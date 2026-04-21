@@ -1,0 +1,59 @@
+PROJECT: Voxel Engine (Java 8 / LWJGL3 / OpenGL 4.3+)
+OBJECTIVE: Incremental build of a ray-casted voxel engine using compute shaders.
+
+--- ARCHITECTURE OVERVIEW ---
+- Rendering: Pure compute shader ray casting (no rasterization/triangles).
+- Output: Compute shader writes to an RGBA8 image2D, displayed via a fullscreen quad.
+- Memory: All voxel and world data stored in SSBOs (Direct State Access utilized).
+- World Structure: 16³ voxel chunks grouped into a 32³ Region Indirection Table (512³ voxels total).
+- Traversal: Two-level Hierarchical DDA (Macro jumps empty chunks, Micro marches non-empty ones).
+- Camera: Custom orthonormal basis (Forward, Right, Up) with WASD + Mouse look + Space/Shift verticality.
+
+--- DATA LAYOUTS (SSBO) ---
+1. RegionIndirectionTable (Binding 1): [rx][ry][rz] -> uint slot | 0xFFFFFFFF (EMPTY)
+2. ChunkPool (Binding 2): [slot] -> 16³ uint voxel cells (4KB per chunk).
+3. EntityRootPool (Binding 3): flat array of EntityRoot structs (64 bytes).
+4. ChildNodePool (Binding 4): flat array of ChildNode structs (64 bytes).
+5. EntityVoxelPool (Binding 5): flat array of 32³ voxel blocks (128KB per model).
+
+--- CURRENT PROGRESS (8/8 STEPS COMPLETE) ---
+[X] Step 1: Window + context (GLFW, OGL 4.3 Core).
+[X] Step 2: Shader compiler (Utility for loading/compiling GLSL).
+[X] Step 3: Fullscreen quad (VAO/VBO setup using DSA).
+[X] Step 4: Compute shader + image output (RGBA8 texture generation).
+[X] Step 5: Camera uniforms (Position/Vector transmission, Mouse look).
+[X] Step 6: Flat voxel grid (Initial DDA implementation).
+[X] Step 7: Chunk pool + region indirection (Hierarchical DDA, solid checkerboard world).
+[X] Step 8: Entity pool (Hierarchical rotating entities, bulk SSBO updates).
+
+--- ENTITY IMPLEMENTATION DETAILS ---
+Models: 32³ voxel blocks. Root pivot is centered at (16, 16, 16).
+Rotation: Entities rotate around exactly one world axis (X, Y, or Z).
+Hierarchy: Supported via ChildNodePool. Children rotate around parent-local axes.
+Physics/Collision: World chunks tagged with 4x4x4 ENTITY volume to prevent rotational clipping.
+Struct Alignment: Explicit float fields used to bypass std430 vec3 padding issues.
+
+EntityRoot Struct (std430, 64 bytes):
+- float wx, wy, wz; (12b)
+- uint axis; (4b)
+- float cosTheta, sinTheta; (8b)
+- uint voxelSlot, childStart, childCount; (12b)
+- float bminx, bminy, bminz; (12b)
+- float bmaxx, bmaxy, bmaxz; (12b)
+- uint padding; (4b)
+
+ChildNode Struct (std430, 64 bytes):
+- float lx, ly, lz; (12b)
+- uint axis; (4b)
+- float cosTheta, sinTheta; (8b)
+- uint voxelSlot; (4b)
+- float bminx, bminy, bminz; (12b)
+- float bmaxx, bmaxy, bmaxz; (12b)
+- uint p1, p2, p3; (12b)
+
+--- RECENT OPTIMIZATIONS ---
+- Persistent CPU Buffers: Entity data mirrored in native memory for fast per-frame modification.
+- Bulk Uploads: All entity rotations uploaded in a single glNamedBufferSubData call (16KB).
+- Expanded Tagging: 4x4x4 tagging area ensures 32³ entity models never clip during rotation.
+- Chunk-Locked DDA: Prevents redundant SSBO lookups during traversal.
+- Iteration Limit: Set to 2048 to ensure full world coverage.

@@ -1,0 +1,234 @@
+#version 430 core
+
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(rgba8, binding = 0) uniform image2D imgOutput;
+
+layout(location = 0) uniform vec3 camPos;
+layout(location = 1) uniform vec3 camForward;
+layout(location = 2) uniform vec3 camRight;
+layout(location = 3) uniform vec3 camUp;
+
+layout(std430, binding = 1) buffer IndirectionTable {
+    uint chunkSlots[];
+};
+
+layout(std430, binding = 2) buffer ChunkPool {
+    uint voxelPool[];
+};
+
+struct EntityRoot {
+    float wx, wy, wz;
+    uint axis;
+    float cosTheta;
+    float sinTheta;
+    uint voxelSlot;
+    uint childStart;
+    uint childCount;
+    float bminx, bminy, bminz;
+    float bmaxx, bmaxy, bmaxz;
+    uint padding;
+};
+
+struct ChildNode {
+    float lx, ly, lz;
+    uint axis;
+    float cosTheta;
+    float sinTheta;
+    uint voxelSlot;
+    float bminx, bminy, bminz;
+    float bmaxx, bmaxy, bmaxz;
+    uint p1, p2, p3;
+};
+
+layout(std430, binding = 3) buffer EntityRootPool {
+    EntityRoot entities[];
+};
+
+layout(std430, binding = 4) buffer ChildNodePool {
+    ChildNode children[];
+};
+
+layout(std430, binding = 5) buffer EntityVoxelPool {
+    uint entityVoxels[];
+};
+
+const int CHUNK_SIZE = 16;
+const int REGION_SIZE = 32;
+const int WORLD_SIZE = 512;
+const uint EMPTY = 0xFFFFFFFF;
+
+vec3 rotate(vec3 v, float cosT, float sinT, uint axis) {
+    vec3 res = v;
+    if (axis == 0) {
+        res.y = v.y * cosT - v.z * sinT;
+        res.z = v.y * sinT + v.z * cosT;
+    } else if (axis == 1) {
+        res.x = v.x * cosT + v.z * sinT;
+        res.z = -v.x * sinT + v.z * cosT;
+    } else if (axis == 2) {
+        res.x = v.x * cosT - v.y * sinT;
+        res.y = v.x * sinT + v.y * cosT;
+    }
+    return res;
+}
+
+bool intersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, out float tFar) {
+    vec3 invDir = 1.0 / rd;
+    vec3 t0 = (boxMin - ro) * invDir;
+    vec3 t1 = (boxMax - ro) * invDir;
+    vec3 tmin = min(t0, t1);
+    vec3 tmax = max(t0, t1);
+    tNear = max(max(tmin.x, tmin.y), tmin.z);
+    tFar = min(min(tmax.x, tmax.y), tmax.z);
+    return tNear <= tFar && tFar > 0.0;
+}
+
+bool marchEntityGrid(vec3 lro, vec3 lrd, uint slot, out int hitSide, out uint voxelType) {
+    float tNear, tFar;
+    if (!intersectAABB(lro, lrd, vec3(0.0), vec3(32.0), tNear, tFar)) return false;
+    
+    vec3 p = lro + lrd * (max(0.0, tNear) + 0.001);
+    ivec3 mapPos = ivec3(floor(p));
+    vec3 deltaDist = abs(1.0 / lrd);
+    ivec3 step = ivec3(sign(lrd));
+    vec3 sideDist = (step * (vec3(mapPos) - p) + (step * 0.5) + 0.5) * deltaDist;
+    
+    uint poolOffset = slot << 15;
+    
+    for (int i = 0; i < 64; i++) {
+        if (mapPos.x < 0 || mapPos.y < 0 || mapPos.z < 0 || mapPos.x >= 32 || mapPos.y >= 32 || mapPos.z >= 32) break;
+        
+        uint voxel = entityVoxels[poolOffset + mapPos.x + (mapPos.y << 5) + (mapPos.z << 10)];
+        if (voxel > 0) {
+            voxelType = voxel;
+            return true;
+        }
+        
+        if (sideDist.x < sideDist.y) {
+            if (sideDist.x < sideDist.z) {
+                sideDist.x += deltaDist.x; mapPos.x += step.x; hitSide = 0;
+            } else {
+                sideDist.z += deltaDist.z; mapPos.z += step.z; hitSide = 2;
+            }
+        } else {
+            if (sideDist.y < sideDist.z) {
+                sideDist.y += deltaDist.y; mapPos.y += step.y; hitSide = 1;
+            } else {
+                sideDist.z += deltaDist.z; mapPos.z += step.z; hitSide = 2;
+            }
+        }
+    }
+    return false;
+}
+
+void main() {
+    ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(imgOutput);
+    if (pixelCoords.x >= size.x || pixelCoords.y >= size.y) return;
+
+    vec2 uv = (vec2(pixelCoords) + 0.5) / vec2(size);
+    vec2 ndc = uv * 2.0 - 1.0;
+    float aspect = float(size.x) / float(size.y);
+    vec3 rayDir = normalize(camForward + ndc.x * aspect * camRight + ndc.y * camUp);
+
+    vec3 hitColor = vec3(0.5, 0.7, 0.9);
+    float tNear, tFar;
+
+    if (intersectAABB(camPos, rayDir, vec3(0.0), vec3(float(WORLD_SIZE)), tNear, tFar)) {
+        vec3 p = camPos + rayDir * (max(0.0, tNear) + 0.0001);
+        ivec3 mapPos = ivec3(floor(p));
+        vec3 deltaDist = abs(1.0 / rayDir);
+        ivec3 step = ivec3(sign(rayDir));
+        vec3 sideDist = (step * (vec3(mapPos) - p) + (step * 0.5) + 0.5) * deltaDist;
+
+        int hitSide = 0;
+        uint voxelType = 0;
+        bool hit = false;
+
+        for (int i = 0; i < 2048; i++) {
+            if (mapPos.x < 0 || mapPos.y < 0 || mapPos.z < 0 || mapPos.x >= WORLD_SIZE || mapPos.y >= WORLD_SIZE || mapPos.z >= WORLD_SIZE) break;
+
+            ivec3 chunkCoords = mapPos >> 4;
+            uint slot = chunkSlots[chunkCoords.x + (chunkCoords.y << 5) + (chunkCoords.z << 10)];
+
+            if (slot == EMPTY) {
+                ivec3 localPos = mapPos & 15;
+                vec3 distToExit;
+                distToExit.x = (step.x > 0) ? float(16 - localPos.x) : float(localPos.x + 1);
+                distToExit.y = (step.y > 0) ? float(16 - localPos.y) : float(localPos.y + 1);
+                distToExit.z = (step.z > 0) ? float(16 - localPos.z) : float(localPos.z + 1);
+                vec3 tToExit = sideDist + (distToExit - 1.0) * deltaDist;
+                
+                if (tToExit.x <= tToExit.y && tToExit.x <= tToExit.z) {
+                    sideDist.x = tToExit.x + deltaDist.x; mapPos.x += step.x * int(distToExit.x); hitSide = 0;
+                } else if (tToExit.y <= tToExit.x && tToExit.y <= tToExit.z) {
+                    sideDist.y = tToExit.y + deltaDist.y; mapPos.y += step.y * int(distToExit.y); hitSide = 1;
+                } else {
+                    sideDist.z = tToExit.z + deltaDist.z; mapPos.z += step.z * int(distToExit.z); hitSide = 2;
+                }
+            } else {
+                uint poolOffset = slot << 12;
+                for (int j = 0; j < 64; j++) {
+                    ivec3 lp = mapPos & 15;
+                    uint voxel = voxelPool[poolOffset + lp.x + (lp.y << 4) + (lp.z << 8)];
+                    if (voxel > 0) {
+                        if ((voxel & 0x80000000) != 0) {
+                            uint entIdx = voxel & 0x7FFFFFFF;
+                            EntityRoot ent = entities[entIdx];
+                            vec3 worldPos = vec3(ent.wx, ent.wy, ent.wz);
+                            vec3 lCamPos = rotate(camPos - worldPos, ent.cosTheta, -ent.sinTheta, ent.axis);
+                            vec3 lRayDir = rotate(rayDir, ent.cosTheta, -ent.sinTheta, ent.axis);
+                            
+                            bool entHit = false;
+                            for (uint c = 0; c < ent.childCount; c++) {
+                                ChildNode child = children[ent.childStart + c];
+                                vec3 localPos = vec3(child.lx, child.ly, child.lz);
+                                vec3 clro = (rotate(lCamPos - localPos, child.cosTheta, -child.sinTheta, child.axis) + vec3(1.0)) * 16.0;
+                                vec3 clrd = rotate(lRayDir, child.cosTheta, -child.sinTheta, child.axis);
+                                if (marchEntityGrid(clro, clrd, child.voxelSlot, hitSide, voxelType)) {
+                                    entHit = true; break;
+                                }
+                            }
+                            if (!entHit) {
+                                vec3 elro = (lCamPos + vec3(1.0)) * 16.0;
+                                if (marchEntityGrid(elro, lRayDir, ent.voxelSlot, hitSide, voxelType)) {
+                                    entHit = true;
+                                }
+                            }
+                            if (entHit) { hit = true; break; }
+                        } else {
+                            voxelType = voxel; hit = true; break;
+                        }
+                    }
+
+                    if (sideDist.x < sideDist.y) {
+                        if (sideDist.x < sideDist.z) {
+                            sideDist.x += deltaDist.x; mapPos.x += step.x; hitSide = 0;
+                        } else {
+                            sideDist.z += deltaDist.z; mapPos.z += step.z; hitSide = 2;
+                        }
+                    } else {
+                        if (sideDist.y < sideDist.z) {
+                            sideDist.y += deltaDist.y; mapPos.y += step.y; hitSide = 1;
+                        } else {
+                            sideDist.z += deltaDist.z; mapPos.z += step.z; hitSide = 2;
+                        }
+                    }
+                    if ((mapPos >> 4) != chunkCoords) break;
+                    if (mapPos.x < 0 || mapPos.y < 0 || mapPos.z < 0 || mapPos.x >= WORLD_SIZE || mapPos.y >= WORLD_SIZE || mapPos.z >= WORLD_SIZE) break;
+                }
+                if (hit) break;
+            }
+        }
+
+        if (hit) {
+            if (voxelType == 1) hitColor = vec3(0.4);
+            else if (voxelType == 2) hitColor = vec3(0.6, 0.3, 0.1);
+            else if (voxelType == 3) hitColor = vec3(0.8, 0.2, 0.2);
+            if (hitSide == 0) hitColor *= 0.7;
+            if (hitSide == 2) hitColor *= 0.85;
+        }
+    }
+
+    imageStore(imgOutput, pixelCoords, vec4(hitColor, 1.0));
+}
