@@ -3,6 +3,7 @@ package com.voxel;
 import com.voxel.utils.GLUtil;
 import com.voxel.utils.ShaderUtil;
 import com.voxel.Entity;
+import com.voxel.EntityManager;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.system.MemoryStack;
@@ -27,8 +28,7 @@ public class Main {
     private int quadVAO, quadVBO, renderTexture;
     private int indirectionSSBO, chunkPoolSSBO;
     private int entityRootSSBO, childNodeSSBO, entityVoxelPoolSSBO;
-    private java.nio.ByteBuffer entityRootBuffer;
-    private Entity[] entities;
+    private EntityManager entityManager;
     
     private int width = 1280, height = 720;
     
@@ -59,7 +59,7 @@ public class Main {
         glDeleteBuffers(entityRootSSBO);
         glDeleteBuffers(childNodeSSBO);
         glDeleteBuffers(entityVoxelPoolSSBO);
-        if (entityRootBuffer != null) MemoryUtil.memFree(entityRootBuffer);
+        if (entityManager != null) entityManager.cleanup();
         glfwDestroyWindow(window);
         glfwTerminate();
         glfwSetErrorCallback(null).free();
@@ -116,10 +116,7 @@ public class Main {
     }
 
     private void setupEntities() {
-        int entityCount = 1024;
-        entities = new Entity[entityCount];
-        entityRootBuffer = MemoryUtil.memAlloc(entityCount * 64);
-        for (int i = 0; i < entityCount * 64; i++) entityRootBuffer.put(i, (byte) 0);
+        entityManager = new EntityManager();
 
         int childCount = 4096;
         java.nio.ByteBuffer childBuffer = MemoryUtil.memAlloc(childCount * 64);
@@ -131,10 +128,9 @@ public class Main {
         for (int i = 0; i < modelsCount * voxelsPerModel; i++) modelBuffer.put(i, 0);
 
         // Populate many entities
-        int idx = 0;
         for (int z = 0; z < 16; z++) {
             for (int x = 0; x < 16; x++) {
-                entities[idx] = new Entity(
+                Entity entity = new Entity(
                     x * 32.0f + 16.5f, // wx
                     8.5f,              // wy
                     z * 32.0f + 16.5f, // wz
@@ -145,9 +141,7 @@ public class Main {
                     0,                  // childStart
                     0                   // childCount
                 );
-                // Populate buffer from entity
-                updateEntityBuffer(idx);
-                idx++;
+                entityManager.add(entity);
             }
         }
 
@@ -161,7 +155,7 @@ public class Main {
         }
 
         entityRootSSBO = glCreateBuffers();
-        glNamedBufferStorage(entityRootSSBO, entityRootBuffer, GL_DYNAMIC_STORAGE_BIT);
+        glNamedBufferStorage(entityRootSSBO, entityManager.getBuffer(), GL_DYNAMIC_STORAGE_BIT);
         
         childNodeSSBO = glCreateBuffers();
         glNamedBufferStorage(childNodeSSBO, childBuffer, 0);
@@ -172,19 +166,7 @@ public class Main {
         MemoryUtil.memFree(modelBuffer);
     }
 
-    private void updateEntityBuffer(int idx) {
-        Entity entity = entities[idx];
-        int offset = idx * 64;
-        entityRootBuffer.putFloat(offset + 0, entity.wx);
-        entityRootBuffer.putFloat(offset + 4, entity.wy);
-        entityRootBuffer.putFloat(offset + 8, entity.wz);
-        entityRootBuffer.putInt(offset + 12, entity.axis);
-        entityRootBuffer.putFloat(offset + 16, entity.cos);
-        entityRootBuffer.putFloat(offset + 20, entity.sin);
-        entityRootBuffer.putInt(offset + 24, entity.model);
-        entityRootBuffer.putInt(offset + 28, entity.childStart);
-        entityRootBuffer.putInt(offset + 32, entity.childCount);
-    }
+
 
     private void setupQuad() {
         float[] vertices = {-1,-1, 1,-1, -1,1, 1,-1, 1,1, -1,1};
@@ -321,13 +303,13 @@ public class Main {
             float cos = (float) Math.cos(angle);
             float sin = (float) Math.sin(angle);
 
-            // Update all 256 entity rotations
-            for (int i = 0; i < 256; i++) {
-                entities[i].setRotation(cos, sin);
-                updateEntityBuffer(i);
+            // Update all entity rotations
+            for (int i = 0; i < entityManager.size() && i < 256; i++) {
+                entityManager.get(i).setRotation(cos, sin);
+                entityManager.update(i, entityManager.get(i));
             }
             // Single bulk upload to GPU (16KB)
-            glNamedBufferSubData(entityRootSSBO, 0, entityRootBuffer);
+            glNamedBufferSubData(entityRootSSBO, 0, entityManager.getBuffer());
             
             glUseProgram(computeProgram);
             glProgramUniform3f(computeProgram, 0, camX, camY, camZ);
