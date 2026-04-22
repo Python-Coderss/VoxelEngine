@@ -17,8 +17,8 @@ layout(std430, binding = 2) buffer readonly restrict ChunkPool {
 };
 
 const int CHUNK_SIZE = 16;
-const int REGION_SIZE = 32;
-const int WORLD_SIZE = 512;
+const int REGION_SIZE = 128;
+const int WORLD_SIZE = 2048; // 128 * 16
 const uint EMPTY = 0xFFFFFFFF;
 
 const vec3 PALETTE[5] = vec3[](
@@ -69,11 +69,11 @@ void main() {
         int stepIdxY = step.y << 4;
         int stepIdxZ = step.z << 8;
 
-        for (int i = 0; i < 1024; i++) {
+        for (int i = 0; i < 2048; i++) {
             if (any(greaterThanEqual(uvec3(mapPos), uvec3(WORLD_SIZE)))) break;
 
             ivec3 chunkCoords = mapPos >> 4;
-            uint chunkIdx = chunkCoords.x | (chunkCoords.y << 5) | (chunkCoords.z << 10);
+            uint chunkIdx = chunkCoords.x | (chunkCoords.y << 7) | (chunkCoords.z << 14); // Updated for REGION_SIZE 128
             uint slot = chunkSlots[chunkIdx];
 
             if (slot == EMPTY) {
@@ -121,7 +121,6 @@ void main() {
                         }
                     }
                     if ((mapPos >> 4) != chunkCoords) break;
-                    // Note: Bounds check handled by chunk exit or outer loop
                 }
                 if (hit) break;
             }

@@ -29,12 +29,12 @@ public class Main {
     private int width = 1280, height = 720;
     
     private final int CHUNK_SIZE = 16;
-    private final int REGION_SIZE = 32;
-    private final int POOL_SIZE = 1024;
+    private final int REGION_SIZE = 128; // 128x128x128 chunks
+    private final int POOL_SIZE = 16384; // Enough for a full 128x128 layer
     
     private final int EMPTY = 0xFFFFFFFF;
 
-    private float camX = 256, camY = 10, camZ = 256;
+    private float camX = 1024, camY = 20, camZ = 1024; // Center of the world
     private float yaw = -45, pitch = -20;
     private float lastMouseX = width / 2f, lastMouseY = height / 2f;
     private boolean firstMouse = true;
@@ -139,6 +139,7 @@ public class Main {
         int slot = 0;
         for (int cx = 0; cx < REGION_SIZE; cx++) {
             for (int cz = 0; cz < REGION_SIZE; cz++) {
+                // Fill y=0 layer with chunks
                 int tableIdx = cx + 0 * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
                 tableBuffer.put(tableIdx, slot);
 
@@ -168,7 +169,7 @@ public class Main {
     }
 
     private void updateCamera(float dt) {
-        float speed = 30.0f * dt;
+        float speed = 50.0f * dt; // Increased speed for larger world
         double radYaw = Math.toRadians(yaw), radPitch = Math.toRadians(pitch);
         forwardX = (float) (Math.cos(radYaw) * Math.cos(radPitch));
         forwardY = (float) Math.sin(radPitch);
