@@ -2,9 +2,6 @@ package com.voxel;
 
 import com.voxel.utils.GLUtil;
 import com.voxel.utils.ShaderUtil;
-import com.voxel.Entity;
-import com.voxel.EntityManager;
-import com.voxel.ChildEntityManager;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.system.MemoryStack;
@@ -28,9 +25,6 @@ public class Main {
     private int quadProgram, computeProgram;
     private int quadVAO, quadVBO, renderTexture;
     private int indirectionSSBO, chunkPoolSSBO;
-    private int entityRootSSBO, childNodeSSBO, entityVoxelPoolSSBO;
-    private EntityManager entityManager;
-    private ChildEntityManager childEntityManager;
     
     private int width = 1280, height = 720;
     
@@ -58,11 +52,6 @@ public class Main {
         glDeleteTextures(renderTexture);
         glDeleteBuffers(indirectionSSBO);
         glDeleteBuffers(chunkPoolSSBO);
-        glDeleteBuffers(entityRootSSBO);
-        glDeleteBuffers(childNodeSSBO);
-        glDeleteBuffers(entityVoxelPoolSSBO);
-        if (entityManager != null) entityManager.cleanup();
-        if (childEntityManager != null) childEntityManager.cleanup();
         glfwDestroyWindow(window);
         glfwTerminate();
         glfwSetErrorCallback(null).free();
@@ -115,91 +104,7 @@ public class Main {
         setupQuad();
         setupTexture();
         setupWorld();
-        setupEntities();
     }
-
-    private void setupEntities() {
-        entityManager = new EntityManager();
-        childEntityManager = new ChildEntityManager(4096);
-
-        int modelsCount = 128;
-        int voxelsPerModel = 32 * 32 * 32;
-        IntBuffer modelBuffer = MemoryUtil.memAllocInt(modelsCount * voxelsPerModel);
-        for (int i = 0; i < modelsCount * voxelsPerModel; i++) modelBuffer.put(i, 0);
-
-        int childStart = 0;
-
-        // Populate many entities
-        for (int z = 0; z < 16; z++) {
-            for (int x = 0; x < 16; x++) {
-                int childCount = 0;
-                if ((x + z) % 4 == 0) { // Every 4th entity gets children
-                    // Add some children
-                    for (int c = 0; c < 1; c++) { // 1 child each
-                        float offsetX = 0.5f;
-                        float offsetY = 0.0f;
-                        float offsetZ = 0.0f;
-                        ChildEntity child = new ChildEntity(
-                            offsetX, offsetY, offsetZ, // relative position in -1 to 1 local space
-                            1, // axis Y
-                            1.0f, 0.0f, // no rotation
-                            1 // model 1
-                        );
-                        childEntityManager.add(child);
-                        childCount++;
-                    }
-                }
-                Entity entity = new Entity(
-                    x * 32.0f + 16.5f, // wx
-                    8.5f,              // wy
-                    z * 32.0f + 16.5f, // wz
-                    1,                  // axis (Y)
-                    1.0f,               // cos
-                    0.0f,               // sin
-                    0,                  // Model 0
-                    childStart,         // childStart
-                    childCount          // childCount
-                );
-                entityManager.add(entity);
-                childStart += childCount;
-            }
-        }
-
-        // Model 0: Wireframe cube edges for debug
-        for (int vx = 8; vx < 24; vx++) {
-            for (int vy = 8; vy < 24; vy++) {
-                for (int vz = 8; vz < 24; vz++) {
-                    // Only set voxels on the edges: where at least two coordinates are at boundary
-                    if ((vx == 8 || vx == 23) && (vy == 8 || vy == 23) ||
-                        (vx == 8 || vx == 23) && (vz == 8 || vz == 23) ||
-                        (vy == 8 || vy == 23) && (vz == 8 || vz == 23)) {
-                        modelBuffer.put(vx + (vy << 5) + (vz << 10), 3);
-                    }
-                }
-            }
-        }
-
-        // Model 1: Small cube for children
-        for (int vx = 20; vx < 24; vx++) {
-            for (int vy = 16; vy < 20; vy++) {
-                for (int vz = 16; vz < 20; vz++) {
-                    modelBuffer.put(vx + (vy << 5) + (vz << 10), 4);
-                }
-            }
-        }
-
-        entityRootSSBO = glCreateBuffers();
-        glNamedBufferStorage(entityRootSSBO, entityManager.getBuffer(), GL_DYNAMIC_STORAGE_BIT);
-
-        childNodeSSBO = glCreateBuffers();
-        glNamedBufferStorage(childNodeSSBO, childEntityManager.getBuffer(), 0);
-
-        entityVoxelPoolSSBO = glCreateBuffers();
-        glNamedBufferStorage(entityVoxelPoolSSBO, modelBuffer, 0);
-        MemoryUtil.memFree(modelBuffer);
-    }
-
-
 
     private void setupQuad() {
         float[] vertices = {-1,-1, 1,-1, -1,1, 1,-1, 1,1, -1,1};
@@ -251,29 +156,6 @@ public class Main {
                 if (slot >= POOL_SIZE) break;
             }
             if (slot >= POOL_SIZE) break;
-        }
-
-        // Tag Stress Test Entities in the world (4x4x4 tagging to prevent rotational clipping)
-        int entIdx = 0;
-        for (int ez = 0; ez < 16; ez++) {
-            for (int ex = 0; ex < 16; ex++) {
-                int baseWX = ex * 32 + 15, baseWY = 7, baseWZ = ez * 32 + 15;
-                for (int ox = 0; ox < 4; ox++) {
-                    for (int oy = 0; oy < 4; oy++) {
-                        for (int oz = 0; oz < 4; oz++) {
-                            int wx = baseWX + ox, wy = baseWY + oy, wz = baseWZ + oz;
-                            int cx = wx >> 4, cy = wy >> 4, cz = wz >> 4;
-                            int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
-                            int slotVal = tableBuffer.get(tableIdx);
-                            if (slotVal != EMPTY) {
-                                int vIdx = (wx & 15) + ((wy & 15) << 4) + ((wz & 15) << 8);
-                                poolBuffer.put(slotVal * voxelsPerChunk + vIdx, 0x80000000 | entIdx);
-                            }
-                        }
-                    }
-                }
-                entIdx++;
-            }
         }
 
         indirectionSSBO = glCreateBuffers();
@@ -332,18 +214,6 @@ public class Main {
 
             updateCamera(dt);
 
-            float angle = (float) glfwGetTime() * 1.5f;
-            float cos = (float) Math.cos(angle);
-            float sin = (float) Math.sin(angle);
-
-            // Update all entity rotations
-            for (int i = 0; i < entityManager.size() && i < 256; i++) {
-                entityManager.get(i).setRotation(cos, sin);
-                entityManager.update(i, entityManager.get(i));
-            }
-            // Single bulk upload to GPU (16KB)
-            glNamedBufferSubData(entityRootSSBO, 0, entityManager.getBuffer());
-            
             glUseProgram(computeProgram);
             glProgramUniform3f(computeProgram, 0, camX, camY, camZ);
             glProgramUniform3f(computeProgram, 1, forwardX, forwardY, forwardZ);
@@ -352,9 +222,6 @@ public class Main {
             
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, entityRootSSBO);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, childNodeSSBO);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, entityVoxelPoolSSBO);
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
             glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
