@@ -32,7 +32,7 @@ public class Main {
     
     private EntityManager entityManager;
     private Entity player;
-    private EntityPart head, leftArm, rightArm;
+    private EntityPart head, leftArm, rightArm, leftLeg, rightLeg;
     
     private int width = 1280, height = 720;
     
@@ -118,28 +118,48 @@ public class Main {
     private void setupEntities() {
         entityManager = new EntityManager();
         player = new Entity();
-        player.position.set(1024, 2, 1024);
+        player.position.set(1024, 0, 1024); // Start at ground level
 
+        // All dimensions in entity voxels (1/16 of a block)
+        // Goal: Height=32, Width=32, Depth=16
+
+        // Legs: y=0 to y=12
+        leftLeg = new EntityPart("leftLeg");
+        leftLeg.position.set(8, 0, 12);
+        leftLeg.pivot.set(4, 12, 4);
+        leftLeg.voxelData = createBoxData(0, 0, 0, 8, 12, 8, 3);
+        player.rootParts.add(leftLeg);
+
+        rightLeg = new EntityPart("rightLeg");
+        rightLeg.position.set(16, 0, 12);
+        rightLeg.pivot.set(4, 12, 4);
+        rightLeg.voxelData = createBoxData(0, 0, 0, 8, 12, 8, 3);
+        player.rootParts.add(rightLeg);
+
+        // Body: y=12 to y=24
         EntityPart body = new EntityPart("body");
-        body.voxelData = createBoxData(4, 0, 4, 12, 12, 12, 3); // Red body
+        body.position.set(8, 12, 12);
+        body.voxelData = createBoxData(0, 0, 0, 16, 12, 8, 4); // Green body
         player.rootParts.add(body);
 
+        // Head: y=24 to y=32
         head = new EntityPart("head");
-        head.position.set(0, 12, 0);
-        head.pivot.set(4, 0, 4); // Center pivot
-        head.voxelData = createBoxData(4, 0, 4, 12, 8, 12, 4); // Green head
+        head.position.set(0, 12, -4); // Relative to body
+        head.pivot.set(8, 0, 8);
+        head.voxelData = createBoxData(0, 0, 0, 16, 8, 16, 3); // Red head
         body.children.add(head);
 
+        // Arms: y=12 to y=24 (sides of body)
         leftArm = new EntityPart("leftArm");
-        leftArm.position.set(-4, 10, 4);
-        leftArm.pivot.set(2, 2, 2);
-        leftArm.voxelData = createBoxData(0, 0, 0, 4, 12, 4, 4);
+        leftArm.position.set(-8, 0, 0); // Relative to body
+        leftArm.pivot.set(8, 12, 4);
+        leftArm.voxelData = createBoxData(0, 0, 0, 8, 12, 8, 3);
         body.children.add(leftArm);
 
         rightArm = new EntityPart("rightArm");
-        rightArm.position.set(12, 10, 4);
-        rightArm.pivot.set(2, 2, 2);
-        rightArm.voxelData = createBoxData(0, 0, 0, 4, 12, 4, 4);
+        rightArm.position.set(16, 0, 0); // Relative to body
+        rightArm.pivot.set(0, 12, 4);
+        rightArm.voxelData = createBoxData(0, 0, 0, 8, 12, 8, 3);
         body.children.add(rightArm);
 
         entityManager.addEntity(player);
@@ -197,10 +217,10 @@ public class Main {
                 tableBuffer.put(tableIdx, slot);
 
                 int poolOffset = slot * voxelsPerChunk;
-                int type = ((cx + cz) % 2 == 0) ? 1 : 2;
                 for (int vx = 0; vx < CHUNK_SIZE; vx++) {
                     for (int vy = 0; vy < 2; vy++) {
                         for (int vz = 0; vz < CHUNK_SIZE; vz++) {
+                            int type = ((cx * 16 + vx) + vy + (cz * 16 + vz)) % 2 == 0 ? 1 : 2;
                             int vIdx = vx + vy * CHUNK_SIZE + vz * CHUNK_SIZE * CHUNK_SIZE;
                             poolBuffer.put(poolOffset + vIdx, type);
                         }
@@ -273,6 +293,8 @@ public class Main {
             head.rotation.identity().rotateX((float) Math.sin(time * 2) * 0.2f);
             leftArm.rotation.identity().rotateX((float) Math.sin(time * 4) * 0.5f);
             rightArm.rotation.identity().rotateX((float) Math.sin(time * 4 + Math.PI) * 0.5f);
+            leftLeg.rotation.identity().rotateX((float) Math.sin(time * 4 + Math.PI) * 0.4f);
+            rightLeg.rotation.identity().rotateX((float) Math.sin(time * 4) * 0.4f);
 
             entityManager.updateGpuData();
 
