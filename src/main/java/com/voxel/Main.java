@@ -125,20 +125,20 @@ public class Main {
         player.rootParts.add(body);
 
         head = new EntityPart("head");
-        head.position.set(0, 12 * (1f/16f), 0);
-        head.pivot.set(4 * (1f/16f), 0, 4 * (1f/16f)); // Center pivot
+        head.position.set(0, 12, 0);
+        head.pivot.set(4, 0, 4); // Center pivot
         head.voxelData = createBoxData(4, 0, 4, 12, 8, 12, 4); // Green head
         body.children.add(head);
 
         leftArm = new EntityPart("leftArm");
-        leftArm.position.set(-4 * (1f/16f), 10 * (1f/16f), 4 * (1f/16f));
-        leftArm.pivot.set(2 * (1f/16f), 2 * (1f/16f), 2 * (1f/16f));
+        leftArm.position.set(-4, 10, 4);
+        leftArm.pivot.set(2, 2, 2);
         leftArm.voxelData = createBoxData(0, 0, 0, 4, 12, 4, 4);
         body.children.add(leftArm);
 
         rightArm = new EntityPart("rightArm");
-        rightArm.position.set(12 * (1f/16f), 10 * (1f/16f), 4 * (1f/16f));
-        rightArm.pivot.set(2 * (1f/16f), 2 * (1f/16f), 2 * (1f/16f));
+        rightArm.position.set(12, 10, 4);
+        rightArm.pivot.set(2, 2, 2);
         rightArm.voxelData = createBoxData(0, 0, 0, 4, 12, 4, 4);
         body.children.add(rightArm);
 

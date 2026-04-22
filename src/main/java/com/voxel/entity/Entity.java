@@ -11,7 +11,7 @@ public class Entity {
     private final Matrix4f rootTransform = new Matrix4f();
 
     public void update() {
-        rootTransform.identity().translate(position);
+        rootTransform.identity().translate(position).scale(1.0f / 16.0f);
         for (EntityPart part : rootParts) {
             part.updateTransforms(rootTransform);
         }

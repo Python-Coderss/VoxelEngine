@@ -12,7 +12,7 @@ public class EntityPart {
     public final Vector3f position = new Vector3f();
     public final Vector3f pivot = new Vector3f();
     public final Quaternionf rotation = new Quaternionf();
-    public final Vector3f scale = new Vector3f(1.0f / 16.0f);
+    public final Vector3f scale = new Vector3f(1.0f);
     
     public final Matrix4f localTransform = new Matrix4f();
     public final Matrix4f worldTransform = new Matrix4f();
