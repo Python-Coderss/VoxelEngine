@@ -8,11 +8,11 @@ layout(location = 1) uniform vec3 camForward;
 layout(location = 2) uniform vec3 camRight;
 layout(location = 3) uniform vec3 camUp;
 
-layout(std430, binding = 1) buffer IndirectionTable {
+layout(std430, binding = 1) buffer readonly restrict IndirectionTable {
     uint chunkSlots[];
 };
 
-layout(std430, binding = 2) buffer ChunkPool {
+layout(std430, binding = 2) buffer readonly restrict ChunkPool {
     uint voxelPool[];
 };
 
@@ -20,6 +20,14 @@ const int CHUNK_SIZE = 16;
 const int REGION_SIZE = 32;
 const int WORLD_SIZE = 512;
 const uint EMPTY = 0xFFFFFFFF;
+
+const vec3 PALETTE[5] = vec3[](
+    vec3(0.5, 0.7, 0.9), // Sky
+    vec3(0.4, 0.4, 0.4), // Floor 1
+    vec3(0.6, 0.3, 0.1), // Floor 2
+    vec3(0.8, 0.2, 0.2), // Red
+    vec3(0.2, 0.8, 0.2)  // Green
+);
 
 bool intersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, out float tFar) {
     vec3 invDir = 1.0 / rd;
@@ -42,7 +50,7 @@ void main() {
     float aspect = float(size.x) / float(size.y);
     vec3 rayDir = normalize(camForward + ndc.x * aspect * camRight + ndc.y * camUp);
 
-    vec3 hitColor = vec3(0.5, 0.7, 0.9);
+    vec3 hitColor = PALETTE[0];
     float tNear, tFar;
 
     if (intersectAABB(camPos, rayDir, vec3(0.0), vec3(float(WORLD_SIZE)), tNear, tFar)) {
@@ -56,13 +64,20 @@ void main() {
         uint voxelType = 0;
         bool hit = false;
 
-        for (int i = 0; i < 2048; i++) {
-            if (mapPos.x < 0 || mapPos.y < 0 || mapPos.z < 0 || mapPos.x >= WORLD_SIZE || mapPos.y >= WORLD_SIZE || mapPos.z >= WORLD_SIZE) break;
+        // Precompute step indices for inner loop
+        int stepIdxX = step.x;
+        int stepIdxY = step.y << 4;
+        int stepIdxZ = step.z << 8;
+
+        for (int i = 0; i < 1024; i++) {
+            if (any(greaterThanEqual(uvec3(mapPos), uvec3(WORLD_SIZE)))) break;
 
             ivec3 chunkCoords = mapPos >> 4;
-            uint slot = chunkSlots[chunkCoords.x + (chunkCoords.y << 5) + (chunkCoords.z << 10)];
+            uint chunkIdx = chunkCoords.x | (chunkCoords.y << 5) | (chunkCoords.z << 10);
+            uint slot = chunkSlots[chunkIdx];
 
             if (slot == EMPTY) {
+                // Jump to chunk boundary
                 ivec3 localPos = mapPos & 15;
                 vec3 distToExit;
                 distToExit.x = (step.x > 0) ? float(16 - localPos.x) : float(localPos.x + 1);
@@ -79,9 +94,11 @@ void main() {
                 }
             } else {
                 uint poolOffset = slot << 12;
+                ivec3 lp = mapPos & 15;
+                int localIdx = lp.x | (lp.y << 4) | (lp.z << 8);
+
                 for (int j = 0; j < 64; j++) {
-                    ivec3 lp = mapPos & 15;
-                    uint voxel = voxelPool[poolOffset + lp.x + (lp.y << 4) + (lp.z << 8)];
+                    uint voxel = voxelPool[poolOffset + localIdx];
                     if (voxel > 0) {
                         voxelType = voxel; hit = true; break;
                     }
@@ -89,28 +106,29 @@ void main() {
                     if (sideDist.x < sideDist.y) {
                         if (sideDist.x < sideDist.z) {
                             sideDist.x += deltaDist.x; mapPos.x += step.x; hitSide = 0;
+                            localIdx += stepIdxX;
                         } else {
                             sideDist.z += deltaDist.z; mapPos.z += step.z; hitSide = 2;
+                            localIdx += stepIdxZ;
                         }
                     } else {
                         if (sideDist.y < sideDist.z) {
                             sideDist.y += deltaDist.y; mapPos.y += step.y; hitSide = 1;
+                            localIdx += stepIdxY;
                         } else {
                             sideDist.z += deltaDist.z; mapPos.z += step.z; hitSide = 2;
+                            localIdx += stepIdxZ;
                         }
                     }
                     if ((mapPos >> 4) != chunkCoords) break;
-                    if (mapPos.x < 0 || mapPos.y < 0 || mapPos.z < 0 || mapPos.x >= WORLD_SIZE || mapPos.y >= WORLD_SIZE || mapPos.z >= WORLD_SIZE) break;
+                    // Note: Bounds check handled by chunk exit or outer loop
                 }
                 if (hit) break;
             }
         }
 
         if (hit) {
-            if (voxelType == 1) hitColor = vec3(0.4);
-            else if (voxelType == 2) hitColor = vec3(0.6, 0.3, 0.1);
-            else if (voxelType == 3) hitColor = vec3(0.8, 0.2, 0.2);
-            else if (voxelType == 4) hitColor = vec3(0.2, 0.8, 0.2);
+            hitColor = PALETTE[clamp(voxelType, 0, 4)];
             if (hitSide == 0) hitColor *= 0.7;
             if (hitSide == 2) hitColor *= 0.85;
         }
