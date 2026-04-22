@@ -85,6 +85,11 @@
             <artifactId>lwjgl-opengl</artifactId>
             <classifier>natives-macos</classifier>
         </dependency>
+        <dependency>
+            <groupId>org.joml</groupId>
+            <artifactId>joml</artifactId>
+            <version>1.10.5</version>
+        </dependency>
     </dependencies>
 
     <build>

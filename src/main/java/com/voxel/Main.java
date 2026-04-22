@@ -1,9 +1,13 @@
 package com.voxel;
 
+import com.voxel.entity.Entity;
+import com.voxel.entity.EntityManager;
+import com.voxel.entity.EntityPart;
 import com.voxel.utils.GLUtil;
 import com.voxel.utils.ShaderUtil;
-import org.lwjgl.opengl.GL;
+import org.joml.Quaternionf;
 import org.lwjgl.glfw.GLFWErrorCallback;
+import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
@@ -25,6 +29,10 @@ public class Main {
     private int quadProgram, computeProgram;
     private int quadVAO, quadVBO, renderTexture;
     private int indirectionSSBO, chunkPoolSSBO;
+    
+    private EntityManager entityManager;
+    private Entity player;
+    private EntityPart head, leftArm, rightArm;
     
     private int width = 1280, height = 720;
     
@@ -104,6 +112,51 @@ public class Main {
         setupQuad();
         setupTexture();
         setupWorld();
+        setupEntities();
+    }
+
+    private void setupEntities() {
+        entityManager = new EntityManager();
+        player = new Entity();
+        player.position.set(1024, 2, 1024);
+
+        EntityPart body = new EntityPart("body");
+        body.voxelData = createBoxData(4, 0, 4, 12, 12, 12, 3); // Red body
+        player.rootParts.add(body);
+
+        head = new EntityPart("head");
+        head.position.set(0, 12 * (1f/16f), 0);
+        head.pivot.set(4 * (1f/16f), 0, 4 * (1f/16f)); // Center pivot
+        head.voxelData = createBoxData(4, 0, 4, 12, 8, 12, 4); // Green head
+        body.children.add(head);
+
+        leftArm = new EntityPart("leftArm");
+        leftArm.position.set(-4 * (1f/16f), 10 * (1f/16f), 4 * (1f/16f));
+        leftArm.pivot.set(2 * (1f/16f), 2 * (1f/16f), 2 * (1f/16f));
+        leftArm.voxelData = createBoxData(0, 0, 0, 4, 12, 4, 4);
+        body.children.add(leftArm);
+
+        rightArm = new EntityPart("rightArm");
+        rightArm.position.set(12 * (1f/16f), 10 * (1f/16f), 4 * (1f/16f));
+        rightArm.pivot.set(2 * (1f/16f), 2 * (1f/16f), 2 * (1f/16f));
+        rightArm.voxelData = createBoxData(0, 0, 0, 4, 12, 4, 4);
+        body.children.add(rightArm);
+
+        entityManager.addEntity(player);
+    }
+
+    private short[] createBoxData(int x, int y, int z, int w, int h, int d, int type) {
+        short[] data = new short[16 * 16 * 16];
+        for (int vx = x; vx < x + w; vx++) {
+            for (int vy = y; vy < y + h; vy++) {
+                for (int vz = z; vz < z + d; vz++) {
+                    if (vx >= 0 && vx < 16 && vy >= 0 && vy < 16 && vz >= 0 && vz < 16) {
+                        data[vx + vy * 16 + vz * 256] = (short) type;
+                    }
+                }
+            }
+        }
+        return data;
     }
 
     private void setupQuad() {
@@ -208,21 +261,32 @@ public class Main {
             fpsTime += dt;
             frames++;
             if (fpsTime >= 1.0f) {
-                glfwSetWindowTitle(window, "Voxel Engine | FPS: " + frames);
+                glfwSetWindowTitle(window, String.format("Voxel Engine | FPS: %d | Pos: %.2f, %.2f, %.2f", frames, camX, camY, camZ));
                 frames = 0;
                 fpsTime = 0;
             }
 
             updateCamera(dt);
 
+            // Animate entities
+            float time = (float) glfwGetTime();
+            head.rotation.identity().rotateX((float) Math.sin(time * 2) * 0.2f);
+            leftArm.rotation.identity().rotateX((float) Math.sin(time * 4) * 0.5f);
+            rightArm.rotation.identity().rotateX((float) Math.sin(time * 4 + Math.PI) * 0.5f);
+
+            entityManager.updateGpuData();
+
             glUseProgram(computeProgram);
             glProgramUniform3f(computeProgram, 0, camX, camY, camZ);
             glProgramUniform3f(computeProgram, 1, forwardX, forwardY, forwardZ);
             glProgramUniform3f(computeProgram, 2, rightX, rightY, rightZ);
             glProgramUniform3f(computeProgram, 3, upX, upY, upZ);
+            glProgramUniform1i(computeProgram, glGetUniformLocation(computeProgram, "numEntityParts"), entityManager.getNumParts());
             
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
+            entityManager.bind(3, 4);
+
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
             glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);

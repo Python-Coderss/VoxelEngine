@@ -16,6 +16,22 @@ layout(std430, binding = 2) buffer readonly restrict ChunkPool {
     uint voxelPool[];
 };
 
+struct EntityPart {
+    mat4 worldToLocal;
+    int voxelOffset; // Offset into EntityVoxelPool
+    int pad1, pad2, pad3;
+};
+
+layout(std430, binding = 3) buffer readonly restrict EntityParts {
+    EntityPart parts[];
+};
+
+layout(std430, binding = 4) buffer readonly restrict EntityVoxelPool {
+    uint entityVoxels[]; // Packed shorts as uints or just uints
+};
+
+uniform int numEntityParts;
+
 const int CHUNK_SIZE = 16;
 const int REGION_SIZE = 128;
 const int WORLD_SIZE = 2048; // 128 * 16
@@ -40,6 +56,76 @@ bool intersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, 
     return tNear <= tFar && tFar > 0.0;
 }
 
+bool ddaRaycast16x16x16(vec3 ro, vec3 rd, float tNear, float tFar, int voxelOffset, out float hitT, out int hitSide, out uint voxelType) {
+    vec3 p = ro + rd * (max(0.0, tNear) + 0.0001);
+    ivec3 mapPos = ivec3(floor(p));
+    vec3 deltaDist = abs(1.0 / rd);
+    ivec3 step = ivec3(sign(rd));
+    vec3 sideDist = (step * (vec3(mapPos) - p) + (step * 0.5) + 0.5) * deltaDist;
+
+    int currentHitSide = 0;
+    int stepIdxX = step.x;
+    int stepIdxY = step.y << 4;
+    int stepIdxZ = step.z << 8;
+    ivec3 lp = mapPos & 15;
+    int localIdx = lp.x | (lp.y << 4) | (lp.z << 8);
+
+    for (int i = 0; i < 48; i++) {
+        if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(16)))) break;
+        
+        uint voxel = entityVoxels[voxelOffset + localIdx];
+        if (voxel > 0) {
+            voxelType = voxel;
+            hitSide = currentHitSide;
+            if (hitSide == 0) hitT = sideDist.x - deltaDist.x;
+            else if (hitSide == 1) hitT = sideDist.y - deltaDist.y;
+            else hitT = sideDist.z - deltaDist.z;
+            return true;
+        }
+
+        if (sideDist.x < sideDist.y) {
+            if (sideDist.x < sideDist.z) {
+                sideDist.x += deltaDist.x; mapPos.x += step.x; currentHitSide = 0; localIdx += stepIdxX;
+            } else {
+                sideDist.z += deltaDist.z; mapPos.z += step.z; currentHitSide = 2; localIdx += stepIdxZ;
+            }
+        } else {
+            if (sideDist.y < sideDist.z) {
+                sideDist.y += deltaDist.y; mapPos.y += step.y; currentHitSide = 1; localIdx += stepIdxY;
+            } else {
+                sideDist.z += deltaDist.z; mapPos.z += step.z; currentHitSide = 2; localIdx += stepIdxZ;
+            }
+        }
+    }
+    return false;
+}
+
+bool raycastEntityPart(int partIdx, vec3 worldRo, vec3 worldRd, inout float closestT, inout int hitSide, inout uint voxelType) {
+    EntityPart part = parts[partIdx];
+    vec4 localRo4 = part.worldToLocal * vec4(worldRo, 1.0);
+    vec3 localRo = localRo4.xyz / localRo4.w;
+    vec3 localRd = mat3(part.worldToLocal) * worldRd;
+    float tScale = length(localRd);
+    localRd /= tScale;
+
+    float tNear, tFar;
+    if (intersectAABB(localRo, localRd, vec3(0.0), vec3(16.0), tNear, tFar)) {
+        float localHitT;
+        int localHitSide;
+        uint localVoxelType;
+        if (ddaRaycast16x16x16(localRo, localRd, tNear, tFar, part.voxelOffset, localHitT, localHitSide, localVoxelType)) {
+            float worldHitT = localHitT / tScale;
+            if (worldHitT < closestT) {
+                closestT = worldHitT;
+                hitSide = localHitSide;
+                voxelType = localVoxelType;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void main() {
     ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(imgOutput);
@@ -51,8 +137,12 @@ void main() {
     vec3 rayDir = normalize(camForward + ndc.x * aspect * camRight + ndc.y * camUp);
 
     vec3 hitColor = PALETTE[0];
-    float tNear, tFar;
+    float worldT = 1e9;
+    int worldHitSide = 0;
+    uint worldVoxelType = 0;
+    bool worldHit = false;
 
+    float tNear, tFar;
     if (intersectAABB(camPos, rayDir, vec3(0.0), vec3(float(WORLD_SIZE)), tNear, tFar)) {
         vec3 p = camPos + rayDir * (max(0.0, tNear) + 0.0001);
         ivec3 mapPos = ivec3(floor(p));
@@ -60,11 +150,7 @@ void main() {
         ivec3 step = ivec3(sign(rayDir));
         vec3 sideDist = (step * (vec3(mapPos) - p) + (step * 0.5) + 0.5) * deltaDist;
 
-        int hitSide = 0;
-        uint voxelType = 0;
-        bool hit = false;
-
-        // Precompute step indices for inner loop
+        int currentHitSide = 0;
         int stepIdxX = step.x;
         int stepIdxY = step.y << 4;
         int stepIdxZ = step.z << 8;
@@ -73,11 +159,10 @@ void main() {
             if (any(greaterThanEqual(uvec3(mapPos), uvec3(WORLD_SIZE)))) break;
 
             ivec3 chunkCoords = mapPos >> 4;
-            uint chunkIdx = chunkCoords.x | (chunkCoords.y << 7) | (chunkCoords.z << 14); // Updated for REGION_SIZE 128
+            uint chunkIdx = chunkCoords.x | (chunkCoords.y << 7) | (chunkCoords.z << 14);
             uint slot = chunkSlots[chunkIdx];
 
             if (slot == EMPTY) {
-                // Jump to chunk boundary
                 ivec3 localPos = mapPos & 15;
                 vec3 distToExit;
                 distToExit.x = (step.x > 0) ? float(16 - localPos.x) : float(localPos.x + 1);
@@ -86,11 +171,11 @@ void main() {
                 vec3 tToExit = sideDist + (distToExit - 1.0) * deltaDist;
                 
                 if (tToExit.x <= tToExit.y && tToExit.x <= tToExit.z) {
-                    sideDist.x = tToExit.x + deltaDist.x; mapPos.x += step.x * int(distToExit.x); hitSide = 0;
+                    sideDist.x = tToExit.x + deltaDist.x; mapPos.x += step.x * int(distToExit.x); currentHitSide = 0;
                 } else if (tToExit.y <= tToExit.x && tToExit.y <= tToExit.z) {
-                    sideDist.y = tToExit.y + deltaDist.y; mapPos.y += step.y * int(distToExit.y); hitSide = 1;
+                    sideDist.y = tToExit.y + deltaDist.y; mapPos.y += step.y * int(distToExit.y); currentHitSide = 1;
                 } else {
-                    sideDist.z = tToExit.z + deltaDist.z; mapPos.z += step.z * int(distToExit.z); hitSide = 2;
+                    sideDist.z = tToExit.z + deltaDist.z; mapPos.z += step.z * int(distToExit.z); currentHitSide = 2;
                 }
             } else {
                 uint poolOffset = slot << 12;
@@ -100,37 +185,49 @@ void main() {
                 for (int j = 0; j < 64; j++) {
                     uint voxel = voxelPool[poolOffset + localIdx];
                     if (voxel > 0) {
-                        voxelType = voxel; hit = true; break;
+                        worldVoxelType = voxel; worldHit = true; 
+                        if (currentHitSide == 0) worldT = sideDist.x - deltaDist.x;
+                        else if (currentHitSide == 1) worldT = sideDist.y - deltaDist.y;
+                        else worldT = sideDist.z - deltaDist.z;
+                        worldHitSide = currentHitSide;
+                        break;
                     }
 
                     if (sideDist.x < sideDist.y) {
                         if (sideDist.x < sideDist.z) {
-                            sideDist.x += deltaDist.x; mapPos.x += step.x; hitSide = 0;
-                            localIdx += stepIdxX;
+                            sideDist.x += deltaDist.x; mapPos.x += step.x; currentHitSide = 0; localIdx += stepIdxX;
                         } else {
-                            sideDist.z += deltaDist.z; mapPos.z += step.z; hitSide = 2;
-                            localIdx += stepIdxZ;
+                            sideDist.z += deltaDist.z; mapPos.z += step.z; currentHitSide = 2; localIdx += stepIdxZ;
                         }
                     } else {
                         if (sideDist.y < sideDist.z) {
-                            sideDist.y += deltaDist.y; mapPos.y += step.y; hitSide = 1;
-                            localIdx += stepIdxY;
+                            sideDist.y += deltaDist.y; mapPos.y += step.y; currentHitSide = 1; localIdx += stepIdxY;
                         } else {
-                            sideDist.z += deltaDist.z; mapPos.z += step.z; hitSide = 2;
-                            localIdx += stepIdxZ;
+                            sideDist.z += deltaDist.z; mapPos.z += step.z; currentHitSide = 2; localIdx += stepIdxZ;
                         }
                     }
                     if ((mapPos >> 4) != chunkCoords) break;
                 }
-                if (hit) break;
+                if (worldHit) break;
             }
         }
+    }
 
-        if (hit) {
-            hitColor = PALETTE[clamp(voxelType, 0, 4)];
-            if (hitSide == 0) hitColor *= 0.7;
-            if (hitSide == 2) hitColor *= 0.85;
+    float closestT = worldT;
+    int finalHitSide = worldHitSide;
+    uint finalVoxelType = worldVoxelType;
+    bool entityHit = false;
+
+    for (int i = 0; i < numEntityParts; i++) {
+        if (raycastEntityPart(i, camPos, rayDir, closestT, finalHitSide, finalVoxelType)) {
+            entityHit = true;
         }
+    }
+
+    if (worldHit || entityHit) {
+        hitColor = PALETTE[clamp(finalVoxelType, 0, 4)];
+        if (finalHitSide == 0) hitColor *= 0.7;
+        if (finalHitSide == 2) hitColor *= 0.85;
     }
 
     imageStore(imgOutput, pixelCoords, vec4(hitColor, 1.0));
