@@ -16,6 +16,10 @@ layout(std430, binding = 2) buffer readonly restrict ChunkPool {
     uint voxelPool[];
 };
 
+layout(std430, binding = 5) buffer readonly restrict LightPool {
+    uint lightPool[];
+};
+
 struct EntityPart {
     mat4 worldToLocal;
     int voxelOffset; // Offset into EntityVoxelPool
@@ -126,6 +130,48 @@ bool raycastEntityPart(int partIdx, vec3 worldRo, vec3 worldRd, inout float clos
     return false;
 }
 
+vec3 sampleLight(ivec3 p) {
+    if (any(lessThan(p, ivec3(0))) || any(greaterThanEqual(p, ivec3(WORLD_SIZE)))) return vec3(0.0);
+    ivec3 chunkCoords = p >> 4;
+    uint chunkIdx = chunkCoords.x | (chunkCoords.y << 7) | (chunkCoords.z << 14);
+    uint slot = chunkSlots[chunkIdx];
+    if (slot == EMPTY) return vec3(0.0);
+    // Every voxel in a chunk has the same light, so we just sample the first one
+    uint packedLight = lightPool[slot << 12];
+    return vec3(
+        float(packedLight & 0xF),
+        float((packedLight >> 4) & 0xF),
+        float((packedLight >> 8) & 0xF)
+    ) / 15.0;
+}
+
+vec3 getInterpolatedLight(vec3 worldPos) {
+    // Offset by half a chunk to interpolate between chunk centers
+    vec3 p = (worldPos - 8.0) / 16.0;
+    ivec3 i = ivec3(floor(p));
+    vec3 f = fract(p);
+
+    // Sample 8 chunk centers
+    vec3 c000 = sampleLight(i << 4);
+    vec3 c100 = sampleLight((i + ivec3(1,0,0)) << 4);
+    vec3 c010 = sampleLight((i + ivec3(0,1,0)) << 4);
+    vec3 c110 = sampleLight((i + ivec3(1,1,0)) << 4);
+    vec3 c001 = sampleLight((i + ivec3(0,0,1)) << 4);
+    vec3 c101 = sampleLight((i + ivec3(1,0,1)) << 4);
+    vec3 c011 = sampleLight((i + ivec3(0,1,1)) << 4);
+    vec3 c111 = sampleLight((i + ivec3(1,1,1)) << 4);
+
+    vec3 c00 = mix(c000, c100, f.x);
+    vec3 c01 = mix(c001, c101, f.x);
+    vec3 c10 = mix(c010, c110, f.x);
+    vec3 c11 = mix(c011, c111, f.x);
+
+    vec3 c0 = mix(c00, c10, f.y);
+    vec3 c1 = mix(c01, c11, f.y);
+
+    return mix(c0, c1, f.z);
+}
+
 void main() {
     ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(imgOutput);
@@ -226,8 +272,23 @@ void main() {
 
     if (worldHit || entityHit) {
         hitColor = PALETTE[clamp(finalVoxelType, 0, 4)];
-        if (finalHitSide == 0) hitColor *= 0.7;
-        if (finalHitSide == 2) hitColor *= 0.85;
+        
+        vec3 hitPos = camPos + rayDir * closestT;
+        vec3 normal = vec3(0.0);
+        if (finalHitSide == 0) normal = vec3(-sign(rayDir.x), 0.0, 0.0);
+        else if (finalHitSide == 1) normal = vec3(0.0, -sign(rayDir.y), 0.0);
+        else normal = vec3(0.0, 0.0, -sign(rayDir.z));
+        
+        // Use trilinear interpolation between chunk centers for smooth lighting
+        vec3 light = getInterpolatedLight(hitPos + normal * 0.5);
+        
+        hitColor *= (light + 0.1);
+
+        if (finalHitSide == 0) hitColor *= 0.8;
+        if (finalHitSide == 2) hitColor *= 0.9;
+    } else {
+        // Sky with some vertical gradient and minimal ambient
+        hitColor = mix(PALETTE[0] * 0.5, PALETTE[0], max(0.0, rayDir.y + 0.5));
     }
 
     imageStore(imgOutput, pixelCoords, vec4(hitColor, 1.0));

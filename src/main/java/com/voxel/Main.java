@@ -1,11 +1,14 @@
 package com.voxel;
 
-import com.voxel.entity.Entity;
-import com.voxel.entity.EntityManager;
-import com.voxel.entity.EntityPart;
-import com.voxel.utils.GLUtil;
+import com.voxel.entity.*;
+import com.voxel.lighting.LightPropagationEngine;
+import com.voxel.lighting.LightSource;
+import com.voxel.lighting.LightType;
 import com.voxel.utils.ShaderUtil;
+
 import org.joml.Quaternionf;
+import org.joml.Vector3f;
+import org.joml.Vector3i;
 import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
@@ -13,6 +16,8 @@ import org.lwjgl.system.MemoryUtil;
 
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.GL11.*;
@@ -28,7 +33,10 @@ public class Main {
     private long window;
     private int quadProgram, computeProgram;
     private int quadVAO, quadVBO, renderTexture;
-    private int indirectionSSBO, chunkPoolSSBO;
+    private int indirectionSSBO, chunkPoolSSBO, lightPoolSSBO;
+    
+    private World world;
+    private LightPropagationEngine lightEngine;
     
     private EntityManager entityManager;
     private Entity player;
@@ -38,7 +46,7 @@ public class Main {
     
     private final int CHUNK_SIZE = 16;
     private final int REGION_SIZE = 128; // 128x128x128 chunks
-    private final int POOL_SIZE = 16384; // Enough for a full 128x128 layer
+    private final int POOL_SIZE = 16384; 
     
     private final int EMPTY = 0xFFFFFFFF;
 
@@ -60,6 +68,7 @@ public class Main {
         glDeleteTextures(renderTexture);
         glDeleteBuffers(indirectionSSBO);
         glDeleteBuffers(chunkPoolSSBO);
+        glDeleteBuffers(lightPoolSSBO);
         glfwDestroyWindow(window);
         glfwTerminate();
         glfwSetErrorCallback(null).free();
@@ -112,16 +121,14 @@ public class Main {
         setupQuad();
         setupTexture();
         setupWorld();
+        setupLighting();
         setupEntities();
     }
 
     private void setupEntities() {
         entityManager = new EntityManager();
         player = new Entity();
-        player.position.set(1024, 0, 1024); // Start at ground level
-
-        // All dimensions in entity voxels (1/16 of a block)
-        // Goal: Height=32, Width=32, Depth=16
+        player.position.set(1024, 2, 1024); // Start above ground level
 
         // Legs: y=0 to y=12
         leftLeg = new EntityPart("leftLeg");
@@ -200,49 +207,82 @@ public class Main {
         glTextureParameteri(renderTexture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     }
 
-    private void setupWorld() {
-        int tableSize = REGION_SIZE * REGION_SIZE * REGION_SIZE;
-        IntBuffer tableBuffer = MemoryUtil.memAllocInt(tableSize);
-        for (int i = 0; i < tableSize; i++) tableBuffer.put(i, EMPTY);
+    private void setupLighting() {
+        lightEngine = new LightPropagationEngine(world);
+        List<LightSource> sources = new ArrayList<>();
+        
+        // Sun light (high up)
+        sources.add(new LightSource(new Vector3i(1024, 63, 1024), new Vector3f(0.9f, 0.85f, 0.7f), 10, 512, LightType.SUN));
 
-        int voxelsPerChunk = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
-        IntBuffer poolBuffer = MemoryUtil.memAllocInt(POOL_SIZE * voxelsPerChunk);
-        for (int i = 0; i < POOL_SIZE * voxelsPerChunk; i++) poolBuffer.put(i, 0);
+
+        // Block lights
+        sources.add(new LightSource(new Vector3i(1030, 2, 1030), new Vector3f(1.0f, 0.1f, 0.1f), 15, 25, LightType.BLOCK));
+        sources.add(new LightSource(new Vector3i(1010, 2, 1010), new Vector3f(0.1f, 1.0f, 0.1f), 15, 25, LightType.BLOCK));
+        sources.add(new LightSource(new Vector3i(1024, 2, 1040), new Vector3f(0.2f, 0.4f, 1.0f), 15, 25, LightType.BLOCK));
+
+        // Place visible blocks for the light sources
+        world.setVoxel(1024, 63, 1024, 3); // Sun (Red voxel for visibility)
+
+        world.setVoxel(1030, 2, 1030, 3); // Red
+        world.setVoxel(1010, 2, 1010, 4); // Green
+        world.setVoxel(1024, 2, 1040, 3); // Blue (using Red voxel for visibility)
+
+        lightEngine.propagateAllLights(sources);
+
+        int[] lightPool = world.getLightPool();
+        IntBuffer buffer = MemoryUtil.memAllocInt(lightPool.length);
+        buffer.put(lightPool).flip();
+        lightPoolSSBO = glCreateBuffers();
+        glNamedBufferStorage(lightPoolSSBO, buffer, 0);
+        MemoryUtil.memFree(buffer);
+    }
+
+    private void setupWorld() {
+        world = new World();
 
         int slot = 0;
-        for (int cx = 0; cx < REGION_SIZE; cx++) {
-            for (int cz = 0; cz < REGION_SIZE; cz++) {
-                // Fill y=0 layer with chunks
-                int tableIdx = cx + 0 * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
-                tableBuffer.put(tableIdx, slot);
-
-                int poolOffset = slot * voxelsPerChunk;
-                for (int vx = 0; vx < CHUNK_SIZE; vx++) {
-                    for (int vy = 0; vy < 2; vy++) {
-                        for (int vz = 0; vz < CHUNK_SIZE; vz++) {
-                            int type = ((cx * 16 + vx) + vy + (cz * 16 + vz)) % 2 == 0 ? 1 : 2;
-                            int vIdx = vx + vy * CHUNK_SIZE + vz * CHUNK_SIZE * CHUNK_SIZE;
-                            poolBuffer.put(poolOffset + vIdx, type);
+        // Populate a 64x64 chunk area around the center with 4 vertical layers
+        for (int cy = 0; cy < 4; cy++) {
+            for (int cx = 32; cx < 96; cx++) {
+                for (int cz = 32; cz < 96; cz++) {
+                    if (slot >= POOL_SIZE) break;
+                    
+                    world.setChunkSlot(cx, cy, cz, slot);
+                    
+                    if (cy == 0) {
+                        for (int vx = 0; vx < CHUNK_SIZE; vx++) {
+                            for (int vy = 0; vy < 2; vy++) {
+                                for (int vz = 0; vz < CHUNK_SIZE; vz++) {
+                                    int type = ((cx * 16 + vx) + vy + (cz * 16 + vz)) % 2 == 0 ? 1 : 2;
+                                    world.setVoxelInPool(slot, vx, vy, vz, type);
+                                }
+                            }
                         }
                     }
+                    slot++;
                 }
-                slot++;
                 if (slot >= POOL_SIZE) break;
             }
             if (slot >= POOL_SIZE) break;
         }
 
+        int[] indirectionTable = world.getIndirectionTable();
+        IntBuffer tableBuffer = MemoryUtil.memAllocInt(indirectionTable.length);
+        tableBuffer.put(indirectionTable).flip();
         indirectionSSBO = glCreateBuffers();
         glNamedBufferStorage(indirectionSSBO, tableBuffer, 0);
         MemoryUtil.memFree(tableBuffer);
 
+        int[] chunkPool = world.getChunkPool();
+        IntBuffer poolBuffer = MemoryUtil.memAllocInt(chunkPool.length);
+        poolBuffer.put(chunkPool).flip();
         chunkPoolSSBO = glCreateBuffers();
         glNamedBufferStorage(chunkPoolSSBO, poolBuffer, 0);
         MemoryUtil.memFree(poolBuffer);
     }
 
     private void updateCamera(float dt) {
-        float speed = 50.0f * dt; // Increased speed for larger world
+        float speed = 50.0f * dt;
         double radYaw = Math.toRadians(yaw), radPitch = Math.toRadians(pitch);
         forwardX = (float) (Math.cos(radYaw) * Math.cos(radPitch));
         forwardY = (float) Math.sin(radPitch);
@@ -288,7 +328,6 @@ public class Main {
 
             updateCamera(dt);
 
-            // Animate entities
             float time = (float) glfwGetTime();
             head.rotation.identity().rotateX((float) Math.sin(time * 2) * 0.2f);
             leftArm.rotation.identity().rotateX((float) Math.sin(time * 4) * 0.5f);
@@ -307,6 +346,7 @@ public class Main {
             
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lightPoolSSBO);
             entityManager.bind(3, 4);
 
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
