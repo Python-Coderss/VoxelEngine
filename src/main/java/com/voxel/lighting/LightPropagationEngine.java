@@ -2,14 +2,26 @@ package com.voxel.lighting;
 
 import com.voxel.World;
 import com.voxel.utils.Direction;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
 import org.joml.Vector3f;
 import org.joml.Vector3i;
 
-import java.util.*;
 
 public class LightPropagationEngine {
     private static final float ATTENUATION_LINEAR = 0.15f;
     private static final float ATTENUATION_QUADRATIC = 0.05f;
+    private static final Direction[] DIRECTIONS = Direction.values();
+    private static final float[] ATTENUATION_TABLE = new float[256];
+
+    static {
+        for (int i = 0; i < 256; i++) {
+            ATTENUATION_TABLE[i] = 1.0f / (1.0f + ATTENUATION_LINEAR * i + ATTENUATION_QUADRATIC * i * i);
+        }
+    }
     
     private final World world;
     
@@ -64,51 +76,102 @@ public class LightPropagationEngine {
         float sunR = sun.color.x * sun.intensity;
         float sunG = sun.color.y * sun.intensity;
         float sunB = sun.color.z * sun.intensity;
+        float sunX = sun.position.x;
+        float sunY = sun.position.y;
+        float sunZ = sun.position.z;
 
-        for (int i = 0; i < indirection.length; i++) {
-            int slot = indirection[i];
-            if (slot == -1) continue;
-            int cx = i % 128, cy = (i / 128) % 128, cz = i / 16384;
-            float dist = (float) Math.sqrt(Math.pow(cx*16+8 - sun.position.x, 2) + 
-                                           Math.pow(cy*16+8 - sun.position.y, 2) + 
-                                           Math.pow(cz*16+8 - sun.position.z, 2));
-            float attenuation = 1.0f / (1.0f + 0.0002f * dist);
-            int packed = ((int)(sunR * attenuation)) | ((int)(sunG * attenuation) << 4) | ((int)(sunB * attenuation) << 8);
-            Arrays.fill(lightPool, slot << 12, (slot << 12) + 4096, packed);
+        for (int cz = 0; cz < 128; cz++) {
+            float dz = cz * 16 + 8 - sunZ;
+            float dz2 = dz * dz;
+            int baseZ = cz * 16384;
+            for (int cy = 0; cy < 128; cy++) {
+                float dy = cy * 16 + 8 - sunY;
+                float dy2 = dy * dy;
+                int baseY = baseZ + (cy << 7);
+                for (int cx = 0; cx < 128; cx++) {
+                    int slot = indirection[baseY | cx];
+                    if (slot == -1) continue;
+                    float dx = cx * 16 + 8 - sunX;
+                    float dist = (float) Math.sqrt(dx * dx + dy2 + dz2);
+                    float attenuation = 1.0f / (1.0f + 0.0002f * dist);
+                    int packed = ((int)(sunR * attenuation)) | ((int)(sunG * attenuation) << 4) | ((int)(sunB * attenuation) << 8);
+                    int startIdx = slot << 12;
+                    Arrays.fill(lightPool, startIdx, startIdx + 4096, packed);
+                }
+            }
         }
     }
 
     private void runBlockBFS(List<LightSource> sources, int[] lightPool, int[] indirectionTable) {
         LongQueue queue = new LongQueue(65536);
         int[] chunkPool = world.getChunkPool();
-
-        for (int i = 0; i < sources.size(); i++) {
+        int numSources = sources.size();
+        
+        int[] srcR = new int[numSources];
+        int[] srcG = new int[numSources];
+        int[] srcB = new int[numSources];
+        int[] srcRadius = new int[numSources];
+        
+        for (int i = 0; i < numSources; i++) {
             LightSource src = sources.get(i);
+            int r = (int)(src.color.x * src.intensity);
+            int g = (int)(src.color.y * src.intensity);
+            int b = (int)(src.color.z * src.intensity);
+            srcR[i] = r;
+            srcG[i] = g;
+            srcB[i] = b;
+            srcRadius[i] = (int)src.radius;
+            
             int slot = getSlot(src.position.x, src.position.y, src.position.z, indirectionTable);
             if (slot == -1) continue;
-            updateVoxelLight(src.position.x, src.position.y, src.position.z, (int)(src.color.x * src.intensity), 
-                             (int)(src.color.y * src.intensity), (int)(src.color.z * src.intensity), slot, lightPool);
-            queue.offer(pack(src.position.x, src.position.y, src.position.z, 0, i));
+
+            int idx = (slot << 12) | (src.position.x & 15) | ((src.position.y & 15) << 4) | ((src.position.z & 15) << 8);
+            int packed = lightPool[idx];
+            int cr = packed & 15, cg = (packed >> 4) & 15, cb = (packed >> 8) & 15;
+            if (r > cr || g > cg || b > cb) {
+                lightPool[idx] = (r > cr ? r : cr) | ((g > cg ? g : cg) << 4) | ((b > cb ? b : cb) << 8);
+                queue.offer(pack(src.position.x, src.position.y, src.position.z, 0, i));
+            }
         }
 
         while (!queue.isEmpty()) {
             long current = queue.poll();
             int cx = unpackX(current), cy = unpackY(current), cz = unpackZ(current), cDist = unpackDist(current), srcID = unpackID(current);
-            LightSource source = sources.get(srcID);
-            if (cDist >= source.radius) continue;
+            if (cDist >= srcRadius[srcID]) continue;
 
-            for (Direction dir : Direction.values()) {
+            int nDist = cDist + 1;
+            float att = ATTENUATION_TABLE[nDist];
+            int nr = (int)(srcR[srcID] * att);
+            int ng = (int)(srcG[srcID] * att);
+            int nb = (int)(srcB[srcID] * att);
+            if (nr < 1 && ng < 1 && nb < 1) continue;
+
+            int lx = cx & 15, ly = cy & 15, lz = cz & 15;
+            int chunkIdx = (cx >> 4) | ((cy >> 4) << 7) | ((cz >> 4) << 14);
+            int currentSlot = indirectionTable[chunkIdx];
+
+            for (Direction dir : DIRECTIONS) {
                 int nx = cx + dir.x, ny = cy + dir.y, nz = cz + dir.z;
                 if (nx < 0 || ny < 0 || nz < 0 || nx >= 2048 || ny >= 2048 || nz >= 2048) continue;
-                int slot = indirectionTable[(nx >> 4) + (ny >> 4) * 128 + (nz >> 4) * 16384];
-                if (slot == -1 || chunkPool[(slot << 12) | ((nx & 15) | ((ny & 15) << 4) | ((nz & 15) << 8))] > 0) continue;
+                
+                int nlx = lx + dir.x, nly = ly + dir.y, nlz = lz + dir.z;
+                int nSlot;
+                if (nlx >= 0 && nlx < 16 && nly >= 0 && nly < 16 && nlz >= 0 && nlz < 16) {
+                    nSlot = currentSlot;
+                } else {
+                    nSlot = indirectionTable[(nx >> 4) | ((ny >> 4) << 7) | ((nz >> 4) << 14)];
+                }
 
-                int nDist = cDist + 1;
-                float att = 1.0f / (1.0f + ATTENUATION_LINEAR * nDist + ATTENUATION_QUADRATIC * nDist * nDist);
-                int nr = (int)(source.color.x * source.intensity * att), ng = (int)(source.color.y * source.intensity * att), nb = (int)(source.color.z * source.intensity * att);
-                if (Math.max(nr, Math.max(ng, nb)) < 1) continue;
+                if (nSlot == -1) continue;
+                int voxelIdx = (nSlot << 12) | (nlx & 15) | ((nly & 15) << 4) | ((nlz & 15) << 8);
+                if (chunkPool[voxelIdx] > 0) continue;
 
-                if (updateVoxelLight(nx, ny, nz, nr, ng, nb, slot, lightPool)) queue.offer(pack(nx, ny, nz, nDist, srcID));
+                int packed = lightPool[voxelIdx];
+                int cr = packed & 15, cg = (packed >> 4) & 15, cb = (packed >> 8) & 15;
+                if (nr > cr || ng > cg || nb > cb) {
+                    lightPool[voxelIdx] = (nr > cr ? nr : cr) | ((ng > cg ? ng : cg) << 4) | ((nb > cb ? nb : cb) << 8);
+                    queue.offer(pack(nx, ny, nz, nDist, srcID));
+                }
             }
         }
     }
@@ -118,7 +181,7 @@ public class LightPropagationEngine {
         int packed = lightPool[idx];
         int cr = packed & 15, cg = (packed >> 4) & 15, cb = (packed >> 8) & 15;
         if (r > cr || g > cg || b > cb) {
-            lightPool[idx] = Math.max(r, cr) | (Math.max(g, cg) << 4) | (Math.max(b, cb) << 8);
+            lightPool[idx] = (r > cr ? r : cr) | ((g > cg ? g : cg) << 4) | ((b > cb ? b : cb) << 8);
             return true;
         }
         return false;
@@ -126,7 +189,7 @@ public class LightPropagationEngine {
 
     private int getSlot(int x, int y, int z, int[] indirection) {
         if (x < 0 || y < 0 || z < 0 || x >= 2048 || y >= 2048 || z >= 2048) return -1;
-        return indirection[(x >> 4) + (y >> 4) * 128 + (z >> 4) * 16384];
+        return indirection[(x >> 4) | ((y >> 4) << 7) | ((z >> 4) << 14)];
     }
     private long pack(int x, int y, int z, int d, int id) { return ((long)(x&0x7FF)<<53)|((long)(y&0x7FF)<<42)|((long)(z&0x7FF)<<31)|((long)(d&0xFFF)<<19)|(id&0x7FFFFL); }
     private int unpackX(long p) { return (int)((p >> 53) & 0x7FF); }
