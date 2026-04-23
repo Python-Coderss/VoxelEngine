@@ -219,6 +219,7 @@ public class Main {
         sources.add(new LightSource(new Vector3i(1030, 2, 1030), new Vector3f(1.0f, 0.1f, 0.1f), 15, 25, LightType.BLOCK));
         sources.add(new LightSource(new Vector3i(1010, 2, 1010), new Vector3f(0.1f, 1.0f, 0.1f), 15, 25, LightType.BLOCK));
         sources.add(new LightSource(new Vector3i(1024, 2, 1040), new Vector3f(0.2f, 0.4f, 1.0f), 15, 25, LightType.BLOCK));
+        sources.add(new LightSource(new Vector3i(1024, 3, 1024), new Vector3f(0.2f, 1f, 1.0f), 15, 25, LightType.BLOCK));
 
         // Place visible blocks for the light sources
         world.setVoxel(1024, 63, 1024, 3); // Sun (Red voxel for visibility)
@@ -226,7 +227,7 @@ public class Main {
         world.setVoxel(1030, 2, 1030, 3); // Red
         world.setVoxel(1010, 2, 1010, 4); // Green
         world.setVoxel(1024, 2, 1040, 3); // Blue (using Red voxel for visibility)
-
+        
         lightEngine.propagateAllLights(sources);
 
         int[] lightPool = world.getLightPool();

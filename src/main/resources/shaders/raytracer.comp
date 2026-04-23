@@ -136,8 +136,8 @@ vec3 sampleLight(ivec3 p) {
     uint chunkIdx = chunkCoords.x | (chunkCoords.y << 7) | (chunkCoords.z << 14);
     uint slot = chunkSlots[chunkIdx];
     if (slot == EMPTY) return vec3(0.0);
-    // Every voxel in a chunk has the same light, so we just sample the first one
-    uint packedLight = lightPool[slot << 12];
+    ivec3 lp = p & 15;
+    uint packedLight = lightPool[(slot << 12) | (lp.x | (lp.y << 4) | (lp.z << 8))];
     return vec3(
         float(packedLight & 0xF),
         float((packedLight >> 4) & 0xF),
@@ -146,20 +146,20 @@ vec3 sampleLight(ivec3 p) {
 }
 
 vec3 getInterpolatedLight(vec3 worldPos) {
-    // Offset by half a chunk to interpolate between chunk centers
-    vec3 p = (worldPos - 8.0) / 16.0;
+    // Interpolate between voxel centers
+    vec3 p = worldPos - 0.5;
     ivec3 i = ivec3(floor(p));
     vec3 f = fract(p);
 
-    // Sample 8 chunk centers
-    vec3 c000 = sampleLight(i << 4);
-    vec3 c100 = sampleLight((i + ivec3(1,0,0)) << 4);
-    vec3 c010 = sampleLight((i + ivec3(0,1,0)) << 4);
-    vec3 c110 = sampleLight((i + ivec3(1,1,0)) << 4);
-    vec3 c001 = sampleLight((i + ivec3(0,0,1)) << 4);
-    vec3 c101 = sampleLight((i + ivec3(1,0,1)) << 4);
-    vec3 c011 = sampleLight((i + ivec3(0,1,1)) << 4);
-    vec3 c111 = sampleLight((i + ivec3(1,1,1)) << 4);
+    // Sample 8 neighbor voxels
+    vec3 c000 = sampleLight(i);
+    vec3 c100 = sampleLight(i + ivec3(1,0,0));
+    vec3 c010 = sampleLight(i + ivec3(0,1,0));
+    vec3 c110 = sampleLight(i + ivec3(1,1,0));
+    vec3 c001 = sampleLight(i + ivec3(0,0,1));
+    vec3 c101 = sampleLight(i + ivec3(1,0,1));
+    vec3 c011 = sampleLight(i + ivec3(0,1,1));
+    vec3 c111 = sampleLight(i + ivec3(1,1,1));
 
     vec3 c00 = mix(c000, c100, f.x);
     vec3 c01 = mix(c001, c101, f.x);
