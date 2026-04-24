@@ -116,8 +116,22 @@ void main() {
     bool worldHit = false;
 
     float tNear, tFar;
+    vec3 skyColor = mix(PALETTE[0] * 0.5, PALETTE[0], max(0.0, rayDir.y + 0.5));
+
     if (intersectAABB(camPos, rayDir, vec3(0.0), vec3(WORLD_SIZE), tNear, tFar)) {
-        vec3 p = camPos + rayDir * (max(0.0, tNear) + 0.0001);
+        float startT = max(0.0, tNear);
+        
+        // Early Exit: If the world is completely obscured by fog at this distance, don't march
+        float fogAtNear = 1.0 - exp(-startT * 0.0008);
+        if (fogAtNear > 0.99) {
+            imageStore(imgOutput, pixelCoords, vec4(skyColor, 1.0));
+            return;
+        }
+
+        vec3 p = camPos + rayDir * startT;
+        // Clamp p to be strictly inside the world bounds to avoid immediate exit due to precision
+        p = clamp(p, vec3(0.0), vec3(float(WORLD_SIZE)));
+        
         ivec3 mapPos = ivec3(floor(p));
         vec3 deltaDist = abs(1.0 / rayDir);
         ivec3 step = ivec3(sign(rayDir));
@@ -125,7 +139,8 @@ void main() {
 
         // Optimized DDA
         for (int i = 0; i < 512; i++) {
-            if (any(greaterThanEqual(uvec3(mapPos), uvec3(WORLD_SIZE)))) break;
+            // Safety break for out of bounds
+            if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(WORLD_SIZE)))) break;
 
             uint slot = chunkSlots[(mapPos.x >> 4) | ((mapPos.y >> 4) << 7) | ((mapPos.z >> 4) << 14)];
 
@@ -134,17 +149,23 @@ void main() {
                 ivec3 localPos = mapPos & 15;
                 vec3 distToExit = vec3(step.x > 0 ? 16-localPos.x : localPos.x+1, step.y > 0 ? 16-localPos.y : localPos.y+1, step.z > 0 ? 16-localPos.z : localPos.z+1);
                 vec3 tToExit = sideDist + (distToExit - 1.0) * deltaDist;
-                if (tToExit.x <= tToExit.y && tToExit.x <= tToExit.z) { sideDist.x = tToExit.x + deltaDist.x; mapPos.x += step.x * int(distToExit.x); }
-                else if (tToExit.y <= tToExit.x && tToExit.y <= tToExit.z) { sideDist.y = tToExit.y + deltaDist.y; mapPos.y += step.y * int(distToExit.y); }
-                else { sideDist.z = tToExit.z + deltaDist.z; mapPos.z += step.z * int(distToExit.z); }
+                
+                if (tToExit.x <= tToExit.y && tToExit.x <= tToExit.z) { 
+                    sideDist.x = tToExit.x + deltaDist.x; mapPos.x += step.x * int(distToExit.x); worldHitSide = 0;
+                } else if (tToExit.y <= tToExit.x && tToExit.y <= tToExit.z) { 
+                    sideDist.y = tToExit.y + deltaDist.y; mapPos.y += step.y * int(distToExit.y); worldHitSide = 1;
+                } else { 
+                    sideDist.z = tToExit.z + deltaDist.z; mapPos.z += step.z * int(distToExit.z); worldHitSide = 2;
+                }
             } else {
                 uint poolOffset = slot << 12;
-                for (int j = 0; j < 48; j++) {
+                for (int j = 0; j < 64; j++) { // Increased inner loop for better detail at distance
                     ivec3 lp = mapPos & 15;
                     uint voxel = voxelPool[poolOffset + (lp.x | (lp.y << 4) | (lp.z << 8))];
                     if (voxel > 0) {
                         worldVoxelType = voxel; worldHit = true;
                         worldT = (worldHitSide == 0) ? sideDist.x - deltaDist.x : (worldHitSide == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z);
+                        worldT += startT; // Add the initial offset
                         break;
                     }
                     if (sideDist.x < sideDist.y) {
@@ -154,10 +175,14 @@ void main() {
                         if (sideDist.y < sideDist.z) { sideDist.y += deltaDist.y; mapPos.y += step.y; worldHitSide = 1; }
                         else { sideDist.z += deltaDist.z; mapPos.z += step.z; worldHitSide = 2; }
                     }
+                    // Check if we left the current chunk
                     if (((mapPos.x >> 4) | ((mapPos.y >> 4) << 7) | ((mapPos.z >> 4) << 14)) != ((mapPos.x-step.x >> 4) | ((mapPos.y-step.y >> 4) << 7) | ((mapPos.z-step.z >> 4) << 14))) break;
                 }
                 if (worldHit) break;
             }
+            
+            // Optimization: If we are already far beyond the world far plane, stop
+            if (worldHit && worldT > tFar) break;
         }
     }
 
@@ -182,15 +207,26 @@ void main() {
         }
     }
 
-    vec3 color = PALETTE[0];
+    vec3 color;
     if (worldHit || entityHit) {
         color = PALETTE[clamp(finalVoxelType, 0, 4)];
-        vec3 light = getSurfaceLight(camPos + rayDir * closestT, finalHitSide, (finalHitSide == 0 ? vec3(-sign(rayDir.x), 0, 0) : (finalHitSide == 1 ? vec3(0, -sign(rayDir.y), 0) : vec3(0, 0, -sign(rayDir.z)))));
-        color *= (light + 0.1);
-        if (finalHitSide == 0) color *= 0.8;
-        if (finalHitSide == 2) color *= 0.9;
+        
+        // Optimize: Skip expensive lighting if the hit is very far or obscured by fog
+        float fogDensity = 0.0008;
+        float fogFactor = 1.0 - exp(-closestT * fogDensity);
+        fogFactor = clamp(fogFactor, 0.0, 1.0);
+
+        if (fogFactor < 0.99) {
+            vec3 light = getSurfaceLight(camPos + rayDir * closestT, finalHitSide, (finalHitSide == 0 ? vec3(-sign(rayDir.x), 0, 0) : (finalHitSide == 1 ? vec3(0, -sign(rayDir.y), 0) : vec3(0, 0, -sign(rayDir.z)))));
+            color *= (light + 0.1);
+            if (finalHitSide == 0) color *= 0.8;
+            if (finalHitSide == 2) color *= 0.9;
+            color = mix(color, skyColor, fogFactor);
+        } else {
+            color = skyColor;
+        }
     } else {
-        color = mix(PALETTE[0] * 0.5, PALETTE[0], max(0.0, rayDir.y + 0.5));
+        color = skyColor;
     }
 
     imageStore(imgOutput, pixelCoords, vec4(color, 1.0));
