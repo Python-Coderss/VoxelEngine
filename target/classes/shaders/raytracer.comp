@@ -36,6 +36,9 @@ layout(std430, binding = 4) buffer readonly restrict EntityVoxelPool {
 
 uniform sampler2DArray u_BlockTextures;
 uniform isamplerBuffer u_BlockData;
+uniform sampler2D u_BiomeMap;
+uniform sampler2D u_GrassColormap;
+uniform sampler2D u_FoliageColormap;
 
 uniform int numEntityParts;
 
@@ -80,7 +83,7 @@ vec3 getSurfaceLight(vec3 p, int side, vec3 normal) {
         c10 = sampleLightFast(i + ivec3(0, 1, 0));
         c01 = sampleLightFast(i + ivec3(0, 0, 1));
         c11 = sampleLightFast(i + ivec3(0, 1, 1));
-        uv = f.yz;
+        uv = f.zy;
     } else if (side == 1) { 
         c00 = sampleLightFast(i);
         c10 = sampleLightFast(i + ivec3(1, 0, 0));
@@ -95,7 +98,7 @@ vec3 getSurfaceLight(vec3 p, int side, vec3 normal) {
         uv = f.xy;
     }
 
-    return mix(mix(c00, c10, uv.x), mix(c01, c11, uv.x), uv.y);
+    return mix(mix(c00, c10, uv.y), mix(c01, c11, uv.y), uv.x);
 }
 
 bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out float resT, out int resSide, out uint resVoxel) {
@@ -152,8 +155,28 @@ bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out fl
                         resT += startT;
                         return true;
                     } else {
-                        ivec4 data = texelFetch(u_BlockData, int(voxel));
-                        if (data.y == 0) { // Opaque
+                        // Order: -Y, +Y, -Z, +Z, -X, +X
+                        // side: 0: X, 1: Y, 2: Z
+                        // To get the actual face index, we need more than just 'side'.
+                        // Let's use the sign of rayDir to distinguish +/-.
+                        int faceIdx = 0;
+                        if (side == 0) faceIdx = (rd.x > 0) ? 4 : 5; // -X is 4, +X is 5
+                        else if (side == 1) faceIdx = (rd.y > 0) ? 0 : 1; // -Y is 0, +Y is 1
+                        else faceIdx = (rd.z > 0) ? 2 : 3; // -Z is 2, +Z is 3
+
+                        ivec4 d0 = texelFetch(u_BlockData, int(voxel) * 2);
+                        ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 2 + 1);
+                        
+                        int texIdx = 0;
+                        if (faceIdx == 0) texIdx = d0.x;
+                        else if (faceIdx == 1) texIdx = d0.y;
+                        else if (faceIdx == 2) texIdx = d0.z;
+                        else if (faceIdx == 3) texIdx = d0.w;
+                        else if (faceIdx == 4) texIdx = d1.x;
+                        else texIdx = d1.y;
+
+                        int trans = d1.z;
+                        if (trans == 0) { // Opaque
                             resVoxel = voxel; resSide = side;
                             resT = (side == 0) ? sideDist.x - deltaDist.x : (side == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z);
                             resT += startT;
@@ -200,21 +223,43 @@ void main() {
             else if (side == 1) normal.y = -sign(rayDir.y);
             else normal.z = -sign(rayDir.z);
 
-            ivec4 data = texelFetch(u_BlockData, int(voxel));
-            int texIdx = data.x;
-            float trans = float(data.y) / 255.0;
-            float refl = float(data.z) / 255.0;
+            // Fetch block data (2 ivec4 per block)
+            ivec4 d0 = texelFetch(u_BlockData, int(voxel) * 2);
+            ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 2 + 1);
+
+            int faceIdx = 0;
+            if (side == 0) faceIdx = (rayDir.x > 0) ? 4 : 5; 
+            else if (side == 1) faceIdx = (rayDir.y > 0) ? 0 : 1; 
+            else faceIdx = (rayDir.z > 0) ? 2 : 3; 
+
+            int texIdx = 0;
+            if (faceIdx == 0) texIdx = d0.x;
+            else if (faceIdx == 1) texIdx = d0.y;
+            else if (faceIdx == 2) texIdx = d0.z;
+            else if (faceIdx == 3) texIdx = d0.w;
+            else if (faceIdx == 4) texIdx = d1.x;
+            else texIdx = d1.y;
+
+            float trans = float(d1.z) / 255.0;
+            int packedVal = d1.w;
+            float refl = float(packedVal & 0xFF) / 255.0;
+            int isTintable = (packedVal >> 8) & 1;
 
             vec3 albedo = vec3(1.0);
             if (texIdx >= 0) {
                 vec2 uv;
-                if (side == 0) uv = fract(hitPos.yz);
+                if (side == 0) uv = fract(hitPos.zy);
                 else if (side == 1) uv = fract(hitPos.xz);
                 else uv = fract(hitPos.xy);
                 vec4 texColor = texture(u_BlockTextures, vec3(uv, float(texIdx)));
                 albedo = texColor.rgb;
                 
-                // If it's a transparent block and pixel is black/transparent, treat as 100% clear
+                if (isTintable == 1) {
+                    vec2 biomeParams = texture(u_BiomeMap, hitPos.xz / float(WORLD_SIZE)).rg;
+                    vec3 tint = texture(u_GrassColormap, vec2(1.0 - biomeParams.x, 1.0 - biomeParams.y)).rgb;
+                    albedo *= tint;
+                }
+
                 if (trans > 0.0 && (texColor.a < 0.1 || dot(albedo, vec3(1.0)) < 0.1)) {
                     trans = 1.0;
                     albedo = vec3(1.0);

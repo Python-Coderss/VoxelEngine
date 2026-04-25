@@ -44,8 +44,7 @@ public class TextureManager {
             }
 
             if (texturePaths.isEmpty()) {
-                System.err.println("No textures found in " + directoryPath);
-                return;
+                throw new RuntimeException("No textures found in " + directoryPath);
             }
 
             textureArrayId = glGenTextures();
@@ -66,7 +65,7 @@ public class TextureManager {
             glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
 
         } catch (IOException e) {
-            e.printStackTrace();
+            throw new RuntimeException("Failed to load textures from directory: " + directoryPath, e);
         }
     }
 
@@ -78,8 +77,7 @@ public class TextureManager {
 
             ByteBuffer image = STBImage.stbi_load(path, w, h, comp, 4);
             if (image == null) {
-                System.err.println("Failed to load texture: " + path + " - " + STBImage.stbi_failure_reason());
-                return;
+                throw new RuntimeException("Failed to load texture: " + path + " - " + STBImage.stbi_failure_reason());
             }
 
             if (w.get(0) != TEXTURE_SIZE || h.get(0) != TEXTURE_SIZE) {

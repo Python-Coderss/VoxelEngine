@@ -42,6 +42,7 @@ public class Main {
     
     private TextureManager textureManager;
     private BlockDataManager blockDataManager;
+    private com.voxel.utils.BiomeManager biomeManager;
     
     private EntityManager entityManager;
     private Entity player;
@@ -135,15 +136,22 @@ public class Main {
         textureManager = new TextureManager();
         textureManager.loadTextures("src/main/resources/assets/minecraft/textures/blocks");
 
+        biomeManager = new com.voxel.utils.BiomeManager();
+        biomeManager.loadColormaps(
+            "src/main/resources/assets/minecraft/textures/colormap/grass.png",
+            "src/main/resources/assets/minecraft/textures/colormap/foliage.png"
+        );
+        biomeManager.generateBiomeMap(2048);
+
         blockDataManager = new BlockDataManager();
-        blockDataManager.registerBlock(1, "grass_block_top", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(1, "grass_normal", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(2, "stone", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(3, "glass", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(4, "diamond_block", textureManager, "src/main/resources/assets/minecraft/models/block"); 
         blockDataManager.registerBlock(5, "water_still", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(6, "oak_log", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(7, "oak_planks", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.registerBlock(8, "bricks", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(8, "brick", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(9, "gold_block", textureManager, "src/main/resources/assets/minecraft/models/block");
         
         blockDataManager.uploadToGPU();
@@ -406,6 +414,18 @@ public class Main {
             glActiveTexture(GL_TEXTURE7);
             glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getTextureId());
             glUniform1i(glGetUniformLocation(computeProgram, "u_BlockData"), 7);
+
+            glActiveTexture(GL_TEXTURE8);
+            glBindTexture(GL_TEXTURE_2D, biomeManager.getBiomeMapId());
+            glUniform1i(glGetUniformLocation(computeProgram, "u_BiomeMap"), 8);
+
+            glActiveTexture(GL_TEXTURE9);
+            glBindTexture(GL_TEXTURE_2D, biomeManager.getGrassColormapId());
+            glUniform1i(glGetUniformLocation(computeProgram, "u_GrassColormap"), 9);
+
+            glActiveTexture(GL_TEXTURE10);
+            glBindTexture(GL_TEXTURE_2D, biomeManager.getFoliageColormapId());
+            glUniform1i(glGetUniformLocation(computeProgram, "u_FoliageColormap"), 10);
             
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
