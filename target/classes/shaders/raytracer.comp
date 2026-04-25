@@ -34,6 +34,9 @@ layout(std430, binding = 4) buffer readonly restrict EntityVoxelPool {
     uint entityVoxels[];
 };
 
+uniform sampler2DArray u_BlockTextures;
+uniform isamplerBuffer u_BlockData;
+
 uniform int numEntityParts;
 
 const int CHUNK_SIZE = 16;
@@ -41,13 +44,7 @@ const int REGION_SIZE = 128;
 const int WORLD_SIZE = 2048; 
 const uint EMPTY = 0xFFFFFFFF;
 
-const vec3 PALETTE[5] = vec3[](
-    vec3(0.5, 0.7, 0.9), 
-    vec3(0.4, 0.4, 0.4), 
-    vec3(0.6, 0.3, 0.1), 
-    vec3(0.8, 0.2, 0.2), 
-    vec3(0.2, 0.8, 0.2)  
-);
+const vec3 SKY_BLUE = vec3(0.5, 0.7, 0.9);
 
 bool intersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, out float tFar) {
     vec3 invDir = 1.0 / rd;
@@ -60,38 +57,37 @@ bool intersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, 
     return tNear <= tFar && tFar > 0.0;
 }
 
-// Highly optimized sampleLight (avoiding any checks where possible)
 vec3 sampleLightFast(ivec3 p) {
     ivec3 cc = p >> 4;
+    if (any(lessThan(cc, ivec3(0))) || any(greaterThanEqual(cc, ivec3(128)))) return vec3(0.01);
     uint slot = chunkSlots[cc.x | (cc.y << 7) | (cc.z << 14)];
-    if (slot == EMPTY) return vec3(0.01); // Minimal ambient
+    if (slot == EMPTY) return vec3(0.01); 
     ivec3 lp = p & 15;
     uint packedLight = lightPool[(slot << 12) | (lp.x | (lp.y << 4) | (lp.z << 8))];
     return vec3(float(packedLight & 0xF), float((packedLight >> 4) & 0xF), float((packedLight >> 8) & 0xF)) * 0.06666;
 }
 
-// Surface-optimized Bilinear Interpolation (4 samples instead of 8)
 vec3 getSurfaceLight(vec3 p, int side, vec3 normal) {
-    vec3 pos = p + normal * 0.05; // Stay slightly in front of surface
+    vec3 pos = p + normal * 0.05; 
     ivec3 i = ivec3(floor(pos));
     vec3 f = fract(pos);
     
     vec3 c00, c10, c01, c11;
     vec2 uv;
 
-    if (side == 0) { // X-face: interpolate on YZ plane
+    if (side == 0) { 
         c00 = sampleLightFast(i);
         c10 = sampleLightFast(i + ivec3(0, 1, 0));
         c01 = sampleLightFast(i + ivec3(0, 0, 1));
         c11 = sampleLightFast(i + ivec3(0, 1, 1));
         uv = f.yz;
-    } else if (side == 1) { // Y-face: interpolate on XZ plane
+    } else if (side == 1) { 
         c00 = sampleLightFast(i);
         c10 = sampleLightFast(i + ivec3(1, 0, 0));
         c01 = sampleLightFast(i + ivec3(0, 0, 1));
         c11 = sampleLightFast(i + ivec3(1, 0, 1));
         uv = f.xz;
-    } else { // Z-face: interpolate on XY plane
+    } else { 
         c00 = sampleLightFast(i);
         c10 = sampleLightFast(i + ivec3(1, 0, 0));
         c01 = sampleLightFast(i + ivec3(0, 1, 0));
@@ -102,132 +98,132 @@ vec3 getSurfaceLight(vec3 p, int side, vec3 normal) {
     return mix(mix(c00, c10, uv.x), mix(c01, c11, uv.x), uv.y);
 }
 
+bool traceWorld(vec3 ro, vec3 rd, out float resT, out int resSide, out uint resVoxel) {
+    float tNear, tFar;
+    if (!intersectAABB(ro, rd, vec3(0.0), vec3(WORLD_SIZE), tNear, tFar)) return false;
+    
+    float startT = max(0.0, tNear);
+    vec3 p = ro + rd * startT;
+    p = clamp(p, vec3(0.0), vec3(float(WORLD_SIZE)));
+    
+    ivec3 mapPos = ivec3(floor(p));
+    vec3 deltaDist = abs(1.0 / rd);
+    ivec3 step = ivec3(sign(rd));
+    vec3 sideDist = (step * (vec3(mapPos) - p) + (step * 0.5) + 0.5) * deltaDist;
+
+    int side = 0;
+    for (int i = 0; i < 512; i++) {
+        if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(WORLD_SIZE)))) break;
+
+        uint slot = chunkSlots[(mapPos.x >> 4) | ((mapPos.y >> 4) << 7) | ((mapPos.z >> 4) << 14)];
+
+        if (slot == EMPTY) {
+            ivec3 localPos = mapPos & 15;
+            vec3 distToExit = vec3(step.x > 0 ? 16-localPos.x : localPos.x+1, step.y > 0 ? 16-localPos.y : localPos.y+1, step.z > 0 ? 16-localPos.z : localPos.z+1);
+            vec3 tToExit = sideDist + (distToExit - 1.0) * deltaDist;
+            
+            if (tToExit.x <= tToExit.y && tToExit.x <= tToExit.z) { 
+                sideDist.x = tToExit.x + deltaDist.x; mapPos.x += step.x * int(distToExit.x); side = 0;
+            } else if (tToExit.y <= tToExit.x && tToExit.y <= tToExit.z) { 
+                sideDist.y = tToExit.y + deltaDist.y; mapPos.y += step.y * int(distToExit.y); side = 1;
+            } else { 
+                sideDist.z = tToExit.z + deltaDist.z; mapPos.z += step.z * int(distToExit.z); side = 2;
+            }
+        } else {
+            uint poolOffset = slot << 12;
+            for (int j = 0; j < 64; j++) {
+                ivec3 lp = mapPos & 15;
+                uint voxel = voxelPool[poolOffset + (lp.x | (lp.y << 4) | (lp.z << 8))];
+                if (voxel > 0) {
+                    resVoxel = voxel;
+                    resSide = side;
+                    resT = (side == 0) ? sideDist.x - deltaDist.x : (side == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z);
+                    resT += startT;
+                    return true;
+                }
+                if (sideDist.x < sideDist.y) {
+                    if (sideDist.x < sideDist.z) { sideDist.x += deltaDist.x; mapPos.x += step.x; side = 0; }
+                    else { sideDist.z += deltaDist.z; mapPos.z += step.z; side = 2; }
+                } else {
+                    if (sideDist.y < sideDist.z) { sideDist.y += deltaDist.y; mapPos.y += step.y; side = 1; }
+                    else { sideDist.z += deltaDist.z; mapPos.z += step.z; side = 2; }
+                }
+                if (((mapPos.x >> 4) | ((mapPos.y >> 4) << 7) | ((mapPos.z >> 4) << 14)) != ((mapPos.x-step.x >> 4) | ((mapPos.y-step.y >> 4) << 7) | ((mapPos.z-step.z >> 4) << 14))) break;
+            }
+        }
+        if (sideDist.x > tFar && sideDist.y > tFar && sideDist.z > tFar) break;
+    }
+    return false;
+}
+
 void main() {
     ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(imgOutput);
-    if (pixelCoords.x >= size.x || pixelCoords.y >= size.y) return;
+    if (any(greaterThanEqual(pixelCoords, size))) return;
 
     vec2 ndc = ((vec2(pixelCoords) + 0.5) / vec2(size)) * 2.0 - 1.0;
+    vec3 rayRo = camPos;
     vec3 rayDir = normalize(camForward + ndc.x * (float(size.x)/size.y) * camRight + ndc.y * camUp);
 
-    float worldT = 1e9;
-    int worldHitSide = 0;
-    uint worldVoxelType = 0;
-    bool worldHit = false;
+    vec3 finalColor = vec3(0.0);
+    vec3 throughput = vec3(1.0);
 
-    float tNear, tFar;
-    vec3 skyColor = mix(PALETTE[0] * 0.5, PALETTE[0], max(0.0, rayDir.y + 0.5));
+    for (int bounce = 0; bounce < 3; bounce++) {
+        float t;
+        int side;
+        uint voxel;
+        if (traceWorld(rayRo, rayDir, t, side, voxel)) {
+            vec3 hitPos = rayRo + rayDir * t;
+            vec3 normal = vec3(0.0);
+            if (side == 0) normal.x = -sign(rayDir.x);
+            else if (side == 1) normal.y = -sign(rayDir.y);
+            else normal.z = -sign(rayDir.z);
 
-    if (intersectAABB(camPos, rayDir, vec3(0.0), vec3(WORLD_SIZE), tNear, tFar)) {
-        float startT = max(0.0, tNear);
-        
-        // Early Exit: If the world is completely obscured by fog at this distance, don't march
-        float fogAtNear = 1.0 - exp(-startT * 0.0008);
-        if (fogAtNear > 0.99) {
-            imageStore(imgOutput, pixelCoords, vec4(skyColor, 1.0));
-            return;
-        }
+            ivec4 data = texelFetch(u_BlockData, int(voxel));
+            int texIdx = data.x;
+            float trans = float(data.y) / 255.0;
+            float refl = float(data.z) / 255.0;
 
-        vec3 p = camPos + rayDir * startT;
-        // Clamp p to be strictly inside the world bounds to avoid immediate exit due to precision
-        p = clamp(p, vec3(0.0), vec3(float(WORLD_SIZE)));
-        
-        ivec3 mapPos = ivec3(floor(p));
-        vec3 deltaDist = abs(1.0 / rayDir);
-        ivec3 step = ivec3(sign(rayDir));
-        vec3 sideDist = (step * (vec3(mapPos) - p) + (step * 0.5) + 0.5) * deltaDist;
+            vec3 albedo = vec3(1.0);
+            if (texIdx >= 0) {
+                vec2 uv;
+                if (side == 0) uv = fract(hitPos.yz);
+                else if (side == 1) uv = fract(hitPos.xz);
+                else uv = fract(hitPos.xy);
+                albedo = texture(u_BlockTextures, vec3(uv, float(texIdx))).rgb;
+            }
 
-        // Optimized DDA
-        for (int i = 0; i < 512; i++) {
-            // Safety break for out of bounds
-            if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(WORLD_SIZE)))) break;
+            vec3 light = getSurfaceLight(hitPos, side, normal);
+            vec3 diffuse = albedo * (light + 0.1);
+            if (side == 0) diffuse *= 0.8;
+            if (side == 2) diffuse *= 0.9;
 
-            uint slot = chunkSlots[(mapPos.x >> 4) | ((mapPos.y >> 4) << 7) | ((mapPos.z >> 4) << 14)];
+            // Fog
+            float fogFactor = clamp(1.0 - exp(-t * 0.0008), 0.0, 1.0);
+            vec3 skyColor = mix(SKY_BLUE * 0.5, SKY_BLUE, max(0.0, rayDir.y + 0.5));
+            diffuse = mix(diffuse, skyColor, fogFactor);
 
-            if (slot == EMPTY) {
-                // Fast chunk skip
-                ivec3 localPos = mapPos & 15;
-                vec3 distToExit = vec3(step.x > 0 ? 16-localPos.x : localPos.x+1, step.y > 0 ? 16-localPos.y : localPos.y+1, step.z > 0 ? 16-localPos.z : localPos.z+1);
-                vec3 tToExit = sideDist + (distToExit - 1.0) * deltaDist;
-                
-                if (tToExit.x <= tToExit.y && tToExit.x <= tToExit.z) { 
-                    sideDist.x = tToExit.x + deltaDist.x; mapPos.x += step.x * int(distToExit.x); worldHitSide = 0;
-                } else if (tToExit.y <= tToExit.x && tToExit.y <= tToExit.z) { 
-                    sideDist.y = tToExit.y + deltaDist.y; mapPos.y += step.y * int(distToExit.y); worldHitSide = 1;
-                } else { 
-                    sideDist.z = tToExit.z + deltaDist.z; mapPos.z += step.z * int(distToExit.z); worldHitSide = 2;
-                }
+            if (refl > 0.0) {
+                finalColor += throughput * diffuse * (1.0 - refl) * (1.0 - trans);
+                throughput *= refl;
+                rayRo = hitPos + normal * 0.001;
+                rayDir = reflect(rayDir, normal);
+            } else if (trans > 0.0) {
+                finalColor += throughput * diffuse * (1.0 - trans);
+                throughput *= trans * albedo;
+                rayRo = hitPos - normal * 0.001;
+                // No refraction for now, just pass through
             } else {
-                uint poolOffset = slot << 12;
-                for (int j = 0; j < 64; j++) { // Increased inner loop for better detail at distance
-                    ivec3 lp = mapPos & 15;
-                    uint voxel = voxelPool[poolOffset + (lp.x | (lp.y << 4) | (lp.z << 8))];
-                    if (voxel > 0) {
-                        worldVoxelType = voxel; worldHit = true;
-                        worldT = (worldHitSide == 0) ? sideDist.x - deltaDist.x : (worldHitSide == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z);
-                        worldT += startT; // Add the initial offset
-                        break;
-                    }
-                    if (sideDist.x < sideDist.y) {
-                        if (sideDist.x < sideDist.z) { sideDist.x += deltaDist.x; mapPos.x += step.x; worldHitSide = 0; }
-                        else { sideDist.z += deltaDist.z; mapPos.z += step.z; worldHitSide = 2; }
-                    } else {
-                        if (sideDist.y < sideDist.z) { sideDist.y += deltaDist.y; mapPos.y += step.y; worldHitSide = 1; }
-                        else { sideDist.z += deltaDist.z; mapPos.z += step.z; worldHitSide = 2; }
-                    }
-                    // Check if we left the current chunk
-                    if (((mapPos.x >> 4) | ((mapPos.y >> 4) << 7) | ((mapPos.z >> 4) << 14)) != ((mapPos.x-step.x >> 4) | ((mapPos.y-step.y >> 4) << 7) | ((mapPos.z-step.z >> 4) << 14))) break;
-                }
-                if (worldHit) break;
+                finalColor += throughput * diffuse;
+                break;
             }
-            
-            // Optimization: If we are already far beyond the world far plane, stop
-            if (worldHit && worldT > tFar) break;
-        }
-    }
-
-    float closestT = worldT;
-    int finalHitSide = worldHitSide;
-    uint finalVoxelType = worldVoxelType;
-    bool entityHit = false;
-
-    // Fast entity raycasting (only AABB hit)
-    for (int i = 0; i < numEntityParts; i++) {
-        EntityPart part = parts[i];
-        vec3 localRo = (part.worldToLocal * vec4(camPos, 1.0)).xyz;
-        vec3 localRd = mat3(part.worldToLocal) * rayDir;
-        float tS = length(localRd);
-        float tn, tf;
-        if (intersectAABB(localRo, localRd/tS, vec3(0.0), vec3(16.0), tn, tf)) {
-            // Simplified DDA for entities to save performance
-            float worldTN = tn / tS;
-            if (worldTN < closestT) {
-                 closestT = worldTN; finalVoxelType = 3; entityHit = true; // Temporary simplification
-            }
-        }
-    }
-
-    vec3 color;
-    if (worldHit || entityHit) {
-        color = PALETTE[clamp(finalVoxelType, 0, 4)];
-        
-        // Optimize: Skip expensive lighting if the hit is very far or obscured by fog
-        float fogDensity = 0.0008;
-        float fogFactor = 1.0 - exp(-closestT * fogDensity);
-        fogFactor = clamp(fogFactor, 0.0, 1.0);
-
-        if (fogFactor < 0.99) {
-            vec3 light = getSurfaceLight(camPos + rayDir * closestT, finalHitSide, (finalHitSide == 0 ? vec3(-sign(rayDir.x), 0, 0) : (finalHitSide == 1 ? vec3(0, -sign(rayDir.y), 0) : vec3(0, 0, -sign(rayDir.z)))));
-            color *= (light + 0.1);
-            if (finalHitSide == 0) color *= 0.8;
-            if (finalHitSide == 2) color *= 0.9;
-            color = mix(color, skyColor, fogFactor);
         } else {
-            color = skyColor;
+            vec3 skyColor = mix(SKY_BLUE * 0.5, SKY_BLUE, max(0.0, rayDir.y + 0.5));
+            finalColor += throughput * skyColor;
+            break;
         }
-    } else {
-        color = skyColor;
     }
 
-    imageStore(imgOutput, pixelCoords, vec4(color, 1.0));
+    imageStore(imgOutput, pixelCoords, vec4(finalColor, 1.0));
 }
+

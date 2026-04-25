@@ -4,7 +4,9 @@ import com.voxel.entity.*;
 import com.voxel.lighting.LightPropagationEngine;
 import com.voxel.lighting.LightSource;
 import com.voxel.lighting.LightType;
+import com.voxel.utils.BlockDataManager;
 import com.voxel.utils.ShaderUtil;
+import com.voxel.utils.TextureManager;
 
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -37,6 +39,9 @@ public class Main {
     
     private World world;
     private LightPropagationEngine lightEngine;
+    
+    private TextureManager textureManager;
+    private BlockDataManager blockDataManager;
     
     private EntityManager entityManager;
     private Entity player;
@@ -121,8 +126,29 @@ public class Main {
         setupQuad();
         setupTexture();
         setupWorld();
+        setupResources();
         setupLighting();
         setupEntities();
+    }
+
+    private void setupResources() {
+        textureManager = new TextureManager();
+        textureManager.loadTextures("src/main/resources/assets/minecraft/textures/blocks");
+
+        blockDataManager = new BlockDataManager();
+        blockDataManager.registerBlock(1, "grass_block_top", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(2, "stone", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(3, "glass", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(4, "diamond_block", textureManager, "src/main/resources/assets/minecraft/models/block"); 
+        blockDataManager.registerBlock(5, "water_still", textureManager, "src/main/resources/assets/minecraft/models/block");
+        // Force texture index if JSON failed (simple check/fix)
+        if (blockDataManager.getTextureId() != -1) {
+             // BlockDataManager already tries to find it by name, but if JSON is missing, we might need a fallback.
+             // My BlockDataManager already does: texIndex = textureManager.getTextureIndex(texName);
+             // If JSON is missing, texIndex remains -1. 
+        }
+        
+        blockDataManager.uploadToGPU();
     }
 
     private void setupEntities() {
@@ -254,7 +280,26 @@ public class Main {
                         for (int vx = 0; vx < CHUNK_SIZE; vx++) {
                             for (int vy = 0; vy < 2; vy++) {
                                 for (int vz = 0; vz < CHUNK_SIZE; vz++) {
-                                    int type = ((cx * 16 + vx) + vy + (cz * 16 + vz)) % 2 == 0 ? 1 : 2;
+                                    int gx = cx * 16 + vx;
+                                    int gz = cz * 16 + vz;
+                                    
+                                    int type = (gx + vy + gz) % 2 == 0 ? 1 : 2;
+                                    
+                                    // Mirror floor area
+                                    if (gx >= 1030 && gx < 1040 && gz >= 1030 && gz < 1040 && vy == 1) {
+                                        type = 4;
+                                    }
+                                    
+                                    // Glass wall
+                                    if (gx == 1020 && gz >= 1020 && gz < 1030 && vy == 1) {
+                                        type = 3;
+                                    }
+                                    
+                                    // Water pool
+                                    if (gx >= 1010 && gx < 1020 && gz >= 1010 && gz < 1020) {
+                                        type = 5;
+                                    }
+
                                     world.setVoxelInPool(slot, vx, vy, vz, type);
                                 }
                             }
@@ -283,7 +328,7 @@ public class Main {
     }
 
     private void updateCamera(float dt) {
-        float speed = 50.0f * dt;
+        float speed = 5.0f * dt;
         double radYaw = Math.toRadians(yaw), radPitch = Math.toRadians(pitch);
         forwardX = (float) (Math.cos(radYaw) * Math.cos(radPitch));
         forwardY = (float) Math.sin(radPitch);
@@ -344,6 +389,14 @@ public class Main {
             glProgramUniform3f(computeProgram, 2, rightX, rightY, rightZ);
             glProgramUniform3f(computeProgram, 3, upX, upY, upZ);
             glProgramUniform1i(computeProgram, glGetUniformLocation(computeProgram, "numEntityParts"), entityManager.getNumParts());
+
+            glActiveTexture(GL_TEXTURE6);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, textureManager.getTextureArrayId());
+            glUniform1i(glGetUniformLocation(computeProgram, "u_BlockTextures"), 6);
+
+            glActiveTexture(GL_TEXTURE7);
+            glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getTextureId());
+            glUniform1i(glGetUniformLocation(computeProgram, "u_BlockData"), 7);
             
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
