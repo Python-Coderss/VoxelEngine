@@ -98,7 +98,7 @@ vec3 getSurfaceLight(vec3 p, int side, vec3 normal) {
     return mix(mix(c00, c10, uv.x), mix(c01, c11, uv.x), uv.y);
 }
 
-bool traceWorld(vec3 ro, vec3 rd, out float resT, out int resSide, out uint resVoxel) {
+bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out float resT, out int resSide, out uint resVoxel) {
     float tNear, tFar;
     if (!intersectAABB(ro, rd, vec3(0.0), vec3(WORLD_SIZE), tNear, tFar)) return false;
     
@@ -112,6 +112,17 @@ bool traceWorld(vec3 ro, vec3 rd, out float resT, out int resSide, out uint resV
     vec3 sideDist = (step * (vec3(mapPos) - p) + (step * 0.5) + 0.5) * deltaDist;
 
     int side = 0;
+    
+    if (skipFirst) {
+        if (sideDist.x < sideDist.y) {
+            if (sideDist.x < sideDist.z) { sideDist.x += deltaDist.x; mapPos.x += step.x; side = 0; }
+            else { sideDist.z += deltaDist.z; mapPos.z += step.z; side = 2; }
+        } else {
+            if (sideDist.y < sideDist.z) { sideDist.y += deltaDist.y; mapPos.y += step.y; side = 1; }
+            else { sideDist.z += deltaDist.z; mapPos.z += step.z; side = 2; }
+        }
+    }
+
     for (int i = 0; i < 512; i++) {
         if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(WORLD_SIZE)))) break;
 
@@ -135,11 +146,20 @@ bool traceWorld(vec3 ro, vec3 rd, out float resT, out int resSide, out uint resV
                 ivec3 lp = mapPos & 15;
                 uint voxel = voxelPool[poolOffset + (lp.x | (lp.y << 4) | (lp.z << 8))];
                 if (voxel > 0) {
-                    resVoxel = voxel;
-                    resSide = side;
-                    resT = (side == 0) ? sideDist.x - deltaDist.x : (side == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z);
-                    resT += startT;
-                    return true;
+                    if (stopAtTransparent) {
+                        resVoxel = voxel; resSide = side;
+                        resT = (side == 0) ? sideDist.x - deltaDist.x : (side == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z);
+                        resT += startT;
+                        return true;
+                    } else {
+                        ivec4 data = texelFetch(u_BlockData, int(voxel));
+                        if (data.y == 0) { // Opaque
+                            resVoxel = voxel; resSide = side;
+                            resT = (side == 0) ? sideDist.x - deltaDist.x : (side == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z);
+                            resT += startT;
+                            return true;
+                        }
+                    }
                 }
                 if (sideDist.x < sideDist.y) {
                     if (sideDist.x < sideDist.z) { sideDist.x += deltaDist.x; mapPos.x += step.x; side = 0; }
@@ -167,12 +187,13 @@ void main() {
 
     vec3 finalColor = vec3(0.0);
     vec3 throughput = vec3(1.0);
+    bool skip = false;
 
-    for (int bounce = 0; bounce < 3; bounce++) {
+    for (int bounce = 0; bounce < 8; bounce++) {
         float t;
         int side;
         uint voxel;
-        if (traceWorld(rayRo, rayDir, t, side, voxel)) {
+        if (traceWorld(rayRo, rayDir, true, skip, t, side, voxel)) {
             vec3 hitPos = rayRo + rayDir * t;
             vec3 normal = vec3(0.0);
             if (side == 0) normal.x = -sign(rayDir.x);
@@ -190,7 +211,14 @@ void main() {
                 if (side == 0) uv = fract(hitPos.yz);
                 else if (side == 1) uv = fract(hitPos.xz);
                 else uv = fract(hitPos.xy);
-                albedo = texture(u_BlockTextures, vec3(uv, float(texIdx))).rgb;
+                vec4 texColor = texture(u_BlockTextures, vec3(uv, float(texIdx)));
+                albedo = texColor.rgb;
+                
+                // If it's a transparent block and pixel is black/transparent, treat as 100% clear
+                if (trans > 0.0 && (texColor.a < 0.1 || dot(albedo, vec3(1.0)) < 0.1)) {
+                    trans = 1.0;
+                    albedo = vec3(1.0);
+                }
             }
 
             vec3 light = getSurfaceLight(hitPos, side, normal);
@@ -203,16 +231,17 @@ void main() {
             vec3 skyColor = mix(SKY_BLUE * 0.5, SKY_BLUE, max(0.0, rayDir.y + 0.5));
             diffuse = mix(diffuse, skyColor, fogFactor);
 
-            if (refl > 0.0) {
+            if (refl > 0.0 && trans < 1.0) {
                 finalColor += throughput * diffuse * (1.0 - refl) * (1.0 - trans);
                 throughput *= refl;
-                rayRo = hitPos + normal * 0.001;
+                rayRo = hitPos + normal * 0.01;
                 rayDir = reflect(rayDir, normal);
+                skip = false;
             } else if (trans > 0.0) {
                 finalColor += throughput * diffuse * (1.0 - trans);
                 throughput *= trans * albedo;
-                rayRo = hitPos - normal * 0.001;
-                // No refraction for now, just pass through
+                rayRo = hitPos + rayDir * 0.01; // Advance past the face along the ray
+                skip = true; // Skip the current voxel in next trace
             } else {
                 finalColor += throughput * diffuse;
                 break;
@@ -226,4 +255,3 @@ void main() {
 
     imageStore(imgOutput, pixelCoords, vec4(finalColor, 1.0));
 }
-

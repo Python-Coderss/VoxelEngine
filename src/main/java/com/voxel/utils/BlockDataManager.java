@@ -59,7 +59,7 @@ public class BlockDataManager {
 
         // Hardcoded special properties for demonstration
         if (name.contains("glass")) {
-            transparency = 200;
+            transparency = 150;
             reflectivity = 50;
         } else if (name.contains("mirror") || name.equals("diamond_block")) {
             reflectivity = 200;

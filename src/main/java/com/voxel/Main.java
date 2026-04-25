@@ -141,12 +141,10 @@ public class Main {
         blockDataManager.registerBlock(3, "glass", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(4, "diamond_block", textureManager, "src/main/resources/assets/minecraft/models/block"); 
         blockDataManager.registerBlock(5, "water_still", textureManager, "src/main/resources/assets/minecraft/models/block");
-        // Force texture index if JSON failed (simple check/fix)
-        if (blockDataManager.getTextureId() != -1) {
-             // BlockDataManager already tries to find it by name, but if JSON is missing, we might need a fallback.
-             // My BlockDataManager already does: texIndex = textureManager.getTextureIndex(texName);
-             // If JSON is missing, texIndex remains -1. 
-        }
+        blockDataManager.registerBlock(6, "oak_log", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(7, "oak_planks", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(8, "bricks", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(9, "gold_block", textureManager, "src/main/resources/assets/minecraft/models/block");
         
         blockDataManager.uploadToGPU();
     }
@@ -267,51 +265,62 @@ public class Main {
     private void setupWorld() {
         world = new World();
 
+        // 1. Procedural Ground (Layers 0-1)
         int slot = 0;
-        // Populate a 64x64 chunk area around the center with 4 vertical layers
-        for (int cy = 0; cy < 4; cy++) {
-            for (int cx = 32; cx < 96; cx++) {
-                for (int cz = 32; cz < 96; cz++) {
-                    if (slot >= POOL_SIZE) break;
-                    
-                    world.setChunkSlot(cx, cy, cz, slot);
-                    
-                    if (cy == 0) {
-                        for (int vx = 0; vx < CHUNK_SIZE; vx++) {
-                            for (int vy = 0; vy < 2; vy++) {
-                                for (int vz = 0; vz < CHUNK_SIZE; vz++) {
-                                    int gx = cx * 16 + vx;
-                                    int gz = cz * 16 + vz;
-                                    
-                                    int type = (gx + vy + gz) % 2 == 0 ? 1 : 2;
-                                    
-                                    // Mirror floor area
-                                    if (gx >= 1030 && gx < 1040 && gz >= 1030 && gz < 1040 && vy == 1) {
-                                        type = 4;
-                                    }
-                                    
-                                    // Glass wall
-                                    if (gx == 1020 && gz >= 1020 && gz < 1030 && vy == 1) {
-                                        type = 3;
-                                    }
-                                    
-                                    // Water pool
-                                    if (gx >= 1010 && gx < 1020 && gz >= 1010 && gz < 1020) {
-                                        type = 5;
-                                    }
-
-                                    world.setVoxelInPool(slot, vx, vy, vz, type);
-                                }
-                            }
-                        }
-                    }
-                    slot++;
-                }
+        for (int cx = 32; cx < 96; cx++) {
+            for (int cz = 32; cz < 96; cz++) {
                 if (slot >= POOL_SIZE) break;
+                world.setChunkSlot(cx, 0, cz, slot);
+                for (int vx = 0; vx < CHUNK_SIZE; vx++) {
+                    for (int vz = 0; vz < CHUNK_SIZE; vz++) {
+                        world.setVoxelInPool(slot, vx, 0, vz, 2); // Stone base
+                        world.setVoxelInPool(slot, vx, 1, vz, 1); // Grass top
+                    }
+                }
+                slot++;
             }
-            if (slot >= POOL_SIZE) break;
         }
 
+        // 2. The Mirror House (1020, 2, 1020)
+        int baseEX = 1020, baseEY = 2, baseEZ = 1020;
+        // Floor
+        for(int x=0; x<10; x++) for(int z=0; z<10; z++) world.setVoxel(baseEX+x, baseEY-1, baseEZ+z, 7); // Planks
+        // Walls
+        for(int y=0; y<5; y++) {
+            for(int i=0; i<10; i++) {
+                world.setVoxel(baseEX+i, baseEY+y, baseEZ, 6);     // Back log
+                world.setVoxel(baseEX+i, baseEY+y, baseEZ+9, 6);   // Front log
+                world.setVoxel(baseEX, baseEY+y, baseEZ+i, 6);     // Left log
+                world.setVoxel(baseEX+9, baseEY+y, baseEZ+i, 6);   // Right log
+            }
+        }
+        // Glass Windows
+        for(int y=1; y<3; y++) {
+            for(int i=2; i<8; i++) {
+                world.setVoxel(baseEX+i, baseEY+y, baseEZ+9, 3); // Front window
+                world.setVoxel(baseEX, baseEY+y, baseEZ+i, 3);   // Side window
+            }
+        }
+        // Mirror Wall inside
+        for(int y=0; y<4; y++) for(int i=1; i<9; i++) world.setVoxel(baseEX+1, baseEY+y, baseEZ+i, 4);
+
+        // 3. Gold & Diamond Reflective Platform (1040, 2, 1040)
+        for(int x=0; x<8; x++) {
+            for(int z=0; z<8; z++) {
+                world.setVoxel(1040+x, 2, 1040+z, 9); // Gold base
+                if ((x+z)%2 == 0) world.setVoxel(1040+x, 3, 1040+z, 4); // Diamond checker
+            }
+        }
+
+        // 4. Large Water Pool (1000, 1, 1000)
+        for(int x=0; x<20; x++) {
+            for(int z=0; z<20; z++) {
+                world.setVoxel(1000+x, 1, 1000+z, 5); // Water surface
+                world.setVoxel(1000+x, 0, 1000+z, 2); // Stone bottom
+            }
+        }
+
+        // Sync to GPU
         int[] indirectionTable = world.getIndirectionTable();
         IntBuffer tableBuffer = MemoryUtil.memAllocInt(indirectionTable.length);
         tableBuffer.put(indirectionTable).flip();
