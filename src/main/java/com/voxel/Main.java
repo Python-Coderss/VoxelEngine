@@ -1,8 +1,5 @@
 package com.voxel;
 
-import com.voxel.jem.JemEntityInstance;
-import com.voxel.jem.JemEntityRenderer;
-import com.voxel.jem.JemModelLoader;
 import com.voxel.lighting.LightPropagationEngine;
 import com.voxel.lighting.LightSource;
 import com.voxel.lighting.LightType;
@@ -23,6 +20,7 @@ import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
+// Import static constants and methods from GLFW and OpenGL for easier access
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL20.*;
@@ -33,49 +31,76 @@ import static org.lwjgl.opengl.GL43.*;
 import static org.lwjgl.opengl.GL45.*;
 import static org.lwjgl.system.MemoryUtil.NULL;
 
+/**
+ * The Main class serves as the entry point for the Voxel Engine.
+ * It handles window creation (using GLFW), OpenGL context initialization,
+ * the main rendering loop, and input handling.
+ *
+ * For beginners:
+ * - GLFW is a library for creating windows and handling input (keyboard/mouse).
+ * - OpenGL is the API used for rendering 3D graphics on the GPU.
+ */
 public class Main {
-    private static final int[] DEBUG_PART_BLOCK_IDS = {2, 4, 6, 7, 8, 9, 3};
+    // Distance around debug areas to ensure chunks are allocated
     private static final int DEBUG_CHUNK_PADDING = 1;
 
+    // Handle to the GLFW window
     private long window;
+
+    // OpenGL Program IDs for our shaders
     private int quadProgram, computeProgram;
+
+    // OpenGL Object IDs for the full-screen quad used to display the raytraced image
     private int quadVAO, quadVBO, renderTexture;
+
+    // SSBO (Shader Storage Buffer Object) IDs for world data
+    // SSBOs allow us to pass large amounts of data to shaders
     private int indirectionSSBO, chunkPoolSSBO, lightPoolSSBO;
+
+    // Counter for the next available slot in the chunk pool
     private int nextWorldChunkSlot;
     
+    // The world object containing voxel data
     private World world;
+
+    // The engine responsible for calculating light levels in the world
     private LightPropagationEngine lightEngine;
     
+    // Managers for textures, block properties, and biomes
     private TextureManager textureManager;
     private BlockDataManager blockDataManager;
     private com.voxel.utils.BiomeManager biomeManager;
     
-    private JemEntityRenderer entityRenderer;
-    private JemEntityInstance player;
-    
+    // Window dimensions
     private int width = 1280, height = 720;
     
-    private final int CHUNK_SIZE = 16;
-    private final int REGION_SIZE = 128; // 128x128x128 chunks
-    private final int POOL_SIZE = 16384; 
+    // Engine constants
+    private final int CHUNK_SIZE = 16; // Chunks are 16x16x16 voxels
+    private final int REGION_SIZE = 128; // The world is 128x128x128 chunks
+    private final int POOL_SIZE = 16384; // Maximum number of allocated chunks
     
+    // Constant representing an empty/unallocated chunk
     private final int EMPTY = 0xFFFFFFFF;
 
-    private float camX = 1024, camY = 20, camZ = 1024; // Center of the world
-    private float yaw = -45, pitch = -20;
-    private float lastMouseX = width / 2f, lastMouseY = height / 2f;
-    private boolean firstMouse = true;
+    // Camera state: Position and orientation
+    private float camX = 1024, camY = 20, camZ = 1024; // Initial position at the center of the world
+    private float yaw = -45, pitch = -20; // Yaw (left/right rotation) and Pitch (up/down rotation)
+    private float lastMouseX = width / 2f, lastMouseY = height / 2f; // For mouse movement delta
+    private boolean firstMouse = true; // Flag to initialize mouse position
+
+    // Camera direction vectors calculated from yaw and pitch
     private float forwardX, forwardY, forwardZ;
     private float rightX, rightY, rightZ;
     private float upX, upY, upZ;
 
-	private JemEntityInstance cow;
-
-	private JemEntityInstance pig;
-
+    /**
+     * Entry point of the application.
+     */
     public void run() {
-        init();
-        loop();
+        init();     // Initialize GLFW, OpenGL, and resources
+        loop();     // Enter the main rendering loop
+
+        // Clean up resources once the loop ends
         glDeleteProgram(quadProgram);
         glDeleteProgram(computeProgram);
         glDeleteBuffers(quadVBO);
@@ -84,78 +109,119 @@ public class Main {
         glDeleteBuffers(indirectionSSBO);
         glDeleteBuffers(chunkPoolSSBO);
         glDeleteBuffers(lightPoolSSBO);
-        if (entityRenderer != null) {
-            entityRenderer.destroy();
-        }
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        glfwSetErrorCallback(null).free();
+
+        glfwDestroyWindow(window); // Close the window
+        glfwTerminate();           // Shut down GLFW
+        glfwSetErrorCallback(null).free(); // Free the error callback
     }
 
+    /**
+     * Initializes GLFW, creates the window, and sets up OpenGL state.
+     */
     private void init() {
+        // Set up an error callback to print GLFW errors to the console
         GLFWErrorCallback.createPrint(System.err).set();
+
+        // Initialize GLFW
         if (!glfwInit()) throw new IllegalStateException("Unable to initialize GLFW");
+
+        // Configure window hints for the upcoming window creation
         glfwDefaultWindowHints();
-        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // Window stays hidden after creation until we are ready
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE); // Allow window resizing
+
+        // Request OpenGL 4.3 Core Profile
+        // Core profile removes deprecated features for better performance and modern practices
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 
+        // Create the window
         window = glfwCreateWindow(width, height, "Voxel Engine", NULL, NULL);
         if (window == NULL) throw new RuntimeException("Failed to create window");
 
+        // Set a key callback to handle the Escape key for closing the window
         glfwSetKeyCallback(window, (w, key, scancode, action, mods) -> {
             if (key == GLFW_KEY_ESCAPE && action == GLFW_RELEASE) glfwSetWindowShouldClose(w, true);
         });
 
+        // Set a cursor position callback to handle camera rotation via mouse movement
         glfwSetCursorPosCallback(window, (w, xpos, ypos) -> {
-            if (firstMouse) { lastMouseX = (float) xpos; lastMouseY = (float) ypos; firstMouse = false; }
+            if (firstMouse) {
+                lastMouseX = (float) xpos;
+                lastMouseY = (float) ypos;
+                firstMouse = false;
+            }
+            // Calculate mouse movement offset
             float xoffset = (float) xpos - lastMouseX;
-            float yoffset = lastMouseY - (float) ypos;
-            lastMouseX = (float) xpos; lastMouseY = (float) ypos;
+            float yoffset = lastMouseY - (float) ypos; // Reversed since y-coordinates go from bottom to top
+            lastMouseX = (float) xpos;
+            lastMouseY = (float) ypos;
+
             float sensitivity = 0.1f;
             yaw += xoffset * sensitivity;
             pitch += yoffset * sensitivity;
+
+            // Constrain the pitch so the camera doesn't flip
             if (pitch > 89.0f) pitch = 89.0f;
             if (pitch < -89.0f) pitch = -89.0f;
         });
 
+        // Capture the mouse cursor and hide it
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+        // Make the OpenGL context current for the current thread
         glfwMakeContextCurrent(window);
-        glfwSwapInterval(0); // V-Sync OFF
+
+        // Disable V-Sync for uncapped frame rates
+        glfwSwapInterval(0);
+
+        // Finally show the window
         glfwShowWindow(window);
+
+        // This line is critical for LWJGL's interoperation with OpenGL's context.
+        // It makes the OpenGL functions available for use.
         GL.createCapabilities();
 
+        // Compile and link the shader programs
+        // quadProgram is for drawing the final image to the screen
         quadProgram = ShaderUtil.createProgram(
             ShaderUtil.compileShader("src/main/resources/shaders/quad.vert", GL_VERTEX_SHADER),
             ShaderUtil.compileShader("src/main/resources/shaders/quad.frag", GL_FRAGMENT_SHADER)
         );
+        // computeProgram is where the raytracing logic lives
         computeProgram = ShaderUtil.createProgram(
             ShaderUtil.compileShader("src/main/resources/shaders/raytracer.comp", GL_COMPUTE_SHADER)
         );
 
-        setupQuad();
-        setupTexture();
-        setupEntities();
-        setupWorld();
-        setupResources();
-        setupLighting();
+        // Setup various engine components
+        setupQuad();     // Full-screen rectangle geometry
+        setupTexture();  // Texture where the raytracer will write its output
+        setupWorld();    // Procedural world generation
+        setupResources();// Loading textures and block data
+        setupLighting(); // Initial light propagation
     }
 
+    /**
+     * Loads textures and registers block types.
+     */
     private void setupResources() {
         textureManager = new TextureManager();
+        // Load all block textures from the specified directory into a Texture Array
         textureManager.loadTextures("src/main/resources/assets/minecraft/textures/blocks");
 
         biomeManager = new com.voxel.utils.BiomeManager();
+        // Load color maps used for tinting grass and foliage based on biome
         biomeManager.loadColormaps(
             "src/main/resources/assets/minecraft/textures/colormap/grass.png",
             "src/main/resources/assets/minecraft/textures/colormap/foliage.png"
         );
+        // Generate a 2D map representing biomes across the world
         biomeManager.generateBiomeMap(2048);
 
         blockDataManager = new BlockDataManager();
+        // Register various blocks with their corresponding textures and properties
         blockDataManager.registerBlock(1, "grass_normal", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(2, "stone", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(3, "glass", textureManager, "src/main/resources/assets/minecraft/models/block");
@@ -166,77 +232,74 @@ public class Main {
         blockDataManager.registerBlock(8, "brick", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(9, "gold_block", textureManager, "src/main/resources/assets/minecraft/models/block");
         
+        // Upload block property data to the GPU in a texture buffer
         blockDataManager.uploadToGPU();
     }
 
-    private void setupEntities() {
-        entityRenderer = new JemEntityRenderer();
-
-        player = loadEntity("creeper", 1024, 2, 1024);
-        entityRenderer.addEntity(player);
-
-        cow = loadEntity("cow", 1040, 2, 1024);
-        pig = loadEntity("pig", 1060, 2, 1024);
-        entityRenderer.addEntity(cow);
-        entityRenderer.addEntity(pig);
-
-        
-    }
-
-    private JemEntityInstance loadEntity(String modelName, float x, float y, float z) {
-        try {
-            JemEntityInstance entity = JemModelLoader.loadEntity(modelName);
-            entity.position.set(x, y, z);
-            return entity;
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to load JEM model '" + modelName + "'", e);
-        }
-    }
-
+    /**
+     * Sets up a simple quad (two triangles) that covers the entire screen.
+     * This is used to display the output of the compute shader.
+     */
     private void setupQuad() {
+        // Coordinates for two triangles forming a square from (-1,-1) to (1,1)
         float[] vertices = {-1,-1, 1,-1, -1,1, 1,-1, 1,1, -1,1};
+
+        // Use MemoryStack for efficient off-heap memory allocation (required by LWJGL)
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            FloatBuffer buffer = stack.mallocFloat(vertices.length).put(vertices); buffer.flip();
+            FloatBuffer buffer = stack.mallocFloat(vertices.length).put(vertices);
+            buffer.flip(); // Prepare the buffer for reading
+
+            // Create a VBO (Vertex Buffer Object) to store the vertex data on the GPU
             quadVBO = glCreateBuffers();
-            glNamedBufferStorage(quadVBO, buffer, 0);
+            glNamedBufferStorage(quadVBO, buffer, 0); // Upload data
+
+            // Create a VAO (Vertex Array Object) to define the layout of the vertex data
             quadVAO = glCreateVertexArrays();
-            glEnableVertexArrayAttrib(quadVAO, 0);
-            glVertexArrayAttribFormat(quadVAO, 0, 2, GL_FLOAT, false, 0);
-            glVertexArrayAttribBinding(quadVAO, 0, 0);
-            glVertexArrayVertexBuffer(quadVAO, 0, quadVBO, 0, 2 * Float.BYTES);
+            glEnableVertexArrayAttrib(quadVAO, 0); // Enable attribute index 0
+            glVertexArrayAttribFormat(quadVAO, 0, 2, GL_FLOAT, false, 0); // 2 floats per vertex
+            glVertexArrayAttribBinding(quadVAO, 0, 0); // Bind attribute to binding point 0
+            glVertexArrayVertexBuffer(quadVAO, 0, quadVBO, 0, 2 * Float.BYTES); // Link VBO to binding point
         }
     }
 
+    /**
+     * Creates the texture that the raytracer compute shader will write into.
+     */
     private void setupTexture() {
         renderTexture = glCreateTextures(GL_TEXTURE_2D);
+        // Allocate storage for the texture
         glTextureStorage2D(renderTexture, 1, GL_RGBA8, width, height);
+        // Use Nearest filtering for a crisp voxel look
         glTextureParameteri(renderTexture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTextureParameteri(renderTexture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     }
 
+    /**
+     * Sets up the lighting engine and propagates initial light sources.
+     */
     private void setupLighting() {
         lightEngine = new LightPropagationEngine(world);
         List<LightSource> sources = new ArrayList<>();
         
-        // Sun light (high up)
+        // Sun light (high up at Y=63)
         sources.add(new LightSource(new Vector3i(1024, 63, 1024), new Vector3f(0.9f, 0.85f, 0.7f), 10, 512, LightType.SUN));
 
-
-        // Block lights
+        // Point lights at various locations with different colors
         sources.add(new LightSource(new Vector3i(1030, 2, 1030), new Vector3f(1.0f, 0.1f, 0.1f), 15, 25, LightType.BLOCK));
         sources.add(new LightSource(new Vector3i(1010, 2, 1010), new Vector3f(0.1f, 1.0f, 0.1f), 15, 25, LightType.BLOCK));
         sources.add(new LightSource(new Vector3i(1024, 2, 1040), new Vector3f(0.2f, 0.4f, 1.0f), 15, 25, LightType.BLOCK));
         sources.add(new LightSource(new Vector3i(1024, 3, 1024), new Vector3f(0.2f, 1f, 1.0f), 15, 25, LightType.BLOCK));
 
-        // Place visible blocks for the light sources
-        world.setVoxel(1024, 63, 1024, 3); // Sun (Red voxel for visibility)
-
-        world.setVoxel(1030, 2, 1030, 3); // Red
-        world.setVoxel(1010, 2, 1010, 4); // Green
-        world.setVoxel(1024, 2, 1040, 3); // Blue (using Red voxel for visibility)
+        // Place physical blocks at light source locations so we can see where they are
+        world.setVoxel(1024, 63, 1024, 3); // Sun
+        world.setVoxel(1030, 2, 1030, 3); // Red Light
+        world.setVoxel(1010, 2, 1010, 4); // Green Light
+        world.setVoxel(1024, 2, 1040, 3); // Blue Light
         
+        // Calculate light propagation through the voxel grid
         lightEngine.propagateAllLights(sources);
 
+        // Upload the resulting light data to the GPU in an SSBO
         int[] lightPool = world.getLightPool();
         IntBuffer buffer = MemoryUtil.memAllocInt(lightPool.length);
         buffer.put(lightPool).flip();
@@ -245,11 +308,14 @@ public class Main {
         MemoryUtil.memFree(buffer);
     }
 
+    /**
+     * Procedurally generates the world content and uploads it to the GPU.
+     */
     private void setupWorld() {
         world = new World();
         nextWorldChunkSlot = 0;
 
-        // 1. Procedural Ground (Layers 0-1)
+        // 1. Generate Procedural Ground (Layers 0 and 1)
         for (int cx = 32; cx < 96; cx++) {
             for (int cz = 32; cz < 96; cz++) {
                 if (nextWorldChunkSlot >= POOL_SIZE) break;
@@ -257,58 +323,59 @@ public class Main {
                 world.setChunkSlot(cx, 0, cz, slot);
                 for (int vx = 0; vx < CHUNK_SIZE; vx++) {
                     for (int vz = 0; vz < CHUNK_SIZE; vz++) {
-                        world.setVoxelInPool(slot, vx, 0, vz, 2); // Stone base
-                        world.setVoxelInPool(slot, vx, 1, vz, 1); // Grass top
+                        world.setVoxelInPool(slot, vx, 0, vz, 2); // Stone base layer
+                        world.setVoxelInPool(slot, vx, 1, vz, 1); // Grass top layer
                     }
                 }
             }
         }
-        stampEntityDebugChunks(player, 64, 3, 64);
-        stampEntityDebugChunks(cow, 64, 6, 64);
-        stampEntityDebugChunks(pig, 64, 9, 64);
         
-        // 2. The Mirror House (1020, 2, 1020)
+        // 2. Create "The Mirror House"
         int baseEX = 1020, baseEY = 2, baseEZ = 1020;
-        // Floor
-        for(int x=0; x<10; x++) for(int z=0; z<10; z++) world.setVoxel(baseEX+x, baseEY-1, baseEZ+z, 7); // Planks
-        // Walls
+        // Floor made of planks
+        for(int x=0; x<10; x++) for(int z=0; z<10; z++) world.setVoxel(baseEX+x, baseEY-1, baseEZ+z, 7);
+        // Log Walls
         for(int y=0; y<5; y++) {
             for(int i=0; i<10; i++) {
-                world.setVoxel(baseEX+i, baseEY+y, baseEZ, 6);     // Back log
-                world.setVoxel(baseEX+i, baseEY+y, baseEZ+9, 6);   // Front log
-                world.setVoxel(baseEX, baseEY+y, baseEZ+i, 6);     // Left log
-                world.setVoxel(baseEX+9, baseEY+y, baseEZ+i, 6);   // Right log
+                world.setVoxel(baseEX+i, baseEY+y, baseEZ, 6);
+                world.setVoxel(baseEX+i, baseEY+y, baseEZ+9, 6);
+                world.setVoxel(baseEX, baseEY+y, baseEZ+i, 6);
+                world.setVoxel(baseEX+9, baseEY+y, baseEZ+i, 6);
             }
         }
         // Glass Windows
         for(int y=1; y<3; y++) {
             for(int i=2; i<8; i++) {
-                world.setVoxel(baseEX+i, baseEY+y, baseEZ+9, 3); // Front window
-                world.setVoxel(baseEX, baseEY+y, baseEZ+i, 3);   // Side window
+                world.setVoxel(baseEX+i, baseEY+y, baseEZ+9, 3);
+                world.setVoxel(baseEX, baseEY+y, baseEZ+i, 3);
             }
         }
-        // Mirror Wall inside
+        // Reflective Mirror Wall inside (using Diamond blocks)
         for(int y=0; y<4; y++) for(int i=1; i<9; i++) world.setVoxel(baseEX+1, baseEY+y, baseEZ+i, 4);
 
-        // 3. Gold & Diamond Reflective Platform (1040, 2, 1040)
+        // 3. Reflective Gold & Diamond Platform
         for(int x=0; x<8; x++) {
             for(int z=0; z<8; z++) {
-                world.setVoxel(1040+x, 2, 1040+z, 9); // Gold base
-                if ((x+z)%2 == 0) world.setVoxel(1040+x, 3, 1040+z, 4); // Diamond checker
+                world.setVoxel(1040+x, 2, 1040+z, 9); // Gold blocks
+                if ((x+z)%2 == 0) world.setVoxel(1040+x, 3, 1040+z, 4); // Diamond checkerboard
             }
         }
 
-        // 4. Large Water Pool (1000, 1, 1000)
+        // 4. Large Water Pool
         for(int x=0; x<20; x++) {
             for(int z=0; z<20; z++) {
-                world.setVoxel(1000+x, 1, 1000+z, 5); // Water surface
-                world.setVoxel(1000+x, 0, 1000+z, 2); // Stone bottom
+                world.setVoxel(1000+x, 1, 1000+z, 5); // Water blocks
+                world.setVoxel(1000+x, 0, 1000+z, 2); // Stone base
             }
         }
 
+        // Finalize world data and upload to GPU
         uploadWorldToGpu();
     }
 
+    /**
+     * Allocates a new chunk slot from the pool.
+     */
     private int allocateChunkSlot() {
         if (nextWorldChunkSlot >= POOL_SIZE) {
             throw new IllegalStateException("World chunk pool exhausted");
@@ -316,6 +383,9 @@ public class Main {
         return nextWorldChunkSlot++;
     }
 
+    /**
+     * Ensures a chunk exists at the given coordinates, allocating a new one if necessary.
+     */
     private int ensureChunkSlot(int cx, int cy, int cz) {
         int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
         int[] table = world.getIndirectionTable();
@@ -329,7 +399,11 @@ public class Main {
         return slot;
     }
 
+    /**
+     * Uploads the world's indirection table and chunk pool to the GPU via SSBOs.
+     */
     private void uploadWorldToGpu() {
+        // Upload the indirection table (maps world coords to chunk pool slots)
         int[] indirectionTable = world.getIndirectionTable();
         IntBuffer tableBuffer = MemoryUtil.memAllocInt(indirectionTable.length);
         tableBuffer.put(indirectionTable).flip();
@@ -341,6 +415,7 @@ public class Main {
         }
         MemoryUtil.memFree(tableBuffer);
 
+        // Upload the chunk pool (contains the actual voxel data)
         int[] chunkPool = world.getChunkPool();
         IntBuffer poolBuffer = MemoryUtil.memAllocInt(chunkPool.length);
         poolBuffer.put(chunkPool).flip();
@@ -353,82 +428,34 @@ public class Main {
         MemoryUtil.memFree(poolBuffer);
     }
 
-    private void stampEntityDebugChunks(JemEntityInstance entity, int baseChunkX, int chunkY, int chunkZ) {
-        List<com.voxel.jem.JemPartDefinition> parts = entity.getModel().getParts();
-        ensureDebugChunkPadding(baseChunkX, chunkY, chunkZ, parts.size(), DEBUG_CHUNK_PADDING);
-        System.out.printf("Debug stamping model '%s' with %d baked parts at chunk row (%d,%d,%d)%n",
-                entity.getModel().getName(), parts.size(), baseChunkX, chunkY, chunkZ);
-
-        for (int i = 0; i < parts.size(); i++) {
-            com.voxel.jem.JemPartDefinition part = parts.get(i);
-            int chunkX = baseChunkX + i;
-            int slot = ensureChunkSlot(chunkX, chunkY, chunkZ);
-            int blockId = DEBUG_PART_BLOCK_IDS[i % DEBUG_PART_BLOCK_IDS.length];
-            int solidCount = stampPartIntoChunk(part, slot, blockId);
-        System.out.printf("  part[%02d] %-20s chunk=(%d,%d,%d) voxels=%d origin=(%.2f, %.2f, %.2f) min=(%.2f, %.2f, %.2f) max=(%.2f, %.2f, %.2f)%n",
-                    i,
-                    part.name,
-                    chunkX, chunkY, chunkZ,
-                    solidCount,
-                    part.origin.x, part.origin.y, part.origin.z,
-                    part.min.x, part.min.y, part.min.z,
-                    part.max.x, part.max.y, part.max.z);
-        }
-    }
-
-    private void ensureDebugChunkPadding(int baseChunkX, int chunkY, int chunkZ, int chunkCount, int padding) {
-        int minX = Math.max(0, baseChunkX - padding);
-        int maxX = Math.min(REGION_SIZE - 1, baseChunkX + chunkCount - 1 + padding);
-        int minY = Math.max(0, chunkY - padding);
-        int maxY = Math.min(REGION_SIZE - 1, chunkY + padding);
-        int minZ = Math.max(0, chunkZ - padding);
-        int maxZ = Math.min(REGION_SIZE - 1, chunkZ + padding);
-
-        for (int cx = minX; cx <= maxX; cx++) {
-            for (int cy = minY; cy <= maxY; cy++) {
-                for (int cz = minZ; cz <= maxZ; cz++) {
-                    ensureChunkSlot(cx, cy, cz);
-                }
-            }
-        }
-    }
-
-    private int stampPartIntoChunk(com.voxel.jem.JemPartDefinition part, int slot, int blockId) {
-        int filled = 0;
-        for (int x = 0; x < CHUNK_SIZE; x++) {
-            for (int y = 0; y < CHUNK_SIZE; y++) {
-                for (int z = 0; z < CHUNK_SIZE; z++) {
-                    if (x >= part.min.x && x <= part.max.x && y >= part.min.y && y <= part.max.y && z >= part.min.z && z <= part.max.z) {
-                        world.setVoxelInPool(slot, x, y, z, blockId);
-                        filled++;
-                    } else {
-                        world.setVoxelInPool(slot, x, y, z, 0);
-                    }
-                }
-            }
-        }
-        return filled;
-    }
-
+    /**
+     * Updates the camera position and orientation based on keyboard input and mouse movement.
+     * @param dt Delta time since the last frame.
+     */
     private void updateCamera(float dt) {
-        float speed = 5.0f * dt;
+        float speed = 5.0f * dt; // Movement speed
         double radYaw = Math.toRadians(yaw), radPitch = Math.toRadians(pitch);
+
+        // Calculate the forward vector from yaw and pitch
         forwardX = (float) (Math.cos(radYaw) * Math.cos(radPitch));
         forwardY = (float) Math.sin(radPitch);
         forwardZ = (float) (Math.sin(radYaw) * Math.cos(radPitch));
         float len = (float) Math.sqrt(forwardX*forwardX + forwardY*forwardY + forwardZ*forwardZ);
         forwardX /= len; forwardY /= len; forwardZ /= len;
         
+        // Calculate the right vector (perpendicular to forward and global up)
         rightX = -forwardZ; rightY = 0; rightZ = forwardX;
         len = (float) Math.sqrt(rightX*rightX + rightZ*rightZ);
         if (len > 0) { rightX /= len; rightZ /= len; }
         
+        // Calculate the camera's local up vector
         upX = rightY * forwardZ - rightZ * forwardY;
         upY = rightZ * forwardX - rightX * forwardZ;
         upZ = rightX * forwardY - rightY * forwardX;
         len = (float) Math.sqrt(upX*upX + upY*upY + upZ*upZ);
         if (len > 0) { upX /= len; upY /= len; upZ /= len; }
 
+        // Keyboard controls (WASD, Space, Shift)
         if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { camX += forwardX * speed; camY += forwardY * speed; camZ += forwardZ * speed; }
         if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) { camX -= forwardX * speed; camY -= forwardY * speed; camZ -= forwardZ * speed; }
         if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) { camX -= rightX * speed; camY -= rightY * speed; camZ -= rightZ * speed; }
@@ -437,16 +464,21 @@ public class Main {
         if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) camY -= speed;
     }
 
+    /**
+     * The main application loop. Handles timing, camera updates, and rendering.
+     */
     private void loop() {
         float lastTime = (float) glfwGetTime();
         float fpsTime = 0;
         int frames = 0;
 
+        // Keep running until the window should close
         while (!glfwWindowShouldClose(window)) {
             float currentTime = (float) glfwGetTime();
-            float dt = currentTime - lastTime;
+            float dt = currentTime - lastTime; // Calculate time elapsed since last frame
             lastTime = currentTime;
 
+            // Track and display FPS in the window title
             fpsTime += dt;
             frames++;
             if (fpsTime >= 1.0f) {
@@ -455,17 +487,19 @@ public class Main {
                 fpsTime = 0;
             }
 
+            // Update camera based on input
             updateCamera(dt);
 
-            entityRenderer.updateGpuData();
-
+            // --- Raytracing Pass (Compute Shader) ---
             glUseProgram(computeProgram);
+
+            // Pass camera uniforms to the shader
             glProgramUniform3f(computeProgram, 0, camX, camY, camZ);
             glProgramUniform3f(computeProgram, 1, forwardX, forwardY, forwardZ);
             glProgramUniform3f(computeProgram, 2, rightX, rightY, rightZ);
             glProgramUniform3f(computeProgram, 3, upX, upY, upZ);
-            glProgramUniform1i(computeProgram, glGetUniformLocation(computeProgram, "numEntityParts"), entityRenderer.getNumParts());
 
+            // Bind textures to specific texture units for the shader
             glActiveTexture(GL_TEXTURE6);
             glBindTexture(GL_TEXTURE_2D_ARRAY, textureManager.getTextureArrayId());
             glUniform1i(glGetUniformLocation(computeProgram, "u_BlockTextures"), 6);
@@ -486,25 +520,36 @@ public class Main {
             glBindTexture(GL_TEXTURE_2D, biomeManager.getFoliageColormapId());
             glUniform1i(glGetUniformLocation(computeProgram, "u_FoliageColormap"), 10);
             
+            // Bind SSBOs to their respective binding points (defined in the shader)
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lightPoolSSBO);
-            entityRenderer.bind(3, 6, 11);
 
+            // Bind the output image texture
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
+
+            // Dispatch the compute shader: one thread per pixel
+            // We use 16x16 thread groups (matching layout in shader)
             glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
+
+            // Ensure all writes to the image are finished before we use it for rendering
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
             
-            glClear(GL_COLOR_BUFFER_BIT);
-            glUseProgram(quadProgram);
-            glBindTextureUnit(0, renderTexture);
-            glBindVertexArray(quadVAO);
-            glDrawArrays(GL_TRIANGLES, 0, 6);
-            glfwSwapBuffers(window);
-            glfwPollEvents();
+            // --- Final Display Pass (Graphics Pipeline) ---
+            glClear(GL_COLOR_BUFFER_BIT); // Clear the back buffer
+            glUseProgram(quadProgram);    // Use the quad shader
+            glBindTextureUnit(0, renderTexture); // Bind the raytraced image
+            glBindVertexArray(quadVAO);   // Bind the quad geometry
+            glDrawArrays(GL_TRIANGLES, 0, 6); // Draw the quad to fill the screen
+
+            glfwSwapBuffers(window); // Swap the front and back buffers
+            glfwPollEvents();        // Process window and input events
         }
     }
 
+    /**
+     * Main method to launch the application.
+     */
     public static void main(String[] args) {
         System.out.println("Voxel Engine Version 1.1.0.1");
         new Main().run();

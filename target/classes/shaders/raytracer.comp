@@ -1,55 +1,57 @@
 #version 430 core
 
+/**
+ * The Raytracer Compute Shader.
+ * This is the "brain" of the rendering engine. Instead of drawing triangles,
+ * it "fires" a ray for every pixel on the screen and calculates what it hits.
+ */
+
+// Define the size of each thread group (16x16 pixels)
 layout(local_size_x = 16, local_size_y = 16) in;
+
+// The output image that we write the final pixel colors into
 layout(rgba8, binding = 0) uniform image2D imgOutput;
 
-layout(location = 0) uniform vec3 camPos;
-layout(location = 1) uniform vec3 camForward;
-layout(location = 2) uniform vec3 camRight;
-layout(location = 3) uniform vec3 camUp;
+// Uniforms: values passed from the Java code (Main.java)
+layout(location = 0) uniform vec3 camPos;     // Camera world position
+layout(location = 1) uniform vec3 camForward; // Direction camera is looking
+layout(location = 2) uniform vec3 camRight;   // Direction to the right of camera
+layout(location = 3) uniform vec3 camUp;      // Direction above the camera
 
+// SSBOs: Large data buffers stored on the GPU memory
 layout(std430, binding = 1) buffer readonly restrict IndirectionTable {
-    uint chunkSlots[];
+    uint chunkSlots[]; // Maps world coordinates to chunk pool slots
 };
 
 layout(std430, binding = 2) buffer readonly restrict ChunkPool {
-    uint voxelPool[];
+    uint voxelPool[]; // Contains the actual voxel IDs for all allocated chunks
 };
 
 layout(std430, binding = 5) buffer readonly restrict LightPool {
-    uint lightPool[];
+    uint lightPool[]; // Contains the packed light values for all voxels
 };
 
-struct EntityPart {
-    mat4 worldToLocal;
-    int voxelOffset; 
-    int pad1, pad2, pad3;
-};
+// Samplers for textures
+uniform sampler2DArray u_BlockTextures; // All block textures in one array
+uniform isamplerBuffer u_BlockData;      // Block properties (transparency, reflection, etc.)
+uniform sampler2D u_BiomeMap;            // 2D map of biomes across the world
+uniform sampler2D u_GrassColormap;       // Colors for grass based on biome
+uniform sampler2D u_FoliageColormap;     // Colors for leaves based on biome
 
-layout(std430, binding = 3) buffer readonly restrict EntityParts {
-    EntityPart parts[];
-};
-
-layout(std430, binding = 4) buffer readonly restrict EntityVoxelPool {
-    uint entityVoxels[];
-};
-
-uniform sampler2DArray u_BlockTextures;
-uniform isamplerBuffer u_BlockData;
-uniform sampler2D u_BiomeMap;
-uniform sampler2D u_GrassColormap;
-uniform sampler2D u_FoliageColormap;
-
-uniform int numEntityParts;
-
+// Constants for the voxel grid structure
 const int CHUNK_SIZE = 16;
 const int REGION_SIZE = 128;
 const int WORLD_SIZE = 2048; 
-const uint EMPTY = 0xFFFFFFFF;
-const float DDA_EPS = 1e-5;
+const uint EMPTY = 0xFFFFFFFF; // Represents an unallocated chunk
+const float DDA_EPS = 1e-5;    // Small epsilon to avoid floating point errors
 
+// The color of the sky
 const vec3 SKY_BLUE = vec3(0.5, 0.7, 0.9);
 
+/**
+ * Calculates if a ray intersects a 3D box (AABB).
+ * Used to check if the ray enters the world boundaries.
+ */
 bool intersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, out float tFar) {
     vec3 invDir = 1.0 / rd;
     vec3 t0 = (boxMin - ro) * invDir;
@@ -61,10 +63,15 @@ bool intersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, 
     return tNear <= tFar && tFar > 0.0;
 }
 
+/**
+ * DDA (Digital Differential Analyzer) Algorithm.
+ * Moves the ray from one voxel to the next neighbor in a grid.
+ * It's very efficient for ray-marching in a uniform grid.
+ */
 int advanceDDA(inout ivec3 mapPos, inout vec3 sideDist, vec3 deltaDist, ivec3 step) {
     float minDist = min(sideDist.x, min(sideDist.y, sideDist.z));
     bvec3 crossed = lessThanEqual(abs(sideDist - vec3(minDist)), vec3(DDA_EPS));
-    int side = crossed.x ? 0 : (crossed.y ? 1 : 2);
+    int side = crossed.x ? 0 : (crossed.y ? 1 : 2); // Which axis did we cross?
 
     if (crossed.x) {
         sideDist.x += deltaDist.x;
@@ -79,11 +86,15 @@ int advanceDDA(inout ivec3 mapPos, inout vec3 sideDist, vec3 deltaDist, ivec3 st
         mapPos.z += step.z;
     }
 
-    return side;
+    return side; // Returns 0 for X, 1 for Y, 2 for Z
 }
 
+/**
+ * Skips an entire empty chunk (16x16x16) to speed up raytracing.
+ */
 int skipEmptyChunk(inout ivec3 mapPos, inout vec3 sideDist, vec3 deltaDist, ivec3 step) {
     ivec3 localPos = mapPos & 15;
+    // Calculate how many steps to the edge of the current chunk
     ivec3 cellsToExit = ivec3(
         step.x > 0 ? 16 - localPos.x : localPos.x + 1,
         step.y > 0 ? 16 - localPos.y : localPos.y + 1,
@@ -110,37 +121,50 @@ int skipEmptyChunk(inout ivec3 mapPos, inout vec3 sideDist, vec3 deltaDist, ivec
     return side;
 }
 
+/**
+ * Samples the lighting at a specific voxel position.
+ */
 vec3 sampleLightFast(ivec3 p) {
-    ivec3 cc = p >> 4;
+    ivec3 cc = p >> 4; // Get chunk coords
     if (any(lessThan(cc, ivec3(0))) || any(greaterThanEqual(cc, ivec3(128)))) return vec3(0.01);
+
+    // Look up chunk slot
     uint slot = chunkSlots[cc.x | (cc.y << 7) | (cc.z << 14)];
     if (slot == EMPTY) return vec3(0.01); 
-    ivec3 lp = p & 15;
+
+    ivec3 lp = p & 15; // Local coords
+    // Fetch packed light value
     uint packedLight = lightPool[(slot << 12) | (lp.x | (lp.y << 4) | (lp.z << 8))];
+
+    // Unpack 4 bits per channel and scale to [0, 1]
     return vec3(float(packedLight & 0xF), float((packedLight >> 4) & 0xF), float((packedLight >> 8) & 0xF)) * 0.06666;
 }
 
+/**
+ * Calculates smooth lighting at a surface point using bilinear interpolation.
+ */
 vec3 getSurfaceLight(vec3 p, int side, vec3 normal) {
-    vec3 pos = p - normal * 0.05; 
+    vec3 pos = p - normal * 0.05; // Offset slightly inside the voxel to sample light
     ivec3 i = ivec3(floor(pos));
     vec3 f = fract(pos);
     
     vec3 c00, c10, c01, c11;
     vec2 uv;
 
-    if (side == 0) { 
+    // Depending on which face we hit, we interpolate along different axes
+    if (side == 0) { // Hit X face, interpolate Y and Z
         c00 = sampleLightFast(i);
         c10 = sampleLightFast(i + ivec3(0, 1, 0));
         c01 = sampleLightFast(i + ivec3(0, 0, 1));
         c11 = sampleLightFast(i + ivec3(0, 1, 1));
         uv = f.zy;
-    } else if (side == 1) { 
+    } else if (side == 1) { // Hit Y face, interpolate X and Z
         c00 = sampleLightFast(i);
         c10 = sampleLightFast(i + ivec3(1, 0, 0));
         c01 = sampleLightFast(i + ivec3(0, 0, 1));
         c11 = sampleLightFast(i + ivec3(1, 0, 1));
         uv = f.xz;
-    } else { 
+    } else { // Hit Z face, interpolate X and Y
         c00 = sampleLightFast(i);
         c10 = sampleLightFast(i + ivec3(1, 0, 0));
         c01 = sampleLightFast(i + ivec3(0, 1, 0));
@@ -151,14 +175,20 @@ vec3 getSurfaceLight(vec3 p, int side, vec3 normal) {
     return mix(mix(c00, c10, uv.y), mix(c01, c11, uv.y), uv.x);
 }
 
+/**
+ * Traces a ray through the entire voxel world.
+ * @return True if a voxel was hit.
+ */
 bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out float resT, out int resSide, out uint resVoxel) {
     float tNear, tFar;
+    // Check if the ray even hits the world box
     if (!intersectAABB(ro, rd, vec3(0.0), vec3(WORLD_SIZE), tNear, tFar)) return false;
     
     float startT = max(0.0, tNear);
     vec3 p = ro + rd * startT;
     p = clamp(p, vec3(0.0), vec3(float(WORLD_SIZE)));
     
+    // Initialize DDA variables
     ivec3 mapPos = ivec3(floor(p));
     vec3 deltaDist = abs(1.0 / rd);
     ivec3 step = ivec3(sign(rd));
@@ -166,52 +196,40 @@ bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out fl
 
     int side = 0;
     
-    if (skipFirst) {
+    if (skipFirst) { // Useful when starting from the surface of a voxel
         side = advanceDDA(mapPos, sideDist, deltaDist, step);
     }
 
+    // Main Raymarching Loop (Max 512 steps)
     for (int i = 0; i < 512; i++) {
+        // Stop if out of world bounds
         if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(WORLD_SIZE)))) break;
 
+        // Fetch chunk slot from indirection table
         uint slot = chunkSlots[(mapPos.x >> 4) | ((mapPos.y >> 4) << 7) | ((mapPos.z >> 4) << 14)];
 
         if (slot == EMPTY) {
+            // Jump across the empty chunk
             side = skipEmptyChunk(mapPos, sideDist, deltaDist, step);
         } else {
+            // Iterate through voxels inside the chunk
             uint poolOffset = slot << 12;
             ivec3 chunkCoord = mapPos >> 4;
             for (int j = 0; j < 64; j++) {
                 ivec3 lp = mapPos & 15;
                 uint voxel = voxelPool[poolOffset + (lp.x | (lp.y << 4) | (lp.z << 8))];
-                if (voxel > 0) {
+
+                if (voxel > 0) { // We hit something!
                     if (stopAtTransparent) {
                         resVoxel = voxel; resSide = side;
                         resT = (side == 0) ? sideDist.x - deltaDist.x : (side == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z);
                         resT += startT;
                         return true;
                     } else {
-                        // Order: -Y, +Y, -Z, +Z, -X, +X
-                        // side: 0: X, 1: Y, 2: Z
-                        // To get the actual face index, we need more than just 'side'.
-                        // Let's use the sign of rayDir to distinguish +/-.
-                        int faceIdx = 0;
-                        if (side == 0) faceIdx = (rd.x > 0) ? 4 : 5; // -X is 4, +X is 5
-                        else if (side == 1) faceIdx = (rd.y > 0) ? 0 : 1; // -Y is 0, +Y is 1
-                        else faceIdx = (rd.z > 0) ? 2 : 3; // -Z is 2, +Z is 3
-
-                        ivec4 d0 = texelFetch(u_BlockData, int(voxel) * 2);
+                        // Check if the block is transparent
                         ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 2 + 1);
-                        
-                        int texIdx = 0;
-                        if (faceIdx == 0) texIdx = d0.x;
-                        else if (faceIdx == 1) texIdx = d0.y;
-                        else if (faceIdx == 2) texIdx = d0.z;
-                        else if (faceIdx == 3) texIdx = d0.w;
-                        else if (faceIdx == 4) texIdx = d1.x;
-                        else texIdx = d1.y;
-
                         int trans = d1.z;
-                        if (trans == 0) { // Opaque
+                        if (trans == 0) { // Opaque hit
                             resVoxel = voxel; resSide = side;
                             resT = (side == 0) ? sideDist.x - deltaDist.x : (side == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z);
                             resT += startT;
@@ -219,207 +237,130 @@ bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out fl
                         }
                     }
                 }
+                // Move to the next voxel
                 side = advanceDDA(mapPos, sideDist, deltaDist, step);
+                // Exit chunk loop if we move to a different chunk
                 if (any(notEqual(mapPos >> 4, chunkCoord))) break;
             }
         }
+        // Exit if we've passed the world
         if (sideDist.x > tFar && sideDist.y > tFar && sideDist.z > tFar) break;
     }
     return false;
 }
 
-bool traceEntityPart(vec3 ro, vec3 rd, float tNear, float tFar, int voxelOffset, bool stopAtTransparent, out float resT, out int resSide, out uint resVoxel) {
-    float startT = max(0.0, tNear);
-    vec3 p = ro + rd * startT;
-    p = clamp(p, vec3(0.0), vec3(15.9999));
-    
-    ivec3 mapPos = ivec3(floor(p));
-    mapPos = clamp(mapPos, ivec3(0), ivec3(15));
-
-    vec3 deltaDist = abs(1.0 / rd);
-    ivec3 step = ivec3(sign(rd));
-    vec3 sideDist = (step * (vec3(mapPos) - p) + (step * 0.5) + 0.5) * deltaDist;
-
-    int side = 0;
-    for (int i = 0; i < 128; i++) {
-        if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(16)))) break;
-        uint voxel = entityVoxels[voxelOffset + (mapPos.x | (mapPos.y << 4) | (mapPos.z << 8))];
-        if (voxel > 0) {
-            float alpha = float((voxel >> 24) & 0xFF) / 255.0;
-            bool hit = true;
-            if (!stopAtTransparent) {
-                if (alpha < 0.99) hit = false;
-            }
-            if (hit && alpha > 0.01) {
-                resVoxel = voxel;
-                resSide = side;
-                resT = (side == 0) ? sideDist.x - deltaDist.x : (side == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z);
-                resT += startT;
-                return true;
-            }
-        }
-
-        side = advanceDDA(mapPos, sideDist, deltaDist, step);
-        if (sideDist.x > tFar && sideDist.y > tFar && sideDist.z > tFar) break;
-    }
-    return false;
-}
-
-bool traceEntities(vec3 ro, vec3 rd, bool stopAtTransparent, out float resT, out int resSide, out uint resVoxel, out int resPartIdx, out vec3 resLocalRd) {
-    resT = 1e30;
-    bool hit = false;
-    for (int i = 0; i < numEntityParts; i++) {
-        vec3 localRo = (parts[i].worldToLocal * vec4(ro, 1.0)).xyz;
-        vec3 rayDirInLocal = (parts[i].worldToLocal * vec4(rd, 0.0)).xyz;
-        float len = length(rayDirInLocal);
-        vec3 localRd = rayDirInLocal / len;
-        
-        float tNear, tFar;
-        if (intersectAABB(localRo, localRd, vec3(0.0), vec3(16.0), tNear, tFar)) {
-             float partT; int partSide; uint partVoxel;
-             if (traceEntityPart(localRo, localRd, tNear, tFar, parts[i].voxelOffset, stopAtTransparent, partT, partSide, partVoxel)) {
-                 float worldT = partT / len;
-                 if (worldT < resT) {
-                     resT = worldT;
-                     resSide = partSide;
-                     resVoxel = partVoxel;
-                     resPartIdx = i;
-                     resLocalRd = localRd;
-                     hit = true;
-                 }
-             }
-        }
-    }
-    return hit;
-}
-
+/**
+ * Main Compute Shader execution entry.
+ */
 void main() {
+    // Determine the pixel this thread is responsible for
     ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(imgOutput);
     if (any(greaterThanEqual(pixelCoords, size))) return;
 
+    // Convert pixel coordinates to NDC (Normalized Device Coordinates) [-1, 1]
     vec2 ndc = ((vec2(pixelCoords) + 0.5) / vec2(size)) * 2.0 - 1.0;
+
+    // Construct the ray direction based on camera orientation
     vec3 rayRo = camPos;
     vec3 rayDir = normalize(camForward + ndc.x * (float(size.x)/size.y) * camRight + ndc.y * camUp);
 
     vec3 finalColor = vec3(0.0);
-    vec3 throughput = vec3(1.0);
+    vec3 throughput = vec3(1.0); // How much light can pass through to the next bounce
     bool skip = false;
 
+    // Bounce loop for reflections and transparency (Max 8 bounces)
     for (int bounce = 0; bounce < 8; bounce++) {
-        float tWorld, tEntity;
-        int sideWorld, sideEntity;
-        uint voxelWorld, voxelEntity;
-        int partIdx;
-        vec3 localRd;
-        
-        bool hitWorld = traceWorld(rayRo, rayDir, true, skip, tWorld, sideWorld, voxelWorld);
-        bool hitEntity = traceEntities(rayRo, rayDir, true, tEntity, sideEntity, voxelEntity, partIdx, localRd);
-        
         float t;
         int side;
         uint voxel;
-        bool isEntity = false;
 
-        if (hitWorld && hitEntity) {
-            if (tWorld < tEntity) {
-                t = tWorld; side = sideWorld; voxel = voxelWorld; isEntity = false;
-            } else {
-                t = tEntity; side = sideEntity; voxel = voxelEntity; isEntity = true;
-            }
-        } else if (hitWorld) {
-            t = tWorld; side = sideWorld; voxel = voxelWorld; isEntity = false;
-        } else if (hitEntity) {
-            t = tEntity; side = sideEntity; voxel = voxelEntity; isEntity = true;
-        } else {
+        // Find what the ray hits
+        bool hitWorld = traceWorld(rayRo, rayDir, true, skip, t, side, voxel);
+
+        if (!hitWorld) {
+            // Hit the sky
             vec3 skyColor = mix(SKY_BLUE * 0.5, SKY_BLUE, max(0.0, rayDir.y + 0.5));
             finalColor += throughput * skyColor;
             break;
         }
 
+        // Calculate hit position and surface normal
         vec3 hitPos = rayRo + rayDir * t;
         vec3 normal = vec3(0.0);
-        
-        if (isEntity) {
-            vec3 localNormal = vec3(0.0);
-            if (side == 0) localNormal.x = -sign(localRd.x);
-            else if (side == 1) localNormal.y = -sign(localRd.y);
-            else localNormal.z = -sign(localRd.z);
-            normal = normalize(transpose(mat3(parts[partIdx].worldToLocal)) * localNormal);
-        } else {
-            if (side == 0) normal.x = -sign(rayDir.x);
-            else if (side == 1) normal.y = -sign(rayDir.y);
-            else normal.z = -sign(rayDir.z);
-        }
+        if (side == 0) normal.x = -sign(rayDir.x);
+        else if (side == 1) normal.y = -sign(rayDir.y);
+        else normal.z = -sign(rayDir.z);
+
+        // Fetch properties for the block we hit
+        ivec4 d0 = texelFetch(u_BlockData, int(voxel) * 2);
+        ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 2 + 1);
+
+        // Determine which face of the voxel we hit (0-5)
+        int faceIdx = 0;
+        if (side == 0) faceIdx = (rayDir.x > 0) ? 4 : 5;
+        else if (side == 1) faceIdx = (rayDir.y > 0) ? 0 : 1;
+        else faceIdx = (rayDir.z > 0) ? 2 : 3;
+
+        // Get the texture index for that face
+        int texIdx = 0;
+        if (faceIdx == 0) texIdx = d0.x;
+        else if (faceIdx == 1) texIdx = d0.y;
+        else if (faceIdx == 2) texIdx = d0.z;
+        else if (faceIdx == 3) texIdx = d0.w;
+        else if (faceIdx == 4) texIdx = d1.x;
+        else texIdx = d1.y;
+
+        // Unpack properties
+        float trans = float(d1.z) / 255.0;
+        int packedVal = d1.w;
+        float refl = float(packedVal & 0xFF) / 255.0;
+        int isTintable = (packedVal >> 8) & 1;
 
         vec3 albedo = vec3(1.0);
-        float trans = 0.0;
-        float refl = 0.0;
-        if (isEntity) {
-            albedo = vec3(
-                float(voxel & 0xFF),
-                float((voxel >> 8) & 0xFF),
-                float((voxel >> 16) & 0xFF)
-            ) / 255.0;
-            trans = 1.0 - float((voxel >> 24) & 0xFF) / 255.0;
-        } else {
-            // Fetch block data (2 ivec4 per block)
-            ivec4 d0 = texelFetch(u_BlockData, int(voxel) * 2);
-            ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 2 + 1);
+        if (texIdx >= 0) {
+            // Calculate UV coordinates on the voxel face
+            vec2 uv;
+            if (side == 0) uv = fract(hitPos.zy);
+            else if (side == 1) uv = fract(hitPos.xz);
+            else uv = fract(hitPos.xy);
 
-            int faceIdx = 0;
-            if (side == 0) faceIdx = (rayDir.x > 0) ? 4 : 5; 
-            else if (side == 1) faceIdx = (rayDir.y > 0) ? 0 : 1; 
-            else faceIdx = (rayDir.z > 0) ? 2 : 3; 
+            // Sample the block texture from the array
+            vec4 texColor = texture(u_BlockTextures, vec3(uv, float(texIdx)));
+            albedo = texColor.rgb;
 
-            int texIdx = 0;
-            if (faceIdx == 0) texIdx = d0.x;
-            else if (faceIdx == 1) texIdx = d0.y;
-            else if (faceIdx == 2) texIdx = d0.z;
-            else if (faceIdx == 3) texIdx = d0.w;
-            else if (faceIdx == 4) texIdx = d1.x;
-            else texIdx = d1.y;
+            // Apply biome tint if necessary (e.g., for grass)
+            if (isTintable == 1) {
+                vec2 biomeParams = texture(u_BiomeMap, hitPos.xz / float(WORLD_SIZE)).rg;
+                vec3 tint = texture(u_GrassColormap, vec2(1.0 - biomeParams.x, 1.0 - biomeParams.y)).rgb;
+                albedo *= tint;
+            }
 
-            trans = float(d1.z) / 255.0;
-            int packedVal = d1.w;
-            refl = float(packedVal & 0xFF) / 255.0;
-            int isTintable = (packedVal >> 8) & 1;
-
-            if (texIdx >= 0) {
-                vec2 uv;
-                if (side == 0) uv = fract(hitPos.zy);
-                else if (side == 1) uv = fract(hitPos.xz);
-                else uv = fract(hitPos.xy);
-                vec4 texColor = texture(u_BlockTextures, vec3(uv, float(texIdx)));
-                albedo = texColor.rgb;
-                
-                if (isTintable == 1) {
-                    vec2 biomeParams = texture(u_BiomeMap, hitPos.xz / float(WORLD_SIZE)).rg;
-                    vec3 tint = texture(u_GrassColormap, vec2(1.0 - biomeParams.x, 1.0 - biomeParams.y)).rgb;
-                    albedo *= tint;
-                }
-
-                if (trans > 0.0 && (texColor.a < 0.1 || dot(albedo, vec3(1.0)) < 0.1)) {
-                    trans = 1.0;
-                    albedo = vec3(1.0);
-                }
+            // Simple cutout transparency (discard pixels with low alpha)
+            if (trans > 0.0 && (texColor.a < 0.1 || dot(albedo, vec3(1.0)) < 0.1)) {
+                trans = 1.0;
+                albedo = vec3(1.0);
             }
         }
 
+        // Apply lighting
         int worldSide = 0;
         if (abs(normal.y) > abs(normal.x) && abs(normal.y) > abs(normal.z)) worldSide = 1;
         else if (abs(normal.z) > abs(normal.x) && abs(normal.z) > abs(normal.y)) worldSide = 2;
 
         vec3 light = getSurfaceLight(hitPos, worldSide, normal);
-        vec3 diffuse = albedo * (light + 0.1);
+        vec3 diffuse = albedo * (light + 0.1); // Add small ambient light
+
+        // Simple directional shading to define shapes
         if (worldSide == 0) diffuse *= 0.8;
         if (worldSide == 2) diffuse *= 0.9;
 
-        // Fog
+        // Apply distance fog
         float fogFactor = clamp(1.0 - exp(-t * 0.0008), 0.0, 1.0);
         vec3 skyColor = mix(SKY_BLUE * 0.5, SKY_BLUE, max(0.0, rayDir.y + 0.5));
         diffuse = mix(diffuse, skyColor, fogFactor);
 
+        // Handle reflection or transparency for the next bounce
         if (refl > 0.0 && trans < 1.0) {
             finalColor += throughput * diffuse * (1.0 - refl) * (1.0 - trans);
             throughput *= refl;
@@ -430,12 +371,14 @@ void main() {
             finalColor += throughput * diffuse * (1.0 - trans);
             throughput *= trans * albedo;
             rayRo = hitPos + rayDir * 0.01; 
-            skip = true; 
+            skip = true; // Skip the first DDA step to avoid hitting the same voxel again
         } else {
+            // Opaque hit, stop bouncing
             finalColor += throughput * diffuse;
             break;
         }
     }
 
+    // Save the final color to the output image
     imageStore(imgOutput, pixelCoords, vec4(finalColor, 1.0));
 }
