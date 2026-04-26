@@ -8,18 +8,18 @@ public final class JemPartDefinition {
     public final Vector3f origin = new Vector3f();
     public final Quaternionf baseRotation = new Quaternionf();
     public final Vector3f baseScale = new Vector3f(1.0f);
-    public final Vector3f gridOffset = new Vector3f();
-    public final Vector3f voxelScale = new Vector3f(1.0f);
-    public final int[] voxelData;
+    public final Vector3f min = new Vector3f();
+    public final Vector3f max = new Vector3f();
+    public final int blockId;
 
     public JemPartDefinition(String name, Vector3f origin, Quaternionf baseRotation,
-            Vector3f baseScale, Vector3f gridOffset, Vector3f voxelScale, int[] voxelData) {
+            Vector3f baseScale, Vector3f min, Vector3f max, int blockId) {
         this.name = name;
         this.origin.set(origin);
         this.baseRotation.set(baseRotation);
         this.baseScale.set(baseScale);
-        this.gridOffset.set(gridOffset);
-        this.voxelScale.set(voxelScale);
-        this.voxelData = voxelData.clone();
+        this.min.set(min);
+        this.max.set(max);
+        this.blockId = blockId;
     }
 }

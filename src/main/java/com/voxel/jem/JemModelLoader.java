@@ -27,8 +27,18 @@ public final class JemModelLoader {
 
     private static final Map<Path, JemModel> CACHE = new HashMap<>();
     private static final Map<Path, TextureImage> TEXTURE_CACHE = new HashMap<>();
+    private static final List<EntityPartMetadata> PART_METADATA = new ArrayList<>();
+    private static final List<TextureImage> UNIQUE_TEXTURES = new ArrayList<>();
 
     private JemModelLoader() {
+    }
+
+    public static List<EntityPartMetadata> getPartMetadata() {
+        return PART_METADATA;
+    }
+
+    public static List<TextureImage> getUniqueTextures() {
+        return UNIQUE_TEXTURES;
     }
 
     public static JemEntityInstance loadEntity(String modelNameOrPath) throws IOException {
@@ -96,11 +106,28 @@ public final class JemModelLoader {
         Bounds bounds = computeBounds(box);
         bounds.ensureNonZeroAxes();
 
-        Vector3f span = new Vector3f(bounds.max).sub(bounds.min);
-        Vector3f voxelScale = new Vector3f(span).div(16.0f);
-        int[] voxelData = voxelize(box, bounds, voxelScale);
+        EntityPartMetadata meta = new EntityPartMetadata();
+        meta.textureIdx = UNIQUE_TEXTURES.indexOf(box.texture);
+        if (meta.textureIdx == -1 && box.texture != null) {
+            meta.textureIdx = UNIQUE_TEXTURES.size();
+            UNIQUE_TEXTURES.add(box.texture);
+        }
 
-        return new JemPartDefinition(partName, origin, baseRotation, baseScale, bounds.min, voxelScale, voxelData);
+        Vector3f size = new Vector3f(box.max).sub(box.min);
+        for (int face = 0; face < 6; face++) {
+            FaceSample fs = box.getFaceUVs(face, size);
+            meta.uvs[face].set(
+                (box.textureOffset.x + fs.u) / box.textureSize.x,
+                (box.textureOffset.y + fs.v) / box.textureSize.y,
+                fs.faceWidth / box.textureSize.x,
+                fs.faceHeight / box.textureSize.y
+            );
+        }
+
+        int blockId = PART_METADATA.size();
+        PART_METADATA.add(meta);
+
+        return new JemPartDefinition(partName, origin, baseRotation, baseScale, bounds.min, bounds.max, blockId);
     }
 
     private static List<VoxelBox> collectBoxesForPart(JSONObject model, TextureImage texture, Vector3f textureSize) {
@@ -534,6 +561,24 @@ public final class JemModelLoader {
             return texture.sample(texU / textureSize.x, texV / textureSize.y);
         }
 
+        private FaceSample getFaceUVs(int face, Vector3f size) {
+            float x = size.x;
+            float y = size.y;
+            float z = size.z;
+
+            FaceSample fs;
+            if (face == 0) fs = new FaceSample(z, 0, z, y); // -X
+            else if (face == 1) fs = new FaceSample(z + x, 0, z, y); // +X
+            else if (face == 2) fs = new FaceSample(z, z, x, z); // -Y
+            else if (face == 3) fs = new FaceSample(z + x, 0, x, y); // +Y
+            else if (face == 4) fs = new FaceSample(z + x + z, 0, x, y); // -Z
+            else fs = new FaceSample(z, 0, x, y); // +Z
+
+            if (mirrorU) fs.u = fs.faceWidth - fs.u;
+            if (mirrorV) fs.v = fs.faceHeight - fs.v;
+            return fs;
+        }
+
         private FaceSample pickFace(Vector3f point, Vector3f size) {
             float dxMin = point.x - min.x;
             float dxMax = max.x - point.x;
@@ -557,28 +602,23 @@ public final class JemModelLoader {
             float y = size.y;
             float z = size.z;
 
-            if (face == 0) {
-                return new FaceSample(z - localZ, localY, z, y);
-            }
-            if (face == 1) {
-                return new FaceSample(z + x + localZ, localY, z, y);
-            }
-            if (face == 2) {
-                return new FaceSample(z + localX, z - localZ, x, z);
-            }
-            if (face == 3) {
-                return new FaceSample(z + x + localX, localY, x, y);
-            }
-            if (face == 4) {
-                return new FaceSample(z + x + z + (x - localX), localY, x, y);
-            }
-            return new FaceSample(z + localX, localY, x, y);
+            FaceSample fs;
+            if (face == 0) fs = new FaceSample(z - localZ, localY, z, y);
+            else if (face == 1) fs = new FaceSample(z + x + localZ, localY, z, y);
+            else if (face == 2) fs = new FaceSample(z + localX, z - localZ, x, z);
+            else if (face == 3) fs = new FaceSample(z + x + localX, localY, x, y);
+            else if (face == 4) fs = new FaceSample(z + x + z + (x - localX), localY, x, y);
+            else fs = new FaceSample(z + localX, localY, x, y);
+
+            if (mirrorU) fs.u = fs.faceWidth - fs.u;
+            if (mirrorV) fs.v = fs.faceHeight - fs.v;
+            return fs;
         }
     }
 
     private static final class FaceSample {
-        private final float u;
-        private final float v;
+        private float u;
+        private float v;
         private final float faceWidth;
         private final float faceHeight;
 
@@ -625,7 +665,7 @@ public final class JemModelLoader {
         }
     }
 
-    private static final class TextureImage {
+    public static final class TextureImage {
         private final int width;
         private final int height;
         private final int[] argb;
@@ -636,6 +676,10 @@ public final class JemModelLoader {
             argb = new int[width * height];
             image.getRGB(0, 0, width, height, argb, 0, width);
         }
+
+        public int getWidth() { return width; }
+        public int getHeight() { return height; }
+        public int[] getArgb() { return argb; }
 
         private int sample(float u, float v) {
             float wrappedU = clamp01(u);

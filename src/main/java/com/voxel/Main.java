@@ -365,14 +365,14 @@ public class Main {
             int slot = ensureChunkSlot(chunkX, chunkY, chunkZ);
             int blockId = DEBUG_PART_BLOCK_IDS[i % DEBUG_PART_BLOCK_IDS.length];
             int solidCount = stampPartIntoChunk(part, slot, blockId);
-            System.out.printf("  part[%02d] %-20s chunk=(%d,%d,%d) voxels=%d origin=(%.2f, %.2f, %.2f) offset=(%.2f, %.2f, %.2f) scale=(%.3f, %.3f, %.3f)%n",
+        System.out.printf("  part[%02d] %-20s chunk=(%d,%d,%d) voxels=%d origin=(%.2f, %.2f, %.2f) min=(%.2f, %.2f, %.2f) max=(%.2f, %.2f, %.2f)%n",
                     i,
                     part.name,
                     chunkX, chunkY, chunkZ,
                     solidCount,
                     part.origin.x, part.origin.y, part.origin.z,
-                    part.gridOffset.x, part.gridOffset.y, part.gridOffset.z,
-                    part.voxelScale.x, part.voxelScale.y, part.voxelScale.z);
+                    part.min.x, part.min.y, part.min.z,
+                    part.max.x, part.max.y, part.max.z);
         }
     }
 
@@ -398,8 +398,7 @@ public class Main {
         for (int x = 0; x < CHUNK_SIZE; x++) {
             for (int y = 0; y < CHUNK_SIZE; y++) {
                 for (int z = 0; z < CHUNK_SIZE; z++) {
-                    int voxel = part.voxelData[x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_SIZE];
-                    if ((voxel >>> 24) != 0) {
+                    if (x >= part.min.x && x <= part.max.x && y >= part.min.y && y <= part.max.y && z >= part.min.z && z <= part.max.z) {
                         world.setVoxelInPool(slot, x, y, z, blockId);
                         filled++;
                     } else {
@@ -490,7 +489,7 @@ public class Main {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lightPoolSSBO);
-            entityRenderer.bind(3, 4);
+            entityRenderer.bind(3, 6, 11);
 
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
             glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
@@ -506,5 +505,8 @@ public class Main {
         }
     }
 
-    public static void main(String[] args) { new Main().run(); }
+    public static void main(String[] args) {
+        System.out.println("Voxel Engine Version 1.1.0.1");
+        new Main().run();
+    }
 }
