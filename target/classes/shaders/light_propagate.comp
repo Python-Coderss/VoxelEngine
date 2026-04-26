@@ -1,107 +1,13 @@
 #version 430 core
+
+/**
+ * Light Propagation Compute Shader (Static).
+ * Used for calculating light levels across the voxel grid on the GPU.
+ */
+
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
-layout(std430, binding = 1) buffer readonly restrict IndirectionTable {
-    uint chunkSlots[];
-};
-
-layout(std430, binding = 2) buffer readonly restrict ChunkPool {
-    uint voxelPool[];
-};
-
-// Two buffers for ping-ponging propagation
-layout(std430, binding = 5) buffer LightPoolA {
-    uint lightPoolA[];
-};
-
-layout(std430, binding = 6) buffer LightPoolB {
-    uint lightPoolB[];
-};
-
-uniform uint iteration;
-uniform uint pingPong;  // 0 = read from A, write to B; 1 = read from B, write to A
-
-const float ATTENUATION_LINEAR = 0.05;
-const float ATTENUATION_QUADRATIC = 0.01;
-const float MIN_CONTRIBUTION = 0.01;
-
-const int CHUNK_SIZE = 16;
-const int REGION_SIZE = 128;
-const uint EMPTY = 0xFFFFFFFF;
-
-uint getPoolIndex(ivec3 pos) {
-    ivec3 chunkCoords = pos >> 4;
-    if (any(lessThan(chunkCoords, ivec3(0))) || any(greaterThanEqual(chunkCoords, ivec3(REGION_SIZE)))) return EMPTY;
-    
-    uint chunkIdx = chunkCoords.x | (chunkCoords.y << 7) | (chunkCoords.z << 14);
-    uint slot = chunkSlots[chunkIdx];
-    if (slot == EMPTY) return EMPTY;
-    
-    ivec3 lp = pos & 15;
-    return (slot << 12) | (lp.x | (lp.y << 4) | (lp.z << 8));
-}
-
-vec3 unpackLight(uint packed) {
-    return vec3(
-        float(packed & 0xF),
-        float((packed >> 4) & 0xF),
-        float((packed >> 8) & 0xF)
-    );
-}
-
-uint packLight(vec3 light) {
-    uvec3 iLight = uvec3(clamp(light, vec3(0.0), vec3(15.0)));
-    return iLight.x | (iLight.y << 4) | (iLight.z << 8);
-}
-
+// Placeholder for future GPU-accelerated lighting logic
 void main() {
-    ivec3 pos = ivec3(gl_GlobalInvocationID.xyz);
-    // Limit to loaded region
-    if (any(greaterThanEqual(pos, ivec3(REGION_SIZE * CHUNK_SIZE)))) return;
-
-    uint selfIdx = getPoolIndex(pos);
-    if (selfIdx == EMPTY) return;
-
-    // Skip if opaque
-    if (voxelPool[selfIdx] > 0) {
-        if (pingPong == 0) lightPoolB[selfIdx] = 0;
-        else lightPoolA[selfIdx] = 0;
-        return;
-    }
-
-    vec3 currentLight;
-    if (pingPong == 0) currentLight = unpackLight(lightPoolA[selfIdx]);
-    else currentLight = unpackLight(lightPoolB[selfIdx]);
-
-    vec3 bestLight = currentLight;
-
-    const ivec3 neighbors[6] = ivec3[](
-        ivec3(1, 0, 0), ivec3(-1, 0, 0),
-        ivec3(0, 1, 0), ivec3(0, -1, 0),
-        ivec3(0, 0, 1), ivec3(0, 0, -1)
-    );
-
-    for (int i = 0; i < 6; i++) {
-        ivec3 nPos = pos + neighbors[i];
-        uint nIdx = getPoolIndex(nPos);
-        if (nIdx == EMPTY) continue;
-
-        uint packedN;
-        if (pingPong == 0) packedN = lightPoolA[nIdx];
-        else packedN = lightPoolB[nIdx];
-
-        if (packedN == 0) continue;
-
-        vec3 nLight = unpackLight(packedN);
-        
-        // Simple linear decay for shader (approximation of BFS)
-        // In a true BFS we'd need distance, but here we can use per-iteration decay
-        float attenuation = 0.9; 
-        vec3 propagated = nLight * attenuation;
-
-        bestLight = max(bestLight, propagated);
-    }
-
-    if (pingPong == 0) lightPoolB[selfIdx] = packLight(bestLight);
-    else lightPoolA[selfIdx] = packLight(bestLight);
+    // Current light propagation is handled on the CPU in LightPropagationEngine.java
 }
