@@ -166,56 +166,54 @@ public class Main {
         leftLeg = new EntityPart("leftLeg");
         leftLeg.position.set(8, 0, 12);
         leftLeg.pivot.set(4, 12, 4);
-        leftLeg.voxelData = createBoxData(0, 0, 0, 8, 12, 8, 3);
+        leftLeg.min.set(0, 0, 0);
+        leftLeg.max.set(8, 12, 8);
+        leftLeg.blockId = 3;
         player.rootParts.add(leftLeg);
 
         rightLeg = new EntityPart("rightLeg");
         rightLeg.position.set(16, 0, 12);
         rightLeg.pivot.set(4, 12, 4);
-        rightLeg.voxelData = createBoxData(0, 0, 0, 8, 12, 8, 3);
+        rightLeg.min.set(0, 0, 0);
+        rightLeg.max.set(8, 12, 8);
+        rightLeg.blockId = 3;
         player.rootParts.add(rightLeg);
 
         // Body: y=12 to y=24
         EntityPart body = new EntityPart("body");
         body.position.set(8, 12, 12);
-        body.voxelData = createBoxData(0, 0, 0, 16, 12, 8, 4); // Green body
+        body.min.set(0, 0, 0);
+        body.max.set(16, 12, 8);
+        body.blockId = 4; // Green body
         player.rootParts.add(body);
 
         // Head: y=24 to y=32
         head = new EntityPart("head");
         head.position.set(0, 12, -4); // Relative to body
         head.pivot.set(8, 0, 8);
-        head.voxelData = createBoxData(0, 0, 0, 16, 8, 16, 3); // Red head
+        head.min.set(0, 0, 0);
+        head.max.set(16, 8, 16);
+        head.blockId = 3; // Red head
         body.children.add(head);
 
         // Arms: y=12 to y=24 (sides of body)
         leftArm = new EntityPart("leftArm");
         leftArm.position.set(-8, 0, 0); // Relative to body
         leftArm.pivot.set(8, 12, 4);
-        leftArm.voxelData = createBoxData(0, 0, 0, 8, 12, 8, 3);
+        leftArm.min.set(0, 0, 0);
+        leftArm.max.set(8, 12, 8);
+        leftArm.blockId = 3;
         body.children.add(leftArm);
 
         rightArm = new EntityPart("rightArm");
         rightArm.position.set(16, 0, 0); // Relative to body
         rightArm.pivot.set(0, 12, 4);
-        rightArm.voxelData = createBoxData(0, 0, 0, 8, 12, 8, 3);
+        rightArm.min.set(0, 0, 0);
+        rightArm.max.set(8, 12, 8);
+        rightArm.blockId = 3;
         body.children.add(rightArm);
 
         entityManager.addEntity(player);
-    }
-
-    private short[] createBoxData(int x, int y, int z, int w, int h, int d, int type) {
-        short[] data = new short[16 * 16 * 16];
-        for (int vx = x; vx < x + w; vx++) {
-            for (int vy = y; vy < y + h; vy++) {
-                for (int vz = z; vz < z + d; vz++) {
-                    if (vx >= 0 && vx < 16 && vy >= 0 && vy < 16 && vz >= 0 && vz < 16) {
-                        data[vx + vy * 16 + vz * 256] = (short) type;
-                    }
-                }
-            }
-        }
-        return data;
     }
 
     private void setupQuad() {
@@ -430,7 +428,7 @@ public class Main {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lightPoolSSBO);
-            entityManager.bind(3, 4);
+            entityManager.bind(3);
 
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
             glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);

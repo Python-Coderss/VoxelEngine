@@ -18,8 +18,9 @@ public class EntityPart {
     public final Matrix4f worldTransform = new Matrix4f();
     public final Matrix4f worldToLocal = new Matrix4f();
     
-    public short[] voxelData; // 16x16x16
-    public int gpuBufferOffset = -1;
+    public final Vector3f min = new Vector3f();
+    public final Vector3f max = new Vector3f(16.0f);
+    public int blockId = 0;
     
     public EntityPart parent;
     public final List<EntityPart> children = new ArrayList<>();
