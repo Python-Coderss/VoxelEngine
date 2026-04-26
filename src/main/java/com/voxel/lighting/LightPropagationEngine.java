@@ -1,6 +1,7 @@
 package com.voxel.lighting;
 
 import com.voxel.World;
+import com.voxel.utils.BlockDataManager;
 import com.voxel.utils.Direction;
 import org.joml.Vector3f;
 import org.joml.Vector3i;
@@ -14,17 +15,20 @@ import java.util.*;
  */
 public class LightPropagationEngine {
     // Tuning parameters for light fading
-    private static final float ATTENUATION_LINEAR = 0.15f;
-    private static final float ATTENUATION_QUADRATIC = 0.05f;
+    private static final float ATTENUATION_LINEAR = 0.08f;
+    private static final float ATTENUATION_QUADRATIC = 0.02f;
     
     private final World world;
+    private final BlockDataManager blockDataManager;
     
     /**
      * Constructs the light engine.
      * @param world The world to propagate light in.
+     * @param blockDataManager The manager for block properties.
      */
-    public LightPropagationEngine(World world) {
+    public LightPropagationEngine(World world, BlockDataManager blockDataManager) {
         this.world = world;
+        this.blockDataManager = blockDataManager;
     }
 
     /**
@@ -75,8 +79,11 @@ public class LightPropagationEngine {
         // 1. Fast Global Sun Pass (Calculated at the chunk level for speed)
         if (sun != null) applySun(sun, lightPool, indirection);
 
-        // 2. High-Resolution Voxel BFS for Block Lights (More accurate, slower)
-        if (!blockLights.isEmpty()) runBlockBFS(blockLights, lightPool, indirection);
+        // 2. High-Resolution Voxel BFS for Block Lights (Direct lighting)
+        if (!blockLights.isEmpty()) runBlockBFS(blockLights, lightPool, indirection, false);
+
+        // 3. Radiance Cascade for Indirect Lighting (Lower resolution, bounces)
+        if (!blockLights.isEmpty()) runBlockBFS(blockLights, lightPool, indirection, true);
 
         long end = System.currentTimeMillis();
         System.out.println("Lighting optimization took: " + (end - start) + "ms");
@@ -84,87 +91,92 @@ public class LightPropagationEngine {
 
     /**
      * Quickly applies global sunlight to all loaded chunks.
+     * Modified to apply light per-voxel for smoother transitions and 8-bit precision.
      */
     private void applySun(LightSource sun, int[] lightPool, int[] indirection) {
-        float sunR = sun.color.x * sun.intensity;
-        float sunG = sun.color.y * sun.intensity;
-        float sunB = sun.color.z * sun.intensity;
+        float sunR = sun.color.x * sun.intensity * 17.0f; // Scale 15 to ~255
+        float sunG = sun.color.y * sun.intensity * 17.0f;
+        float sunB = sun.color.z * sun.intensity * 17.0f;
 
         for (int i = 0; i < indirection.length; i++) {
             int slot = indirection[i];
             if (slot == -1) continue;
 
-            // Calculate chunk world coordinates
-            int cx = i % 128, cy = (i / 128) % 128, cz = i / 16384;
+            int cx = (i % 128) * 16;
+            int cy = ((i / 128) % 128) * 16;
+            int cz = (i / 16384) * 16;
 
-            // Simple distance-based attenuation for the entire chunk
-            float dist = (float) Math.sqrt(Math.pow(cx*16+8 - sun.position.x, 2) + 
-                                           Math.pow(cy*16+8 - sun.position.y, 2) + 
-                                           Math.pow(cz*16+8 - sun.position.z, 2));
-            float attenuation = 1.0f / (1.0f + 0.0002f * dist);
+            int poolOffset = slot << 12;
+            for (int vx = 0; vx < 16; vx++) {
+                for (int vy = 0; vy < 16; vy++) {
+                    for (int vz = 0; vz < 16; vz++) {
+                        float dist = (float) Math.sqrt(Math.pow(cx + vx - sun.position.x, 2) + 
+                                                       Math.pow(cy + vy - sun.position.y, 2) + 
+                                                       Math.pow(cz + vz - sun.position.z, 2));
+                        float attenuation = 1.0f / (1.0f + 0.0002f * dist);
 
-            // Pack RGB (4 bits each) into an integer
-            int packed = ((int)(sunR * attenuation)) | ((int)(sunG * attenuation) << 4) | ((int)(sunB * attenuation) << 8);
+                        int r = Math.min(255, (int)(sunR * attenuation));
+                        int g = Math.min(255, (int)(sunG * attenuation));
+                        int b = Math.min(255, (int)(sunB * attenuation));
 
-            // Fill the entire chunk's light data with this value
-            Arrays.fill(lightPool, slot << 12, (slot << 12) + 4096, packed);
+                        int packed = r | (g << 8) | (b << 16);
+                        lightPool[poolOffset + (vx | (vy << 4) | (vz << 8))] = packed;
+                    }
+                }
+            }
         }
     }
 
     /**
      * Uses Breadth-First Search to accurately propagate light from point sources (block lights).
+     * Updated for 8-bit precision.
      */
-    private void runBlockBFS(List<LightSource> sources, int[] lightPool, int[] indirectionTable) {
+    private void runBlockBFS(List<LightSource> sources, int[] lightPool, int[] indirectionTable, boolean isIndirect) {
         LongQueue queue = new LongQueue(65536);
         int[] chunkPool = world.getChunkPool();
+        float intensityMultiplier = (isIndirect ? 0.8f : 1.0f) * 17.0f; 
+        float attLinear = isIndirect ? ATTENUATION_LINEAR * 0.3f : ATTENUATION_LINEAR;
+        float attQuad = isIndirect ? ATTENUATION_QUADRATIC * 0.3f : ATTENUATION_QUADRATIC;
 
-        // Initialize queue with all light source positions
         for (int i = 0; i < sources.size(); i++) {
             LightSource src = sources.get(i);
             int slot = getSlot(src.position.x, src.position.y, src.position.z, indirectionTable);
             if (slot == -1) continue;
 
             updateVoxelLight(src.position.x, src.position.y, src.position.z,
-                             (int)(src.color.x * src.intensity),
-                             (int)(src.color.y * src.intensity),
-                             (int)(src.color.z * src.intensity), slot, lightPool);
+                              (int)(src.color.x * src.intensity * intensityMultiplier),
+                              (int)(src.color.y * src.intensity * intensityMultiplier),
+                              (int)(src.color.z * src.intensity * intensityMultiplier), slot, lightPool);
 
             queue.offer(pack(src.position.x, src.position.y, src.position.z, 0, i));
         }
 
-        // Process the queue
         while (!queue.isEmpty()) {
             long current = queue.poll();
             int cx = unpackX(current), cy = unpackY(current), cz = unpackZ(current), cDist = unpackDist(current), srcID = unpackID(current);
             LightSource source = sources.get(srcID);
 
-            // Stop if we've reached the maximum light radius
-            if (cDist >= source.radius) continue;
+            int maxRadius = (int)source.radius;
+            if (cDist >= maxRadius) continue;
 
-            // Check all 6 neighboring voxels
             for (Direction dir : Direction.values()) {
                 int nx = cx + dir.x, ny = cy + dir.y, nz = cz + dir.z;
-
-                // Bounds check
                 if (nx < 0 || ny < 0 || nz < 0 || nx >= 2048 || ny >= 2048 || nz >= 2048) continue;
 
-                // Get chunk slot for neighbor
                 int slot = indirectionTable[(nx >> 4) + (ny >> 4) * 128 + (nz >> 4) * 16384];
+                if (slot == -1) continue;
 
-                // Light cannot pass through solid blocks or unallocated chunks
-                if (slot == -1 || chunkPool[(slot << 12) | ((nx & 15) | ((ny & 15) << 4) | ((nz & 15) << 8))] > 0) continue;
+                int blockId = chunkPool[(slot << 12) | ((nx & 15) | ((ny & 15) << 4) | ((nz & 15) << 8))];
+                if (blockId > 0 && blockDataManager.isFullBlock(blockId)) continue;
 
-                // Calculate attenuation at this distance
                 int nDist = cDist + 1;
-                float att = 1.0f / (1.0f + ATTENUATION_LINEAR * nDist + ATTENUATION_QUADRATIC * nDist * nDist);
-                int nr = (int)(source.color.x * source.intensity * att);
-                int ng = (int)(source.color.y * source.intensity * att);
-                int nb = (int)(source.color.z * source.intensity * att);
+                float att = 1.0f / (1.0f + attLinear * nDist + attQuad * nDist * nDist);
+                int nr = (int)(source.color.x * source.intensity * intensityMultiplier * att);
+                int ng = (int)(source.color.y * source.intensity * intensityMultiplier * att);
+                int nb = (int)(source.color.z * source.intensity * intensityMultiplier * att);
 
-                // Stop propagating if light is too dim
                 if (Math.max(nr, Math.max(ng, nb)) < 1) continue;
 
-                // Update light pool if the new light is brighter than existing light
                 if (updateVoxelLight(nx, ny, nz, nr, ng, nb, slot, lightPool)) {
                     queue.offer(pack(nx, ny, nz, nDist, srcID));
                 }
@@ -174,18 +186,18 @@ public class LightPropagationEngine {
 
     /**
      * Updates the light value at a specific voxel if the new values are brighter.
-     * @return True if any color channel was updated.
+     * Updated for 8-bit precision (0-255).
      */
     private boolean updateVoxelLight(int x, int y, int z, int r, int g, int b, int slot, int[] lightPool) {
         int idx = (slot << 12) | ((x & 15) | ((y & 15) << 4) | ((z & 15) << 8));
         int packed = lightPool[idx];
 
-        // Extract current channels (4 bits each)
-        int cr = packed & 15, cg = (packed >> 4) & 15, cb = (packed >> 8) & 15;
+        int cr = packed & 0xFF, cg = (packed >> 8) & 0xFF, cb = (packed >> 16) & 0xFF;
+
+        r = Math.min(255, r); g = Math.min(255, g); b = Math.min(255, b);
 
         if (r > cr || g > cg || b > cb) {
-            // Write back the maximum of current and new brightness
-            lightPool[idx] = Math.max(r, cr) | (Math.max(g, cg) << 4) | (Math.max(b, cb) << 8);
+            lightPool[idx] = Math.max(r, cr) | (Math.max(g, cg) << 8) | (Math.max(b, cb) << 16);
             return true;
         }
         return false;

@@ -1,11 +1,15 @@
 package com.voxel.utils;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.IOException;
+import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.lwjgl.system.MemoryUtil;
 
@@ -25,6 +29,12 @@ public class BlockDataManager {
     // OpenGL IDs for the Buffer and the Texture Buffer Object (TBO).
     private int tboId;
     private int textureId;
+
+    // For block AABBs
+    private int aabbTboId;
+    private int aabbTextureId;
+    private int infoTboId;
+    private int infoTextureId;
     
     /**
      * Inner class representing the properties of a single block type.
@@ -43,9 +53,16 @@ public class BlockDataManager {
         // Whether the block color should be modified by the biome (e.g., grass).
         public int isTintable;
 
+        // Whether this block occupies the full voxel space (true for most blocks, false for slabs/stairs/fences).
+        public boolean isFullBlock;
+
+        // List of AABBs for the block shape (each float[6]: minx,miny,minz,maxx,maxy,maxz in 0-1 range)
+        public List<float[]> aabbs = new ArrayList<>();
+
         /** Initializes a block with no textures. */
         public BlockData() {
             for(int i=0; i<6; i++) tex[i] = -1;
+            isFullBlock = true; // Default to full block
         }
     }
 
@@ -87,6 +104,16 @@ public class BlockDataManager {
         } else if (name.contains("water")) {
             data.transparency = 150;
             data.reflectivity = 100;
+        }
+
+        // Set isFullBlock based on block type
+        if (name.contains("slab") || name.contains("stairs") || name.contains("fence") ||
+            name.contains("wall") || name.contains("door") || name.contains("trapdoor") ||
+            name.contains("pane") || name.contains("carpet") || name.contains("pressure_plate") ||
+            name.contains("button") || name.contains("lever") || name.contains("torch") ||
+            name.contains("rail") || name.contains("sign") || name.contains("banner") ||
+            name.contains("flower") || name.contains("sapling") || name.contains("mushroom")) {
+            data.isFullBlock = false;
         }
 
         // Validate that we found a texture for every face.
@@ -149,6 +176,20 @@ public class BlockDataManager {
                 }
             }
 
+            // Parse elements for AABBs
+            if (json.has("elements")) {
+                JSONArray elements = json.getJSONArray("elements");
+                for (int i = 0; i < elements.length(); i++) {
+                    JSONObject el = elements.getJSONObject(i);
+                    JSONArray from = el.getJSONArray("from");
+                    JSONArray to = el.getJSONArray("to");
+                    float[] aabb = new float[6];
+                    for (int j = 0; j < 3; j++) aabb[j] = (float) from.getDouble(j) / 16.0f;
+                    for (int j = 0; j < 3; j++) aabb[j + 3] = (float) to.getDouble(j) / 16.0f;
+                    data.aabbs.add(aabb);
+                }
+            }
+
         } catch (IOException e) {
             // Error reading file, stop recursion.
         }
@@ -175,12 +216,12 @@ public class BlockDataManager {
                 buffer.put(data.tex[1]);
                 buffer.put(data.tex[2]);
                 buffer.put(data.tex[3]);
-                
-                // ivec4(tex-X, tex+X, transparency, packed_refl_tint)
+
+                // ivec4(tex-X, tex+X, transparency, packed_refl_tint_full)
                 buffer.put(data.tex[4]);
                 buffer.put(data.tex[5]);
                 buffer.put(data.transparency);
-                int packed = (data.reflectivity & 0xFF) | ((data.isTintable & 1) << 8);
+                int packed = (data.reflectivity & 0xFF) | ((data.isTintable & 1) << 8) | ((data.isFullBlock ? 1 : 0) << 9);
                 buffer.put(packed);
             } else {
                 // Fill with -1 for unused IDs.
@@ -200,11 +241,87 @@ public class BlockDataManager {
         // Link the texture to the buffer with an integer format.
         glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32I, tboId);
 
-        MemoryUtil.memFree(buffer); // Clean up CPU memory.
+        MemoryUtil.memFree(buffer);
+
+        uploadAABBs(maxId);
+    }
+
+    private void uploadAABBs(int maxId) {
+        List<float[]> allAABBs = new ArrayList<>();
+        Map<Integer, int[]> blockInfo = new HashMap<>();
+        int offset = 0;
+        for (int id = 0; id <= maxId; id++) {
+            BlockData data = blockRegistry.get(id);
+            List<float[]> aabbs = (data != null) ? data.aabbs : null;
+            if (aabbs != null && !aabbs.isEmpty()) {
+                blockInfo.put(id, new int[]{offset, aabbs.size()});
+                for (float[] aabb : aabbs) {
+                    allAABBs.add(new float[]{aabb[0], aabb[1], aabb[2]}); // min
+                    allAABBs.add(new float[]{aabb[3], aabb[4], aabb[5]}); // max
+                }
+                offset += aabbs.size() * 2;
+            } else {
+                blockInfo.put(id, new int[]{0, 0});
+            }
+        }
+
+        // AABB data buffer
+        FloatBuffer aabbBuffer = MemoryUtil.memAllocFloat(allAABBs.size() * 3);
+        for (float[] v : allAABBs) aabbBuffer.put(v);
+        aabbBuffer.flip();
+
+        aabbTboId = glGenBuffers();
+        glBindBuffer(GL_TEXTURE_BUFFER, aabbTboId);
+        glBufferData(GL_TEXTURE_BUFFER, aabbBuffer, GL_STATIC_DRAW);
+
+        aabbTextureId = glGenTextures();
+        glBindTexture(GL_TEXTURE_BUFFER, aabbTextureId);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F, aabbTboId);
+
+        MemoryUtil.memFree(aabbBuffer);
+
+        // Info buffer
+        IntBuffer infoBuffer = MemoryUtil.memAllocInt((maxId + 1) * 2);
+        for (int id = 0; id <= maxId; id++) {
+            int[] info = blockInfo.get(id);
+            infoBuffer.put(info[0]);
+            infoBuffer.put(info[1]);
+        }
+        infoBuffer.flip();
+
+        infoTboId = glGenBuffers();
+        glBindBuffer(GL_TEXTURE_BUFFER, infoTboId);
+        glBufferData(GL_TEXTURE_BUFFER, infoBuffer, GL_STATIC_DRAW);
+
+        infoTextureId = glGenTextures();
+        glBindTexture(GL_TEXTURE_BUFFER, infoTextureId);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32I, infoTboId);
+
+        MemoryUtil.memFree(infoBuffer);
     }
 
     /** @return The ID of the Texture Buffer Object. */
     public int getTextureId() {
         return textureId;
+    }
+
+    /** @return The ID of the AABB Texture Buffer Object. */
+    public int getAABBTextureId() {
+        return aabbTextureId;
+    }
+
+    /** @return The ID of the AABB Info Texture Buffer Object. */
+    public int getInfoTextureId() {
+        return infoTextureId;
+    }
+
+    /**
+     * Checks if the block with the given ID occupies the full voxel space.
+     * @param blockId The block ID to check.
+     * @return True if it's a full block, false if partial (e.g., slabs, stairs).
+     */
+    public boolean isFullBlock(int blockId) {
+        BlockData data = blockRegistry.get(blockId);
+        return data != null && data.isFullBlock;
     }
 }

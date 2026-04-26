@@ -1,13 +1,106 @@
 #version 430 core
 
 /**
- * Light Propagation Compute Shader (Static).
- * Used for calculating light levels across the voxel grid on the GPU.
+ * Radiance Cascade Propagation Compute Shader.
+ * Based on the principles shared by SimonDev and Alexander Sannikov.
+ * Simplified for 3D voxel grid.
  */
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
-// Placeholder for future GPU-accelerated lighting logic
+layout(std430, binding = 1) buffer readonly restrict IndirectionTable {
+    uint chunkSlots[];
+};
+
+layout(std430, binding = 2) buffer readonly restrict ChunkPool {
+    uint voxelPool[];
+};
+
+layout(std430, binding = 5) buffer restrict LightPool {
+    uint lightPool[];
+};
+
+layout(location = 1) uniform int u_Pass; // 0 = Cascade 0 (Direct), 1 = Cascade 1 (Indirect)
+
+const int WORLD_SIZE = 2048;
+const uint EMPTY = 0xFFFFFFFF;
+
+// 6 cardinal directions for the 3D cascade
+const vec3 DIRS[6] = {
+    vec3(1,0,0), vec3(-1,0,0),
+    vec3(0,1,0), vec3(0,-1,0),
+    vec3(0,0,1), vec3(0,0,-1)
+};
+
+/** Samples voxel ID. */
+uint getVoxel(ivec3 p) {
+    if (any(lessThan(p, ivec3(0))) || any(greaterThanEqual(p, ivec3(WORLD_SIZE)))) return 0;
+    uint slot = chunkSlots[(p.x >> 4) | ((p.y >> 4) << 7) | ((p.z >> 4) << 14)];
+    if (slot == EMPTY) return 0;
+    return voxelPool[(slot << 12) | ((p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8))];
+}
+
+/** Samples packed light. */
+uint getPackedLight(ivec3 p) {
+    if (any(lessThan(p, ivec3(0))) || any(greaterThanEqual(p, ivec3(WORLD_SIZE)))) return 0;
+    uint slot = chunkSlots[(p.x >> 4) | ((p.y >> 4) << 7) | ((p.z >> 4) << 14)];
+    if (slot == EMPTY) return 0;
+    return lightPool[(slot << 12) | ((p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8))];
+}
+
+vec3 unpackLight(uint p) {
+    return vec3(float(p & 0xFF), float((p >> 8) & 0xFF), float((p >> 16) & 0xFF));
+}
+
+uint packLight(vec3 c) {
+    return uint(clamp(c.r, 0, 255)) | (uint(clamp(c.g, 0, 255)) << 8) | (uint(clamp(c.b, 0, 255)) << 16);
+}
+
 void main() {
-    // Current light propagation is handled on the CPU in LightPropagationEngine.java
+    ivec3 pos = ivec3(gl_GlobalInvocationID.xyz);
+    if (any(greaterThanEqual(pos, ivec3(WORLD_SIZE)))) return;
+
+    uint slot = chunkSlots[(pos.x >> 4) | ((pos.y >> 4) << 7) | ((pos.z >> 4) << 14)];
+    if (slot == EMPTY) return;
+
+    uint voxel = getVoxel(pos);
+    // Radiance cascades usually calculate light in empty space
+    if (voxel != 0) return; 
+
+    vec3 radiance = vec3(0.0);
+
+    if (u_Pass == 0) {
+        // --- Cascade 0: Direct Lighting (Short Range) ---
+        // Raymarch 4 steps in each direction
+        for (int i = 0; i < 6; i++) {
+            vec3 d = DIRS[i];
+            for (float t = 1.0; t <= 4.0; t += 1.0) {
+                ivec3 np = pos + ivec3(d * t);
+                uint hitVoxel = getVoxel(np);
+                if (hitVoxel != 0) {
+                    // Simple: if we hit something, it's dark (shadow)
+                    // In a real system, we'd check if the hit voxel is a light source
+                    break;
+                }
+                // Check if this neighbor has direct light (e.g. from Sun or BFS)
+                // We merge it into our local radiance
+                radiance += unpackLight(getPackedLight(np)) * 0.1;
+            }
+        }
+    } else {
+        // --- Cascade 1: Indirect Lighting (Longer Range) ---
+        // Sample 8 neighbors from a coarser grid or just further away
+        for (int i = 0; i < 6; i++) {
+            ivec3 np = pos + ivec3(DIRS[i] * 4.0);
+            radiance += unpackLight(getPackedLight(np)) * 0.8;
+        }
+    }
+
+    uint currentPacked = lightPool[(slot << 12) | ((pos.x & 15) | ((pos.y & 15) << 4) | ((pos.z & 15) << 8))];
+    vec3 currentLight = unpackLight(currentPacked);
+    
+    // Smoothly merge (very simple temporal-like accumulation)
+    vec3 finalLight = max(currentLight, radiance / 6.0);
+    
+    lightPool[(slot << 12) | ((pos.x & 15) | ((pos.y & 15) << 4) | ((pos.z & 15) << 8))] = packLight(finalLight);
 }
