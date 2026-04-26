@@ -1,0 +1,12 @@
+com\voxel\jem\JemModel.class
+com\voxel\jem\JemModelLoader$VoxelBox.class
+com\voxel\jem\JemPartInstance.class
+com\voxel\jem\JemEntityInstance.class
+com\voxel\jem\JemModelLoader$Bounds.class
+com\voxel\jem\JemModelLoader$1.class
+com\voxel\jem\JemEntityRenderer.class
+com\voxel\jem\JemPartDefinition.class
+com\voxel\jem\JemModelLoader$FaceSample.class
+com\voxel\jem\JemModelLoader.class
+com\voxel\jem\JemModelLoader$TextureImage.class
+com\voxel\jem\JemModelLoader$AxisSettings.class

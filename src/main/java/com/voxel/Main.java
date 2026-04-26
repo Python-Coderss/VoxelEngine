@@ -1,6 +1,8 @@
 package com.voxel;
 
-import com.voxel.entity.*;
+import com.voxel.jem.JemEntityInstance;
+import com.voxel.jem.JemEntityRenderer;
+import com.voxel.jem.JemModelLoader;
 import com.voxel.lighting.LightPropagationEngine;
 import com.voxel.lighting.LightSource;
 import com.voxel.lighting.LightType;
@@ -8,7 +10,6 @@ import com.voxel.utils.BlockDataManager;
 import com.voxel.utils.ShaderUtil;
 import com.voxel.utils.TextureManager;
 
-import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.joml.Vector3i;
 import org.lwjgl.glfw.GLFWErrorCallback;
@@ -16,6 +17,7 @@ import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
+import java.io.IOException;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
@@ -32,10 +34,14 @@ import static org.lwjgl.opengl.GL45.*;
 import static org.lwjgl.system.MemoryUtil.NULL;
 
 public class Main {
+    private static final int[] DEBUG_PART_BLOCK_IDS = {2, 4, 6, 7, 8, 9, 3};
+    private static final int DEBUG_CHUNK_PADDING = 1;
+
     private long window;
     private int quadProgram, computeProgram;
     private int quadVAO, quadVBO, renderTexture;
     private int indirectionSSBO, chunkPoolSSBO, lightPoolSSBO;
+    private int nextWorldChunkSlot;
     
     private World world;
     private LightPropagationEngine lightEngine;
@@ -44,9 +50,8 @@ public class Main {
     private BlockDataManager blockDataManager;
     private com.voxel.utils.BiomeManager biomeManager;
     
-    private EntityManager entityManager;
-    private Entity player;
-    private EntityPart head, leftArm, rightArm, leftLeg, rightLeg;
+    private JemEntityRenderer entityRenderer;
+    private JemEntityInstance player;
     
     private int width = 1280, height = 720;
     
@@ -64,6 +69,10 @@ public class Main {
     private float rightX, rightY, rightZ;
     private float upX, upY, upZ;
 
+	private JemEntityInstance cow;
+
+	private JemEntityInstance pig;
+
     public void run() {
         init();
         loop();
@@ -75,6 +84,9 @@ public class Main {
         glDeleteBuffers(indirectionSSBO);
         glDeleteBuffers(chunkPoolSSBO);
         glDeleteBuffers(lightPoolSSBO);
+        if (entityRenderer != null) {
+            entityRenderer.destroy();
+        }
         glfwDestroyWindow(window);
         glfwTerminate();
         glfwSetErrorCallback(null).free();
@@ -126,10 +138,10 @@ public class Main {
 
         setupQuad();
         setupTexture();
+        setupEntities();
         setupWorld();
         setupResources();
         setupLighting();
-        setupEntities();
     }
 
     private void setupResources() {
@@ -158,64 +170,27 @@ public class Main {
     }
 
     private void setupEntities() {
-        entityManager = new EntityManager();
-        player = new Entity();
-        player.position.set(1024, 2, 1024); // Start above ground level
+        entityRenderer = new JemEntityRenderer();
 
-        // Legs: y=0 to y=12
-        leftLeg = new EntityPart("leftLeg");
-        leftLeg.position.set(8, 0, 12);
-        leftLeg.pivot.set(4, 12, 4);
-        leftLeg.voxelData = createBoxData(0, 0, 0, 8, 12, 8, 3);
-        player.rootParts.add(leftLeg);
+        player = loadEntity("creeper", 1024, 2, 1024);
+        entityRenderer.addEntity(player);
 
-        rightLeg = new EntityPart("rightLeg");
-        rightLeg.position.set(16, 0, 12);
-        rightLeg.pivot.set(4, 12, 4);
-        rightLeg.voxelData = createBoxData(0, 0, 0, 8, 12, 8, 3);
-        player.rootParts.add(rightLeg);
+        cow = loadEntity("cow", 1040, 2, 1024);
+        pig = loadEntity("pig", 1060, 2, 1024);
+        entityRenderer.addEntity(cow);
+        entityRenderer.addEntity(pig);
 
-        // Body: y=12 to y=24
-        EntityPart body = new EntityPart("body");
-        body.position.set(8, 12, 12);
-        body.voxelData = createBoxData(0, 0, 0, 16, 12, 8, 4); // Green body
-        player.rootParts.add(body);
-
-        // Head: y=24 to y=32
-        head = new EntityPart("head");
-        head.position.set(0, 12, -4); // Relative to body
-        head.pivot.set(8, 0, 8);
-        head.voxelData = createBoxData(0, 0, 0, 16, 8, 16, 3); // Red head
-        body.children.add(head);
-
-        // Arms: y=12 to y=24 (sides of body)
-        leftArm = new EntityPart("leftArm");
-        leftArm.position.set(-8, 0, 0); // Relative to body
-        leftArm.pivot.set(8, 12, 4);
-        leftArm.voxelData = createBoxData(0, 0, 0, 8, 12, 8, 3);
-        body.children.add(leftArm);
-
-        rightArm = new EntityPart("rightArm");
-        rightArm.position.set(16, 0, 0); // Relative to body
-        rightArm.pivot.set(0, 12, 4);
-        rightArm.voxelData = createBoxData(0, 0, 0, 8, 12, 8, 3);
-        body.children.add(rightArm);
-
-        entityManager.addEntity(player);
+        
     }
 
-    private short[] createBoxData(int x, int y, int z, int w, int h, int d, int type) {
-        short[] data = new short[16 * 16 * 16];
-        for (int vx = x; vx < x + w; vx++) {
-            for (int vy = y; vy < y + h; vy++) {
-                for (int vz = z; vz < z + d; vz++) {
-                    if (vx >= 0 && vx < 16 && vy >= 0 && vy < 16 && vz >= 0 && vz < 16) {
-                        data[vx + vy * 16 + vz * 256] = (short) type;
-                    }
-                }
-            }
+    private JemEntityInstance loadEntity(String modelName, float x, float y, float z) {
+        try {
+            JemEntityInstance entity = JemModelLoader.loadEntity(modelName);
+            entity.position.set(x, y, z);
+            return entity;
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to load JEM model '" + modelName + "'", e);
         }
-        return data;
     }
 
     private void setupQuad() {
@@ -272,12 +247,13 @@ public class Main {
 
     private void setupWorld() {
         world = new World();
+        nextWorldChunkSlot = 0;
 
         // 1. Procedural Ground (Layers 0-1)
-        int slot = 0;
         for (int cx = 32; cx < 96; cx++) {
             for (int cz = 32; cz < 96; cz++) {
-                if (slot >= POOL_SIZE) break;
+                if (nextWorldChunkSlot >= POOL_SIZE) break;
+                int slot = allocateChunkSlot();
                 world.setChunkSlot(cx, 0, cz, slot);
                 for (int vx = 0; vx < CHUNK_SIZE; vx++) {
                     for (int vz = 0; vz < CHUNK_SIZE; vz++) {
@@ -285,10 +261,12 @@ public class Main {
                         world.setVoxelInPool(slot, vx, 1, vz, 1); // Grass top
                     }
                 }
-                slot++;
             }
         }
-
+        stampEntityDebugChunks(player, 64, 3, 64);
+        stampEntityDebugChunks(cow, 64, 6, 64);
+        stampEntityDebugChunks(pig, 64, 9, 64);
+        
         // 2. The Mirror House (1020, 2, 1020)
         int baseEX = 1020, baseEY = 2, baseEZ = 1020;
         // Floor
@@ -328,20 +306,109 @@ public class Main {
             }
         }
 
-        // Sync to GPU
+        uploadWorldToGpu();
+    }
+
+    private int allocateChunkSlot() {
+        if (nextWorldChunkSlot >= POOL_SIZE) {
+            throw new IllegalStateException("World chunk pool exhausted");
+        }
+        return nextWorldChunkSlot++;
+    }
+
+    private int ensureChunkSlot(int cx, int cy, int cz) {
+        int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
+        int[] table = world.getIndirectionTable();
+        int slot = table[tableIdx];
+        if (slot != EMPTY) {
+            return slot;
+        }
+
+        slot = allocateChunkSlot();
+        world.setChunkSlot(cx, cy, cz, slot);
+        return slot;
+    }
+
+    private void uploadWorldToGpu() {
         int[] indirectionTable = world.getIndirectionTable();
         IntBuffer tableBuffer = MemoryUtil.memAllocInt(indirectionTable.length);
         tableBuffer.put(indirectionTable).flip();
-        indirectionSSBO = glCreateBuffers();
-        glNamedBufferStorage(indirectionSSBO, tableBuffer, 0);
+        if (indirectionSSBO == 0) {
+            indirectionSSBO = glCreateBuffers();
+            glNamedBufferStorage(indirectionSSBO, tableBuffer, 0);
+        } else {
+            glNamedBufferSubData(indirectionSSBO, 0, tableBuffer);
+        }
         MemoryUtil.memFree(tableBuffer);
 
         int[] chunkPool = world.getChunkPool();
         IntBuffer poolBuffer = MemoryUtil.memAllocInt(chunkPool.length);
         poolBuffer.put(chunkPool).flip();
-        chunkPoolSSBO = glCreateBuffers();
-        glNamedBufferStorage(chunkPoolSSBO, poolBuffer, 0);
+        if (chunkPoolSSBO == 0) {
+            chunkPoolSSBO = glCreateBuffers();
+            glNamedBufferStorage(chunkPoolSSBO, poolBuffer, 0);
+        } else {
+            glNamedBufferSubData(chunkPoolSSBO, 0, poolBuffer);
+        }
         MemoryUtil.memFree(poolBuffer);
+    }
+
+    private void stampEntityDebugChunks(JemEntityInstance entity, int baseChunkX, int chunkY, int chunkZ) {
+        List<com.voxel.jem.JemPartDefinition> parts = entity.getModel().getParts();
+        ensureDebugChunkPadding(baseChunkX, chunkY, chunkZ, parts.size(), DEBUG_CHUNK_PADDING);
+        System.out.printf("Debug stamping model '%s' with %d baked parts at chunk row (%d,%d,%d)%n",
+                entity.getModel().getName(), parts.size(), baseChunkX, chunkY, chunkZ);
+
+        for (int i = 0; i < parts.size(); i++) {
+            com.voxel.jem.JemPartDefinition part = parts.get(i);
+            int chunkX = baseChunkX + i;
+            int slot = ensureChunkSlot(chunkX, chunkY, chunkZ);
+            int blockId = DEBUG_PART_BLOCK_IDS[i % DEBUG_PART_BLOCK_IDS.length];
+            int solidCount = stampPartIntoChunk(part, slot, blockId);
+            System.out.printf("  part[%02d] %-20s chunk=(%d,%d,%d) voxels=%d origin=(%.2f, %.2f, %.2f) offset=(%.2f, %.2f, %.2f) scale=(%.3f, %.3f, %.3f)%n",
+                    i,
+                    part.name,
+                    chunkX, chunkY, chunkZ,
+                    solidCount,
+                    part.origin.x, part.origin.y, part.origin.z,
+                    part.gridOffset.x, part.gridOffset.y, part.gridOffset.z,
+                    part.voxelScale.x, part.voxelScale.y, part.voxelScale.z);
+        }
+    }
+
+    private void ensureDebugChunkPadding(int baseChunkX, int chunkY, int chunkZ, int chunkCount, int padding) {
+        int minX = Math.max(0, baseChunkX - padding);
+        int maxX = Math.min(REGION_SIZE - 1, baseChunkX + chunkCount - 1 + padding);
+        int minY = Math.max(0, chunkY - padding);
+        int maxY = Math.min(REGION_SIZE - 1, chunkY + padding);
+        int minZ = Math.max(0, chunkZ - padding);
+        int maxZ = Math.min(REGION_SIZE - 1, chunkZ + padding);
+
+        for (int cx = minX; cx <= maxX; cx++) {
+            for (int cy = minY; cy <= maxY; cy++) {
+                for (int cz = minZ; cz <= maxZ; cz++) {
+                    ensureChunkSlot(cx, cy, cz);
+                }
+            }
+        }
+    }
+
+    private int stampPartIntoChunk(com.voxel.jem.JemPartDefinition part, int slot, int blockId) {
+        int filled = 0;
+        for (int x = 0; x < CHUNK_SIZE; x++) {
+            for (int y = 0; y < CHUNK_SIZE; y++) {
+                for (int z = 0; z < CHUNK_SIZE; z++) {
+                    int voxel = part.voxelData[x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_SIZE];
+                    if ((voxel >>> 24) != 0) {
+                        world.setVoxelInPool(slot, x, y, z, blockId);
+                        filled++;
+                    } else {
+                        world.setVoxelInPool(slot, x, y, z, 0);
+                    }
+                }
+            }
+        }
+        return filled;
     }
 
     private void updateCamera(float dt) {
@@ -391,21 +458,14 @@ public class Main {
 
             updateCamera(dt);
 
-            float time = (float) glfwGetTime();
-            head.rotation.identity().rotateX((float) Math.sin(time * 2) * 0.2f);
-            leftArm.rotation.identity().rotateX((float) Math.sin(time * 4) * 0.5f);
-            rightArm.rotation.identity().rotateX((float) Math.sin(time * 4 + Math.PI) * 0.5f);
-            leftLeg.rotation.identity().rotateX((float) Math.sin(time * 4 + Math.PI) * 0.4f);
-            rightLeg.rotation.identity().rotateX((float) Math.sin(time * 4) * 0.4f);
-
-            entityManager.updateGpuData();
+            entityRenderer.updateGpuData();
 
             glUseProgram(computeProgram);
             glProgramUniform3f(computeProgram, 0, camX, camY, camZ);
             glProgramUniform3f(computeProgram, 1, forwardX, forwardY, forwardZ);
             glProgramUniform3f(computeProgram, 2, rightX, rightY, rightZ);
             glProgramUniform3f(computeProgram, 3, upX, upY, upZ);
-            glProgramUniform1i(computeProgram, glGetUniformLocation(computeProgram, "numEntityParts"), entityManager.getNumParts());
+            glProgramUniform1i(computeProgram, glGetUniformLocation(computeProgram, "numEntityParts"), entityRenderer.getNumParts());
 
             glActiveTexture(GL_TEXTURE6);
             glBindTexture(GL_TEXTURE_2D_ARRAY, textureManager.getTextureArrayId());
@@ -430,7 +490,7 @@ public class Main {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lightPoolSSBO);
-            entityManager.bind(3, 4);
+            entityRenderer.bind(3, 4);
 
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
             glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
