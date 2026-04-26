@@ -34,6 +34,8 @@ layout(std430, binding = 5) buffer readonly restrict LightPool {
 // Samplers for textures
 uniform sampler2DArray u_BlockTextures; // All block textures in one array
 uniform isamplerBuffer u_BlockData;      // Block properties (transparency, reflection, etc.)
+uniform samplerBuffer u_BlockAABBs;      // AABB data (vec3 min, max)
+uniform isamplerBuffer u_BlockAABBInfo;  // AABB info per block (ivec2 offset, count)
 uniform sampler2D u_BiomeMap;            // 2D map of biomes across the world
 uniform sampler2D u_GrassColormap;       // Colors for grass based on biome
 uniform sampler2D u_FoliageColormap;     // Colors for leaves based on biome
@@ -123,128 +125,144 @@ int skipEmptyChunk(inout ivec3 mapPos, inout vec3 sideDist, vec3 deltaDist, ivec
 
 /**
  * Samples the lighting at a specific voxel position.
+ * Updated for 8-bit precision.
  */
 vec3 sampleLightFast(ivec3 p) {
-    ivec3 cc = p >> 4; // Get chunk coords
+    ivec3 cc = p >> 4;
     if (any(lessThan(cc, ivec3(0))) || any(greaterThanEqual(cc, ivec3(128)))) return vec3(0.01);
 
-    // Look up chunk slot
     uint slot = chunkSlots[cc.x | (cc.y << 7) | (cc.z << 14)];
     if (slot == EMPTY) return vec3(0.01); 
 
-    ivec3 lp = p & 15; // Local coords
-    // Fetch packed light value
+    ivec3 lp = p & 15;
     uint packedLight = lightPool[(slot << 12) | (lp.x | (lp.y << 4) | (lp.z << 8))];
 
-    // Unpack 4 bits per channel and scale to [0, 1]
-    return vec3(float(packedLight & 0xF), float((packedLight >> 4) & 0xF), float((packedLight >> 8) & 0xF)) * 0.06666;
+    // Unpack 8 bits per channel and scale to [0, 1]
+    return vec3(float(packedLight & 0xFF), float((packedLight >> 8) & 0xFF), float((packedLight >> 16) & 0xFF)) / 255.0;
 }
 
 /**
- * Calculates smooth lighting at a surface point using bilinear interpolation.
+ * Calculates smooth lighting at a surface point using trilinear interpolation.
  */
 vec3 getSurfaceLight(vec3 p, int side, vec3 normal) {
-    vec3 pos = p - normal * 0.05; // Offset slightly inside the voxel to sample light
-    ivec3 i = ivec3(floor(pos));
-    vec3 f = fract(pos);
+    // Sample the light field at the center of the voxel just outside the surface
+    vec3 samplePos = p + normal * 0.5;
     
-    vec3 c00, c10, c01, c11;
-    vec2 uv;
+    // Trilinear interpolation
+    ivec3 i = ivec3(floor(samplePos - 0.5));
+    vec3 f = fract(samplePos - 0.5);
 
-    // Depending on which face we hit, we interpolate along different axes
-    if (side == 0) { // Hit X face, interpolate Y and Z
-        c00 = sampleLightFast(i);
-        c10 = sampleLightFast(i + ivec3(0, 1, 0));
-        c01 = sampleLightFast(i + ivec3(0, 0, 1));
-        c11 = sampleLightFast(i + ivec3(0, 1, 1));
-        uv = f.zy;
-    } else if (side == 1) { // Hit Y face, interpolate X and Z
-        c00 = sampleLightFast(i);
-        c10 = sampleLightFast(i + ivec3(1, 0, 0));
-        c01 = sampleLightFast(i + ivec3(0, 0, 1));
-        c11 = sampleLightFast(i + ivec3(1, 0, 1));
-        uv = f.xz;
-    } else { // Hit Z face, interpolate X and Y
-        c00 = sampleLightFast(i);
-        c10 = sampleLightFast(i + ivec3(1, 0, 0));
-        c01 = sampleLightFast(i + ivec3(0, 1, 0));
-        c11 = sampleLightFast(i + ivec3(1, 1, 0));
-        uv = f.xy;
-    }
+    vec3 c000 = sampleLightFast(i + ivec3(0, 0, 0));
+    vec3 c100 = sampleLightFast(i + ivec3(1, 0, 0));
+    vec3 c010 = sampleLightFast(i + ivec3(0, 1, 0));
+    vec3 c110 = sampleLightFast(i + ivec3(1, 1, 0));
+    vec3 c001 = sampleLightFast(i + ivec3(0, 0, 1));
+    vec3 c101 = sampleLightFast(i + ivec3(1, 0, 1));
+    vec3 c011 = sampleLightFast(i + ivec3(0, 1, 1));
+    vec3 c111 = sampleLightFast(i + ivec3(1, 1, 1));
 
-    return mix(mix(c00, c10, uv.y), mix(c01, c11, uv.y), uv.x);
+    vec3 x00 = mix(c000, c100, f.x);
+    vec3 x10 = mix(c010, c110, f.x);
+    vec3 x01 = mix(c001, c101, f.x);
+    vec3 x11 = mix(c011, c111, f.x);
+
+    vec3 y0 = mix(x00, x10, f.y);
+    vec3 y1 = mix(x01, x11, f.y);
+
+    return mix(y0, y1, f.z);
 }
 
 /**
  * Traces a ray through the entire voxel world.
- * @return True if a voxel was hit.
  */
 bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out float resT, out int resSide, out uint resVoxel) {
     float tNear, tFar;
-    // Check if the ray even hits the world box
     if (!intersectAABB(ro, rd, vec3(0.0), vec3(WORLD_SIZE), tNear, tFar)) return false;
     
     float startT = max(0.0, tNear);
     vec3 p = ro + rd * startT;
     p = clamp(p, vec3(0.0), vec3(float(WORLD_SIZE)));
     
-    // Initialize DDA variables
     ivec3 mapPos = ivec3(floor(p));
     vec3 deltaDist = abs(1.0 / rd);
     ivec3 step = ivec3(sign(rd));
     vec3 sideDist = (step * (vec3(mapPos) - p) + (step * 0.5) + 0.5) * deltaDist;
 
     int side = 0;
-    
-    if (skipFirst) { // Useful when starting from the surface of a voxel
-        side = advanceDDA(mapPos, sideDist, deltaDist, step);
-    }
+    if (skipFirst) side = advanceDDA(mapPos, sideDist, deltaDist, step);
 
-    // Main Raymarching Loop (Max 512 steps)
     for (int i = 0; i < 512; i++) {
-        // Stop if out of world bounds
         if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(WORLD_SIZE)))) break;
 
-        // Fetch chunk slot from indirection table
         uint slot = chunkSlots[(mapPos.x >> 4) | ((mapPos.y >> 4) << 7) | ((mapPos.z >> 4) << 14)];
 
         if (slot == EMPTY) {
-            // Jump across the empty chunk
             side = skipEmptyChunk(mapPos, sideDist, deltaDist, step);
         } else {
-            // Iterate through voxels inside the chunk
             uint poolOffset = slot << 12;
             ivec3 chunkCoord = mapPos >> 4;
             for (int j = 0; j < 64; j++) {
                 ivec3 lp = mapPos & 15;
                 uint voxel = voxelPool[poolOffset + (lp.x | (lp.y << 4) | (lp.z << 8))];
 
-                if (voxel > 0) { // We hit something!
-                    if (stopAtTransparent) {
+                if (voxel > 0) {
+                    ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 2 + 1);
+                    int isFullBlock = (d1.w >> 9) & 1;
+
+                    if (isFullBlock == 1) {
                         resVoxel = voxel; resSide = side;
                         resT = (side == 0) ? sideDist.x - deltaDist.x : (side == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z);
                         resT += startT;
                         return true;
                     } else {
-                        // Check if the block is transparent
-                        ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 2 + 1);
-                        int trans = d1.z;
-                        if (trans == 0) { // Opaque hit
-                            resVoxel = voxel; resSide = side;
-                            resT = (side == 0) ? sideDist.x - deltaDist.x : (side == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z);
-                            resT += startT;
-                            return true;
+                        // Non-full block: intersect with its AABBs
+                        ivec4 info = texelFetch(u_BlockAABBInfo, int(voxel));
+                        int aabbOffset = info.x;
+                        int aabbCount = info.y;
+                        vec3 voxelMin = vec3(mapPos);
+                        float hitT = 1e30;
+                        int hitSide = -1;
+
+                        for (int k = 0; k < aabbCount; k++) {
+                            vec3 bMin = texelFetch(u_BlockAABBs, aabbOffset + k * 2).xyz + voxelMin;
+                            vec3 bMax = texelFetch(u_BlockAABBs, aabbOffset + k * 2 + 1).xyz + voxelMin;
+                            float tn, tf;
+                            if (intersectAABB(ro, rd, bMin, bMax, tn, tf)) {
+                                if (tn < hitT) {
+                                    hitT = tn;
+                                    // Determine side for AABB
+                                    vec3 hp = ro + rd * tn;
+                                    vec3 center = (bMin + bMax) * 0.5;
+                                    vec3 size = (bMax - bMin) * 0.5;
+                                    vec3 localP = (hp - center) / size;
+                                    vec3 absP = abs(localP);
+                                    if (absP.x > absP.y && absP.x > absP.z) hitSide = 0;
+                                    else if (absP.y > absP.z) hitSide = 1;
+                                    else hitSide = 2;
+                                }
+                            }
+                        }
+
+                        if (hitSide != -1) {
+                            // Hit one of the AABBs!
+                            // Robustness: ensure hit is within reasonable bounds of the voxel
+                            float voxTNear = (side == 0) ? sideDist.x - deltaDist.x : (side == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z);
+                            float voxTFar = min(sideDist.x, min(sideDist.y, sideDist.z));
+                            
+                            // Relaxed constraints to avoid banding artifacts at distance
+                            if (hitT >= startT + voxTNear - 0.01 && hitT <= startT + voxTFar + 0.01) {
+                                resVoxel = voxel; resSide = hitSide;
+                                resT = hitT;
+                                return true;
+                            }
                         }
                     }
                 }
-                // Move to the next voxel
                 side = advanceDDA(mapPos, sideDist, deltaDist, step);
-                // Exit chunk loop if we move to a different chunk
                 if (any(notEqual(mapPos >> 4, chunkCoord))) break;
             }
         }
-        // Exit if we've passed the world
-        if (sideDist.x > tFar && sideDist.y > tFar && sideDist.z > tFar) break;
+        if (sideDist.x > tFar + 0.1 && sideDist.y > tFar + 0.1 && sideDist.z > tFar + 0.1) break;
     }
     return false;
 }
@@ -296,6 +314,34 @@ void main() {
         ivec4 d0 = texelFetch(u_BlockData, int(voxel) * 2);
         ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 2 + 1);
 
+        // Unpack properties
+        float trans = float(d1.z) / 255.0;
+        int packedVal = d1.w;
+        float refl = float(packedVal & 0xFF) / 255.0;
+        int isTintable = (packedVal >> 8) & 1;
+        int isFullBlock = (packedVal >> 9) & 1;
+
+        // For non-full blocks, check if the hit is on the actual shape
+        if (isFullBlock == 0) {
+            ivec4 info = texelFetch(u_BlockAABBInfo, int(voxel));
+            int aabbOffset = info.x;
+            int aabbCount = info.y;
+            bool shapeHit = false;
+            vec3 voxelMin = floor(hitPos);
+            for (int i = 0; i < aabbCount; i++) {
+                vec3 minAABB = texelFetch(u_BlockAABBs, aabbOffset + i * 2).xyz + voxelMin;
+                vec3 maxAABB = texelFetch(u_BlockAABBs, aabbOffset + i * 2 + 1).xyz + voxelMin;
+                if (all(greaterThanEqual(hitPos, minAABB)) && all(lessThanEqual(hitPos, maxAABB))) {
+                    shapeHit = true;
+                    break;
+                }
+            }
+            if (!shapeHit) {
+                // No hit on shape, treat as transparent
+                trans = 1.0;
+            }
+        }
+
         // Determine which face of the voxel we hit (0-5)
         int faceIdx = 0;
         if (side == 0) faceIdx = (rayDir.x > 0) ? 4 : 5;
@@ -310,12 +356,6 @@ void main() {
         else if (faceIdx == 3) texIdx = d0.w;
         else if (faceIdx == 4) texIdx = d1.x;
         else texIdx = d1.y;
-
-        // Unpack properties
-        float trans = float(d1.z) / 255.0;
-        int packedVal = d1.w;
-        float refl = float(packedVal & 0xFF) / 255.0;
-        int isTintable = (packedVal >> 8) & 1;
 
         vec3 albedo = vec3(1.0);
         if (texIdx >= 0) {

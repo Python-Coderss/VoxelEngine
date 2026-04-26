@@ -48,7 +48,7 @@ public class Main {
     private long window;
 
     // OpenGL Program IDs for our shaders
-    private int quadProgram, computeProgram;
+    private int quadProgram, computeProgram, lightProgram;
 
     // OpenGL Object IDs for the full-screen quad used to display the raytraced image
     private int quadVAO, quadVBO, renderTexture;
@@ -83,7 +83,7 @@ public class Main {
     private final int EMPTY = 0xFFFFFFFF;
 
     // Camera state: Position and orientation
-    private float camX = 1024, camY = 20, camZ = 1024; // Initial position at the center of the world
+    private float camX = 1020, camY = 10, camZ = 1030; // Initial position to see the valley of torches
     private float yaw = -45, pitch = -20; // Yaw (left/right rotation) and Pitch (up/down rotation)
     private float lastMouseX = width / 2f, lastMouseY = height / 2f; // For mouse movement delta
     private boolean firstMouse = true; // Flag to initialize mouse position
@@ -194,6 +194,10 @@ public class Main {
         computeProgram = ShaderUtil.createProgram(
             ShaderUtil.compileShader("src/main/resources/shaders/raytracer.comp", GL_COMPUTE_SHADER)
         );
+        // lightProgram handles GPU light propagation (Radiance Cascades)
+        lightProgram = ShaderUtil.createProgram(
+            ShaderUtil.compileShader("src/main/resources/shaders/light_propagate.comp", GL_COMPUTE_SHADER)
+        );
 
         // Setup various engine components
         setupQuad();     // Full-screen rectangle geometry
@@ -231,6 +235,9 @@ public class Main {
         blockDataManager.registerBlock(7, "oak_planks", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(8, "brick", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(9, "gold_block", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(10, "brick_stairs", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(11, "half_slab_oak", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(12, "torch", textureManager, "src/main/resources/assets/minecraft/models/block");
         
         // Upload block property data to the GPU in a texture buffer
         blockDataManager.uploadToGPU();
@@ -275,28 +282,28 @@ public class Main {
     }
 
     /**
-     * Sets up the lighting engine and propagates initial light sources.
+     * Sets up the lighting engine and propagates initial light sources for radiance cascade demo.
      */
     private void setupLighting() {
-        lightEngine = new LightPropagationEngine(world);
+        lightEngine = new LightPropagationEngine(world, blockDataManager);
         List<LightSource> sources = new ArrayList<>();
-        
-        // Sun light (high up at Y=63)
-        sources.add(new LightSource(new Vector3i(1024, 63, 1024), new Vector3f(0.9f, 0.85f, 0.7f), 10, 512, LightType.SUN));
 
-        // Point lights at various locations with different colors
-        sources.add(new LightSource(new Vector3i(1030, 2, 1030), new Vector3f(1.0f, 0.1f, 0.1f), 15, 25, LightType.BLOCK));
-        sources.add(new LightSource(new Vector3i(1010, 2, 1010), new Vector3f(0.1f, 1.0f, 0.1f), 15, 25, LightType.BLOCK));
-        sources.add(new LightSource(new Vector3i(1024, 2, 1040), new Vector3f(0.2f, 0.4f, 1.0f), 15, 25, LightType.BLOCK));
-        sources.add(new LightSource(new Vector3i(1024, 3, 1024), new Vector3f(0.2f, 1f, 1.0f), 15, 25, LightType.BLOCK));
+        // No sun - dark environment to test cascades
 
-        // Place physical blocks at light source locations so we can see where they are
-        world.setVoxel(1024, 63, 1024, 3); // Sun
-        world.setVoxel(1030, 2, 1030, 3); // Red Light
-        world.setVoxel(1010, 2, 1010, 4); // Green Light
-        world.setVoxel(1024, 2, 1040, 3); // Blue Light
-        
-        // Calculate light propagation through the voxel grid
+        // Valley of torches: line of torches at y=3, z=1024, x from 1000 to 1050
+        for (int x = 1000; x <= 1050; x += 5) {
+            sources.add(new LightSource(new Vector3i(x, 3, 1024), new Vector3f(1.0f, 0.6f, 0.2f), 15, 30, LightType.BLOCK));
+            // Place torch blocks
+            world.setVoxel(x, 2, 1024, 7); // Planks base
+            world.setVoxel(x, 3, 1024, 12); // Torch on planks (Correct ID: 12)
+        }
+
+        // Additional scattered lights for testing indirect cascades
+        sources.add(new LightSource(new Vector3i(1025, 5, 1025), new Vector3f(0.2f, 1.0f, 0.2f), 12, 25, LightType.BLOCK));
+        world.setVoxel(1025, 4, 1025, 7);
+        world.setVoxel(1025, 5, 1025, 12);
+
+        // Calculate light propagation with radiance cascades
         lightEngine.propagateAllLights(sources);
 
         // Upload the resulting light data to the GPU in an SSBO
@@ -367,6 +374,12 @@ public class Main {
                 world.setVoxel(1000+x, 1, 1000+z, 5); // Water blocks
                 world.setVoxel(1000+x, 0, 1000+z, 2); // Stone base
             }
+        }
+
+        // 5. Partial blocks demo: stairs and slabs near torches
+        for(int x=1010; x<1020; x++) {
+            world.setVoxel(x, 2, 1020, 10); // brick_stairs
+            world.setVoxel(x, 2, 1022, 11); // half_slab_oak
         }
 
         // Finalize world data and upload to GPU
@@ -490,6 +503,23 @@ public class Main {
             // Update camera based on input
             updateCamera(dt);
 
+            // --- Lighting Pass (Radiance Cascades) ---
+            glUseProgram(lightProgram);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lightPoolSSBO);
+
+            // Pass 0: Cascade 0 (Direct/Short Range)
+            glUniform1i(1, 0); 
+            // Dispatch over a region around the player
+            glDispatchCompute(64, 16, 64); 
+            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+            // Pass 1: Cascade 1 (Indirect/Longer Range)
+            glUniform1i(1, 1);
+            glDispatchCompute(64, 16, 64);
+            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
             // --- Raytracing Pass (Compute Shader) ---
             glUseProgram(computeProgram);
 
@@ -507,6 +537,14 @@ public class Main {
             glActiveTexture(GL_TEXTURE7);
             glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getTextureId());
             glUniform1i(glGetUniformLocation(computeProgram, "u_BlockData"), 7);
+
+            glActiveTexture(GL_TEXTURE10);
+            glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getAABBTextureId());
+            glUniform1i(glGetUniformLocation(computeProgram, "u_BlockAABBs"), 10);
+
+            glActiveTexture(GL_TEXTURE11);
+            glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getInfoTextureId());
+            glUniform1i(glGetUniformLocation(computeProgram, "u_BlockAABBInfo"), 11);
 
             glActiveTexture(GL_TEXTURE8);
             glBindTexture(GL_TEXTURE_2D, biomeManager.getBiomeMapId());

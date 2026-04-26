@@ -1,7 +1,7 @@
 {
     "ambientocclusion": false,
     "textures": {
-        "particle": "#torch"
+        "all":"torch_on"
     },
     "elements": [
         {   "from": [ 7, 0, 7 ],
