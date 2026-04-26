@@ -292,10 +292,10 @@ public class Main {
 
         // Valley of torches: line of torches at y=3, z=1024, x from 1000 to 1050
         for (int x = 1000; x <= 1050; x += 5) {
-            sources.add(new LightSource(new Vector3i(x, 3, 1024), new Vector3f(1.0f, 0.6f, 0.2f), 15, 30, LightType.BLOCK));
+            sources.add(new LightSource(new Vector3i(x, 8, 1024), new Vector3f(1.0f, 0.6f, 0.2f), 15, 30, LightType.BLOCK));
             // Place torch blocks
-            world.setVoxel(x, 2, 1024, 7); // Planks base
-            world.setVoxel(x, 3, 1024, 12); // Torch on planks (Correct ID: 12)
+            world.setVoxel(x, 9, 1024, 7); // Planks base
+            world.setVoxel(x, 10, 1024, 7); // Torch on planks (Correct ID: 12)
         }
 
         // Additional scattered lights for testing indirect cascades
