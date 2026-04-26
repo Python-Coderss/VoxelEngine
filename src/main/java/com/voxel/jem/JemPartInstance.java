@@ -19,8 +19,8 @@ public final class JemPartInstance {
         return definition.name;
     }
 
-    public int[] getVoxelData() {
-        return definition.voxelData;
+    public int getBlockId() {
+        return definition.blockId;
     }
 
     public void update(Matrix4f rootTransform) {
@@ -28,9 +28,7 @@ public final class JemPartInstance {
                 .translate(definition.origin)
                 .rotate(definition.baseRotation)
                 .rotate(poseRotation)
-                .scale(definition.baseScale)
-                .translate(definition.gridOffset)
-                .scale(definition.voxelScale);
+                .scale(definition.baseScale);
 
         worldTransform.set(rootTransform).mul(localTransform);
         worldTransform.invert(worldToLocal);
