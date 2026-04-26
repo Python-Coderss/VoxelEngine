@@ -4,48 +4,88 @@ import org.joml.Vector3i;
 import java.nio.IntBuffer;
 import org.lwjgl.system.MemoryUtil;
 
+/**
+ * The World class represents the entire voxel world.
+ * It uses a two-level structure for efficient storage:
+ * 1. An Indirection Table (128x128x128) that maps regions of space to "chunks".
+ * 2. A Chunk Pool that contains the actual voxel data for each allocated chunk.
+ *
+ * This structure allows for a very large world (2048x2048x2048) without using
+ * massive amounts of memory for empty space (air).
+ */
 public class World {
-    public static final int CHUNK_SIZE = 16;
-    public static final int REGION_SIZE = 128;
-    public static final int POOL_SIZE = 16384;
-    public static final int EMPTY = 0xFFFFFFFF;
+    // Constants for world dimensions and structure
+    public static final int CHUNK_SIZE = 16; // Each chunk is 16x16x16 voxels
+    public static final int REGION_SIZE = 128; // The world is 128x128x128 chunks (total 2048 voxels in each dimension)
+    public static final int POOL_SIZE = 16384; // Maximum number of chunks that can be stored in memory
+    public static final int EMPTY = 0xFFFFFFFF; // Value representing an unallocated/empty chunk slot
 
+    // The indirection table maps a chunk's position in the world to its index in the chunk pool.
+    // Index = cx + cy * 128 + cz * 128^2
     private final int[] indirectionTable;
-    private final int[] chunkPool;
-    private final int[] lightPool; // Packed RGB light
 
+    // The chunk pool stores the voxel IDs (e.g., 1 for grass, 2 for stone).
+    // It's a flat array where each chunk occupies CHUNK_SIZE^3 integers.
+    private final int[] chunkPool;
+
+    // The light pool stores the lighting information for each voxel.
+    // Each integer stores packed RGB light levels (e.g., 4 bits per channel).
+    private final int[] lightPool;
+
+    /**
+     * Initializes the world with empty tables and pools.
+     */
     public World() {
+        // Initialize the indirection table with the EMPTY value
         indirectionTable = new int[REGION_SIZE * REGION_SIZE * REGION_SIZE];
         for (int i = 0; i < indirectionTable.length; i++) indirectionTable[i] = EMPTY;
         
         int voxelsPerChunk = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+        // Allocate memory for the voxel and light pools
         chunkPool = new int[POOL_SIZE * voxelsPerChunk];
         lightPool = new int[POOL_SIZE * voxelsPerChunk];
     }
 
+    /**
+     * Gets the voxel ID at the specified world coordinates.
+     * @return The voxel ID, or 0 if out of bounds or empty.
+     */
     public int getVoxel(int x, int y, int z) {
+        // Check if the coordinates are within world boundaries
         if (x < 0 || y < 0 || z < 0 || x >= REGION_SIZE * CHUNK_SIZE || y >= REGION_SIZE * CHUNK_SIZE || z >= REGION_SIZE * CHUNK_SIZE) return 0;
         
+        // Convert world coordinates to chunk coordinates
         int cx = x / CHUNK_SIZE;
         int cy = y / CHUNK_SIZE;
         int cz = z / CHUNK_SIZE;
         
+        // Look up the chunk slot in the indirection table
         int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
         int slot = indirectionTable[tableIdx];
+
+        // If the slot is empty, there are no voxels here
         if (slot == EMPTY) return 0;
         
+        // Convert world coordinates to local coordinates within the chunk
         int lx = x % CHUNK_SIZE;
         int ly = y % CHUNK_SIZE;
         int lz = z % CHUNK_SIZE;
         
+        // Calculate the index in the flat chunk pool array
         int poolIdx = (slot * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) + (lx + ly * CHUNK_SIZE + lz * CHUNK_SIZE * CHUNK_SIZE);
         return chunkPool[poolIdx];
     }
 
+    /**
+     * Checks if the voxel at the given position is opaque (not air).
+     */
     public boolean isOpaque(Vector3i pos) {
         return getVoxel(pos.x, pos.y, pos.z) > 0;
     }
 
+    /**
+     * Checks if the chunk at the given position is currently loaded/allocated.
+     */
     public boolean isLoaded(Vector3i pos) {
         if (pos.x < 0 || pos.y < 0 || pos.z < 0 || pos.x >= REGION_SIZE * CHUNK_SIZE || pos.y >= REGION_SIZE * CHUNK_SIZE || pos.z >= REGION_SIZE * CHUNK_SIZE) return false;
         int cx = pos.x / CHUNK_SIZE;
@@ -55,12 +95,17 @@ public class World {
         return indirectionTable[tableIdx] != EMPTY;
     }
 
+    /**
+     * Sets the packed light value for a voxel at the specified coordinates.
+     */
     public void setLight(int x, int y, int z, int packedLight) {
         int cx = x / CHUNK_SIZE;
         int cy = y / CHUNK_SIZE;
         int cz = z / CHUNK_SIZE;
         int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
         int slot = indirectionTable[tableIdx];
+
+        // Light can only be set in allocated chunks
         if (slot == EMPTY) return;
 
         int lx = x % CHUNK_SIZE;
@@ -70,20 +115,30 @@ public class World {
         lightPool[poolIdx] = packedLight;
     }
 
+    // Standard getters for internal data structures
     public int[] getIndirectionTable() { return indirectionTable; }
     public int[] getChunkPool() { return chunkPool; }
     public int[] getLightPool() { return lightPool; }
 
+    /**
+     * Assigns a chunk slot to a specific region in the indirection table.
+     */
     public void setChunkSlot(int cx, int cy, int cz, int slot) {
         int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
         indirectionTable[tableIdx] = slot;
     }
 
+    /**
+     * Sets a voxel ID directly into a chunk pool slot at local coordinates.
+     */
     public void setVoxelInPool(int slot, int lx, int ly, int lz, int type) {
         int poolIdx = (slot * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) + (lx + ly * CHUNK_SIZE + lz * CHUNK_SIZE * CHUNK_SIZE);
         chunkPool[poolIdx] = type;
     }
 
+    /**
+     * Sets a voxel ID at world coordinates. Does nothing if the chunk is not allocated.
+     */
     public void setVoxel(int x, int y, int z, int type) {
         if (x < 0 || y < 0 || z < 0 || x >= REGION_SIZE * CHUNK_SIZE || y >= REGION_SIZE * CHUNK_SIZE || z >= REGION_SIZE * CHUNK_SIZE) return;
         int cx = x / CHUNK_SIZE;
