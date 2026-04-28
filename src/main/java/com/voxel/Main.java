@@ -505,6 +505,7 @@ public class Main {
 
             // --- Lighting Pass (Radiance Cascades) ---
             glUseProgram(lightProgram);
+            glProgramUniform1f(lightProgram, 2, currentTime); // Pass u_Time
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lightPoolSSBO);
@@ -523,11 +524,12 @@ public class Main {
             // --- Raytracing Pass (Compute Shader) ---
             glUseProgram(computeProgram);
 
-            // Pass camera uniforms to the shader
+            // Pass camera and time uniforms to the shader
             glProgramUniform3f(computeProgram, 0, camX, camY, camZ);
             glProgramUniform3f(computeProgram, 1, forwardX, forwardY, forwardZ);
             glProgramUniform3f(computeProgram, 2, rightX, rightY, rightZ);
             glProgramUniform3f(computeProgram, 3, upX, upY, upZ);
+            glProgramUniform1f(computeProgram, 4, currentTime); // Pass u_Time
 
             // Bind textures to specific texture units for the shader
             glActiveTexture(GL_TEXTURE6);
