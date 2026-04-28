@@ -205,6 +205,9 @@ public class Main {
         setupWorld();    // Procedural world generation
         setupResources();// Loading textures and block data
         setupLighting(); // Initial light propagation
+
+        // Finalize world data and upload to GPU
+        uploadWorldToGpu();
     }
 
     /**
@@ -288,14 +291,13 @@ public class Main {
         lightEngine = new LightPropagationEngine(world, blockDataManager);
         List<LightSource> sources = new ArrayList<>();
 
-        // No sun - dark environment to test cascades
-
+        sources.add(new LightSource(new Vector3i(1024, 128, 1024), new Vector3f(0.70f, 0.75f, 0.90f), 5, 2048, LightType.SUN));
         // Valley of torches: line of torches at y=3, z=1024, x from 1000 to 1050
         for (int x = 1000; x <= 1050; x += 5) {
             sources.add(new LightSource(new Vector3i(x, 8, 1024), new Vector3f(1.0f, 0.6f, 0.2f), 15, 30, LightType.BLOCK));
             // Place torch blocks
             world.setVoxel(x, 9, 1024, 7); // Planks base
-            world.setVoxel(x, 10, 1024, 7); // Torch on planks (Correct ID: 12)
+            world.setVoxel(x, 10, 1024, 12); // Torch on planks (Correct ID: 12)
         }
 
         // Additional scattered lights for testing indirect cascades
@@ -382,8 +384,6 @@ public class Main {
             world.setVoxel(x, 2, 1022, 11); // half_slab_oak
         }
 
-        // Finalize world data and upload to GPU
-        uploadWorldToGpu();
     }
 
     /**
