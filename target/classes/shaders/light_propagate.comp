@@ -20,17 +20,24 @@ layout(std430, binding = 5) buffer restrict LightPool {
     uint lightPool[];
 };
 
-layout(location = 1) uniform int u_Pass; // 0 = Cascade 0 (Direct), 1 = Cascade 1 (Indirect)
+layout(location = 1) uniform int u_Pass; // Cascade Level
+layout(location = 2) uniform float u_Time;
 
 const int WORLD_SIZE = 2048;
 const uint EMPTY = 0xFFFFFFFF;
 
-// 6 cardinal directions for the 3D cascade
-const vec3 DIRS[6] = {
-    vec3(1,0,0), vec3(-1,0,0),
-    vec3(0,1,0), vec3(0,-1,0),
-    vec3(0,0,1), vec3(0,0,-1)
+// 14 directions for a more spherical radiance field (6 cardinal + 8 diagonal)
+const vec3 DIRS[14] = {
+    vec3(1,0,0), vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0), vec3(0,0,1), vec3(0,0,-1),
+    normalize(vec3(1,1,1)), normalize(vec3(-1,1,1)), normalize(vec3(1,-1,1)), normalize(vec3(1,1,-1)),
+    normalize(vec3(-1,-1,1)), normalize(vec3(-1,1,-1)), normalize(vec3(1,-1,-1)), normalize(vec3(-1,-1,-1))
 };
+
+/** Samples dynamic sun direction. */
+vec3 GetSunDirection(float t) {
+    float angle = t * 0.05;
+    return normalize(vec3(sin(angle), abs(cos(angle)), cos(angle * 0.7)));
+}
 
 /** Samples voxel ID. */
 uint getVoxel(ivec3 p) {
@@ -64,43 +71,49 @@ void main() {
     if (slot == EMPTY) return;
 
     uint voxel = getVoxel(pos);
-    // Radiance cascades usually calculate light in empty space
     if (voxel != 0) return; 
 
     vec3 radiance = vec3(0.0);
+    vec3 sunDir = GetSunDirection(u_Time);
 
     if (u_Pass == 0) {
-        // --- Cascade 0: Direct Lighting (Short Range) ---
-        // Raymarch 4 steps in each direction
-        for (int i = 0; i < 6; i++) {
+        // --- Cascade 0: High Resolution Radiance ---
+        for (int i = 0; i < 14; i++) {
             vec3 d = DIRS[i];
+            float occlusion = 1.0;
             for (float t = 1.0; t <= 4.0; t += 1.0) {
                 ivec3 np = pos + ivec3(d * t);
-                uint hitVoxel = getVoxel(np);
-                if (hitVoxel != 0) {
-                    // Simple: if we hit something, it's dark (shadow)
-                    // In a real system, we'd check if the hit voxel is a light source
+                if (getVoxel(np) != 0) {
+                    occlusion = 0.0;
                     break;
                 }
-                // Check if this neighbor has direct light (e.g. from Sun or BFS)
-                // We merge it into our local radiance
-                radiance += unpackLight(getPackedLight(np)) * 0.1;
             }
+            
+            // Sample neighbor radiance and weight by visibility
+            vec3 neighborLight = unpackLight(getPackedLight(pos + ivec3(d)));
+            radiance += neighborLight * occlusion;
         }
+        
+        // Add direct sun contribution if sky is visible (simple heuristic)
+        if (pos.y > 64) radiance += vec3(255.0, 240.0, 200.0) * max(0.0, sunDir.y) * 0.2;
+
     } else {
-        // --- Cascade 1: Indirect Lighting (Longer Range) ---
-        // Sample 8 neighbors from a coarser grid or just further away
-        for (int i = 0; i < 6; i++) {
-            ivec3 np = pos + ivec3(DIRS[i] * 4.0);
-            radiance += unpackLight(getPackedLight(np)) * 0.8;
+        // --- Cascade 1+: Indirect & Far Field ---
+        float range = pow(4.0, float(u_Pass));
+        for (int i = 0; i < 14; i++) {
+            ivec3 np = pos + ivec3(DIRS[i] * range);
+            radiance += unpackLight(getPackedLight(np));
         }
     }
 
     uint currentPacked = lightPool[(slot << 12) | ((pos.x & 15) | ((pos.y & 15) << 4) | ((pos.z & 15) << 8))];
     vec3 currentLight = unpackLight(currentPacked);
     
-    // Smoothly merge (very simple temporal-like accumulation)
-    vec3 finalLight = max(currentLight, radiance / 6.0);
+    // Temporal-like smooth merge (accumulation)
+    vec3 finalLight = mix(currentLight, radiance / 14.0, 0.15);
     
+    // Boost slightly for better GI look
+    finalLight *= 1.1;
+
     lightPool[(slot << 12) | ((pos.x & 15) | ((pos.y & 15) << 4) | ((pos.z & 15) << 8))] = packLight(finalLight);
 }
