@@ -37,6 +37,7 @@ uniform sampler2DArray u_BlockTextures; // All block textures in one array
 uniform isamplerBuffer u_BlockData;      // Block properties (transparency, reflection, etc.)
 uniform samplerBuffer u_BlockAABBs;      // AABB data (vec3 min, max)
 uniform isamplerBuffer u_BlockAABBInfo;  // AABB info per block (ivec2 offset, count)
+uniform isamplerBuffer u_BlockAABBUVs;   // Packed UVs per face per AABB
 uniform sampler2D u_BiomeMap;            // 2D map of biomes across the world
 uniform sampler2D u_GrassColormap;       // Colors for grass based on biome
 uniform sampler2D u_FoliageColormap;     // Colors for leaves based on biome
@@ -211,8 +212,9 @@ vec3 getSurfaceLight(vec3 p, int side, vec3 normal) {
 /**
  * Traces a ray through the entire voxel world.
  */
-bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out float resT, out int resSide, out uint resVoxel) {
+bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out float resT, out int resSide, out uint resVoxel, out int resAabbIdx) {
     float tNear, tFar;
+    resAabbIdx = -1;
     if (!intersectAABB(ro, rd, vec3(0.0), vec3(WORLD_SIZE), tNear, tFar)) return false;
     
     float startT = max(0.0, tNear);
@@ -258,6 +260,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out fl
                         vec3 voxelMin = vec3(mapPos);
                         float hitT = 1e30;
                         int hitSide = -1;
+                        int hitAabbLocalIdx = -1;
 
                         for (int k = 0; k < aabbCount; k++) {
                             vec3 bMin = texelFetch(u_BlockAABBs, aabbOffset + k * 2).xyz + voxelMin;
@@ -266,6 +269,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out fl
                             if (intersectAABB(ro, rd, bMin, bMax, tn, tf)) {
                                 if (tn < hitT) {
                                     hitT = tn;
+                                    hitAabbLocalIdx = k;
                                     // Determine side for AABB
                                     vec3 hp = ro + rd * tn;
                                     vec3 center = (bMin + bMax) * 0.5;
@@ -289,6 +293,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out fl
                             if (hitT >= startT + voxTNear - 0.01 && hitT <= startT + voxTFar + 0.01) {
                                 resVoxel = voxel; resSide = hitSide;
                                 resT = hitT;
+                                resAabbIdx = (aabbOffset / 2) + hitAabbLocalIdx;
                                 return true;
                             }
                         }
@@ -328,9 +333,10 @@ void main() {
         float t;
         int side;
         uint voxel;
+        int aabbIdx;
 
         // Find what the ray hits
-        bool hitWorld = traceWorld(rayRo, rayDir, true, skip, t, side, voxel);
+        bool hitWorld = traceWorld(rayRo, rayDir, true, skip, t, side, voxel, aabbIdx);
 
         if (!hitWorld) {
             // Hit the sky
@@ -357,27 +363,6 @@ void main() {
         int isTintable = (packedVal >> 8) & 1;
         int isFullBlock = (packedVal >> 9) & 1;
 
-        // For non-full blocks, check if the hit is on the actual shape
-        if (isFullBlock == 0) {
-            ivec4 info = texelFetch(u_BlockAABBInfo, int(voxel));
-            int aabbOffset = info.x;
-            int aabbCount = info.y;
-            bool shapeHit = false;
-            vec3 voxelMin = floor(hitPos);
-            for (int i = 0; i < aabbCount; i++) {
-                vec3 minAABB = texelFetch(u_BlockAABBs, aabbOffset + i * 2).xyz + voxelMin;
-                vec3 maxAABB = texelFetch(u_BlockAABBs, aabbOffset + i * 2 + 1).xyz + voxelMin;
-                if (all(greaterThanEqual(hitPos, minAABB)) && all(lessThanEqual(hitPos, maxAABB))) {
-                    shapeHit = true;
-                    break;
-                }
-            }
-            if (!shapeHit) {
-                // No hit on shape, treat as transparent
-                trans = 1.0;
-            }
-        }
-
         // Determine which face of the voxel we hit (0-5)
         int faceIdx = 0;
         if (side == 0) faceIdx = (rayDir.x > 0) ? 4 : 5;
@@ -395,14 +380,36 @@ void main() {
 
         vec3 albedo = vec3(1.0);
         if (texIdx >= 0) {
-            // Calculate UV coordinates on the voxel face
-            vec2 uv;
-            if (side == 0) uv = fract(hitPos.zy);
-            else if (side == 1) uv = fract(hitPos.xz);
-            else uv = fract(hitPos.xy);
+            // Calculate UV coordinates relative to hitPos
+            vec2 localUv;
+            if (side == 0) localUv = fract(hitPos.zy);
+            else if (side == 1) localUv = fract(hitPos.xz);
+            else localUv = fract(hitPos.xy);
+
+            vec4 uvRect = vec4(0, 0, 16, 16); // Default whole texture
+            if (isFullBlock == 0 && aabbIdx != -1) {
+                int packedUV = texelFetch(u_BlockAABBUVs, aabbIdx * 6 + faceIdx).r;
+                uvRect.x = float(packedUV & 0xFF);
+                uvRect.y = float((packedUV >> 8) & 0xFF);
+                uvRect.z = float((packedUV >> 16) & 0xFF);
+                uvRect.w = float((packedUV >> 24) & 0xFF);
+                
+                // For partial blocks, normalize localUv relative to the AABB bounds
+                vec3 voxelMin = floor(hitPos);
+                vec3 bMin = texelFetch(u_BlockAABBs, aabbIdx * 2).xyz + voxelMin;
+                vec3 bMax = texelFetch(u_BlockAABBs, aabbIdx * 2 + 1).xyz + voxelMin;
+                if (side == 0) localUv = (hitPos.zy - bMin.zy) / (bMax.zy - bMin.zy);
+                else if (side == 1) localUv = (hitPos.xz - bMin.xz) / (bMax.xz - bMin.xz);
+                else localUv = (hitPos.xy - bMin.xy) / (bMax.xy - bMin.xy);
+            }
+
+            // Map local UVs to the rect and apply V-flip (Minecraft top-left to GL bottom-left)
+            vec2 finalUv;
+            finalUv.x = mix(uvRect.x, uvRect.z, localUv.x) / 16.0;
+            finalUv.y = 1.0 - mix(uvRect.y, uvRect.w, localUv.y) / 16.0;
 
             // Sample the block texture from the array
-            vec4 texColor = texture(u_BlockTextures, vec3(uv, float(texIdx)));
+            vec4 texColor = texture(u_BlockTextures, vec3(finalUv, float(texIdx)));
             albedo = texColor.rgb;
 
             // Apply biome tint if necessary (e.g., for grass)

@@ -56,8 +56,10 @@ public class BlockDataManager {
         // Whether this block occupies the full voxel space (true for most blocks, false for slabs/stairs/fences).
         public boolean isFullBlock;
 
-        // List of AABBs for the block shape (each float[6]: minx,miny,minz,maxx,maxy,maxz in 0-1 range)
+        // List of AABBs for the block shape (each float[6]: minx,miny,minz,maxx,maxy,maxz in 0-1 range) 
         public List<float[]> aabbs = new ArrayList<>();
+        // List of UVs for each face of each AABB (6 packed uints per AABB)
+        public List<int[]> aabbUvs = new ArrayList<>();
 
         /** Initializes a block with no textures. */
         public BlockData() {
@@ -176,7 +178,7 @@ public class BlockDataManager {
                 }
             }
 
-            // Parse elements for AABBs
+            // Parse elements for AABBs and UVs
             if (json.has("elements")) {
                 JSONArray elements = json.getJSONArray("elements");
                 for (int i = 0; i < elements.length(); i++) {
@@ -187,12 +189,34 @@ public class BlockDataManager {
                     for (int j = 0; j < 3; j++) aabb[j] = (float) from.getDouble(j) / 16.0f;
                     for (int j = 0; j < 3; j++) aabb[j + 3] = (float) to.getDouble(j) / 16.0f;
                     data.aabbs.add(aabb);
+
+                    // Parse faces for UVs
+                    int[] uvs = new int[6];
+                    for (int j = 0; j < 6; j++) uvs[j] = packUV(0, 0, 16, 16); // Default
+                    if (el.has("faces")) {
+                        JSONObject faces = el.getJSONObject("faces");
+                        String[] names = {"down", "up", "north", "south", "west", "east"};
+                        for (int j = 0; j < 6; j++) {
+                            if (faces.has(names[j])) {
+                                JSONObject face = faces.getJSONObject(names[j]);
+                                if (face.has("uv")) {
+                                    JSONArray uv = face.getJSONArray("uv");
+                                    uvs[j] = packUV(uv.getInt(0), uv.getInt(1), uv.getInt(2), uv.getInt(3));
+                                }
+                            }
+                        }
+                    }
+                    data.aabbUvs.add(uvs);
                 }
             }
 
         } catch (IOException e) {
             // Error reading file, stop recursion.
         }
+    }
+
+    private int packUV(int u1, int v1, int u2, int v2) {
+        return (u1 & 0xFF) | ((v1 & 0xFF) << 8) | ((u2 & 0xFF) << 16) | ((v2 & 0xFF) << 24);
     }
 
     /**
@@ -246,8 +270,11 @@ public class BlockDataManager {
         uploadAABBs(maxId);
     }
 
+    private int aabbUvTboId, aabbUvTextureId;
+
     private void uploadAABBs(int maxId) {
         List<float[]> allAABBs = new ArrayList<>();
+        List<int[]> allUVs = new ArrayList<>();
         Map<Integer, int[]> blockInfo = new HashMap<>();
         int offset = 0;
         for (int id = 0; id <= maxId; id++) {
@@ -255,9 +282,11 @@ public class BlockDataManager {
             List<float[]> aabbs = (data != null) ? data.aabbs : null;
             if (aabbs != null && !aabbs.isEmpty()) {
                 blockInfo.put(id, new int[]{offset, aabbs.size()});
-                for (float[] aabb : aabbs) {
+                for (int i = 0; i < aabbs.size(); i++) {
+                    float[] aabb = aabbs.get(i);
                     allAABBs.add(new float[]{aabb[0], aabb[1], aabb[2]}); // min
                     allAABBs.add(new float[]{aabb[3], aabb[4], aabb[5]}); // max
+                    allUVs.add(data.aabbUvs.get(i));
                 }
                 offset += aabbs.size() * 2;
             } else {
@@ -279,6 +308,23 @@ public class BlockDataManager {
         glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F, aabbTboId);
 
         MemoryUtil.memFree(aabbBuffer);
+
+        // UV data buffer
+        IntBuffer uvBuffer = MemoryUtil.memAllocInt(allUVs.size() * 6);
+        for (int[] uvs : allUVs) {
+            for (int uv : uvs) uvBuffer.put(uv);
+        }
+        uvBuffer.flip();
+
+        aabbUvTboId = glGenBuffers();
+        glBindBuffer(GL_TEXTURE_BUFFER, aabbUvTboId);
+        glBufferData(GL_TEXTURE_BUFFER, uvBuffer, GL_STATIC_DRAW);
+
+        aabbUvTextureId = glGenTextures();
+        glBindTexture(GL_TEXTURE_BUFFER, aabbUvTextureId);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_R32I, aabbUvTboId);
+
+        MemoryUtil.memFree(uvBuffer);
 
         // Info buffer
         IntBuffer infoBuffer = MemoryUtil.memAllocInt((maxId + 1) * 2);
@@ -313,6 +359,11 @@ public class BlockDataManager {
     /** @return The ID of the AABB Info Texture Buffer Object. */
     public int getInfoTextureId() {
         return infoTextureId;
+    }
+
+    /** @return The ID of the AABB UV Texture Buffer Object. */
+    public int getAABBUVTextureId() {
+        return aabbUvTextureId;
     }
 
     /**
