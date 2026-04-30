@@ -548,6 +548,10 @@ public class Main {
             glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getInfoTextureId());
             glUniform1i(glGetUniformLocation(computeProgram, "u_BlockAABBInfo"), 11);
 
+            glActiveTexture(GL_TEXTURE12);
+            glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getAABBUVTextureId());
+            glUniform1i(glGetUniformLocation(computeProgram, "u_BlockAABBUVs"), 12);
+
             glActiveTexture(GL_TEXTURE8);
             glBindTexture(GL_TEXTURE_2D, biomeManager.getBiomeMapId());
             glUniform1i(glGetUniformLocation(computeProgram, "u_BiomeMap"), 8);
