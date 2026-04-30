@@ -202,9 +202,9 @@ public class Main {
         // Setup various engine components
         setupQuad();     // Full-screen rectangle geometry
         setupTexture();  // Texture where the raytracer will write its output
-        setupWorld();    // Procedural world generation
+          
         setupResources();// Loading textures and block data
-        setupLighting(); // Initial light propagation
+        setupLighting(); // Initial light propagation and Procedural world generation
 
         // Finalize world data and upload to GPU
         uploadWorldToGpu();
@@ -288,23 +288,18 @@ public class Main {
      * Sets up the lighting engine and propagates initial light sources for radiance cascade demo.
      */
     private void setupLighting() {
-        lightEngine = new LightPropagationEngine(world, blockDataManager);
+        
         List<LightSource> sources = new ArrayList<>();
 
+        
+        //sun
         sources.add(new LightSource(new Vector3i(1024, 128, 1024), new Vector3f(0.70f, 0.75f, 0.90f), 5, 2048, LightType.SUN));
-        // Valley of torches: line of torches at y=3, z=1024, x from 1000 to 1050
-        for (int x = 1000; x <= 1050; x += 5) {
-            sources.add(new LightSource(new Vector3i(x, 8, 1024), new Vector3f(1.0f, 0.6f, 0.2f), 15, 30, LightType.BLOCK));
-            // Place torch blocks
-            world.setVoxel(x, 9, 1024, 7); // Planks base
-            world.setVoxel(x, 10, 1024, 12); // Torch on planks (Correct ID: 12)
-        }
 
-        // Additional scattered lights for testing indirect cascades
-        sources.add(new LightSource(new Vector3i(1025, 5, 1025), new Vector3f(0.2f, 1.0f, 0.2f), 12, 25, LightType.BLOCK));
-        world.setVoxel(1025, 4, 1025, 7);
-        world.setVoxel(1025, 5, 1025, 12);
+        
+        setupWorld(sources);
 
+        lightEngine = new LightPropagationEngine(world, blockDataManager);
+        
         // Calculate light propagation with radiance cascades
         lightEngine.propagateAllLights(sources);
 
@@ -319,71 +314,53 @@ public class Main {
 
     /**
      * Procedurally generates the world content and uploads it to the GPU.
+     * Updated for a dramatic lighting demo: "The Grotto of Light"
+     * @param sources 
      */
-    private void setupWorld() {
+    private void setupWorld(List<LightSource> sources) {
         world = new World();
         nextWorldChunkSlot = 0;
 
-        // 1. Generate Procedural Ground (Layers 0 and 1)
+        // 1. Generate The Cavern Floor & Walls
         for (int cx = 32; cx < 96; cx++) {
             for (int cz = 32; cz < 96; cz++) {
-                if (nextWorldChunkSlot >= POOL_SIZE) break;
-                int slot = allocateChunkSlot();
-                world.setChunkSlot(cx, 0, cz, slot);
+                int slot = ensureChunkSlot(cx, 0, cz);
                 for (int vx = 0; vx < CHUNK_SIZE; vx++) {
                     for (int vz = 0; vz < CHUNK_SIZE; vz++) {
-                        world.setVoxelInPool(slot, vx, 0, vz, 2); // Stone base layer
-                        world.setVoxelInPool(slot, vx, 1, vz, 1); // Grass top layer
+                        world.setVoxelInPool(slot, vx, 0, vz, 2); // Stone base
+                        world.setVoxelInPool(slot, vx, 1, vz, 2); 
+                    }
+                }
+                // High walls to create a pit
+                if (cx == 32 || cx == 95 || cz == 32 || cz == 95) {
+                    for(int cy=1; cy<5; cy++) {
+                         int s = ensureChunkSlot(cx, cy, cz);
+                         for(int vx=0; vx<16; vx++) for(int vz=0; vz<16; vz++) for(int vy=0; vy<16; vy++) world.setVoxelInPool(s, vx, vy, vz, 2);
                     }
                 }
             }
         }
-        
-        // 2. Create "The Mirror House"
-        int baseEX = 1020, baseEY = 2, baseEZ = 1020;
-        // Floor made of planks
-        for(int x=0; x<10; x++) for(int z=0; z<10; z++) world.setVoxel(baseEX+x, baseEY-1, baseEZ+z, 7);
-        // Log Walls
-        for(int y=0; y<5; y++) {
-            for(int i=0; i<10; i++) {
-                world.setVoxel(baseEX+i, baseEY+y, baseEZ, 6);
-                world.setVoxel(baseEX+i, baseEY+y, baseEZ+9, 6);
-                world.setVoxel(baseEX, baseEY+y, baseEZ+i, 6);
-                world.setVoxel(baseEX+9, baseEY+y, baseEZ+i, 6);
-            }
-        }
-        // Glass Windows
-        for(int y=1; y<3; y++) {
-            for(int i=2; i<8; i++) {
-                world.setVoxel(baseEX+i, baseEY+y, baseEZ+9, 3);
-                world.setVoxel(baseEX, baseEY+y, baseEZ+i, 3);
-            }
-        }
-        // Reflective Mirror Wall inside (using Diamond blocks)
-        for(int y=0; y<4; y++) for(int i=1; i<9; i++) world.setVoxel(baseEX+1, baseEY+y, baseEZ+i, 4);
 
-        // 3. Reflective Gold & Diamond Platform
-        for(int x=0; x<8; x++) {
-            for(int z=0; z<8; z++) {
-                world.setVoxel(1040+x, 2, 1040+z, 9); // Gold blocks
-                if ((x+z)%2 == 0) world.setVoxel(1040+x, 3, 1040+z, 4); // Diamond checkerboard
+        // 2. The "Sunlight Slit" Roof
+        for (int cx = 32; cx < 96; cx++) {
+            for (int cz = 32; cz < 96; cz++) {
+                if (cx > 60 && cx < 68) continue; // Leave a slit for sun
+                int s = ensureChunkSlot(cx, 4, cz);
+                for(int vx=0; vx<16; vx++) for(int vz=0; vz<16; vz++) for(int vy=0; vy<16; vy++) world.setVoxelInPool(s, vx, vy, vz, 2);
             }
         }
 
-        // 4. Large Water Pool
-        for(int x=0; x<20; x++) {
-            for(int z=0; z<20; z++) {
-                world.setVoxel(1000+x, 1, 1000+z, 5); // Water blocks
-                world.setVoxel(1000+x, 0, 1000+z, 2); // Stone base
+        // 3. Colored Emissive Pedestals (Demonstrates GI)
+        int px = 1010, pz = 1010;
+        int[] colors = {9, 4, 8}; // Gold (Yellow), Diamond (Cyan), Brick (Red)
+        for(int i=0; i<3; i++) {
+            int tx = px + i*15;
+            for(int y=1; y<5; y++) {
+            	world.setVoxel(tx, y, pz, colors[i]);
+            	sources.add(new LightSource(new Vector3i(tx, y, pz), new Vector3f(0.44921875f, 0.85546875f, 0.8359375f), 12, 24, LightType.BLOCK));
             }
+            world.setVoxel(tx, 5, pz, 12); // Torch on top
         }
-
-        // 5. Partial blocks demo: stairs and slabs near torches
-        for(int x=1010; x<1020; x++) {
-            world.setVoxel(x, 2, 1020, 10); // brick_stairs
-            world.setVoxel(x, 2, 1022, 11); // half_slab_oak
-        }
-
     }
 
     /**
