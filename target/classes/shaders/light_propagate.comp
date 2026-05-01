@@ -3,7 +3,7 @@
 /**
  * Radiance Cascade Propagation Compute Shader.
  * Based on the principles shared by SimonDev and Alexander Sannikov.
- * Simplified for 3D voxel grid.
+ * This version uses a hierarchical approach for realistic light propagation.
  */
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
@@ -22,6 +22,7 @@ layout(std430, binding = 5) buffer restrict LightPool {
 
 layout(location = 1) uniform int u_Pass; // Cascade Level
 layout(location = 2) uniform float u_Time;
+uniform isamplerBuffer u_BlockData;
 
 const int WORLD_SIZE = 2048;
 const uint EMPTY = 0xFFFFFFFF;
@@ -72,6 +73,45 @@ uint packLight(vec3 c) {
     return uint(clamp(c.r, 0, 255)) | (uint(clamp(c.g, 0, 255)) << 8) | (uint(clamp(c.b, 0, 255)) << 16);
 }
 
+/** 
+ * Raytracing for occlusion and direct radiance gathering within a cascade.
+ */
+vec3 gatherRadiance(ivec3 pos, vec3 dir, float maxDist, out float occlusion) {
+    occlusion = 1.0;
+    vec3 gathered = vec3(0.0);
+    
+    vec3 sunDir, moonDir;
+    GetCelestialDirections(u_Time, sunDir, moonDir);
+    
+    // Step size based on cascade level
+    float stepSize = max(1.0, maxDist / 4.0);
+    for (float t = 1.0; t <= maxDist; t += stepSize) {
+        ivec3 np = pos + ivec3(dir * t);
+        uint voxel = getVoxel(np);
+        if (voxel != 0) {
+            // Hit a block!
+            occlusion = 0.0;
+            
+            // Fetch real albedo from the new 3-ivec4 layout (3rd ivec4 contains RGB)
+            ivec4 d2 = texelFetch(u_BlockData, int(voxel) * 3 + 2);
+            vec3 albedo = vec3(d2.rgb) / 255.0;
+            
+            // Get radiance just outside the block
+            ivec3 outsidePos = pos + ivec3(dir * (t - 1.0));
+            vec3 incomingGI = unpackLight(getPackedLight(outsidePos));
+            
+            // Estimate direct sun hitting this surface (using -dir as a rough normal)
+            float sunHit = max(0.0, dot(-dir, sunDir));
+            vec3 directSun = GetCelestialLight(sunDir) * sunHit;
+            
+            // Combine and reflect
+            gathered = albedo * (incomingGI * 0.5 + directSun * 0.2); 
+            break;
+        }
+    }
+    return gathered;
+}
+
 void main() {
     ivec3 pos = ivec3(gl_GlobalInvocationID.xyz);
     if (any(greaterThanEqual(pos, ivec3(WORLD_SIZE)))) return;
@@ -80,6 +120,7 @@ void main() {
     if (slot == EMPTY) return;
 
     uint voxel = getVoxel(pos);
+    // Radiance is stored in air voxels
     if (voxel != 0) return; 
 
     vec3 radiance = vec3(0.0);
@@ -87,46 +128,60 @@ void main() {
     GetCelestialDirections(u_Time, sunDir, moonDir);
 
     if (u_Pass == 0) {
-        // --- Cascade 0: High Resolution Radiance ---
+        // --- Cascade 0: Direct Lighting & Short Range Radiance ---
+        // Range: 1-4 voxels
         for (int i = 0; i < 14; i++) {
-            vec3 d = DIRS[i];
-            float occlusion = 1.0;
-            for (float t = 1.0; t <= 4.0; t += 1.0) {
-                ivec3 np = pos + ivec3(d * t);
-                if (getVoxel(np) != 0) {
-                    occlusion = 0.0;
-                    break;
-                }
-            }
+            float occlusion;
+            vec3 dir = DIRS[i];
+            vec3 hitRadiance = gatherRadiance(pos, dir, 4.0, occlusion);
             
-            // Sample neighbor radiance and weight by visibility
-            vec3 neighborLight = unpackLight(getPackedLight(pos + ivec3(d)));
-            radiance += neighborLight * occlusion;
+            // Gather light from direct neighbors
+            vec3 neighborLight = unpackLight(getPackedLight(pos + ivec3(dir)));
+            radiance += (neighborLight + hitRadiance) * occlusion;
         }
         
-        // Add direct sun/moon contribution if sky is visible (simple heuristic)
-        if (pos.y > 64) {
-            if (sunDir.y > 0.0) radiance += GetCelestialLight(sunDir) * sunDir.y * 0.2;
-            if (moonDir.y > 0.0) radiance += GetCelestialLight(moonDir) * moonDir.y * 0.1;
+        // Direct sky contribution (Sun/Moon)
+        if (pos.y > 60) {
+            // Heuristic for "open to sky"
+            float skyVis = 1.0;
+            if (getVoxel(pos + ivec3(0, 5, 0)) != 0) skyVis = 0.0;
+            
+            if (skyVis > 0.0) {
+                if (sunDir.y > 0.0) radiance += GetCelestialLight(sunDir) * sunDir.y * 0.5;
+                if (moonDir.y > 0.0) radiance += GetCelestialLight(moonDir) * moonDir.y * 0.1;
+            }
         }
 
     } else {
-        // --- Cascade 1+: Indirect & Far Field ---
+        // --- Cascade 1+: Indirect Radiance Merging ---
+        // Range: 4^u_Pass
         float range = pow(4.0, float(u_Pass));
+        float prevRange = pow(4.0, float(u_Pass - 1));
+        
         for (int i = 0; i < 14; i++) {
-            ivec3 np = pos + ivec3(DIRS[i] * range);
-            radiance += unpackLight(getPackedLight(np));
+            vec3 dir = DIRS[i];
+            float occlusion;
+            vec3 hitRadiance = gatherRadiance(pos, dir, range, occlusion);
+            
+            // Sample the radiance from the previous cascade (spatial interpolation)
+            // Since we store all radiance in one lightPool, we sample at the range of the previous cascade
+            vec3 indirect = unpackLight(getPackedLight(pos + ivec3(dir * prevRange)));
+            radiance += (indirect + hitRadiance) * occlusion;
         }
     }
 
+    // --- Temporal and Spatial Smoothing ---
     uint currentPacked = lightPool[(slot << 12) | ((pos.x & 15) | ((pos.y & 15) << 4) | ((pos.z & 15) << 8))];
     vec3 currentLight = unpackLight(currentPacked);
     
-    // Temporal-like smooth merge (accumulation)
-    vec3 finalLight = mix(currentLight, radiance / 14.0, 0.15);
+    // Average the gathered radiance
+    vec3 newLight = radiance / 14.0;
     
-    // Boost slightly for better GI look
-    finalLight *= 1.1;
+    // Soft merge with existing light field (Leaky Integrator for temporal stability)
+    vec3 finalLight = mix(currentLight, newLight, 0.2);
+    
+    // Energy conservation/boost factor
+    finalLight *= 0.98;
 
     lightPool[(slot << 12) | ((pos.x & 15) | ((pos.y & 15) << 4) | ((pos.z & 15) << 8))] = packLight(finalLight);
 }

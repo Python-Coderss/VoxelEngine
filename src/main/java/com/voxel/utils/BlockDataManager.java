@@ -56,6 +56,9 @@ public class BlockDataManager {
         // Whether this block occupies the full voxel space (true for most blocks, false for slabs/stairs/fences).
         public boolean isFullBlock;
 
+        // The average albedo (color) of the block, extracted from its textures.
+        public java.awt.Color albedo = java.awt.Color.WHITE;
+
         // List of AABBs for the block shape (each float[6]: minx,miny,minz,maxx,maxy,maxz in 0-1 range) 
         public List<float[]> aabbs = new ArrayList<>();
         // List of UVs for each face of each AABB (6 packed uints per AABB)
@@ -89,13 +92,25 @@ public class BlockDataManager {
         String top = textureMap.get("top");
         String bottom = textureMap.get("bottom");
 
+        String representativeTexture = textureMap.getOrDefault("up", top != null ? top : (end != null ? end : all));
+
         // Map common Minecraft JSON keys to the 6 face indices.
         assignFace(data, 0, textureMap.getOrDefault("down",  bottom != null ? bottom : (end != null ? end : all)), textureManager);
-        assignFace(data, 1, textureMap.getOrDefault("up",    top != null ? top : (end != null ? end : all)), textureManager);
+        assignFace(data, 1, representativeTexture, textureManager);
         assignFace(data, 2, textureMap.getOrDefault("north", side != null ? side : all), textureManager);
         assignFace(data, 3, textureMap.getOrDefault("south", side != null ? side : all), textureManager);
         assignFace(data, 4, textureMap.getOrDefault("west",  side != null ? side : all), textureManager);
         assignFace(data, 5, textureMap.getOrDefault("east",  side != null ? side : all), textureManager);
+
+        // Calculate albedo using TextureUtils
+        if (representativeTexture != null) {
+            String texName = representativeTexture;
+            if (texName.contains("/")) {
+                texName = texName.substring(texName.lastIndexOf('/') + 1);
+            }
+            String texPath = "src/main/resources/assets/minecraft/textures/blocks/" + texName + ".png";
+            data.albedo = TextureUtils.getAverageColor(texPath);
+        }
 
         // Set demonstration properties based on block name.
         if (name.contains("glass")) {
@@ -221,7 +236,7 @@ public class BlockDataManager {
 
     /**
      * Packs the block property data into a compact format and uploads it to the GPU.
-     * Each block uses 8 integers (2 ivec4 in GLSL).
+     * Each block uses 12 integers (3 ivec4 in GLSL).
      */
     public void uploadToGPU() {
         int maxId = 0;
@@ -229,27 +244,33 @@ public class BlockDataManager {
             if (id > maxId) maxId = id;
         }
 
-        // Allocate memory for the property buffer.
-        IntBuffer buffer = MemoryUtil.memAllocInt((maxId + 1) * 8);
+        // Allocate memory for the property buffer (12 ints per block).
+        IntBuffer buffer = MemoryUtil.memAllocInt((maxId + 1) * 12);
         for (int i = 0; i <= maxId; i++) {
             BlockData data = blockRegistry.get(i);
             if (data != null) {
                 // Layout for Shader:
-                // ivec4(tex-Y, tex+Y, tex-Z, tex+Z)
+                // ivec4 0: (tex-Y, tex+Y, tex-Z, tex+Z)
                 buffer.put(data.tex[0]);
                 buffer.put(data.tex[1]);
                 buffer.put(data.tex[2]);
                 buffer.put(data.tex[3]);
 
-                // ivec4(tex-X, tex+X, transparency, packed_refl_tint_full)
+                // ivec4 1: (tex-X, tex+X, transparency, packed_refl_tint_full)
                 buffer.put(data.tex[4]);
                 buffer.put(data.tex[5]);
                 buffer.put(data.transparency);
                 int packed = (data.reflectivity & 0xFF) | ((data.isTintable & 1) << 8) | ((data.isFullBlock ? 1 : 0) << 9);
                 buffer.put(packed);
+
+                // ivec4 2: (albedoR, albedoG, albedoB, unused)
+                buffer.put(data.albedo.getRed());
+                buffer.put(data.albedo.getGreen());
+                buffer.put(data.albedo.getBlue());
+                buffer.put(0); // Unused
             } else {
                 // Fill with -1 for unused IDs.
-                for(int j = 0; j < 8; j++) buffer.put(-1);
+                for(int j = 0; j < 12; j++) buffer.put(-1);
             }
         }
         buffer.flip();
