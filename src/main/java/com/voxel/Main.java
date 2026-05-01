@@ -381,7 +381,7 @@ public class Main {
             }
             // The light source behind the wall
             Vector3i pos = new Vector3i(slitX + 3, y + 1, startZ + size / 2);
-            sources.add(new LightSource(pos, new Vector3f(1.0f, 0.5f, 0.1f), 15, 32, LightType.BLOCK));
+            sources.add(new LightSource(pos, new Vector3f(1.0f, 0.5f, 0.1f), 15, 256, LightType.BLOCK));
             world.setVoxel(pos.x, pos.y, pos.z, 21); // Red Lamp (Glowing Orange-ish)
         }
 
