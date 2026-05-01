@@ -58,38 +58,89 @@ vec3 ACESFilm(vec3 x) {
 }
 
 /**
- * Calculates dynamic sun direction.
+ * Calculates celestial body directions (Sun and Moon).
  */
-vec3 GetSunDirection(float t) {
+void GetCelestialDirections(float t, out vec3 sunDir, out vec3 moonDir) {
     float angle = t * 0.05;
-    return normalize(vec3(sin(angle), max(0.01, cos(angle)), cos(angle * 0.7)));
+    sunDir = normalize(vec3(sin(angle), cos(angle), cos(angle * 0.7)));
+    moonDir = -sunDir;
 }
 
 /**
- * Gets the color of the sunlight.
+ * Gets the color of the sunlight/moonlight based on time.
  */
-vec3 GetSunLight() {
-    return vec3(1.64, 1.27, 0.99) * 5.0;
+vec3 GetCelestialLight(vec3 dir) {
+    float horizon = max(0.0, dir.y);
+    // Sun color: Orange at horizon, white at zenith
+    vec3 sunColor = mix(vec3(5.0, 1.5, 0.5), vec3(1.64, 1.27, 0.99) * 4.0, pow(horizon, 0.5));
+    // Moon color: Cool blue
+    vec3 moonColor = vec3(0.1, 0.2, 0.5) * 1.5;
+    
+    return (dir.y > 0.0) ? sunColor : moonColor;
 }
 
 /**
- * Advanced sky model like the Shadertoy demo.
+ * Advanced sky model with time-of-day transitions.
  */
-vec3 GetSkyLight(vec3 rd) {
-    vec3 sunDir = GetSunDirection(u_Time);
-    float sun = max(0.0, dot(rd, sunDir));
+vec3 GetSkyAtmosphere(vec3 rd) {
+    vec3 sunDir, moonDir;
+    GetCelestialDirections(u_Time, sunDir, moonDir);
     
-    // Horizon/Zenith gradient
-    vec3 sky = mix(vec3(0.02, 0.05, 0.2), vec3(0.3, 0.6, 1.0), pow(max(0.0, rd.y * 0.8 + 0.3), 0.5));
+    float sunVisible = sunDir.y;
     
-    // Add sun disk and glow
-    sky += pow(sun, 2000.0) * vec3(1.0, 0.9, 0.7) * 20.0; // Sun disk
-    sky += pow(sun, 8.0) * vec3(1.0, 0.7, 0.3) * 0.8;    // Sun glow
+    // Day sky: Blue to light blue
+    vec3 daySky = mix(vec3(0.02, 0.05, 0.2), vec3(0.3, 0.6, 1.0), pow(max(0.0, rd.y * 0.8 + 0.3), 0.5));
+    // Night sky: Deep blue/black
+    vec3 nightSky = mix(vec3(0.005, 0.01, 0.03), vec3(0.01, 0.02, 0.05), pow(max(0.0, rd.y), 0.5));
+    
+    // Sunset/Sunrise colors
+    vec3 sunsetColor = vec3(1.0, 0.4, 0.1) * pow(max(0.0, 1.0 - abs(rd.y - sunDir.y * 0.5)), 4.0);
+    sunsetColor += vec3(0.5, 0.1, 0.0) * pow(max(0.0, 1.0 - rd.y), 2.0) * max(0.0, 1.0 - abs(sunDir.y) * 5.0);
+    
+    // Mix day/night based on sun height
+    float dayFactor = smoothstep(-0.2, 0.2, sunDir.y);
+    vec3 sky = mix(nightSky, daySky, dayFactor);
+    
+    // Add sunset glow
+    sky += sunsetColor * smoothstep(0.5, -0.5, sunDir.y);
     
     // Horizon haze
-    sky = mix(sky, vec3(0.7, 0.8, 1.0), pow(1.0 - max(0.0, rd.y), 8.0) * 0.5);
+    vec3 hazeColor = mix(vec3(0.1, 0.1, 0.15), vec3(0.7, 0.8, 1.0), dayFactor);
+    sky = mix(sky, hazeColor, pow(1.0 - max(0.0, rd.y), 8.0) * 0.5);
     
     return sky;
+}
+
+/**
+ * Renders the Sun and Moon disks.
+ */
+vec3 GetCelestialDisks(vec3 rd) {
+    vec3 sunDir, moonDir;
+    GetCelestialDirections(u_Time, sunDir, moonDir);
+    
+    float sun = max(0.0, dot(rd, sunDir));
+    float moon = max(0.0, dot(rd, moonDir));
+    
+    vec3 color = vec3(0.0);
+    
+    // Sun disk and glow
+    if (sunDir.y > -0.1) {
+        float sunDisk = pow(sun, 2000.0);
+        float sunGlow = pow(sun, 8.0);
+        vec3 sunColor = mix(vec3(1.0, 0.4, 0.1), vec3(1.0, 0.9, 0.8), smoothstep(-0.1, 0.2, sunDir.y));
+        color += sunDisk * sunColor * 50.0;
+        color += sunGlow * sunColor * 1.5;
+    }
+    
+    // Moon disk and glow
+    if (moonDir.y > -0.1) {
+        float moonDisk = pow(moon, 3000.0);
+        float moonGlow = pow(moon, 12.0);
+        color += moonDisk * vec3(0.8, 0.9, 1.0) * 10.0;
+        color += moonGlow * vec3(0.2, 0.3, 0.5) * 0.5;
+    }
+    
+    return color;
 }
 
 /**
@@ -314,6 +365,15 @@ bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out fl
 }
 
 /**
+ * Helper to get the total sky light (Atmosphere + Disks).
+ */
+vec3 GetSkyLight(vec3 rd, bool includeDisks) {
+    vec3 sky = GetSkyAtmosphere(rd);
+    if (includeDisks) sky += GetCelestialDisks(rd);
+    return sky;
+}
+
+/**
  * Main Compute Shader execution entry.
  */
 void main() {
@@ -344,8 +404,8 @@ void main() {
         bool hitWorld = traceWorld(rayRo, rayDir, true, skip, t, side, voxel, aabbIdx);
 
         if (!hitWorld) {
-            // Hit the sky
-            vec3 skyColor = GetSkyLight(rayDir);
+            // Hit the sky: Render atmosphere AND sun/moon disks
+            vec3 skyColor = GetSkyLight(rayDir, true);
             finalColor += throughput * skyColor;
             break;
         }
@@ -438,21 +498,30 @@ void main() {
 
         vec3 light = getSurfaceLight(hitPos, worldSide, normal);
         
-        // --- Explicit Sunlight with Shadows ---
-        vec3 sunDir = GetSunDirection(u_Time);
-        vec3 sunLight = GetSunLight();
-        float sunDiffuse = max(0.0, dot(normal, sunDir));
+        // --- Explicit Sunlight and Moonlight with Shadows ---
+        vec3 sunDir, moonDir;
+        GetCelestialDirections(u_Time, sunDir, moonDir);
         
-        if (sunDiffuse > 0.0) {
+        vec3 sunContrib = vec3(0.0);
+        float sunDiffuse = max(0.0, dot(normal, sunDir));
+        if (sunDiffuse > 0.0 && sunDir.y > -0.1) {
             float st; int ss; uint sv; int sa;
-            // Trace shadow ray
-            if (traceWorld(hitPos + normal * 0.01, sunDir, false, false, st, ss, sv, sa)) {
-                sunDiffuse = 0.0; // In shadow
+            if (!traceWorld(hitPos + normal * 0.01, sunDir, false, false, st, ss, sv, sa)) {
+                sunContrib = GetCelestialLight(sunDir) * sunDiffuse;
             }
         }
         
-        // Combine GI light with direct sunlight
-        vec3 totalLight = light + sunLight * sunDiffuse;
+        vec3 moonContrib = vec3(0.0);
+        float moonDiffuse = max(0.0, dot(normal, moonDir));
+        if (moonDiffuse > 0.0 && moonDir.y > -0.1) {
+            float st; int ss; uint sv; int sa;
+            if (!traceWorld(hitPos + normal * 0.01, moonDir, false, false, st, ss, sv, sa)) {
+                moonContrib = GetCelestialLight(moonDir) * moonDiffuse;
+            }
+        }
+        
+        // Combine GI light with celestial contribution
+        vec3 totalLight = light + sunContrib + moonContrib;
         
         // Albedo scaling and ambient term
         vec3 diffuse = albedo * (totalLight + 0.02);
@@ -461,10 +530,10 @@ void main() {
         if (worldSide == 0) diffuse *= 0.9;
         if (worldSide == 2) diffuse *= 0.95;
 
-        // Apply distance fog
+        // Apply distance fog (Atmosphere ONLY, no disks)
         float fogFactor = clamp(1.0 - exp(-t * 0.0008), 0.0, 1.0);
-        vec3 skyColor = GetSkyLight(rayDir);
-        diffuse = mix(diffuse, skyColor, fogFactor);
+        vec3 fogColor = GetSkyLight(rayDir, false);
+        diffuse = mix(diffuse, fogColor, fogFactor);
 
         // Handle reflection or transparency for the next bounce
         if (refl > 0.0 && trans < 1.0) {
