@@ -292,10 +292,6 @@ public class Main {
         List<LightSource> sources = new ArrayList<>();
 
         
-        //sun
-        sources.add(new LightSource(new Vector3i(1024, 128, 1024), new Vector3f(0.70f, 0.75f, 0.90f), 5, 2048, LightType.SUN));
-
-        
         setupWorld(sources);
 
         lightEngine = new LightPropagationEngine(world, blockDataManager);
