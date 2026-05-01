@@ -83,8 +83,8 @@ public class Main {
     private final int EMPTY = 0xFFFFFFFF;
 
     // Camera state: Position and orientation
-    private float camX = 1020, camY = 10, camZ = 1030; // Initial position to see the valley of torches
-    private float yaw = -45, pitch = -20; // Yaw (left/right rotation) and Pitch (up/down rotation)
+    private float camX = 1024, camY = 18, camZ = 1050; // Initial position to see the new demo
+    private float yaw = -90, pitch = -10; // Looking towards the scene
     private float lastMouseX = width / 2f, lastMouseY = height / 2f; // For mouse movement delta
     private boolean firstMouse = true; // Flag to initialize mouse position
 
@@ -242,6 +242,14 @@ public class Main {
         blockDataManager.registerBlock(11, "half_slab_oak", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(12, "torch", textureManager, "src/main/resources/assets/minecraft/models/block");
         
+        // Demo blocks
+        blockDataManager.registerBlock(20, "white_block", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(21, "red_lamp", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(22, "blue_lamp", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(23, "green_lamp", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(24, "yellow_lamp", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(25, "red_block", textureManager, "src/main/resources/assets/minecraft/models/block");
+        
         // Upload block property data to the GPU in a texture buffer
         blockDataManager.uploadToGPU();
     }
@@ -310,52 +318,99 @@ public class Main {
 
     /**
      * Procedurally generates the world content and uploads it to the GPU.
-     * Updated for a dramatic lighting demo: "The Grotto of Light"
+     * Updated for a dramatic lighting demo: "The White Gallery"
      * @param sources 
      */
     private void setupWorld(List<LightSource> sources) {
         world = new World();
         nextWorldChunkSlot = 0;
 
-        // 1. Generate The Cavern Floor & Walls
-        for (int cx = 32; cx < 96; cx++) {
-            for (int cz = 32; cz < 96; cz++) {
-                int slot = ensureChunkSlot(cx, 0, cz);
-                for (int vx = 0; vx < CHUNK_SIZE; vx++) {
-                    for (int vz = 0; vz < CHUNK_SIZE; vz++) {
-                        world.setVoxelInPool(slot, vx, 0, vz, 2); // Stone base
-                        world.setVoxelInPool(slot, vx, 1, vz, 2); 
-                    }
+        // Base coordinates for the demo gallery
+        int startX = 1000, startZ = 1000;
+        int size = 48;
+        int height = 24;
+
+        // Pre-allocate chunks for the demo area to ensure setVoxel works
+        for (int cx = (startX >> 4) - 1; cx <= ((startX + size) >> 4) + 1; cx++) {
+            for (int cy = 0; cy <= (height >> 4) + 1; cy++) {
+                for (int cz = (startZ >> 4) - 1; cz <= ((startZ + size) >> 4) + 1; cz++) {
+                    ensureChunkSlot(cx, cy, cz);
                 }
-                // High walls to create a pit
-                if (cx == 32 || cx == 95 || cz == 32 || cz == 95) {
-                    for(int cy=1; cy<5; cy++) {
-                         int s = ensureChunkSlot(cx, cy, cz);
-                         for(int vx=0; vx<16; vx++) for(int vz=0; vz<16; vz++) for(int vy=0; vy<16; vy++) world.setVoxelInPool(s, vx, vy, vz, 2);
+            }
+        }
+
+        // 1. Build a Large White Room (with one red wall)
+        for (int x = startX; x < startX + size; x++) {
+            for (int z = startZ; z < startZ + size; z++) {
+                // Floor
+                world.setVoxel(x, 0, z, 20); // White Block
+                
+                // Ceiling
+                world.setVoxel(x, height, z, 20);
+
+                // Walls
+                if (x == startX || x == startX + size - 1 || z == startZ || z == startZ + size - 1) {
+                    for (int y = 1; y < height; y++) {
+                        int type = 20; // White
+                        if (z == startZ) type = 25; // Red Wall
+                        world.setVoxel(x, y, z, type);
                     }
                 }
             }
         }
 
-        // 2. The "Sunlight Slit" Roof
-        for (int cx = 32; cx < 96; cx++) {
-            for (int cz = 32; cz < 96; cz++) {
-                if (cx > 60 && cx < 68) continue; // Leave a slit for sun
-                int s = ensureChunkSlot(cx, 4, cz);
-                for(int vx=0; vx<16; vx++) for(int vz=0; vz<16; vz++) for(int vy=0; vy<16; vy++) world.setVoxelInPool(s, vx, vy, vz, 2);
+        // 2. Add Shadow Demonstrators (Pillars and Blocks)
+        for (int i = 0; i < 3; i++) {
+            int px = startX + 12 + i * 12;
+            int pz = startZ + 12;
+            for (int y = 1; y < 16; y++) {
+                world.setVoxel(px, y, pz, 20); // White pillars
             }
         }
 
-        // 3. Colored Emissive Pedestals (Demonstrates GI)
-        int px = 1010, pz = 1010;
-        int[] colors = {9, 4, 8}; // Gold (Yellow), Diamond (Cyan), Brick (Red)
-        for(int i=0; i<3; i++) {
-            int tx = px + i*15;
-            for(int y=1; y<5; y++) {
-            	world.setVoxel(tx, y, pz, colors[i]);
-            	sources.add(new LightSource(new Vector3i(tx, y, pz), new Vector3f(0.44921875f, 0.85546875f, 0.8359375f), 12, 24, LightType.BLOCK));
+        // 3. Light Bleeding Showcase (Narrow slits with bright light behind)
+        int slitX = startX + size - 1;
+        for (int y = 2; y < height - 2; y += 4) {
+            // Create a small room behind the slit
+            for (int dx = 1; dx < 5; dx++) {
+                for (int dz = -2; dz < 3; dz++) {
+                    for (int dy = 0; dy < 3; dy++) {
+                        world.setVoxel(slitX + dx, y + dy, startZ + size / 2 + dz, 20);
+                    }
+                }
             }
-            world.setVoxel(tx, 5, pz, 12); // Torch on top
+            // The light source behind the wall
+            Vector3i pos = new Vector3i(slitX + 3, y + 1, startZ + size / 2);
+            sources.add(new LightSource(pos, new Vector3f(1.0f, 0.5f, 0.1f), 15, 32, LightType.BLOCK));
+            world.setVoxel(pos.x, pos.y, pos.z, 21); // Red Lamp (Glowing Orange-ish)
+        }
+
+        // 4. Color Bleeding Showcase (Lamps in corners)
+        // Red Lamp
+        Vector3i redPos = new Vector3i(startX + 5, 2, startZ + 5);
+        world.setVoxel(redPos.x, redPos.y, redPos.z, 21);
+        sources.add(new LightSource(redPos, new Vector3f(1.0f, 0.1f, 0.1f), 12, 24, LightType.BLOCK));
+
+        // Blue Lamp
+        Vector3i bluePos = new Vector3i(startX + size - 6, 2, startZ + 5);
+        world.setVoxel(bluePos.x, bluePos.y, bluePos.z, 22);
+        sources.add(new LightSource(bluePos, new Vector3f(0.1f, 0.2f, 1.0f), 12, 24, LightType.BLOCK));
+
+        // Green Lamp
+        Vector3i greenPos = new Vector3i(startX + 5, 2, startZ + size - 6);
+        world.setVoxel(greenPos.x, greenPos.y, greenPos.z, 23);
+        sources.add(new LightSource(greenPos, new Vector3f(0.1f, 1.0f, 0.2f), 12, 24, LightType.BLOCK));
+
+        // Yellow Lamp
+        Vector3i yellowPos = new Vector3i(startX + size - 6, 2, startZ + size - 6);
+        world.setVoxel(yellowPos.x, yellowPos.y, yellowPos.z, 24);
+        sources.add(new LightSource(yellowPos, new Vector3f(1.0f, 1.0f, 0.1f), 12, 24, LightType.BLOCK));
+
+        // 5. Roof Slit for Natural Light
+        for (int x = startX + size / 2 - 2; x < startX + size / 2 + 2; x++) {
+            for (int z = startZ + 5; z < startZ + size - 5; z++) {
+                world.setVoxel(x, height, z, 0); // Air (Slit in ceiling)
+            }
         }
     }
 
@@ -479,6 +534,11 @@ public class Main {
             // --- Lighting Pass (Radiance Cascades) ---
             glUseProgram(lightProgram);
             glProgramUniform1f(lightProgram, 2, currentTime); // Pass u_Time
+            
+            glActiveTexture(GL_TEXTURE7);
+            glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getTextureId());
+            glUniform1i(glGetUniformLocation(lightProgram, "u_BlockData"), 7);
+
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lightPoolSSBO);
