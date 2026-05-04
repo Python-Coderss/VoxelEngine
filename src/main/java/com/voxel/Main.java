@@ -48,7 +48,7 @@ public class Main {
     private long window;
 
     // OpenGL Program IDs for our shaders
-    private int quadProgram, computeProgram, lightProgram;
+    private int quadProgram, computeProgram;
 
     // OpenGL Object IDs for the full-screen quad used to display the raytraced image
     private int quadVAO, quadVBO, renderTexture;
@@ -194,10 +194,7 @@ public class Main {
         computeProgram = ShaderUtil.createProgram(
             ShaderUtil.compileShader("src/main/resources/shaders/raytracer.comp", GL_COMPUTE_SHADER)
         );
-        // lightProgram handles GPU light propagation (Radiance Cascades)
-        lightProgram = ShaderUtil.createProgram(
-            ShaderUtil.compileShader("src/main/resources/shaders/light_propagate.comp", GL_COMPUTE_SHADER)
-        );
+        
 
         // Setup various engine components
         setupQuad();     // Full-screen rectangle geometry
@@ -531,28 +528,7 @@ public class Main {
             // Update camera based on input
             updateCamera(dt);
 
-            // --- Lighting Pass (Radiance Cascades) ---
-            glUseProgram(lightProgram);
-            glProgramUniform1f(lightProgram, 2, currentTime); // Pass u_Time
-            
-            glActiveTexture(GL_TEXTURE7);
-            glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getTextureId());
-            glUniform1i(glGetUniformLocation(lightProgram, "u_BlockData"), 7);
 
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lightPoolSSBO);
-
-            // Pass 0: Cascade 0 (Direct/Short Range)
-            glUniform1i(1, 0); 
-            // Dispatch over a region around the player
-            glDispatchCompute(64, 16, 64); 
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-
-            // Pass 1: Cascade 1 (Indirect/Longer Range)
-            glUniform1i(1, 1);
-            glDispatchCompute(64, 16, 64);
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
             // --- Raytracing Pass (Compute Shader) ---
             glUseProgram(computeProgram);
@@ -573,9 +549,9 @@ public class Main {
             glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getTextureId());
             glUniform1i(glGetUniformLocation(computeProgram, "u_BlockData"), 7);
 
-            glActiveTexture(GL_TEXTURE10);
+            glActiveTexture(GL_TEXTURE12);
             glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getAABBTextureId());
-            glUniform1i(glGetUniformLocation(computeProgram, "u_BlockAABBs"), 10);
+            glUniform1i(glGetUniformLocation(computeProgram, "u_BlockAABBs"), 12);
 
             glActiveTexture(GL_TEXTURE11);
             glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getInfoTextureId());
