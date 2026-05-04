@@ -255,14 +255,12 @@ public class LightPropagationEngine {
                 }                
                 if (blocked) continue;
 
-                float dist = cDist;
+                float dist = cDist + steps;
                 float distSq = dist * dist;
                 
 
-                // momentum bias (straight propagation preference)
-                float dirBias = (dirIndex == prevDir) ? 1.25f : 1.0f;
 
-                float att = dirBias / (1.0f + attLinear * dist + attQuad * distSq);
+                float att = 1 / (1.0f + attLinear * dist + attQuad * distSq);
 
                 int nr = (int)(source.color.x * source.intensity * intensityMultiplier * att);
                 int ng = (int)(source.color.y * source.intensity * intensityMultiplier * att);
