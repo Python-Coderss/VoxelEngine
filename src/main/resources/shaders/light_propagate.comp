@@ -1,10 +1,54 @@
 #version 430 core
 
-/**
- * Radiance Cascade Propagation Compute Shader.
- * Based on the principles shared by SimonDev and Alexander Sannikov.
- * This version uses a hierarchical approach for realistic light propagation.
- */
+//////////////////////////////////////////////////////////////
+// 📌 GLOBAL TUNABLE CONSTANTS (EDIT ONLY HERE)
+//////////////////////////////////////////////////////////////
+
+// WORLD
+const int WORLD_SIZE = 2048;
+const uint EMPTY = 0xFFFFFFFF;
+
+// TIME / DAY CYCLE
+const float DAY_LENGTH = 24000.0;
+const float EARTH_TILT = 23.44;
+const float LATITUDE = 45.0;
+
+// LIGHT INTENSITY
+const float SUN_INTENSITY = 90.0;        // dimmed sun (realistic)
+const float MOON_RATIO = 0.2;            // 🌙 moon = 1/5 sun
+const float MOON_INTENSITY = SUN_INTENSITY * MOON_RATIO;
+
+// TWILIGHT CONTROL
+const float TWILIGHT_START = -0.15;
+const float TWILIGHT_END = 0.05;
+
+// ATMOSPHERE
+const float FOG_DENSITY = 0.015;
+const float HEIGHT_FOG_SCALE = 0.02;
+const float AIR_EXTINCTION = 0.15;
+
+// SKY
+const vec3 SKY_BLUE = vec3(0.5, 0.7, 1.0);
+const vec3 SUNSET_ORANGE = vec3(1.0, 0.6, 0.3);
+
+// SUN RAYS (volumetric approximation)
+const float SUN_RAY_STRENGTH = 1.8;
+const float SUN_RAY_DENSITY = 18.0;
+const float SUN_RAY_DECAY = 0.92;
+
+// GI
+const float GI_BOUNCE = 0.65;
+const float DIRECT_SUN_BOOST = 0.35;
+
+// TONEMAP
+const float TONEMAP_STRENGTH = 1.0;
+
+// ENERGY
+const float LIGHT_FALLOFF = 0.995;
+
+//////////////////////////////////////////////////////////////
+// BUFFERS
+//////////////////////////////////////////////////////////////
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
@@ -20,36 +64,141 @@ layout(std430, binding = 5) buffer restrict LightPool {
     uint lightPool[];
 };
 
-layout(location = 1) uniform int u_Pass; // Cascade Level
+layout(location = 1) uniform int u_Pass;
 layout(location = 2) uniform float u_Time;
 uniform isamplerBuffer u_BlockData;
 
-const int WORLD_SIZE = 2048;
-const uint EMPTY = 0xFFFFFFFF;
+//////////////////////////////////////////////////////////////
+// DIRECTIONS
+//////////////////////////////////////////////////////////////
 
-// 14 directions for a more spherical radiance field (6 cardinal + 8 diagonal)
 const vec3 DIRS[14] = {
     vec3(1,0,0), vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0), vec3(0,0,1), vec3(0,0,-1),
     normalize(vec3(1,1,1)), normalize(vec3(-1,1,1)), normalize(vec3(1,-1,1)), normalize(vec3(1,1,-1)),
     normalize(vec3(-1,-1,1)), normalize(vec3(-1,1,-1)), normalize(vec3(1,-1,-1)), normalize(vec3(-1,-1,-1))
 };
 
-/** Calculates celestial body directions (Sun and Moon). */
+//////////////////////////////////////////////////////////////
+// 🌞 CELESTIAL MODEL
+//////////////////////////////////////////////////////////////
+
 void GetCelestialDirections(float t, out vec3 sunDir, out vec3 moonDir) {
-    float angle = t * 0.05;
-    sunDir = normalize(vec3(sin(angle), cos(angle), cos(angle * 0.7)));
+    float angle = (t / DAY_LENGTH) * 6.28318530718;
+
+    float declination = radians(EARTH_TILT) * sin(angle);
+    float lat = radians(LATITUDE);
+
+    float elevation = asin(
+        sin(lat) * sin(declination) +
+        cos(lat) * cos(declination) * cos(angle)
+    );
+
+    float azimuth = atan(sin(angle), cos(angle));
+
+    sunDir = normalize(vec3(
+        cos(elevation) * sin(azimuth),
+        sin(elevation),
+        cos(elevation) * cos(azimuth)
+    ));
+
     moonDir = -sunDir;
 }
 
-/** Gets the color of the sunlight/moonlight based on time. */
-vec3 GetCelestialLight(vec3 dir) {
-    float horizon = max(0.0, dir.y);
-    vec3 sunColor = mix(vec3(255.0, 100.0, 25.0), vec3(255.0, 240.0, 200.0), pow(horizon, 0.5));
-    vec3 moonColor = vec3(25.0, 50.0, 128.0) * 0.5;
-    return (dir.y > 0.0) ? sunColor : moonColor;
+//////////////////////////////////////////////////////////////
+// 🌤️ SKY MODEL
+//////////////////////////////////////////////////////////////
+
+vec3 ComputeSkyColor(vec3 dir, vec3 sunDir) {
+    float h = clamp(dir.y, -0.2, 1.0);
+
+    float sunFactor = max(dot(dir, sunDir), 0.0);
+
+    float horizon = exp(-max(dir.y, 0.0) * 8.0);
+
+    vec3 sky = SKY_BLUE * (1.0 - horizon)
+             + SUNSET_ORANGE * horizon * 0.5;
+
+    // sun disk glow
+    sky += SUNSET_ORANGE * pow(sunFactor, 64.0) * 2.0;
+
+    return sky;
 }
 
-/** Samples voxel ID. */
+//////////////////////////////////////////////////////////////
+// 🌤️ ATMOSPHERIC LIGHT
+//////////////////////////////////////////////////////////////
+
+vec3 GetCelestialLight(vec3 dir, vec3 sunDir, bool isMoon) {
+    float h = clamp(dir.y, -0.1, 1.0);
+
+    float airMass = 1.0 / max(0.05, h);
+    float extinction = exp(-airMass * AIR_EXTINCTION);
+
+    vec3 baseSky = ComputeSkyColor(dir, sunDir);
+
+    float intensity = pow(max(h, 0.0), 1.3) * extinction;
+
+    float strength = isMoon ? MOON_INTENSITY : SUN_INTENSITY;
+
+    return baseSky * intensity * strength;
+}
+
+//////////////////////////////////////////////////////////////
+// 🌫️ FOG
+//////////////////////////////////////////////////////////////
+
+vec3 applyFog(vec3 color, float dist, float height, vec3 sunDir) {
+    float heightFactor = exp(-height * HEIGHT_FOG_SCALE);
+
+    float fog = 1.0 - exp(-dist * FOG_DENSITY * heightFactor);
+
+    vec3 fogColor = ComputeSkyColor(vec3(0,1,0), sunDir);
+
+    return mix(color, fogColor * 120.0, fog);
+}
+
+//////////////////////////////////////////////////////////////
+// ☀️ SUN RAYS (VOL METRIC APPROX)
+//////////////////////////////////////////////////////////////
+
+vec3 computeSunRays(vec3 pos, vec3 sunDir) {
+    float rayStep = 1.0;
+    vec3 rayPos = pos;
+
+    float accum = 0.0;
+
+    for (int i = 0; i < int(SUN_RAY_DENSITY); i++) {
+        rayPos += sunDir * rayStep;
+
+        // simple density: blocks block light
+        ivec3 ip = ivec3(rayPos);
+        uint voxel = 0;
+
+        if (any(lessThan(ip, ivec3(0))) ||
+            any(greaterThanEqual(ip, ivec3(WORLD_SIZE)))) {
+            continue;
+        }
+
+        uint slot = chunkSlots[(ip.x >> 4) | ((ip.y >> 4) << 7) | ((ip.z >> 4) << 14)];
+        if (slot != EMPTY) {
+            voxel = voxelPool[(slot << 12) |
+                ((ip.x & 15) | ((ip.y & 15) << 4) | ((ip.z & 15) << 8))];
+        }
+
+        if (voxel != 0) {
+            accum *= SUN_RAY_DECAY;
+        } else {
+            accum += 1.0;
+        }
+    }
+
+    return vec3(accum * SUN_RAY_STRENGTH);
+}
+
+//////////////////////////////////////////////////////////////
+// VOXEL ACCESS
+//////////////////////////////////////////////////////////////
+
 uint getVoxel(ivec3 p) {
     if (any(lessThan(p, ivec3(0))) || any(greaterThanEqual(p, ivec3(WORLD_SIZE)))) return 0;
     uint slot = chunkSlots[(p.x >> 4) | ((p.y >> 4) << 7) | ((p.z >> 4) << 14)];
@@ -57,7 +206,6 @@ uint getVoxel(ivec3 p) {
     return voxelPool[(slot << 12) | ((p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8))];
 }
 
-/** Samples packed light. */
 uint getPackedLight(ivec3 p) {
     if (any(lessThan(p, ivec3(0))) || any(greaterThanEqual(p, ivec3(WORLD_SIZE)))) return 0;
     uint slot = chunkSlots[(p.x >> 4) | ((p.y >> 4) << 7) | ((p.z >> 4) << 14)];
@@ -70,47 +218,59 @@ vec3 unpackLight(uint p) {
 }
 
 uint packLight(vec3 c) {
-    return uint(clamp(c.r, 0, 255)) | (uint(clamp(c.g, 0, 255)) << 8) | (uint(clamp(c.b, 0, 255)) << 16);
+    return uint(clamp(c.r, 0, 255)) |
+          (uint(clamp(c.g, 0, 255)) << 8) |
+          (uint(clamp(c.b, 0, 255)) << 16);
 }
 
-/** 
- * Raytracing for occlusion and direct radiance gathering within a cascade.
- */
+//////////////////////////////////////////////////////////////
+// GI
+//////////////////////////////////////////////////////////////
+
 vec3 gatherRadiance(ivec3 pos, vec3 dir, float maxDist, out float occlusion) {
     occlusion = 1.0;
-    vec3 gathered = vec3(0.0);
-    
+    vec3 result = vec3(0.0);
+
     vec3 sunDir, moonDir;
     GetCelestialDirections(u_Time, sunDir, moonDir);
-    
-    // Step size based on cascade level
+
     float stepSize = max(1.0, maxDist / 4.0);
+
     for (float t = 1.0; t <= maxDist; t += stepSize) {
-        ivec3 np = pos + ivec3(dir * t);
-        uint voxel = getVoxel(np);
+        ivec3 p = pos + ivec3(dir * t);
+        uint voxel = getVoxel(p);
+
         if (voxel != 0) {
-            // Hit a block!
             occlusion = 0.0;
-            
-            // Fetch real albedo from the new 3-ivec4 layout (3rd ivec4 contains RGB)
+
             ivec4 d2 = texelFetch(u_BlockData, int(voxel) * 3 + 2);
             vec3 albedo = vec3(d2.rgb) / 255.0;
-            
-            // Get radiance just outside the block
-            ivec3 outsidePos = pos + ivec3(dir * (t - 1.0));
-            vec3 incomingGI = unpackLight(getPackedLight(outsidePos));
-            
-            // Estimate direct sun hitting this surface (using -dir as a rough normal)
+
+            vec3 gi = unpackLight(getPackedLight(pos + ivec3(dir * (t - 1.0))));
+
             float sunHit = max(0.0, dot(-dir, sunDir));
-            vec3 directSun = GetCelestialLight(sunDir) * sunHit;
-            
-            // Combine and reflect
-            gathered = albedo * (incomingGI * 0.5 + directSun * 0.2); 
+
+            vec3 sunLight = GetCelestialLight(sunDir, sunDir, false) * sunHit;
+
+            result = albedo * (gi * GI_BOUNCE + sunLight * DIRECT_SUN_BOOST);
             break;
         }
     }
-    return gathered;
+
+    return result;
 }
+
+//////////////////////////////////////////////////////////////
+// TONEMAP
+//////////////////////////////////////////////////////////////
+
+vec3 tonemap(vec3 x) {
+    return x / (x + vec3(TONEMAP_STRENGTH));
+}
+
+//////////////////////////////////////////////////////////////
+// MAIN
+//////////////////////////////////////////////////////////////
 
 void main() {
     ivec3 pos = ivec3(gl_GlobalInvocationID.xyz);
@@ -119,69 +279,66 @@ void main() {
     uint slot = chunkSlots[(pos.x >> 4) | ((pos.y >> 4) << 7) | ((pos.z >> 4) << 14)];
     if (slot == EMPTY) return;
 
-    uint voxel = getVoxel(pos);
-    // Radiance is stored in air voxels
-    if (voxel != 0) return; 
+    if (getVoxel(pos) != 0) return;
 
     vec3 radiance = vec3(0.0);
+
     vec3 sunDir, moonDir;
     GetCelestialDirections(u_Time, sunDir, moonDir);
 
+    float twilight = smoothstep(TWILIGHT_START, TWILIGHT_END, sunDir.y);
+    float moonVis = smoothstep(-0.05, 0.2, moonDir.y);
+
     if (u_Pass == 0) {
-        // --- Cascade 0: Direct Lighting & Short Range Radiance ---
-        // Range: 1-4 voxels
+
         for (int i = 0; i < 14; i++) {
             float occlusion;
             vec3 dir = DIRS[i];
-            vec3 hitRadiance = gatherRadiance(pos, dir, 4.0, occlusion);
-            
-            // Gather light from direct neighbors
-            vec3 neighborLight = unpackLight(getPackedLight(pos + ivec3(dir)));
-            radiance += (neighborLight + hitRadiance) * occlusion;
-        }
-        
-        // Direct sky contribution (Sun/Moon)
-        if (pos.y > 60) {
-            // Heuristic for "open to sky"
-            float skyVis = 1.0;
-            if (getVoxel(pos + ivec3(0, 5, 0)) != 0) skyVis = 0.0;
-            
-            if (skyVis > 0.0) {
-                if (sunDir.y > 0.0) radiance += GetCelestialLight(sunDir) * sunDir.y * 0.5;
-                if (moonDir.y > 0.0) radiance += GetCelestialLight(moonDir) * moonDir.y * 0.1;
-            }
+
+            vec3 hit = gatherRadiance(pos, dir, 4.0, occlusion);
+            vec3 neighbor = unpackLight(getPackedLight(pos + ivec3(dir)));
+
+            radiance += (neighbor + hit) * occlusion;
         }
 
-    } else {
-        // --- Cascade 1+: Indirect Radiance Merging ---
-        // Range: 4^u_Pass
+        if (pos.y > 60 && getVoxel(pos + ivec3(0,5,0)) == 0) {
+
+            radiance += GetCelestialLight(sunDir, sunDir, false) * twilight;
+            radiance += GetCelestialLight(moonDir, sunDir, true) * moonVis;
+
+            radiance += ComputeSkyColor(vec3(0,1,0), sunDir) * 15.0;
+
+            // 🌞 SUN RAYS
+            radiance += computeSunRays(vec3(pos), sunDir);
+        }
+    }
+    else {
         float range = pow(4.0, float(u_Pass));
-        float prevRange = pow(4.0, float(u_Pass - 1));
-        
+        float prev = pow(4.0, float(u_Pass - 1));
+
         for (int i = 0; i < 14; i++) {
             vec3 dir = DIRS[i];
+
             float occlusion;
-            vec3 hitRadiance = gatherRadiance(pos, dir, range, occlusion);
-            
-            // Sample the radiance from the previous cascade (spatial interpolation)
-            // Since we store all radiance in one lightPool, we sample at the range of the previous cascade
-            vec3 indirect = unpackLight(getPackedLight(pos + ivec3(dir * prevRange)));
-            radiance += (indirect + hitRadiance) * occlusion;
+            vec3 hit = gatherRadiance(pos, dir, range, occlusion);
+
+            vec3 indirect = unpackLight(getPackedLight(pos + ivec3(dir * prev)));
+
+            radiance += (indirect + hit) * occlusion;
         }
     }
 
-    // --- Temporal and Spatial Smoothing ---
-    uint currentPacked = lightPool[(slot << 12) | ((pos.x & 15) | ((pos.y & 15) << 4) | ((pos.z & 15) << 8))];
-    vec3 currentLight = unpackLight(currentPacked);
-    
-    // Average the gathered radiance
-    vec3 newLight = radiance / 14.0;
-    
-    // Soft merge with existing light field (Leaky Integrator for temporal stability)
-    vec3 finalLight = mix(currentLight, newLight, 0.2);
-    
-    // Energy conservation/boost factor
-    finalLight *= 0.98;
+    radiance = applyFog(radiance, float(pos.y), float(pos.y), sunDir);
 
-    lightPool[(slot << 12) | ((pos.x & 15) | ((pos.y & 15) << 4) | ((pos.z & 15) << 8))] = packLight(finalLight);
+    radiance = tonemap(radiance);
+
+    uint idx = (slot << 12) |
+        ((pos.x & 15) | ((pos.y & 15) << 4) | ((pos.z & 15) << 8));
+
+    vec3 current = unpackLight(lightPool[idx]);
+    vec3 final = mix(current, radiance / 14.0, 0.2);
+
+    final *= LIGHT_FALLOFF;
+
+    lightPool[idx] = packLight(final * 255.0);
 }

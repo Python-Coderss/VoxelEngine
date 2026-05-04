@@ -7,12 +7,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Spherical BFS lighting propagation (26-neighbor flood fill).
+ * Spherical + directional-biased BFS lighting propagation.
+ * Adds momentum-based flow and anisotropic branching.
  */
 public class LightPropagationEngine {
 
-    private static final float ATTENUATION_LINEAR = 0.08f;
-    private static final float ATTENUATION_QUADRATIC = 0.02f;
+    private static final float ATTENUATION_LINEAR = 0.14f;
+    private static final float ATTENUATION_QUADRATIC = 0.05f;
 
     private final World world;
     private final BlockDataManager blockDataManager;
@@ -22,26 +23,48 @@ public class LightPropagationEngine {
         this.blockDataManager = blockDataManager;
     }
 
-    // ----------------------------
-    // 26-direction spherical kernel
-    // ----------------------------
-    private static final int[][] DIRS_26 = new int[26][3];
+    // ------------------------------------------------------------
+    // Expanded directional kernel (multi-scale anisotropic stencil)
+    // ------------------------------------------------------------
+    private static final int[][] DIRS = buildDirs();
 
-    static {
-        int i = 0;
+    private static int[][] buildDirs() {
+        List<int[]> dirs = new ArrayList<>();
+
+        // 26-neighborhood
         for (int dx = -1; dx <= 1; dx++) {
             for (int dy = -1; dy <= 1; dy++) {
                 for (int dz = -1; dz <= 1; dz++) {
                     if (dx == 0 && dy == 0 && dz == 0) continue;
-                    DIRS_26[i++] = new int[]{dx, dy, dz};
+                    dirs.add(new int[]{dx, dy, dz});
                 }
             }
         }
+
+        // axial 2-step directions (strong forward bias)
+        int[] v = {-2, -1, 1, 2};
+        for (int i : v) {
+            dirs.add(new int[]{i, 0, 0});
+            dirs.add(new int[]{0, i, 0});
+            dirs.add(new int[]{0, 0, i});
+        }
+
+        // sparse long diagonals
+        for (int dx = -2; dx <= 2; dx += 2) {
+            for (int dy = -2; dy <= 2; dy += 2) {
+                for (int dz = -2; dz <= 2; dz += 2) {
+                    if (dx == 0 && dy == 0 && dz == 0) continue;
+                    dirs.add(new int[]{dx, dy, dz});
+                }
+            }
+        }
+
+        return dirs.toArray(new int[0][]);
     }
 
-    // ----------------------------
-    // BFS queue
-    // ----------------------------
+    // ------------------------------------------------------------
+    // BFS queue (momentum-aware)
+    // ------------------------------------------------------------
     private static class LongQueue {
         private long[] array;
         private int head = 0, tail = 0, size = 0, mask;
@@ -81,9 +104,9 @@ public class LightPropagationEngine {
         }
     }
 
-    // ----------------------------
-    // Main entry
-    // ----------------------------
+    // ------------------------------------------------------------
+    // Public entry
+    // ------------------------------------------------------------
     public void propagateAllLights(List<LightSource> sources) {
 
         int[] lightPool = world.getLightPool();
@@ -100,7 +123,6 @@ public class LightPropagationEngine {
             }
         }
 
-        // Sun handled in shader
         if (sun != null) {
             applySun(sun, lightPool, indirection);
         }
@@ -111,16 +133,14 @@ public class LightPropagationEngine {
         }
     }
 
-    // ----------------------------
-    // No-op sun (shader handles it)
-    // ----------------------------
-    private void applySun(LightSource sun, int[] lightPool, int[] indirection) {
-        // intentionally empty
-    }
+    // ------------------------------------------------------------
+    // Sun handled in shader
+    // ------------------------------------------------------------
+    private void applySun(LightSource sun, int[] lightPool, int[] indirection) {}
 
-    // ----------------------------
-    // Spherical BFS propagation
-    // ----------------------------
+    // ------------------------------------------------------------
+    // Main propagation
+    // ------------------------------------------------------------
     private void runBlockBFS(List<LightSource> sources,
                              int[] lightPool,
                              int[] indirectionTable,
@@ -130,8 +150,8 @@ public class LightPropagationEngine {
         int[] chunkPool = world.getChunkPool();
 
         float intensityMultiplier = (isIndirect ? 0.8f : 1.0f) * 17.0f;
-        float attLinear = isIndirect ? ATTENUATION_LINEAR * 0.3f : ATTENUATION_LINEAR;
-        float attQuad = isIndirect ? ATTENUATION_QUADRATIC * 0.3f : ATTENUATION_QUADRATIC;
+        float attLinear = isIndirect ? ATTENUATION_LINEAR * 0.5f : ATTENUATION_LINEAR;
+        float attQuad = isIndirect ? ATTENUATION_QUADRATIC * 0.5f : ATTENUATION_QUADRATIC;
 
         for (int i = 0; i < sources.size(); i++) {
             LightSource src = sources.get(i);
@@ -150,60 +170,99 @@ public class LightPropagationEngine {
                     lightPool
             );
 
-            queue.offer(pack(src.position.x, src.position.y, src.position.z, 0, i));
+            queue.offer(pack(src.position.x, src.position.y, src.position.z, 0, i, 0));
         }
 
         while (!queue.isEmpty()) {
+
             long current = queue.poll();
 
             int cx = unpackX(current);
             int cy = unpackY(current);
             int cz = unpackZ(current);
-            int cDist = unpackDist(current);
             int srcID = unpackID(current);
+            int prevDir = unpackDir(current);
+            int cDist = unpackDist(current);
 
             LightSource source = sources.get(srcID);
 
-            for (int[] d : DIRS_26) {
+            for (int dirIndex = 0; dirIndex < DIRS.length; dirIndex++) {
+
+                int[] d = DIRS[dirIndex];
 
                 int nx = cx + d[0];
                 int ny = cy + d[1];
                 int nz = cz + d[2];
 
-                if (nx < 0 || ny < 0 || nz < 0 ||
-                    nx >= 2048 || ny >= 2048 || nz >= 2048) {
-                    continue;
+                if (isBlocked(nx, ny, nz)) continue;
+                
+                int x = cx;
+                int y = cy;
+                int z = cz;
+                // Prevent corner tunneling
+                if (d[0] != 0 && d[1] != 0) {
+                    if (isBlocked(cx + d[0], cy, cz) || isBlocked(cx, cy + d[1], cz)) {
+                        continue;
+                    }
                 }
-
-                int cx16 = nx >> 4;
-                int cy16 = ny >> 4;
-                int cz16 = nz >> 4;
-
-                int slotIndex = cx16 + cy16 * 128 + cz16 * 16384;
-                int slot = indirectionTable[slotIndex];
-
-                if (slot == -1) continue;
-
-                int blockId = chunkPool[(slot << 12)
-                        | ((nx & 15)
-                        | ((ny & 15) << 4)
-                        | ((nz & 15) << 8))];
-
-                if (blockId > 0 && blockDataManager.isFullBlock(blockId)) {
-                    continue;
+                if (d[0] != 0 && d[2] != 0) {
+                    if (isBlocked(cx + d[0], cy, cz) || isBlocked(cx, cy, cz + d[2])) {
+                        continue;
+                    }
                 }
+                if (d[1] != 0 && d[2] != 0) {
+                    if (isBlocked(cx, cy + d[1], cz) || isBlocked(cx, cy, cz + d[2])) {
+                        continue;
+                    }
+                }
+                int d_x = Integer.signum(d[0]);
+                int d_y = Integer.signum(d[1]);
+                int d_z = Integer.signum(d[2]);
 
-                // ----------------------------
-                // TRUE spherical distance
-                // ----------------------------
-                int dx = nx - source.position.x;
-                int dy = ny - source.position.y;
-                int dz = nz - source.position.z;
+                int absX = Math.abs(d[0]);
+                int absY = Math.abs(d[1]);
+                int absZ = Math.abs(d[2]);
 
-                float distSq = dx * dx + dy * dy + dz * dz;
-                float dist = (float)Math.sqrt(distSq);
+                int steps = Math.max(absX, Math.max(absY, absZ));
 
-                float att = 1.0f / (1.0f + attLinear * dist + attQuad * distSq);
+                int errX = 0, errY = 0, errZ = 0;
+
+                boolean blocked = false;
+
+                for (int i = 0; i < steps; i++) {
+
+                    errX += absX;
+                    errY += absY;
+                    errZ += absZ;
+
+                    if (errX >= steps) {
+                        x += d_x;
+                        errX -= steps;
+                    }
+                    if (errY >= steps) {
+                        y += d_y;
+                        errY -= steps;
+                    }
+                    if (errZ >= steps) {
+                        z += d_z;
+                        errZ -= steps;
+                    }
+
+                    if (isBlocked(x, y, z)) {
+                        blocked = true;
+                        break;
+                    }
+                }                
+                if (blocked) continue;
+
+                float dist = cDist;
+                float distSq = dist * dist;
+                
+
+                // momentum bias (straight propagation preference)
+                float dirBias = (dirIndex == prevDir) ? 1.25f : 1.0f;
+
+                float att = dirBias / (1.0f + attLinear * dist + attQuad * distSq);
 
                 int nr = (int)(source.color.x * source.intensity * intensityMultiplier * att);
                 int ng = (int)(source.color.y * source.intensity * intensityMultiplier * att);
@@ -211,16 +270,19 @@ public class LightPropagationEngine {
 
                 if (Math.max(nr, Math.max(ng, nb)) < 1) continue;
 
+                int slot = getSlot(nx, ny, nz, indirectionTable);
+                if (slot == -1) continue;
+
                 if (updateVoxelLight(nx, ny, nz, nr, ng, nb, slot, lightPool)) {
-                    queue.offer(pack(nx, ny, nz, cDist + 1, srcID));
+                    queue.offer(pack(nx, ny, nz, cDist + steps, srcID, dirIndex));
                 }
             }
         }
     }
 
-    // ----------------------------
-    // voxel lighting write
-    // ----------------------------
+    // ------------------------------------------------------------
+    // voxel write
+    // ------------------------------------------------------------
     private boolean updateVoxelLight(int x, int y, int z,
                                      int r, int g, int b,
                                      int slot,
@@ -252,32 +314,58 @@ public class LightPropagationEngine {
         return false;
     }
 
-    // ----------------------------
+    // ------------------------------------------------------------
+    // blocking check
+    // ------------------------------------------------------------
+    private boolean isBlocked(int x, int y, int z) {
+        if (x < 0 || y < 0 || z < 0 ||
+            x >= 2048 || y >= 2048 || z >= 2048) return true;
+
+        int cx16 = x >> 4;
+        int cy16 = y >> 4;
+        int cz16 = z >> 4;
+
+        int slotIndex = cx16 + cy16 * 128 + cz16 * 16384;
+        int slot = world.getIndirectionTable()[slotIndex];
+
+        if (slot == -1) return true;
+
+        int blockId = world.getChunkPool()[(slot << 12)
+                | ((x & 15)
+                | ((y & 15) << 4)
+                | ((z & 15) << 8))];
+
+        return blockId > 0 && blockDataManager.isFullBlock(blockId);
+    }
+
+    // ------------------------------------------------------------
     // helpers
-    // ----------------------------
+    // ------------------------------------------------------------
     private int getSlot(int x, int y, int z, int[] indirection) {
         if (x < 0 || y < 0 || z < 0 ||
-            x >= 2048 || y >= 2048 || z >= 2048) {
-            return -1;
-        }
+            x >= 2048 || y >= 2048 || z >= 2048) return -1;
 
         return indirection[(x >> 4) + (y >> 4) * 128 + (z >> 4) * 16384];
     }
 
-    // ----------------------------
+    // ------------------------------------------------------------
     // packing
-    // ----------------------------
-    private long pack(int x, int y, int z, int d, int id) {
+    // ------------------------------------------------------------
+    private long pack(int x, int y, int z, int d, int id, int dir) {
         return ((long)(x & 0x7FF) << 53)
                 | ((long)(y & 0x7FF) << 42)
                 | ((long)(z & 0x7FF) << 31)
                 | ((long)(d & 0xFFF) << 19)
-                | (id & 0x7FFFFL);
+                | ((long)(id & 0x7FF) << 8)
+                | (dir & 0xFF);
     }
 
     private int unpackX(long p) { return (int)((p >> 53) & 0x7FF); }
     private int unpackY(long p) { return (int)((p >> 42) & 0x7FF); }
     private int unpackZ(long p) { return (int)((p >> 31) & 0x7FF); }
-    private int unpackDist(long p) { return (int)((p >> 19) & 0xFFF); }
-    private int unpackID(long p) { return (int)(p & 0x7FFFFL); }
+    private int unpackID(long p) { return (int)((p >> 8) & 0x7FF); }
+    private int unpackDir(long p) { return (int)(p & 0xFF); }
+    private int unpackDist(long p) {
+        return (int)((p >> 19) & 0xFFF);
+    }
 }
