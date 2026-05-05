@@ -8,7 +8,6 @@ import java.util.List;
 
 /**
  * Spherical + directional-biased BFS lighting propagation.
- * Adds momentum-based flow and anisotropic branching.
  */
 public class LightPropagationEngine {
 
@@ -24,7 +23,7 @@ public class LightPropagationEngine {
     }
 
     // ------------------------------------------------------------
-    // Expanded directional kernel (multi-scale anisotropic stencil)
+    // 26 directions
     // ------------------------------------------------------------
     private static final int[][] DIRS = buildDirs();
 
@@ -41,61 +40,66 @@ public class LightPropagationEngine {
             }
         }
 
-        // axial 2-step directions (strong forward bias)
-        int[] v = {-2, -1, 1, 2};
-        for (int i : v) {
-            dirs.add(new int[]{i, 0, 0});
-            dirs.add(new int[]{0, i, 0});
-            dirs.add(new int[]{0, 0, i});
-        }
 
-        // sparse long diagonals
-        for (int dx = -2; dx <= 2; dx += 2) {
-            for (int dy = -2; dy <= 2; dy += 2) {
-                for (int dz = -2; dz <= 2; dz += 2) {
-                    if (dx == 0 && dy == 0 && dz == 0) continue;
-                    dirs.add(new int[]{dx, dy, dz});
-                }
-            }
-        }
 
         return dirs.toArray(new int[0][]);
     }
+    
+    public float[] roots = buildRoot(new float[16]);
 
     // ------------------------------------------------------------
     // BFS queue (momentum-aware)
     // ------------------------------------------------------------
     private static class LongQueue {
         private long[] array;
+        private float[] array2;
+        
         private int head = 0, tail = 0, size = 0, mask;
 
         public LongQueue(int capacity) {
             int cap = 1;
             while (cap < capacity) cap <<= 1;
             array = new long[cap];
+            array2 = new float[cap];
+            
             mask = cap - 1;
         }
 
-        public void offer(long v) {
+        public void offer(long v, float dist) {
             if (size == array.length) {
                 long[] newArray = new long[array.length << 1];
                 for (int i = 0; i < size; i++) {
                     newArray[i] = array[(head + i) & mask];
                 }
+                float[] newArray2 = new float[array.length << 1];
+                for (int i = 0; i < size; i++) {
+                    newArray2[i] = array2[(head + i) & mask];
+                }
                 array = newArray;
+                array2 = newArray2;
+                
                 mask = array.length - 1;
                 head = 0;
                 tail = size;
             }
             array[tail] = v;
+            array2[tail] = dist;
+            
             tail = (tail + 1) & mask;
             size++;
         }
 
-        public long poll() {
-            long v = array[head];
+        public void pop() {
             head = (head + 1) & mask;
             size--;
+            
+        }
+        public long fetch() {
+        	long v = array[head];
+            return v;
+        }
+        public float fetchDist() {
+        	float v = array2[head];
             return v;
         }
 
@@ -133,7 +137,15 @@ public class LightPropagationEngine {
         }
     }
 
-    // ------------------------------------------------------------
+    private float[] buildRoot(float[] fs) {
+		// TODO Auto-generated method stub
+    	for (int i = 0; i < fs.length; i++) {
+    		fs[i] = (float) Math.sqrt(i);
+    	}
+		return fs;
+	}
+
+	// ------------------------------------------------------------
     // Sun handled in shader
     // ------------------------------------------------------------
     private void applySun(LightSource sun, int[] lightPool, int[] indirection) {}
@@ -170,20 +182,20 @@ public class LightPropagationEngine {
                     lightPool
             );
 
-            queue.offer(pack(src.position.x, src.position.y, src.position.z, 0, i, 0));
+            queue.offer(pack(src.position.x, src.position.y, src.position.z, 0, i, 0), 0);
         }
 
         while (!queue.isEmpty()) {
 
-            long current = queue.poll();
+            long current = queue.fetch();
+            float distance = queue.fetchDist();
 
             int cx = unpackX(current);
             int cy = unpackY(current);
             int cz = unpackZ(current);
             int srcID = unpackID(current);
-            int prevDir = unpackDir(current);
-            int cDist = unpackDist(current);
-
+            
+            queue.pop();
             LightSource source = sources.get(srcID);
 
             for (int dirIndex = 0; dirIndex < DIRS.length; dirIndex++) {
@@ -254,14 +266,16 @@ public class LightPropagationEngine {
                     }
                 }                
                 if (blocked) continue;
-
-                float dist = cDist + steps;
+                int axisSteps = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+                float invLen = 1.0f / roots[axisSteps];
+                
+                float dist = distance + roots[axisSteps];
                 float distSq = dist * dist;
                 
 
-
                 float att = 1 / (1.0f + attLinear * dist + attQuad * distSq);
-
+                att *= invLen;
+                
                 int nr = (int)(source.color.x * source.intensity * intensityMultiplier * att);
                 int ng = (int)(source.color.y * source.intensity * intensityMultiplier * att);
                 int nb = (int)(source.color.z * source.intensity * intensityMultiplier * att);
@@ -272,7 +286,7 @@ public class LightPropagationEngine {
                 if (slot == -1) continue;
 
                 if (updateVoxelLight(nx, ny, nz, nr, ng, nb, slot, lightPool)) {
-                    queue.offer(pack(nx, ny, nz, cDist + steps, srcID, dirIndex));
+                    queue.offer(pack(nx, ny, nz, 0, srcID, dirIndex), distance + roots[axisSteps]);
                 }
             }
         }
