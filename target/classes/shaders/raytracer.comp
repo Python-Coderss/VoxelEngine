@@ -374,6 +374,99 @@ vec3 GetSkyLight(vec3 rd, bool includeDisks) {
 }
 
 /**
+ * Interleaved Gradient Noise for jittering.
+ */
+float interleavedGradientNoise(vec2 uv) {
+    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(uv, magic.xy)));
+}
+
+/**
+ * Lightweight shadow tracing. Returns 0.0 if shadowed, 1.0 if clear.
+ */
+float traceShadow(vec3 ro, vec3 rd, float maxDist) {
+    float tNear, tFar;
+    if (!intersectAABB(ro, rd, vec3(0.0), vec3(WORLD_SIZE), tNear, tFar)) return 1.0;
+    
+    float startT = max(0.0, tNear);
+    vec3 p = ro + rd * (startT + 0.01);
+    ivec3 mapPos = ivec3(floor(p));
+    vec3 deltaDist = abs(1.0 / rd);
+    ivec3 step = ivec3(sign(rd));
+    vec3 sideDist = (step * (vec3(mapPos) - p) + (step * 0.5) + 0.5) * deltaDist;
+
+    for (int i = 0; i < 128; i++) {
+        if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(WORLD_SIZE)))) break;
+        float currentT = min(sideDist.x, min(sideDist.y, sideDist.z));
+        if (currentT > maxDist) break;
+
+        uint slot = chunkSlots[(mapPos.x >> 4) | ((mapPos.y >> 4) << 7) | ((mapPos.z >> 4) << 14)];
+        if (slot == EMPTY) {
+            skipEmptyChunk(mapPos, sideDist, deltaDist, step);
+        } else {
+            uint voxel = voxelPool[(slot << 12) | ((mapPos.x & 15) | ((mapPos.y & 15) << 4) | ((mapPos.z & 15) << 8))];
+            if (voxel > 0) {
+                // Check if it's a full block for fast shadow
+                ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 3 + 1);
+                if (((d1.w >> 9) & 1) == 1) return 0.0;
+                
+                // For partial blocks, we'd need AABB intersection, but for volumetric shadows we can approximate
+                return 0.0; 
+            }
+            advanceDDA(mapPos, sideDist, deltaDist, step);
+        }
+    }
+    return 1.0;
+}
+
+/**
+ * Henyey-Greenstein phase function for atmospheric scattering.
+ */
+float phaseHG(float cosTheta, float g) {
+    float g2 = g * g;
+    return (1.0 - g2) / (4.0 * 3.14159 * pow(1.0 + g2 - 2.0 * g * cosTheta, 1.5));
+}
+
+/**
+ * Calculates volumetric scattering (God Rays).
+ */
+vec3 calculateVolumetric(vec3 ro, vec3 rd, float maxDist, float jitter) {
+    vec3 sunDir, moonDir;
+    GetCelestialDirections(u_Time, sunDir, moonDir);
+    
+    int steps = 24;
+    float stepLen = min(maxDist, 150.0) / float(steps);
+    vec3 scattering = vec3(0.0);
+    
+    float cosSun = dot(rd, sunDir);
+    float cosMoon = dot(rd, moonDir);
+    float phaseSun = phaseHG(cosSun, 0.5);
+    float phaseMoon = phaseHG(cosMoon, 0.5);
+    
+    vec3 sunLight = GetCelestialLight(sunDir);
+    vec3 moonLight = GetCelestialLight(moonDir);
+
+    for (int i = 0; i < steps; i++) {
+        float t = (float(i) + jitter) * stepLen;
+        vec3 p = ro + rd * t;
+        
+        // Sun contribution
+        if (sunDir.y > -0.1) {
+            float shadow = traceShadow(p, sunDir, 100.0);
+            scattering += sunLight * shadow * phaseSun;
+        }
+        
+        // Moon contribution
+        if (moonDir.y > -0.1) {
+            float shadow = traceShadow(p, moonDir, 100.0);
+            scattering += moonLight * shadow * phaseMoon;
+        }
+    }
+    
+    return scattering * stepLen * 0.02; // Scale intensity
+}
+
+/**
  * Main Compute Shader execution entry.
  */
 void main() {
@@ -381,6 +474,9 @@ void main() {
     ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(imgOutput);
     if (any(greaterThanEqual(pixelCoords, size))) return;
+
+    // Jitter for volumetric samples
+    float jitter = interleavedGradientNoise(vec2(pixelCoords));
 
     // Convert pixel coordinates to NDC (Normalized Device Coordinates) [-1, 1]
     vec2 ndc = ((vec2(pixelCoords) + 0.5) / vec2(size)) * 2.0 - 1.0;
@@ -392,6 +488,10 @@ void main() {
     vec3 finalColor = vec3(0.0);
     vec3 throughput = vec3(1.0); // How much light can pass through to the next bounce
     bool skip = false;
+    float firstHitT = 1e30;
+
+    vec3 sunDir, moonDir;
+    GetCelestialDirections(u_Time, sunDir, moonDir);
 
     // Bounce loop for reflections and transparency (Max 8 bounces)
     for (int bounce = 0; bounce < 8; bounce++) {
@@ -402,6 +502,8 @@ void main() {
 
         // Find what the ray hits
         bool hitWorld = traceWorld(rayRo, rayDir, true, skip, t, side, voxel, aabbIdx);
+        
+        if (bounce == 0) firstHitT = hitWorld ? t : 200.0;
 
         if (!hitWorld) {
             // Hit the sky: Render atmosphere AND sun/moon disks
@@ -418,7 +520,6 @@ void main() {
         else normal.z = -sign(rayDir.z);
 
         // Fetch properties for the block we hit
-        // Each block now uses 3 ivec4s (12 ints)
         ivec4 d0 = texelFetch(u_BlockData, int(voxel) * 3);
         ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 3 + 1);
         ivec4 d2 = texelFetch(u_BlockData, int(voxel) * 3 + 2);
@@ -464,7 +565,6 @@ void main() {
                 uvRect.z = float((packedUV >> 16) & 0xFF);
                 uvRect.w = float((packedUV >> 24) & 0xFF);
                 
-                // For partial blocks, normalize localUv relative to the AABB bounds
                 vec3 voxelMin = floor(hitPos);
                 vec3 bMin = texelFetch(u_BlockAABBs, aabbIdx * 2).xyz + voxelMin;
                 vec3 bMax = texelFetch(u_BlockAABBs, aabbIdx * 2 + 1).xyz + voxelMin;
@@ -473,23 +573,19 @@ void main() {
                 else localUv = (hitPos.xy - bMin.xy) / (bMax.xy - bMin.xy);
             }
 
-            // Map local UVs to the rect and apply V-flip (Minecraft top-left to GL bottom-left)
             vec2 finalUv;
             finalUv.x = mix(uvRect.x, uvRect.z, localUv.x) / 16.0;
             finalUv.y = 1.0 - mix(uvRect.y, uvRect.w, localUv.y) / 16.0;
 
-            // Sample the block texture from the array
             vec4 texColor = texture(u_BlockTextures, vec3(finalUv, float(texIdx)));
             albedo = texColor.rgb;
 
-            // Apply biome tint if necessary (e.g., for grass)
             if (isTintable == 1) {
                 vec2 biomeParams = texture(u_BiomeMap, hitPos.xz / float(WORLD_SIZE)).rg;
                 vec3 tint = texture(u_GrassColormap, vec2(1.0 - biomeParams.x, 1.0 - biomeParams.y)).rgb;
                 albedo *= tint;
             }
 
-            // Simple cutout transparency (discard pixels with low alpha)
             if (trans > 0.0 && (texColor.a < 0.1 || dot(albedo, vec3(1.0)) < 0.1)) {
                 trans = 1.0;
                 albedo = vec3(1.0);
@@ -503,25 +599,30 @@ void main() {
 
         vec3 light = getSurfaceLight(hitPos, worldSide, normal);
         
-        // --- Explicit Sunlight and Moonlight with Shadows ---
-        vec3 sunDir, moonDir;
-        GetCelestialDirections(u_Time, sunDir, moonDir);
-        
+        // --- Specular and Celestial Light ---
         vec3 sunContrib = vec3(0.0);
         float sunDiffuse = max(0.0, dot(normal, sunDir));
-        if (sunDiffuse > 0.0 && sunDir.y > -0.1) {
-            float st; int ss; uint sv; int sa;
-            if (!traceWorld(hitPos + normal * 0.01, sunDir, false, false, st, ss, sv, sa)) {
+        if (sunDir.y > -0.1) {
+            float shadow = traceShadow(hitPos + normal * 0.01, sunDir, 1000.0);
+            if (shadow > 0.5) {
                 sunContrib = GetCelestialLight(sunDir) * sunDiffuse;
+                // Add Blinn-Phong Specular
+                vec3 halfDir = normalize(sunDir - rayDir);
+                float spec = pow(max(0.0, dot(normal, halfDir)), mix(10.0, 100.0, refl));
+                sunContrib += GetCelestialLight(sunDir) * spec * refl * 2.0;
             }
         }
         
         vec3 moonContrib = vec3(0.0);
         float moonDiffuse = max(0.0, dot(normal, moonDir));
-        if (moonDiffuse > 0.0 && moonDir.y > -0.1) {
-            float st; int ss; uint sv; int sa;
-            if (!traceWorld(hitPos + normal * 0.01, moonDir, false, false, st, ss, sv, sa)) {
+        if (moonDir.y > -0.1) {
+            float shadow = traceShadow(hitPos + normal * 0.01, moonDir, 1000.0);
+            if (shadow > 0.5) {
                 moonContrib = GetCelestialLight(moonDir) * moonDiffuse;
+                // Add Blinn-Phong Specular
+                vec3 halfDir = normalize(moonDir - rayDir);
+                float spec = pow(max(0.0, dot(normal, halfDir)), mix(10.0, 100.0, refl));
+                moonContrib += GetCelestialLight(moonDir) * spec * refl * 2.0;
             }
         }
         
@@ -529,18 +630,17 @@ void main() {
         vec3 totalLight = light + sunContrib + moonContrib;
         
         // Albedo scaling and ambient term
+        // Maintain diffuse even for reflective surfaces as requested
         vec3 diffuse = albedo * (totalLight + 0.02);
 
-        // Simple directional shading to define shapes (less aggressive now)
         if (worldSide == 0) diffuse *= 0.9;
         if (worldSide == 2) diffuse *= 0.95;
 
-        // Apply distance fog (Atmosphere ONLY, no disks)
+        // Apply distance fog
         float fogFactor = clamp(1.0 - exp(-t * 0.0008), 0.0, 1.0);
         vec3 fogColor = GetSkyLight(rayDir, false);
         diffuse = mix(diffuse, fogColor, fogFactor);
 
-        // Handle reflection or transparency for the next bounce
         if (refl > 0.0 && trans < 1.0) {
             finalColor += throughput * diffuse * (1.0 - refl) * (1.0 - trans);
             throughput *= refl;
@@ -551,18 +651,20 @@ void main() {
             finalColor += throughput * diffuse * (1.0 - trans);
             throughput *= trans * albedo;
             rayRo = hitPos + rayDir * 0.01; 
-            skip = true; // Skip the first DDA step to avoid hitting the same voxel again
+            skip = true;
         } else {
-            // Opaque hit, stop bouncing
             finalColor += throughput * diffuse;
             break;
         }
     }
 
-    // Apply Tonemapping and Gamma Correction to match Shadertoy demo
+    // Add Volumetric Scattering (God Rays) for the primary ray
+    finalColor += calculateVolumetric(camPos, normalize(camForward + ndc.x * (float(size.x)/size.y) * camRight + ndc.y * camUp), firstHitT, jitter);
+
+    // Apply Tonemapping and Gamma Correction
     vec3 color = ACESFilm(finalColor);
     color = pow(color, vec3(1.0 / 2.2));
 
-    // Save the final color to the output image
     imageStore(imgOutput, pixelCoords, vec4(color, 1.0));
 }
+
