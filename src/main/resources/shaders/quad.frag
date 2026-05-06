@@ -18,16 +18,16 @@ void main() {
     float bloomThreshold = 0.8;
     float bloomIntensity = 0.4;
     
-    for(int x = -2; x <= 2; x++) {
-        for(int y = -2; y <= 2; y++) {
-            vec3 sampleColor = texture(screenTexture, TexCoords + vec2(x, y) * texelSize * 1.5).rgb;
-            float brightness = dot(sampleColor, vec3(0.2126, 0.7152, 0.0722));
+    for(int x = -1; x <= 1; x++) {
+        for(int y = -1; y <= 1; y++) {
+            vec3 sampleColor = texture(screenTexture, TexCoords + vec2(x, y) * texelSize * 2.0).rgb;
+            float brightness = max(sampleColor.r, max(sampleColor.g, sampleColor.b));
             if(brightness > bloomThreshold) {
                 bloom += sampleColor * (brightness - bloomThreshold);
             }
         }
     }
-    bloom /= 25.0;
+    bloom /= 9.0;
     
     // Composite: Original + Bloom
     vec3 finalColor = color + bloom * bloomIntensity;
