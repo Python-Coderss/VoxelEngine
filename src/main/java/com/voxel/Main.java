@@ -51,7 +51,7 @@ public class Main {
     private int quadProgram, computeProgram;
 
     // OpenGL Object IDs for the full-screen quad used to display the raytraced image
-    private int quadVAO, quadVBO, renderTexture;
+    private int quadVAO, quadVBO, renderTexture, godRayTexture, blurTexture, blurFBO;
 
     // SSBO (Shader Storage Buffer Object) IDs for world data
     // SSBOs allow us to pass large amounts of data to shaders
@@ -106,6 +106,7 @@ public class Main {
         glDeleteBuffers(quadVBO);
         glDeleteVertexArrays(quadVAO);
         glDeleteTextures(renderTexture);
+        glDeleteTextures(godRayTexture);
         glDeleteBuffers(indirectionSSBO);
         glDeleteBuffers(chunkPoolSSBO);
         glDeleteBuffers(lightPoolSSBO);
@@ -287,6 +288,22 @@ public class Main {
         // Use Nearest filtering for a crisp voxel look
         glTextureParameteri(renderTexture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTextureParameteri(renderTexture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+        godRayTexture = glCreateTextures(GL_TEXTURE_2D);
+        glTextureStorage2D(godRayTexture, 1, GL_RGBA8, width, height);
+        // Use Linear filtering for god rays as they are smooth
+        glTextureParameteri(godRayTexture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTextureParameteri(godRayTexture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        // Intermediate texture for separable blur
+        blurTexture = glCreateTextures(GL_TEXTURE_2D);
+        glTextureStorage2D(blurTexture, 1, GL_RGBA8, width, height);
+        glTextureParameteri(blurTexture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTextureParameteri(blurTexture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        // Framebuffer for rendering the intermediate blur pass
+        blurFBO = glCreateFramebuffers();
+        glNamedFramebufferTexture(blurFBO, GL_COLOR_ATTACHMENT0, blurTexture, 0);
     }
 
     /**
@@ -580,6 +597,7 @@ public class Main {
 
             // Bind the output image texture
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
+            glBindImageTexture(1, godRayTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
 
             // Dispatch the compute shader: one thread per pixel
             // We use 16x16 thread groups (matching layout in shader)
@@ -589,11 +607,26 @@ public class Main {
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
             
             // --- Final Display Pass (Graphics Pipeline) ---
-            glClear(GL_COLOR_BUFFER_BIT); // Clear the back buffer
-            glUseProgram(quadProgram);    // Use the quad shader
-            glBindTextureUnit(0, renderTexture); // Bind the raytraced image
-            glBindVertexArray(quadVAO);   // Bind the quad geometry
-            glDrawArrays(GL_TRIANGLES, 0, 6); // Draw the quad to fill the screen
+            
+            // Pass 1: Horizontal Blur of God Rays into intermediate buffer
+            glBindFramebuffer(GL_FRAMEBUFFER, blurFBO);
+            glViewport(0, 0, width, height);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glUseProgram(quadProgram);
+            glBindTextureUnit(0, godRayTexture); // inputTexture for blur
+            glUniform1i(glGetUniformLocation(quadProgram, "u_Pass"), 0);
+            glBindVertexArray(quadVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            // Pass 2: Vertical Blur + Combine with Sharp Scene to Screen
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, width, height);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glBindTextureUnit(0, renderTexture); // inputTexture (sharp voxels)
+            glBindTextureUnit(1, blurTexture);   // u_GodRayTexture (H-blurred)
+            glUniform1i(glGetUniformLocation(quadProgram, "u_GodRayTexture"), 1);
+            glUniform1i(glGetUniformLocation(quadProgram, "u_Pass"), 1);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
 
             glfwSwapBuffers(window); // Swap the front and back buffers
             glfwPollEvents();        // Process window and input events
