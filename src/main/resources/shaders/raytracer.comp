@@ -342,29 +342,67 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * f;
 }
 
-/**
- * Volumetric Scattering (God Rays) - Optimized.
- */
-vec3 calculateVolumetric(vec3 ro, vec3 rd, float maxDist, float jitter, vec3 sunDir, vec3 moonDir) {
-    int steps = 24;
-    float stepLen = min(maxDist, 160.0) / float(steps);
-    vec3 scattering = vec3(0.0);
-    
-    vec3 sunL = GetCelestialLight(sunDir, true);
-    float cosSun = dot(rd, sunDir);
-    float phaseSun = (1.0 - 0.36) / (4.0 * PI * pow(1.36 - 1.2 * cosSun, 1.5));
-    
-    bool doSun = sunDir.y > -0.15;
-    bool doMoon = moonDir.y > -0.15;
 
-    for (int i = 0; i < steps; i++) {
-        float t = (float(i) + jitter) * stepLen;
-        vec3 p = ro + rd * t;
-        if (doSun) scattering += sunL * traceShadow(p, sunDir, 100.0) * phaseSun;
-        else if (doMoon) scattering += vec3(0.15, 0.25, 0.6) * 0.18 * traceShadow(p, moonDir, 80.0) * 0.05;
+vec3 calculateVolumetric(
+    vec3 ro,
+    vec3 rd,
+    float maxDist,
+    float jitter,
+    vec3 sunDir,
+    vec3 moonDir
+) {
+    float dist = min(maxDist, 160.0);
+    float stepLen = dist * 0.5;
+
+    vec3 scattering = vec3(0.0);
+
+    // -------------------------------------------------
+    // SUN
+    // -------------------------------------------------
+    if (sunDir.y > -0.15) {
+
+        vec3 sunL = GetCelestialLight(sunDir, true);
+
+        float cosSun = dot(rd, sunDir);
+
+        // Faster than pow(x, 1.5)
+        float d = 1.36 - 1.2 * cosSun;
+        float phaseSun = 0.64 / (4.0 * PI * sqrt(d * d * d));
+
+        // Step 0
+        float t0 = (0.0 + jitter) * stepLen;
+        vec3 p0 = ro + rd * t0;
+
+        // Step 1
+        float t1 = (1.0 + jitter) * stepLen;
+        vec3 p1 = ro + rd * t1;
+
+        scattering += sunL * traceShadow(p0, sunDir, 100.0) * phaseSun;
+        scattering += sunL * traceShadow(p1, sunDir, 100.0) * phaseSun;
     }
+
+    // -------------------------------------------------
+    // MOON
+    // -------------------------------------------------
+    else if (moonDir.y > -0.15) {
+
+        vec3 moonL = vec3(0.15, 0.25, 0.6) * 0.009;
+
+        // Step 0
+        float t0 = (0.0 + jitter) * stepLen;
+        vec3 p0 = ro + rd * t0;
+
+        // Step 1
+        float t1 = (1.0 + jitter) * stepLen;
+        vec3 p1 = ro + rd * t1;
+
+        scattering += moonL * traceShadow(p0, moonDir, 80.0);
+        scattering += moonL * traceShadow(p1, moonDir, 80.0);
+    }
+
     return scattering * stepLen * 0.015;
 }
+
 
 void main() {
     ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
