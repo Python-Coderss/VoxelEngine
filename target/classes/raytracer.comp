@@ -9,6 +9,7 @@
 layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(rgba8, binding = 0) uniform image2D imgOutput;
+layout(rgba8, binding = 1) uniform image2D godRayOutput;
 
 // Uniforms
 layout(location = 0) uniform vec3 camPos;
@@ -510,12 +511,20 @@ void main() {
         }
     }
 
-    finalColor += calculateVolumetric(camPos, rayDir, firstHitT, jitter, sunDir, moonDir);
+    vec3 godRayColor = calculateVolumetric(camPos, rayDir, firstHitT, jitter, sunDir, moonDir);
     
     // Lens: Vignette
-    finalColor *= 1.0 - 0.4 * length(ndc);
+    float vignette = 1.0 - 0.4 * length(ndc);
+    finalColor *= vignette;
+    godRayColor *= vignette;
     
-    vec3 color = ACESFilm(finalColor);
-    color = pow(color, vec3(1.0 / 2.2));
-    imageStore(imgOutput, pixelCoords, vec4(color, 1.0));
+    // Tonemap and Gamma correct scene
+    vec3 sceneColor = ACESFilm(finalColor);
+    sceneColor = pow(sceneColor, vec3(1.0 / 2.2));
+    imageStore(imgOutput, pixelCoords, vec4(sceneColor, 1.0));
+    
+    // Tonemap and Gamma correct god rays
+    vec3 godRays = ACESFilm(godRayColor);
+    godRays = pow(godRays, vec3(1.0 / 2.2));
+    imageStore(godRayOutput, pixelCoords, vec4(godRays, 1.0));
 }
