@@ -31,6 +31,34 @@ layout(std430, binding = 5) buffer readonly restrict LightPool {
     uint lightPool[];
 };
 
+// Entity Structures
+struct EntityData {
+    vec3 position;
+    float yaw;
+    int partCount;
+    int partOffset;
+    float pad1, pad2;
+};
+
+struct PartData {
+    vec3 offset;
+    float pad1;
+    vec3 size;
+    float textureIndex;
+    vec3 rotation;
+    float pad2;
+};
+
+layout(std430, binding = 3) buffer readonly EntityBuffer {
+    EntityData entities[];
+};
+
+layout(std430, binding = 4) buffer readonly PartBuffer {
+    PartData parts[];
+};
+
+layout(location = 5) uniform int u_EntityCount;
+
 // Samplers
 uniform sampler2DArray u_BlockTextures;
 uniform isamplerBuffer u_BlockData;
@@ -80,6 +108,23 @@ vec3 ACESFilm(vec3 x) {
 }
 
 /**
+ * AABB Intersection.
+ */
+bool intersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, out float tFar) {
+    vec3 invDir = 1.0 / rd;
+    vec3 t0 = (boxMin - ro) * invDir;
+    vec3 t1 = (boxMax - ro) * invDir;
+    vec3 tmin = min(t0, t1);
+    vec3 tmax = max(t0, t1);
+    tNear = max(max(tmin.x, tmin.y), tmin.z);
+    tFar = min(min(tmax.x, tmax.y), tmax.z);
+    return tNear <= tFar && tFar > 0.0;
+}
+
+
+
+
+/**
  * Celestial directions.
  */
 void GetCelestialDirections(float t, out vec3 sunDir, out vec3 moonDir) {
@@ -89,13 +134,69 @@ void GetCelestialDirections(float t, out vec3 sunDir, out vec3 moonDir) {
 }
 
 /**
+ * Entity and Part Intersection.
+ */
+bool intersectPart(vec3 ro, vec3 rd, vec3 pos, float yaw, PartData part, out float tNear, out vec3 normal, out vec2 uv) {
+    float cy = cos(-yaw); float sy = sin(-yaw);
+    vec3 ero = ro - pos;
+    vec3 lro = vec3(ero.x * cy - ero.z * sy, ero.y, ero.x * sy + ero.z * cy);
+    vec3 lrd = vec3(rd.x * cy - rd.z * sy, rd.y, rd.x * sy + rd.z * cy);
+
+    // Flip local Y so pivot is at the top of the part
+    vec3 pro = lro - part.offset;
+    pro.y = -pro.y;
+    vec3 rlrd = vec3(lrd.x, -lrd.y, lrd.z);
+
+    float cx = cos(-part.rotation.x); float sx = sin(-part.rotation.x);
+    vec3 rro = vec3(pro.x, pro.y * cx - pro.z * sx, pro.y * sx + pro.z * cx);
+    vec3 rrd = vec3(rlrd.x, rlrd.y * cx - rlrd.z * sx, rlrd.y * sx + rlrd.z * cx);
+
+    float tFar;
+    if (intersectAABB(rro, rrd, vec3(0.0), part.size, tNear, tFar)) {
+        vec3 hp = rro + rrd * tNear;
+        vec3 center = part.size * 0.5;
+        vec3 localP = abs((hp - center) / (part.size * 0.5));
+        if (localP.x > localP.y && localP.x > localP.z) {
+            normal = vec3(sign(hp.x - center.x), 0, 0); uv = hp.zy / part.size.zy;
+        } else if (localP.y > localP.z) {
+            normal = vec3(0, sign(hp.y - center.y), 0); uv = hp.xz / part.size.xz;
+            normal.y = -normal.y; // Flip normal Y back
+        } else {
+            normal = vec3(0, 0, sign(hp.z - center.z)); uv = hp.xy / part.size.xy;
+        }
+        normal = vec3(normal.x, normal.y * cx + normal.z * sx, -normal.y * sx + normal.z * cx);
+        cy = cos(yaw); sy = sin(yaw);
+        normal = vec3(normal.x * cy + normal.z * sy, normal.y, -normal.x * sy + normal.z * cy);
+        return true;
+    }
+    return false;
+}
+
+bool traceEntities(vec3 ro, vec3 rd, out float resT, out vec3 resNormal, out int resTexIdx, out vec2 resUV) {
+    resT = 1e30; bool hit = false;
+    for (int i = 0; i < u_EntityCount; i++) {
+        EntityData e = entities[i];
+        for (int j = 0; j < e.partCount; j++) {
+            PartData p = parts[e.partOffset + j];
+            float t; vec3 n; vec2 uv;
+            if (intersectPart(ro, rd, e.position, e.yaw, p, t, n, uv)) {
+                if (t < resT) {
+                    resT = t; resNormal = n; resTexIdx = int(p.textureIndex); resUV = uv; hit = true;
+                }
+            }
+        }
+    }
+    return hit;
+}
+
+/**
  * Realistic Celestial Light Colors.
  */
 vec3 GetCelestialLight(vec3 dir, bool isSun) {
     float horizon = max(0.0, dir.y);
     if (isSun) {
         // Sun: warm at horizon, neutral white at zenith
-        vec3 sunColor = mix(vec3(8.0, 2.0, 0.5), vec3(1.64, 1.47, 1.29) * 5.0, sqrt(horizon));
+        vec3 sunColor = mix(vec3(4.0, 1.0, 0.25), vec3(1.0, 0.9, 0.8) * 2.0, sqrt(horizon));
         return sunColor;
     } else {
         // Moon: cool blue-silver
@@ -161,19 +262,6 @@ vec3 GetCelestialDisks(vec3 rd, vec3 sunDir, vec3 moonDir) {
     return color;
 }
 
-/**
- * AABB Intersection.
- */
-bool intersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, out float tFar) {
-    vec3 invDir = 1.0 / rd;
-    vec3 t0 = (boxMin - ro) * invDir;
-    vec3 t1 = (boxMax - ro) * invDir;
-    vec3 tmin = min(t0, t1);
-    vec3 tmax = max(t0, t1);
-    tNear = max(max(tmin.x, tmin.y), tmin.z);
-    tFar = min(min(tmax.x, tmax.y), tmax.z);
-    return tNear <= tFar && tFar > 0.0;
-}
 
 /**
  * DDA Step.
@@ -425,43 +513,57 @@ void main() {
 
     for (int bounce = 0; bounce < 8; bounce++) {
         float t; int side; uint voxel; int aabbIdx;
-        bool hit = traceWorld(rayRo, rayDir, true, skip, t, side, voxel, aabbIdx);
-        if (bounce == 0) firstHitT = hit ? t : 200.0;
+        bool hitWorld = traceWorld(rayRo, rayDir, true, skip, t, side, voxel, aabbIdx);
+        
+        float et; vec3 en; int etex; vec2 euv;
+        bool hitEntity = traceEntities(rayRo, rayDir, et, en, etex, euv);
 
-        if (!hit) {
+        if (!hitWorld && !hitEntity) {
             finalColor += throughput * (GetSkyAtmosphere(rayDir, sunDir, moonDir) + GetCelestialDisks(rayDir, sunDir, moonDir));
             break;
         }
 
-        vec3 hitPos = rayRo + rayDir * t;
+        vec3 hitPos;
         vec3 normal = vec3(0.0);
-        if (side == 0) normal.x = -sign(rayDir.x); else if (side == 1) normal.y = -sign(rayDir.y); else normal.z = -sign(rayDir.z);
+        vec3 albedo = vec3(1.0);
+        float trans = 0.0;
+        float refl = 0.0;
+        int texIdx = -1;
+        vec2 uv = vec2(0.0);
 
-        ivec4 d0 = texelFetch(u_BlockData, int(voxel) * 3);
-        ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 3 + 1);
-        ivec4 d2 = texelFetch(u_BlockData, int(voxel) * 3 + 2);
-
-        float trans = float(d1.z) / 255.0;
-        float refl = float(d1.w & 0xFF) / 255.0;
-        vec3 albedo = vec3(d2.rgb) / 255.0;
-        int texIdx = (side == 0 ? (rayDir.x > 0 ? d1.x : d1.y) : (side == 1 ? (rayDir.y > 0 ? d0.x : d0.y) : (rayDir.z > 0 ? d0.z : d0.w)));
+        if (hitEntity && (!hitWorld || et < t)) {
+            t = et; hitPos = rayRo + rayDir * t;
+            normal = en; texIdx = etex; uv = euv;
+            refl = 0.1; // Default for entities
+        } else {
+            hitPos = rayRo + rayDir * t;
+            if (side == 0) normal.x = -sign(rayDir.x); else if (side == 1) normal.y = -sign(rayDir.y); else normal.z = -sign(rayDir.z);
+            ivec4 d0 = texelFetch(u_BlockData, int(voxel) * 3);
+            ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 3 + 1);
+            ivec4 d2 = texelFetch(u_BlockData, int(voxel) * 3 + 2);
+            trans = float(d1.z) / 255.0; refl = float(d1.w & 0xFF) / 255.0; albedo = vec3(d2.rgb) / 255.0;
+            texIdx = (side == 0 ? (rayDir.x > 0 ? d1.x : d1.y) : (side == 1 ? (rayDir.y > 0 ? d0.x : d0.y) : (rayDir.z > 0 ? d0.z : d0.w)));
+            if (texIdx >= 0) {
+                uv = (side == 0 ? fract(hitPos.zy) : (side == 1 ? fract(hitPos.xz) : fract(hitPos.xy)));
+                if (((d1.w >> 9) & 1) == 0 && aabbIdx != -1) {
+                    vec3 bMin = texelFetch(u_BlockAABBs, aabbIdx * 2).xyz;
+                    vec3 bMax = texelFetch(u_BlockAABBs, aabbIdx * 2 + 1).xyz;
+                    uv = (side == 0 ? (hitPos.zy - (floor(hitPos.zy) + bMin.zy)) / (bMax.zy - bMin.zy) : (side == 1 ? (hitPos.xz - (floor(hitPos.xz) + bMin.xz)) / (bMax.xz - bMin.xz) : (hitPos.xy - (floor(hitPos.xy) + bMin.xy)) / (bMax.xy - bMin.xy)));
+                }
+            }
+            if (((d1.w >> 8) & 1) == 1) {
+                vec2 b = texture(u_BiomeMap, hitPos.xz / 2048.0).rg;
+                albedo *= texture(u_GrassColormap, vec2(1.0 - b.x, 1.0 - b.y)).rgb;
+            }
+        }
 
         if (texIdx >= 0) {
-            vec2 uv = (side == 0 ? fract(hitPos.zy) : (side == 1 ? fract(hitPos.xz) : fract(hitPos.xy)));
-            if (((d1.w >> 9) & 1) == 0 && aabbIdx != -1) {
-                vec3 bMin = texelFetch(u_BlockAABBs, aabbIdx * 2).xyz;
-                vec3 bMax = texelFetch(u_BlockAABBs, aabbIdx * 2 + 1).xyz;
-                uv = (side == 0 ? (hitPos.zy - (floor(hitPos.zy) + bMin.zy)) / (bMax.zy - bMin.zy) : (side == 1 ? (hitPos.xz - (floor(hitPos.xz) + bMin.xz)) / (bMax.xz - bMin.xz) : (hitPos.xy - (floor(hitPos.xy) + bMin.xy)) / (bMax.xy - bMin.xy)));
-            }
             vec4 tex = texture(u_BlockTextures, vec3(uv.x, 1.0 - uv.y, float(texIdx)));
             albedo *= tex.rgb;
             if (trans > 0.0 && tex.a < 0.1) { trans = 1.0; albedo = vec3(1.0); }
         }
 
-        if (((d1.w >> 8) & 1) == 1) {
-            vec2 b = texture(u_BiomeMap, hitPos.xz / 2048.0).rg;
-            albedo *= texture(u_GrassColormap, vec2(1.0 - b.x, 1.0 - b.y)).rgb;
-        }
+        if (bounce == 0) firstHitT = t;
 
         vec3 light = getSurfaceLight(hitPos, normal);
         

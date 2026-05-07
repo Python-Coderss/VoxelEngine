@@ -57,6 +57,9 @@ public class Main {
     // SSBOs allow us to pass large amounts of data to shaders
     private int indirectionSSBO, chunkPoolSSBO, lightPoolSSBO;
 
+    // Entity Manager
+    private com.voxel.entity.EntityManager entityManager;
+
     // Counter for the next available slot in the chunk pool
     private int nextWorldChunkSlot;
     
@@ -198,6 +201,7 @@ public class Main {
         
 
         // Setup various engine components
+        entityManager = new com.voxel.entity.EntityManager();
         setupQuad();     // Full-screen rectangle geometry
         setupTexture();  // Texture where the raytracer will write its output
           
@@ -426,6 +430,15 @@ public class Main {
                 world.setVoxel(x, height, z, 0); // Air (Slit in ceiling)
             }
         }
+
+        // 6. Add Entities
+        int headTex = textureManager.getTextureIndex("concrete_green");
+        int bodyTex = textureManager.getTextureIndex("concrete_cyan");
+        int armTex = textureManager.getTextureIndex("concrete_lime");
+        int legTex = textureManager.getTextureIndex("concrete_blue");
+        
+        entityManager.addEntity(new com.voxel.entity.ZombieEntity(1, new Vector3f(startX + 10, 2.5f, startZ + 10), headTex, bodyTex, armTex, legTex));
+        entityManager.addEntity(new com.voxel.entity.ZombieEntity(2, new Vector3f(startX + 15, 2.5f, startZ + 15), headTex, bodyTex, armTex, legTex));
     }
 
     /**
@@ -545,6 +558,9 @@ public class Main {
             // Update camera based on input
             updateCamera(dt);
 
+            // Update entities
+            entityManager.update(dt);
+            entityManager.uploadToGPU();
 
 
             // --- Raytracing Pass (Compute Shader) ---
@@ -556,6 +572,7 @@ public class Main {
             glProgramUniform3f(computeProgram, 2, rightX, rightY, rightZ);
             glProgramUniform3f(computeProgram, 3, upX, upY, upZ);
             glProgramUniform1f(computeProgram, 4, currentTime); // Pass u_Time
+            glProgramUniform1i(computeProgram, 5, entityManager.getEntityCount()); // Pass u_EntityCount
 
             // Bind textures to specific texture units for the shader
             glActiveTexture(GL_TEXTURE6);
@@ -574,9 +591,9 @@ public class Main {
             glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getInfoTextureId());
             glUniform1i(glGetUniformLocation(computeProgram, "u_BlockAABBInfo"), 11);
 
-            glActiveTexture(GL_TEXTURE12);
+            glActiveTexture(GL_TEXTURE13);
             glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getAABBUVTextureId());
-            glUniform1i(glGetUniformLocation(computeProgram, "u_BlockAABBUVs"), 12);
+            glUniform1i(glGetUniformLocation(computeProgram, "u_BlockAABBUVs"), 13);
 
             glActiveTexture(GL_TEXTURE8);
             glBindTexture(GL_TEXTURE_2D, biomeManager.getBiomeMapId());
@@ -594,6 +611,8 @@ public class Main {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lightPoolSSBO);
+            
+            entityManager.bind(3, 4); // Entity SSBO at 3, Part SSBO at 4
 
             // Bind the output image texture
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
