@@ -2,6 +2,7 @@ C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel
 C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel\Main.java
 C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel\utils\PerlinNoise.java
 C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel\utils\BlockDataManager.java
+C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel\utils\TextureUtils.java
 C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel\utils\BiomeManager.java
 C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel\lighting\LightType.java
 C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel\utils\Direction.java
@@ -10,4 +11,5 @@ C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel
 C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel\utils\GLUtil.java
 C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel\lighting\LightSource.java
 C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel\utils\TextureManager.java
+C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel\utils\UVGuiTool.java
 C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\src\main\java\com\voxel\World.java

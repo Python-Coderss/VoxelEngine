@@ -1,36 +1,47 @@
 #version 430 core
 
-/**
- * Full-screen Quad Fragment Shader with Bloom.
- */
-
 in vec2 TexCoords;
 out vec4 FragColor;
 
-uniform sampler2D screenTexture;
+uniform sampler2D inputTexture;
+
+float luminance(vec3 c) {
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
 
 void main() {
-    vec2 texelSize = 1.0 / textureSize(screenTexture, 0);
-    vec3 color = texture(screenTexture, TexCoords).rgb;
-    
-    // Bloom extraction and blur (Multi-tap box blur)
-    vec3 bloom = vec3(0.0);
-    float bloomThreshold = 0.8;
-    float bloomIntensity = 0.4;
-    
-    for(int x = -1; x <= 1; x++) {
-        for(int y = -1; y <= 1; y++) {
-            vec3 sampleColor = texture(screenTexture, TexCoords + vec2(x, y) * texelSize * 2.0).rgb;
-            float brightness = max(sampleColor.r, max(sampleColor.g, sampleColor.b));
-            if(brightness > bloomThreshold) {
-                bloom += sampleColor * (brightness - bloomThreshold);
-            }
+    vec2 texel = 1.0 / textureSize(inputTexture, 0);
+
+    vec3 centerColor = texture(inputTexture, TexCoords).rgb;
+
+    float minLum = 1e9;
+    float maxLum = -1e9;
+
+    vec3 sumColor = vec3(0.0);
+    int count = 0;
+
+    // 25x25 neighborhood (-12 to +12)
+    for (int x = -12; x <= 12; x++) {
+        for (int y = -12; y <= 12; y++) {
+
+            vec3 c = texture(inputTexture, TexCoords + vec2(x, y) * texel).rgb;
+            float l = luminance(c);
+
+            minLum = min(minLum, l);
+            maxLum = max(maxLum, l);
+
+            sumColor += c;
+            count++;
         }
     }
-    bloom /= 9.0;
-    
-    // Composite: Original + Bloom
-    vec3 finalColor = color + bloom * bloomIntensity;
-    
-    FragColor = vec4(finalColor, 1.0);
+
+    float range = maxLum - minLum;
+
+    float threshold = 50.0 / 255.0;
+
+    if (range > threshold) {
+        FragColor = vec4(sumColor / float(count), 1.0);
+    } else {
+        FragColor = vec4(centerColor, 1.0);
+    }
 }
