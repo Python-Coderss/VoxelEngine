@@ -20,10 +20,10 @@ public class EntityManager {
     private static final int MAX_ENTITIES = 1024;
     private static final int MAX_PARTS = 8192;
     
-    // Entity data size: position(3) + yaw(1) + partCount(1) + partOffset(1) + padding(2) = 8 floats (32 bytes)
-    private static final int ENTITY_STRIDE = 8;
-    // Part data size: offset(3) + padding(1) + size(3) + textureIndex(1) + rotation(3) + padding(1) = 12 floats (48 bytes)
-    private static final int PART_STRIDE = 12;
+    // Entity data size: position(3) + padding(1) + rotation(3) + padding(1) + partCount(1) + partOffset(1) + padding(2) = 12 floats (48 bytes)
+    private static final int ENTITY_STRIDE = 12;
+    // Part data size: offset(3) + padding(1) + absoluteOffset(3) + padding(1) + size(3) + textureIndex(1) + rotation(3) + padding(1) = 16 floats (64 bytes)
+    private static final int PART_STRIDE = 16;
 
     public EntityManager() {
         this.entities = new ArrayList<>();
@@ -57,7 +57,13 @@ public class EntityManager {
             int partCount = entity.parts.size();
             
             entityBuffer.putFloat(entity.position.x).putFloat(entity.position.y).putFloat(entity.position.z);
-            entityBuffer.putFloat((float) Math.toRadians(entity.yaw));
+            entityBuffer.putFloat(0); // Padding
+            
+            entityBuffer.putFloat((float) Math.toRadians(entity.rotation.x));
+            entityBuffer.putFloat((float) Math.toRadians(entity.rotation.y));
+            entityBuffer.putFloat((float) Math.toRadians(entity.rotation.z));
+            entityBuffer.putFloat(0); // Padding
+            
             entityBuffer.putInt(partCount);
             entityBuffer.putInt(partOffset);
             entityBuffer.putFloat(0).putFloat(0); // Padding
@@ -73,9 +79,16 @@ public class EntityManager {
             for (ModelPart part : allParts) {
                 partBuffer.putFloat(part.offset.x).putFloat(part.offset.y).putFloat(part.offset.z);
                 partBuffer.putFloat(0); // Padding
+                
+                partBuffer.putFloat(part.absoluteOffset.x).putFloat(part.absoluteOffset.y).putFloat(part.absoluteOffset.z);
+                partBuffer.putFloat(0); // Padding
+                
                 partBuffer.putFloat(part.size.x).putFloat(part.size.y).putFloat(part.size.z);
                 partBuffer.putFloat((float)part.textureIndex);
-                partBuffer.putFloat(part.rotation.x).putFloat(part.rotation.y).putFloat(part.rotation.z);
+                
+                partBuffer.putFloat((float)Math.toRadians(part.rotation.x));
+                partBuffer.putFloat((float)Math.toRadians(part.rotation.y));
+                partBuffer.putFloat((float)Math.toRadians(part.rotation.z));
                 partBuffer.putFloat(0); // Padding
             }
             partBuffer.flip();
