@@ -2,26 +2,40 @@
   "parts": [
     {
       "name": "head",
+      "from": [12, 24, 12],
+      "size": [8, 8, 8],
       "texture": "concrete_green"
     },
     {
       "name": "body",
+      "from": [12, 12, 14],
+      "size": [8, 12, 4],
       "texture": "concrete_cyan"
     },
     {
       "name": "left_arm",
+      "from": [8, 0, 14],
+      "size": [4, 12, 4],
+      "absolute_offset": [0.0, 0.75, 0.0],
       "texture": "concrete_lime"
     },
     {
       "name": "right_arm",
+      "from": [20, 0, 14],
+      "size": [4, 12, 4],
+      "absolute_offset": [0.0, 0.75, 0.0],
       "texture": "concrete_lime"
     },
     {
       "name": "left_leg",
+      "from": [12, 0, 14],
+      "size": [4, 12, 4],
       "texture": "concrete_blue"
     },
     {
       "name": "right_leg",
+      "from": [16, 0, 14],
+      "size": [4, 12, 4],
       "texture": "concrete_blue"
     }
   ]
