@@ -6,12 +6,14 @@ import org.joml.Vector3f;
  * Represents a single box part of an entity's model.
  */
 public class ModelPart {
-    public Vector3f offset; // Position relative to entity origin
-    public Vector3f size;
-    public Vector3f rotation; // Euler angles (pitch, yaw, roll)
+    public String name;
+    public Vector3f offset; // Relative to 0,0,0 in 32x32x32 space
+    public Vector3f size;   // Dimensions in 32x32x32 space
+    public Vector3f rotation; // Euler angles
     public int textureIndex;
 
-    public ModelPart(Vector3f offset, Vector3f size, int textureIndex) {
+    public ModelPart(String name, Vector3f offset, Vector3f size, int textureIndex) {
+        this.name = name;
         this.offset = new Vector3f(offset);
         this.size = new Vector3f(size);
         this.rotation = new Vector3f(0, 0, 0);

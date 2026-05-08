@@ -142,28 +142,33 @@ bool intersectPart(vec3 ro, vec3 rd, vec3 pos, float yaw, PartData part, out flo
     vec3 lro = vec3(ero.x * cy - ero.z * sy, ero.y, ero.x * sy + ero.z * cy);
     vec3 lrd = vec3(rd.x * cy - rd.z * sy, rd.y, rd.x * sy + rd.z * cy);
 
-    // Flip local Y so pivot is at the top of the part
-    vec3 pro = lro - part.offset;
-    pro.y = -pro.y;
-    vec3 rlrd = vec3(lrd.x, -lrd.y, lrd.z);
+    // Convert to model units (32x32x32 space, center at 0,0,0)
+    vec3 mro = lro * 16.0;
+    vec3 mrd = lrd; // Direction doesn't need scaling for AABB intersection logic if we scale ro
 
     float cx = cos(-part.rotation.x); float sx = sin(-part.rotation.x);
-    vec3 rro = vec3(pro.x, pro.y * cx - pro.z * sx, pro.y * sx + pro.z * cx);
-    vec3 rrd = vec3(rlrd.x, rlrd.y * cx - rlrd.z * sx, rlrd.y * sx + rlrd.z * cx);
+    vec3 rro = vec3(mro.x, mro.y * cx - mro.z * sx, mro.y * sx + mro.z * cx);
+    vec3 rrd = vec3(mrd.x, mrd.y * cx - mrd.z * sx, mrd.y * sx + mrd.z * cx);
+
+    vec3 bMin = part.offset - 16.0;
+    vec3 bMax = bMin + part.size;
 
     float tFar;
-    if (intersectAABB(rro, rrd, vec3(0.0), part.size, tNear, tFar)) {
-        vec3 hp = rro + rrd * tNear;
-        vec3 center = part.size * 0.5;
-        vec3 localP = abs((hp - center) / (part.size * 0.5));
+    if (intersectAABB(rro, rrd, bMin, bMax, tNear, tFar)) {
+        // Correct tNear for scaling
+        tNear /= 16.0;
+        vec3 hp = rro + rrd * (tNear * 16.0);
+        vec3 center = (bMin + bMax) * 0.5;
+        vec3 halfSize = part.size * 0.5;
+        vec3 localP = abs((hp - center) / halfSize);
         if (localP.x > localP.y && localP.x > localP.z) {
-            normal = vec3(sign(hp.x - center.x), 0, 0); uv = hp.zy / part.size.zy;
+            normal = vec3(sign(hp.x - center.x), 0, 0); uv = (hp.zy - bMin.zy) / part.size.zy;
         } else if (localP.y > localP.z) {
-            normal = vec3(0, sign(hp.y - center.y), 0); uv = hp.xz / part.size.xz;
-            normal.y = -normal.y; // Flip normal Y back
+            normal = vec3(0, sign(hp.y - center.y), 0); uv = (hp.xz - bMin.xz) / part.size.xz;
         } else {
-            normal = vec3(0, 0, sign(hp.z - center.z)); uv = hp.xy / part.size.xy;
+            normal = vec3(0, 0, sign(hp.z - center.z)); uv = (hp.xy - bMin.xy) / part.size.xy;
         }
+        // Rotate normal back
         normal = vec3(normal.x, normal.y * cx + normal.z * sx, -normal.y * sx + normal.z * cx);
         cy = cos(yaw); sy = sin(yaw);
         normal = vec3(normal.x * cy + normal.z * sy, normal.y, -normal.x * sy + normal.z * cy);
@@ -171,7 +176,6 @@ bool intersectPart(vec3 ro, vec3 rd, vec3 pos, float yaw, PartData part, out flo
     }
     return false;
 }
-
 bool traceEntities(vec3 ro, vec3 rd, out float resT, out vec3 resNormal, out int resTexIdx, out vec2 resUV) {
     resT = 1e30; bool hit = false;
     for (int i = 0; i < u_EntityCount; i++) {

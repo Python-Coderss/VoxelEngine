@@ -432,13 +432,8 @@ public class Main {
         }
 
         // 6. Add Entities
-        int headTex = textureManager.getTextureIndex("concrete_green");
-        int bodyTex = textureManager.getTextureIndex("concrete_cyan");
-        int armTex = textureManager.getTextureIndex("concrete_lime");
-        int legTex = textureManager.getTextureIndex("concrete_blue");
-        
-        entityManager.addEntity(new com.voxel.entity.ZombieEntity(1, new Vector3f(startX + 10, 2.5f, startZ + 10), headTex, bodyTex, armTex, legTex));
-        entityManager.addEntity(new com.voxel.entity.ZombieEntity(2, new Vector3f(startX + 15, 2.5f, startZ + 15), headTex, bodyTex, armTex, legTex));
+        entityManager.addEntity(new com.voxel.entity.ZombieEntity(1, new Vector3f(startX + 10, 2.5f, startZ + 10), textureManager));
+        entityManager.addEntity(new com.voxel.entity.ZombieEntity(2, new Vector3f(startX + 15, 2.5f, startZ + 15), textureManager));
     }
 
     /**
