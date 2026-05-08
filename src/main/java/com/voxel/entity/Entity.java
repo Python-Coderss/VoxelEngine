@@ -16,15 +16,14 @@ import java.util.List;
 public class Entity {
     public int id;
     public Vector3f position;
-    public float yaw, pitch;
+    public Vector3f rotation; // x=pitch, y=yaw, z=roll
     public List<ModelPart> parts;
 
     public Entity(int id, Vector3f position) {
         this.id = id;
         this.position = new Vector3f(position);
         this.parts = new ArrayList<>();
-        this.yaw = 0;
-        this.pitch = 0;
+        this.rotation = new Vector3f(0, 0, 0);
     }
 
     public void loadModel(String path, com.voxel.utils.TextureManager textureManager) {
@@ -41,12 +40,19 @@ public class Entity {
                 String texture = p.getString("texture");
                 
                 int texIdx = textureManager.getTextureIndex(texture);
-                addPart(new ModelPart(
+                ModelPart part = new ModelPart(
                     name,
                     new Vector3f((float)from.getDouble(0), (float)from.getDouble(1), (float)from.getDouble(2)),
                     new Vector3f((float)size.getDouble(0), (float)size.getDouble(1), (float)size.getDouble(2)),
                     texIdx
-                ));
+                );
+
+                if (p.has("absolute_offset")) {
+                    JSONArray absOff = p.getJSONArray("absolute_offset");
+                    part.absoluteOffset.set((float)absOff.getDouble(0), (float)absOff.getDouble(1), (float)absOff.getDouble(2));
+                }
+
+                addPart(part);
             }
         } catch (IOException e) {
             System.err.println("Failed to load entity model: " + path);

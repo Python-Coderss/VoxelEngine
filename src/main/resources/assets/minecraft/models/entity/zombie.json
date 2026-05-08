@@ -16,12 +16,14 @@
       "name": "left_arm",
       "from": [8, 0, 14],
       "size": [4, 12, 4],
+      "absolute_offset": [0.0, 0.75, 0.0],
       "texture": "concrete_lime"
     },
     {
       "name": "right_arm",
       "from": [20, 0, 14],
       "size": [4, 12, 4],
+      "absolute_offset": [0.0, 0.75, 0.0],
       "texture": "concrete_lime"
     },
     {

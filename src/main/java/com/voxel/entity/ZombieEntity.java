@@ -27,7 +27,7 @@ public class ZombieEntity extends Entity {
         super.update(dt);
         // Simple animation: swing arms and legs
         float time = (float) (System.currentTimeMillis() % 2000) / 2000.0f * 2.0f * (float) Math.PI;
-        float swing = (float) Math.sin(time) * 0.5f;
+        float swing = (float) Math.sin(time) * 30f;
 
         if (leftArm != null) leftArm.rotation.x = swing;
         if (rightArm != null) rightArm.rotation.x = -swing;

@@ -34,19 +34,23 @@ layout(std430, binding = 5) buffer readonly restrict LightPool {
 // Entity Structures
 struct EntityData {
     vec3 position;
-    float yaw;
+    float pad1;
+    vec3 rotation;
+    float pad2;
     int partCount;
     int partOffset;
-    float pad1, pad2;
+    float pad3, pad4;
 };
 
 struct PartData {
     vec3 offset;
     float pad1;
+    vec3 absoluteOffset;
+    float pad2;
     vec3 size;
     float textureIndex;
     vec3 rotation;
-    float pad2;
+    float pad3;
 };
 
 layout(std430, binding = 3) buffer readonly EntityBuffer {
@@ -136,19 +140,40 @@ void GetCelestialDirections(float t, out vec3 sunDir, out vec3 moonDir) {
 /**
  * Entity and Part Intersection.
  */
-bool intersectPart(vec3 ro, vec3 rd, vec3 pos, float yaw, PartData part, out float tNear, out vec3 normal, out vec2 uv) {
-    float cy = cos(-yaw); float sy = sin(-yaw);
-    vec3 ero = ro - pos;
-    vec3 lro = vec3(ero.x * cy - ero.z * sy, ero.y, ero.x * sy + ero.z * cy);
-    vec3 lrd = vec3(rd.x * cy - rd.z * sy, rd.y, rd.x * sy + rd.z * cy);
+mat3 getRotationMatrix(vec3 rotation) {
+    float cx = cos(rotation.x); float sx = sin(rotation.x);
+    float cy = cos(rotation.y); float sy = sin(rotation.y);
+    float cz = cos(rotation.z); float sz = sin(rotation.z);
 
-    // Convert to model units (32x32x32 space, center at 0,0,0)
+    mat3 rotX = mat3(1, 0, 0, 0, cx, sx, 0, -sx, cx);
+    mat3 rotY = mat3(cy, 0, -sy, 0, 1, 0, sy, 0, cy);
+    mat3 rotZ = mat3(cz, sz, 0, -sz, cz, 0, 0, 0, 1);
+
+    return rotX * rotY * rotZ;
+}
+
+bool intersectPart(vec3 ro, vec3 rd, EntityData entity, PartData part, out float tNear, out vec3 normal, out vec2 uv) {
+    // 1. Transform ray to Entity Local Space
+    vec3 ero = ro - entity.position;
+    mat3 entityRot = getRotationMatrix(entity.rotation);
+    mat3 invEntityRot = transpose(entityRot);
+    
+    vec3 lro = invEntityRot * ero;
+    vec3 lrd = invEntityRot * rd;
+
+    // 2. Account for absolute offset (relative to entity center)
+    lro -= part.absoluteOffset;
+
+    // 3. Convert to model units (32x32x32 space, center at 0,0,0)
     vec3 mro = lro * 16.0;
     vec3 mrd = lrd; // Direction doesn't need scaling for AABB intersection logic if we scale ro
 
-    float cx = cos(-part.rotation.x); float sx = sin(-part.rotation.x);
-    vec3 rro = vec3(mro.x, mro.y * cx - mro.z * sx, mro.y * sx + mro.z * cx);
-    vec3 rrd = vec3(mrd.x, mrd.y * cx - mrd.z * sx, mrd.y * sx + mrd.z * cx);
+    // 4. Transform to Part Local Space (Part Rotation)
+    mat3 partRot = getRotationMatrix(part.rotation);
+    mat3 invPartRot = transpose(partRot);
+
+    vec3 rro = invPartRot * mro;
+    vec3 rrd = invPartRot * mrd;
 
     vec3 bMin = part.offset - 16.0;
     vec3 bMax = bMin + part.size;
@@ -168,14 +193,16 @@ bool intersectPart(vec3 ro, vec3 rd, vec3 pos, float yaw, PartData part, out flo
         } else {
             normal = vec3(0, 0, sign(hp.z - center.z)); uv = (hp.xy - bMin.xy) / part.size.xy;
         }
-        // Rotate normal back
-        normal = vec3(normal.x, normal.y * cx + normal.z * sx, -normal.y * sx + normal.z * cx);
-        cy = cos(yaw); sy = sin(yaw);
-        normal = vec3(normal.x * cy + normal.z * sy, normal.y, -normal.x * sy + normal.z * cy);
+        
+        // 5. Rotate normal back to world space
+        normal = partRot * normal;
+        normal = entityRot * normal;
+        
         return true;
     }
     return false;
 }
+
 bool traceEntities(vec3 ro, vec3 rd, out float resT, out vec3 resNormal, out int resTexIdx, out vec2 resUV) {
     resT = 1e30; bool hit = false;
     for (int i = 0; i < u_EntityCount; i++) {
@@ -183,7 +210,7 @@ bool traceEntities(vec3 ro, vec3 rd, out float resT, out vec3 resNormal, out int
         for (int j = 0; j < e.partCount; j++) {
             PartData p = parts[e.partOffset + j];
             float t; vec3 n; vec2 uv;
-            if (intersectPart(ro, rd, e.position, e.yaw, p, t, n, uv)) {
+            if (intersectPart(ro, rd, e, p, t, n, uv)) {
                 if (t < resT) {
                     resT = t; resNormal = n; resTexIdx = int(p.textureIndex); resUV = uv; hit = true;
                 }
