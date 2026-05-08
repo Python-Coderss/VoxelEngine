@@ -2,7 +2,6 @@ package com.voxel.entity;
 
 import org.joml.Vector3f;
 import java.util.ArrayList;
-import org.joml.Vector3f;
 
 /**
  * A simple implementation of a Minecraft-like Zombie entity.
