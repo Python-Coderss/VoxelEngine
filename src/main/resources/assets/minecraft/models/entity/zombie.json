@@ -14,13 +14,13 @@
     },
     {
       "name": "left_arm",
-      "from": [8, 12, 14],
+      "from": [8, 0, 14],
       "size": [4, 12, 4],
       "texture": "concrete_lime"
     },
     {
       "name": "right_arm",
-      "from": [20, 12, 14],
+      "from": [20, 0, 14],
       "size": [4, 12, 4],
       "texture": "concrete_lime"
     },
