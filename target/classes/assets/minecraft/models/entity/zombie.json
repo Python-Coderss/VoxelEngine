@@ -1,4 +1,5 @@
 {
+  "parent": "humanoid.json",
   "parts": [
     {
       "name": "head",
