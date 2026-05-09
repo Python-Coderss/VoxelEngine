@@ -124,8 +124,18 @@ public class World {
      * Assigns a chunk slot to a specific region in the indirection table.
      */
     public void setChunkSlot(int cx, int cy, int cz, int slot) {
+        if (cx < 0 || cy < 0 || cz < 0 || cx >= REGION_SIZE || cy >= REGION_SIZE || cz >= REGION_SIZE) return;
         int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
         indirectionTable[tableIdx] = slot;
+    }
+
+    /**
+     * Clears the chunk slot at the given coordinates in the indirection table.
+     */
+    public void clearChunkSlot(int cx, int cy, int cz) {
+        if (cx < 0 || cy < 0 || cz < 0 || cx >= REGION_SIZE || cy >= REGION_SIZE || cz >= REGION_SIZE) return;
+        int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
+        indirectionTable[tableIdx] = EMPTY;
     }
 
     /**
@@ -134,6 +144,18 @@ public class World {
     public void setVoxelInPool(int slot, int lx, int ly, int lz, int type) {
         int poolIdx = (slot * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) + (lx + ly * CHUNK_SIZE + lz * CHUNK_SIZE * CHUNK_SIZE);
         chunkPool[poolIdx] = type;
+    }
+
+    /**
+     * Clears all voxels in a given chunk slot.
+     */
+    public void clearChunkPoolSlot(int slot) {
+        int voxelsPerChunk = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+        int startIdx = slot * voxelsPerChunk;
+        for (int i = 0; i < voxelsPerChunk; i++) {
+            chunkPool[startIdx + i] = 0;
+            lightPool[startIdx + i] = 0;
+        }
     }
 
     /**
