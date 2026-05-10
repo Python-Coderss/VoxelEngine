@@ -1,15 +1,13 @@
 #version 430 core
 
 /**
- * The Enhanced Raytracer Compute Shader.
- * Features: PBR-lite shading, GGX Specular, Fresnel, Deterministic Sharp Shadows, 
- * Advanced Atmosphere, and Improved Volumetric Scattering.
+ * Final Optimized Hybrid Raytracer.
+ * Focus: High-FPS Prototype logic, Entity support, Partial Blocks, Bitmask Traversal, 
+ * and customizable lighting/fog.
  */
 
 layout(local_size_x = 16, local_size_y = 16) in;
-
 layout(rgba8, binding = 0) uniform image2D imgOutput;
-layout(rgba8, binding = 1) uniform image2D godRayOutput;
 
 // Uniforms
 layout(location = 0) uniform vec3 camPos;
@@ -19,48 +17,16 @@ layout(location = 3) uniform vec3 camUp;
 layout(location = 4) uniform float u_Time;
 
 // SSBOs
-layout(std430, binding = 1) buffer readonly restrict IndirectionTable {
-    uint chunkSlots[];
-};
+layout(std430, binding = 1) buffer readonly restrict IndirectionTable { uint chunkSlots[]; };
+layout(std430, binding = 2) buffer readonly restrict ChunkPool { uint voxelPool[]; };
+layout(std430, binding = 5) buffer readonly restrict LightPool { uint lightPool[]; };
+layout(std430, binding = 6) buffer readonly restrict BitmaskPool { uint bitmasks[]; };
 
-layout(std430, binding = 2) buffer readonly restrict ChunkPool {
-    uint voxelPool[];
-};
-
-layout(std430, binding = 5) buffer readonly restrict LightPool {
-    uint lightPool[];
-};
-
-// Entity Structures
-struct EntityData {
-    vec3 position;
-    float pad1;
-    vec3 rotation;
-    float pad2;
-    int partCount;
-    int partOffset;
-    float pad3, pad4;
-};
-
-struct PartData {
-    vec3 offset;
-    float pad1;
-    vec3 absoluteOffset;
-    float pad2;
-    vec3 size;
-    float textureIndex;
-    vec3 rotation;
-    float pad3;
-};
-
-layout(std430, binding = 3) buffer readonly EntityBuffer {
-    EntityData entities[];
-};
-
-layout(std430, binding = 4) buffer readonly PartBuffer {
-    PartData parts[];
-};
-
+// Entities
+struct EntityData { vec3 position; float pad1; vec3 rotation; float pad2; int partCount; int partOffset; float pad3, pad4; };
+struct PartData { vec3 offset; float pad1; vec3 absoluteOffset; float pad2; vec3 size; float textureIndex; vec3 rotation; float pad3; };
+layout(std430, binding = 3) buffer readonly EntityBuffer { EntityData entities[]; };
+layout(std430, binding = 4) buffer readonly PartBuffer { PartData parts[]; };
 layout(location = 5) uniform int u_EntityCount;
 
 // Samplers
@@ -73,280 +39,104 @@ uniform sampler2D u_BiomeMap;
 uniform sampler2D u_GrassColormap;
 uniform sampler2D u_FoliageColormap;
 
-// Constants
-const int CHUNK_SIZE = 16;
 const int WORLD_SIZE = 2048;
 const uint EMPTY = 0xFFFFFFFF;
-const float DDA_EPS = 1e-5;
 const float PI = 3.14159265359;
+const float DDA_EPS = 1e-4;
 
 /**
- * Hash function for noise and jitter.
+ * VISUAL CUSTOMIZATION
  */
-uint hash(uint x) {
-    x += (x << 10u);
-    x ^= (x >> 6u);
-    x += (x << 3u);
-    x ^= (x >> 11u);
-    x += (x << 15u);
-    return x;
-}
-
-float floatHash(uint x) {
-    return float(hash(x)) / 4294967295.0;
-}
-
 /**
- * Interleaved Gradient Noise for jittering.
+ * REALISTIC EARTH-LIKE SKY
  */
-float interleavedGradientNoise(vec2 uv) {
-    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
-    return fract(magic.z * fract(dot(uv, magic.xy)));
-}
 
+const vec3 SKY_DAY_ZENITH    = vec3(0.22, 0.38, 0.75);
+const vec3 SKY_DAY_HORIZON   = vec3(0.60, 0.72, 0.95);
+
+const vec3 SKY_NIGHT_ZENITH  = vec3(0.005, 0.008, 0.018);
+const vec3 SKY_NIGHT_HORIZON = vec3(0.02, 0.025, 0.04);
+
+const vec3 SKY_SUNSET_GLOW   = vec3(0.95, 0.42, 0.18);
+
+const vec3 SUN_ZENITH        = vec3(1.0, 0.97, 0.92) * 5.0;
+const vec3 SUN_HORIZON       = vec3(1.0, 0.45, 0.12) * 2.2;
+
+const vec3 MOON_LIGHT        = vec3(0.55, 0.62, 0.75) * 0.12;
+
+const float FOG_DENSITY      = 0.00035;
+const float FOG_DISTANCE     = 20.0;
 /**
- * ACES Filmic Tonemapping.
+ * Core Math & Utils
  */
-vec3 ACESFilm(vec3 x) {
-    return clamp((x*(2.51*x + 0.03))/(x*(2.43*x + 0.59) + 0.14), 0.0, 1.0);
+vec3 ACESFilm(vec3 x) { 
+    return clamp((x*(2.51*x + 0.03))/(x*(2.43*x + 0.59) + 0.14), 0.0, 1.0); 
 }
 
-/**
- * AABB Intersection.
- */
-bool intersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, out float tFar) {
-    vec3 invDir = 1.0 / rd;
-    vec3 t0 = (boxMin - ro) * invDir;
-    vec3 t1 = (boxMax - ro) * invDir;
-    vec3 tmin = min(t0, t1);
-    vec3 tmax = max(t0, t1);
-    tNear = max(max(tmin.x, tmin.y), tmin.z);
-    tFar = min(min(tmax.x, tmax.y), tmax.z);
-    return tNear <= tFar && tFar > 0.0;
+void GetCelestialDirections(float t, out vec3 sDir, out vec3 mDir) {
+    float a = t * 0.05;
+    sDir = normalize(vec3(sin(a), cos(a), 0.5)); mDir = -sDir;
 }
 
-
-
-
-/**
- * Celestial directions.
- */
-void GetCelestialDirections(float t, out vec3 sunDir, out vec3 moonDir) {
-    float angle = t * 0.05;
-    sunDir = normalize(vec3(sin(angle), cos(angle), cos(angle * 0.7)));
-    moonDir = -sunDir;
+vec3 GetCelestialLight(vec3 d) {
+    float h = max(0.0, d.y);
+    // Dimmed sun logic (based on horizon height)
+    vec3 sun = mix(SUN_HORIZON, SUN_ZENITH * 0.05, pow(h, 0.5));
+    return (d.y > 0.0) ? sun : MOON_LIGHT;
 }
 
-/**
- * Entity and Part Intersection.
- */
-mat3 getRotationMatrix(vec3 rotation) {
-    float cx = cos(rotation.x); float sx = sin(rotation.x);
-    float cy = cos(rotation.y); float sy = sin(rotation.y);
-    float cz = cos(rotation.z); float sz = sin(rotation.z);
-
-    mat3 rotX = mat3(1, 0, 0, 0, cx, sx, 0, -sx, cx);
-    mat3 rotY = mat3(cy, 0, -sy, 0, 1, 0, sy, 0, cy);
-    mat3 rotZ = mat3(cz, sz, 0, -sz, cz, 0, 0, 0, 1);
-
-    return rotX * rotY * rotZ;
+vec3 GetSky(vec3 rd, vec3 sd) {
+    float sunH = sd.y;
+    vec3 day = mix(SKY_DAY_HORIZON, SKY_DAY_ZENITH, pow(max(0.0, rd.y * 0.8 + 0.3), 0.5));
+    vec3 night = mix(SKY_NIGHT_HORIZON, SKY_NIGHT_ZENITH, pow(max(0.0, rd.y), 0.5));
+    vec3 sunset = SKY_SUNSET_GLOW * pow(max(0.0, 1.0 - abs(rd.y - sunH * 0.5)), 5.0) * smoothstep(0.4, -0.4, abs(sunH));
+    return mix(night, day, smoothstep(-0.15, 0.15, sunH)) + sunset;
 }
 
-bool intersectPart(vec3 ro, vec3 rd, EntityData entity, PartData part, out float tNear, out vec3 normal, out vec2 uv) {
-    // 1. Transform ray to Entity Local Space
-    vec3 ero = ro - entity.position;
-    mat3 entityRot = getRotationMatrix(entity.rotation);
-    mat3 invEntityRot = transpose(entityRot);
-    
-    vec3 lro = invEntityRot * ero;
-    vec3 lrd = invEntityRot * rd;
-
-    // 2. Account for absolute offset (relative to entity center)
-    lro -= part.absoluteOffset;
-
-    // 3. Convert to model units (32x32x32 space, center at 0,0,0)
-    vec3 mro = lro * 16.0;
-    vec3 mrd = lrd; // Direction doesn't need scaling for AABB intersection logic if we scale ro
-
-    // 4. Transform to Part Local Space (Part Rotation)
-    mat3 partRot = getRotationMatrix(part.rotation);
-    mat3 invPartRot = transpose(partRot);
-
-    vec3 rro = invPartRot * mro;
-    vec3 rrd = invPartRot * mrd;
-
-    vec3 bMin = part.offset - 16.0;
-    vec3 bMax = bMin + part.size;
-
-    float tFar;
-    if (intersectAABB(rro, rrd, bMin, bMax, tNear, tFar)) {
-        // Correct tNear for scaling
-        tNear /= 16.0;
-        vec3 hp = rro + rrd * (tNear * 16.0);
-        vec3 center = (bMin + bMax) * 0.5;
-        vec3 halfSize = part.size * 0.5;
-        vec3 localP = abs((hp - center) / halfSize);
-        if (localP.x > localP.y && localP.x > localP.z) {
-            normal = vec3(sign(hp.x - center.x), 0, 0); uv = (hp.zy - bMin.zy) / part.size.zy;
-        } else if (localP.y > localP.z) {
-            normal = vec3(0, sign(hp.y - center.y), 0); uv = (hp.xz - bMin.xz) / part.size.xz;
-        } else {
-            normal = vec3(0, 0, sign(hp.z - center.z)); uv = (hp.xy - bMin.xy) / part.size.xy;
-        }
-        
-        // 5. Rotate normal back to world space
-        normal = partRot * normal;
-        normal = entityRot * normal;
-        
-        return true;
-    }
-    return false;
+bool intersectAABB(vec3 ro, vec3 rd, vec3 bMin, vec3 bMax, out float tn, out float tf) {
+    vec3 inv = 1.0 / rd;
+    vec3 t0 = (bMin - ro) * inv; vec3 t1 = (bMax - ro) * inv;
+    vec3 mi = min(t0, t1); vec3 ma = max(t0, t1);
+    tn = max(max(mi.x, mi.y), mi.z); tf = min(min(ma.x, ma.y), ma.z);
+    return tn <= tf && tf > 0.0;
 }
 
-bool traceEntities(vec3 ro, vec3 rd, out float resT, out vec3 resNormal, out int resTexIdx, out vec2 resUV) {
-    resT = 1e30; bool hit = false;
-    for (int i = 0; i < u_EntityCount; i++) {
-        EntityData e = entities[i];
-        for (int j = 0; j < e.partCount; j++) {
-            PartData p = parts[e.partOffset + j];
-            float t; vec3 n; vec2 uv;
-            if (intersectPart(ro, rd, e, p, t, n, uv)) {
-                if (t < resT) {
-                    resT = t; resNormal = n; resTexIdx = int(p.textureIndex); resUV = uv; hit = true;
-                }
-            }
-        }
-    }
-    return hit;
-}
-
-/**
- * Realistic Celestial Light Colors.
- */
-vec3 GetCelestialLight(vec3 dir, bool isSun) {
-    float horizon = max(0.0, dir.y);
-    if (isSun) {
-        // Sun: warm at horizon, neutral white at zenith
-        vec3 sunColor = mix(vec3(4.0, 1.0, 0.25), vec3(1.0, 0.9, 0.8) * 2.0, sqrt(horizon));
-        return sunColor;
-    } else {
-        // Moon: cool blue-silver
-        return vec3(0.15, 0.25, 0.6) * 1.8;
-    }
-}
-
-/**
- * Advanced Sky Atmosphere model.
- */
-vec3 GetSkyAtmosphere(vec3 rd, vec3 sunDir, vec3 moonDir) {
-    float dayFactor = smoothstep(-0.15, 0.15, sunDir.y);
-    float sunDot = max(0.0, dot(rd, sunDir));
-    
-    // Rayleigh-like gradient
-    vec3 daySky = mix(vec3(0.05, 0.15, 0.5), vec3(0.4, 0.65, 1.0), sqrt(max(0.0, rd.y * 0.9 + 0.1)));
-    vec3 nightSky = mix(vec3(0.002, 0.005, 0.02), vec3(0.01, 0.015, 0.04), sqrt(max(0.0, rd.y)));
-    
-    // Sunset/Sunrise
-    float sunsetFactor = pow(1.0 - abs(rd.y - sunDir.y * 0.5), 8.0) * smoothstep(0.4, -0.4, sunDir.y);
-    vec3 sunsetColor = vec3(1.0, 0.3, 0.05) * sunsetFactor * 1.5;
-    sunsetColor += vec3(0.6, 0.1, 0.0) * pow(max(0.0, 1.0 - rd.y), 3.0) * sunsetFactor;
-    
-    vec3 sky = mix(nightSky, daySky, dayFactor);
-    sky += sunsetColor;
-    
-    // Tight Mie scattering glow around sun
-    float mie = pow(sunDot, 2000.0) * 0.5 + pow(sunDot, 200.0) * 0.1;
-    sky += GetCelestialLight(sunDir, true) * mie * dayFactor * 0.2;
-    
-    // Horizon haze
-    vec3 haze = mix(vec3(0.05, 0.05, 0.1), vec3(0.8, 0.85, 0.9), dayFactor);
-    sky = mix(sky, haze, pow(1.0 - max(0.0, rd.y), 10.0) * 0.6);
-    
-    return sky;
-}
-
-/**
- * Sun and Moon rendering.
- */
-vec3 GetCelestialDisks(vec3 rd, vec3 sunDir, vec3 moonDir) {
-    float sunDot = dot(rd, sunDir);
-    float moonDot = dot(rd, moonDir);
-    
-    vec3 color = vec3(0.0);
-    
-    // Sun
-    if (sunDir.y > -0.1) {
-        float sunDisk = smoothstep(0.9998, 0.9999, sunDot);
-        float sunGlow = pow(max(0.0, sunDot), 5000.0) * 5.0 + pow(max(0.0, sunDot), 500.0) * 0.5;
-        vec3 sunColor = GetCelestialLight(sunDir, true);
-        color += sunDisk * sunColor * 100.0;
-        color += sunGlow * sunColor * 2.0;
-    }
-    
-    // Moon
-    if (moonDir.y > -0.1) {
-        float moonDisk = smoothstep(0.99985, 0.99995, moonDot);
-        color += moonDisk * vec3(0.9, 0.95, 1.0) * 15.0;
-        color += pow(max(0.0, moonDot), 1000.0) * vec3(0.2, 0.3, 0.5) * 0.3;
-    }
-    
-    return color;
-}
-
-
-/**
- * DDA Step.
- */
-int advanceDDA(inout ivec3 mapPos, inout vec3 sideDist, vec3 deltaDist, ivec3 step) {
-    float minDist = min(sideDist.x, min(sideDist.y, sideDist.z));
-    bvec3 crossed = lessThanEqual(abs(sideDist - vec3(minDist)), vec3(DDA_EPS));
-    int side = crossed.x ? 0 : (crossed.y ? 1 : 2);
-    if (crossed.x) { sideDist.x += deltaDist.x; mapPos.x += step.x; }
-    if (crossed.y) { sideDist.y += deltaDist.y; mapPos.y += step.y; }
-    if (crossed.z) { sideDist.z += deltaDist.z; mapPos.z += step.z; }
+int advanceDDA(inout ivec3 mp, inout vec3 sd, vec3 dd, ivec3 s) {
+    int side = (sd.x < sd.y) ? (sd.x < sd.z ? 0 : 2) : (sd.y < sd.z ? 1 : 2);
+    if (side == 0) { sd.x += dd.x; mp.x += s.x; }
+    else if (side == 1) { sd.y += dd.y; mp.y += s.y; }
+    else { sd.z += dd.z; mp.z += s.z; }
     return side;
 }
 
-/**
- * Skip empty chunks.
- */
-int skipEmptyChunk(inout ivec3 mapPos, inout vec3 sideDist, vec3 deltaDist, ivec3 step) {
-    ivec3 localPos = mapPos & 15;
-    ivec3 cellsToExit = ivec3(
-        step.x > 0 ? 16 - localPos.x : localPos.x + 1,
-        step.y > 0 ? 16 - localPos.y : localPos.y + 1,
-        step.z > 0 ? 16 - localPos.z : localPos.z + 1
-    );
-    vec3 tToExit = sideDist + vec3(cellsToExit - ivec3(1)) * deltaDist;
-    float minExit = min(tToExit.x, min(tToExit.y, tToExit.z));
-    bvec3 crossed = lessThanEqual(abs(tToExit - vec3(minExit)), vec3(DDA_EPS));
-    int side = crossed.x ? 0 : (crossed.y ? 1 : 2);
-    if (crossed.x) { sideDist.x = tToExit.x + deltaDist.x; mapPos.x += step.x * cellsToExit.x; }
-    if (crossed.y) { sideDist.y = tToExit.y + deltaDist.y; mapPos.y += step.y * cellsToExit.y; }
-    if (crossed.z) { sideDist.z = tToExit.z + deltaDist.z; mapPos.z += step.z * cellsToExit.z; }
+int skipChunk(inout ivec3 mp, inout vec3 sd, vec3 dd, ivec3 s) {
+    ivec3 lp = mp & 15;
+    ivec3 cells = ivec3(s.x > 0 ? 16 - lp.x : lp.x + 1, s.y > 0 ? 16 - lp.y : lp.y + 1, s.z > 0 ? 16 - lp.z : lp.z + 1);
+    vec3 tE = sd + vec3(cells - ivec3(1)) * dd;
+    float m = min(tE.x, min(tE.y, tE.z));
+    int side = (tE.x == m) ? 0 : (tE.y == m ? 1 : 2);
+    if (side == 0) { sd.x = tE.x + dd.x; mp.x += s.x * cells.x; }
+    else if (side == 1) { sd.y = tE.y + dd.y; mp.y += s.y * cells.y; }
+    else { sd.z = tE.z + dd.z; mp.z += s.z * cells.z; }
     return side;
 }
 
-/**
- * Light Sampling.
- */
+bool isBitSolid(uint slot, ivec3 p) {
+    int bitIdx = (p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8);
+    return (bitmasks[(slot << 7) | (bitIdx >> 5)] & (1u << (bitIdx & 31))) != 0;
+}
+
 vec3 sampleLightFast(ivec3 p) {
-    ivec3 cc = p >> 4;
-    if (any(lessThan(cc, ivec3(0))) || any(greaterThanEqual(cc, ivec3(128)))) return vec3(0.015);
-    uint slot = chunkSlots[cc.x | (cc.y << 7) | (cc.z << 14)];
-    if (slot == EMPTY) return vec3(0.015);
-    ivec3 lp = p & 15;
-    uint packedLight = lightPool[(slot << 12) | (lp.x | (lp.y << 4) | (lp.z << 8))];
-    return vec3(float(packedLight & 0xFF), float((packedLight >> 8) & 0xFF), float((packedLight >> 16) & 0xFF)) / 255.0;
+    if (any(lessThan(p >> 4, ivec3(0))) || any(greaterThanEqual(p >> 4, ivec3(128)))) return vec3(0.01);
+    uint slot = chunkSlots[(p.x >> 4) | ((p.y >> 4) << 7) | ((p.z >> 4) << 14)];
+    if (slot == EMPTY) return vec3(0.01);
+    uint pk = lightPool[(slot << 12) | ((p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8))];
+    return vec3(float(pk & 0xFF), float((pk >> 8) & 0xFF), float((pk >> 16) & 0xFF)) / 255.0;
 }
 
-/**
- * Trilinear smooth light.
- */
 vec3 getSurfaceLight(vec3 p, vec3 normal) {
-    vec3 samplePos = p + normal * 0.5;
-    ivec3 i = ivec3(floor(samplePos - 0.5));
-    vec3 f = fract(samplePos - 0.5);
+    vec3 sp = p + normal * 0.5;
+    ivec3 i = ivec3(floor(sp - 0.5)); vec3 f = fract(sp - 0.5);
     vec3 c000 = sampleLightFast(i + ivec3(0,0,0)); vec3 c100 = sampleLightFast(i + ivec3(1,0,0));
     vec3 c010 = sampleLightFast(i + ivec3(0,1,0)); vec3 c110 = sampleLightFast(i + ivec3(1,1,0));
     vec3 c001 = sampleLightFast(i + ivec3(0,0,1)); vec3 c101 = sampleLightFast(i + ivec3(1,0,1));
@@ -354,310 +144,109 @@ vec3 getSurfaceLight(vec3 p, vec3 normal) {
     return mix(mix(mix(c000, c100, f.x), mix(c010, c110, f.x), f.y), mix(mix(c001, c101, f.x), mix(c011, c111, f.x), f.y), f.z);
 }
 
-/**
- * World Raytracing.
- */
-bool traceWorld(vec3 ro, vec3 rd, bool stopAtTransparent, bool skipFirst, out float resT, out int resSide, out uint resVoxel, out int resAabbIdx) {
-    float tNear, tFar;
-    resAabbIdx = -1;
-    if (!intersectAABB(ro, rd, vec3(0.0), vec3(WORLD_SIZE), tNear, tFar)) return false;
-    float startT = max(0.0, tNear);
-    vec3 p = ro + rd * startT;
-    ivec3 mapPos = ivec3(floor(p));
-    vec3 deltaDist = abs(1.0 / rd);
-    ivec3 step = ivec3(sign(rd));
-    vec3 sideDist = (step * (vec3(mapPos) - p) + (step * 0.5) + 0.5) * deltaDist;
-    int side = 0;
-    if (skipFirst) side = advanceDDA(mapPos, sideDist, deltaDist, step);
-    for (int i = 0; i < 512; i++) {
-        if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(WORLD_SIZE)))) break;
-        uint slot = chunkSlots[(mapPos.x >> 4) | ((mapPos.y >> 4) << 7) | ((mapPos.z >> 4) << 14)];
-        if (slot == EMPTY) { side = skipEmptyChunk(mapPos, sideDist, deltaDist, step); }
-        else {
-            uint poolOffset = slot << 12;
-            ivec3 chunkCoord = mapPos >> 4;
-            for (int j = 0; j < 64; j++) {
-                uint voxel = voxelPool[poolOffset + ((mapPos.x & 15) | ((mapPos.y & 15) << 4) | ((mapPos.z & 15) << 8))];
-                if (voxel > 0) {
-                    ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 3 + 1);
-                    if (((d1.w >> 9) & 1) == 1) {
-                        resVoxel = voxel; resSide = side;
-                        resT = (side == 0 ? sideDist.x - deltaDist.x : (side == 1 ? sideDist.y - deltaDist.y : sideDist.z - deltaDist.z)) + startT;
-                        return true;
-                    } else {
-                        ivec4 info = texelFetch(u_BlockAABBInfo, int(voxel));
-                        int aabbOffset = info.x;
-                        for (int k = 0; k < info.y; k++) {
-                            vec3 bMin = texelFetch(u_BlockAABBs, aabbOffset + k * 2).xyz + floor(vec3(mapPos));
-                            vec3 bMax = texelFetch(u_BlockAABBs, aabbOffset + k * 2 + 1).xyz + floor(vec3(mapPos));
-                            float tn, tf;
-                            if (intersectAABB(ro, rd, bMin, bMax, tn, tf)) {
-                                if (tn < min(sideDist.x, min(sideDist.y, sideDist.z)) + startT) {
-                                    resVoxel = voxel; resT = tn; resAabbIdx = (aabbOffset / 2) + k;
-                                    vec3 hp = ro + rd * tn; vec3 center = (bMin + bMax) * 0.5; vec3 size = (bMax - bMin) * 0.5;
-                                    vec3 localP = abs((hp - center) / size);
-                                    if (localP.x > localP.y && localP.x > localP.z) resSide = 0; else if (localP.y > localP.z) resSide = 1; else resSide = 2;
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-                side = advanceDDA(mapPos, sideDist, deltaDist, step);
-                if (any(notEqual(mapPos >> 4, chunkCoord))) break;
-            }
-        }
-        if (min(sideDist.x, min(sideDist.y, sideDist.z)) + startT > tFar) break;
-    }
-    return false;
-}
-
-/**
- * Deterministic Shadow Tracing with empty chunk skipping.
- */
-float traceShadow(vec3 ro, vec3 rd, float maxDist) {
-    float tNear, tFar;
-    if (!intersectAABB(ro, rd, vec3(0.0), vec3(WORLD_SIZE), tNear, tFar)) return 1.0;
-    float startT = max(0.0, tNear);
-    vec3 p = ro + rd * (startT + 0.02);
-    ivec3 mapPos = ivec3(floor(p));
-    vec3 deltaDist = abs(1.0 / rd);
-    ivec3 step = ivec3(sign(rd));
-    vec3 sideDist = (step * (vec3(mapPos) - p) + (step * 0.5) + 0.5) * deltaDist;
-    for (int i = 0; i < 160; i++) {
-        if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(WORLD_SIZE)))) break;
-        if (min(sideDist.x, min(sideDist.y, sideDist.z)) > maxDist) break;
-        uint slot = chunkSlots[(mapPos.x >> 4) | ((mapPos.y >> 4) << 7) | ((mapPos.z >> 4) << 14)];
-        if (slot == EMPTY) {
-            skipEmptyChunk(mapPos, sideDist, deltaDist, step);
-        } else {
-            uint voxel = voxelPool[(slot << 12) | ((mapPos.x & 15) | ((mapPos.y & 15) << 4) | ((mapPos.z & 15) << 8))];
-            if (voxel > 0) {
-                ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 3 + 1);
-                if (((d1.w >> 9) & 1) == 1 || d1.z < 128) return 0.0;
-            }
-            advanceDDA(mapPos, sideDist, deltaDist, step);
-        }
+float fastShadow(vec3 ro, vec3 rd, float maxDist) {
+    float tn, tf; if (!intersectAABB(ro, rd, vec3(0), vec3(WORLD_SIZE), tn, tf)) return 1.0;
+    vec3 p = ro + rd * (max(0.0, tn) + 0.05); ivec3 mp = ivec3(floor(p));
+    vec3 dd = abs(1.0 / rd); ivec3 s = ivec3(sign(rd));
+    vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
+    for (int i = 0; i < 48; i++) {
+        if (any(lessThan(mp, ivec3(0))) || any(greaterThanEqual(mp, ivec3(WORLD_SIZE)))) break;
+        if (min(sd.x, min(sd.y, sd.z)) > maxDist) break;
+        uint slot = chunkSlots[(mp.x >> 4) | ((mp.y >> 4) << 7) | ((mp.z >> 4) << 14)];
+        if (slot == EMPTY) { skipChunk(mp, sd, dd, s); }
+        else { if (isBitSolid(slot, mp)) return 0.0; advanceDDA(mp, sd, dd, s); }
     }
     return 1.0;
 }
 
-/**
- * PBR-lite BRDF (GGX).
- */
-float D_GGX(float NoH, float roughness) {
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float d = (NoH * a2 - NoH) * NoH + 1.0;
-    return a2 / (PI * d * d);
-}
-
-/**
- * Fresnel Schlick - Optimized.
- */
-vec3 fresnelSchlick(float cosTheta, vec3 F0) {
-    float x = clamp(1.0 - cosTheta, 0.0, 1.0);
-    float x2 = x * x;
-    float f = x2 * x2 * x;
-    return F0 + (1.0 - F0) * f;
-}
-
-
-vec3 calculateVolumetric(
-    vec3 ro,
-    vec3 rd,
-    float maxDist,
-    float jitter,
-    vec3 sunDir,
-    vec3 moonDir
-) {
-    float dist = min(maxDist, 160.0);
-    float stepLen = dist * 0.5;
-
-    vec3 scattering = vec3(0.0);
-
-    // -------------------------------------------------
-    // SUN
-    // -------------------------------------------------
-    if (sunDir.y > -0.15) {
-
-        vec3 sunL = GetCelestialLight(sunDir, true);
-
-        float cosSun = dot(rd, sunDir);
-
-        // Faster than pow(x, 1.5)
-        float d = 1.36 - 1.2 * cosSun;
-        float phaseSun = 0.64 / (4.0 * PI * sqrt(d * d * d));
-
-        // Step 0
-        float t0 = (0.0 + jitter) * stepLen;
-        vec3 p0 = ro + rd * t0;
-
-        // Step 1
-        float t1 = (1.0 + jitter) * stepLen;
-        vec3 p1 = ro + rd * t1;
-
-        scattering += sunL * traceShadow(p0, sunDir, 100.0) * phaseSun;
-        scattering += sunL * traceShadow(p1, sunDir, 100.0) * phaseSun;
+bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, out float resT, out int resSide, out uint resVoxel) { 
+    float tn, tf; if (!intersectAABB(ro, rd, vec3(0), vec3(WORLD_SIZE), tn, tf)) return false;
+    float st = max(0.0, tn); vec3 p = ro + rd * st; ivec3 mp = ivec3(floor(p));
+    vec3 dd = abs(1.0 / rd); ivec3 s = ivec3(sign(rd));
+    vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
+    int side = 0; if (skipFirst) side = advanceDDA(mp, sd, dd, s);
+    for (int i = 0; i < 256; i++) {
+        if (any(lessThan(mp, ivec3(0))) || any(greaterThanEqual(mp, ivec3(WORLD_SIZE)))) break;
+        uint slot = chunkSlots[(mp.x >> 4) | ((mp.y >> 4) << 7) | ((mp.z >> 4) << 14)];
+        if (slot == EMPTY) { side = skipChunk(mp, sd, dd, s); }
+        else {
+            ivec3 cc = mp >> 4; uint maskBase = slot << 7;
+            for (int j = 0; j < 32; j++) {
+                int bi = (mp.x&15)|((mp.y&15)<<4)|((mp.z&15)<<8);
+                if ((bitmasks[maskBase | (bi >> 5)] & (1u << (bi & 31))) != 0) {
+                    uint v = voxelPool[(slot << 12) | bi];
+                    ivec4 data = texelFetch(u_BlockData, int(v) * 3 + 1);
+                    if (((data.w >> 9) & 1) == 1) {
+                        resVoxel = v; resSide = side; resT = (side == 0 ? sd.x - dd.x : (side == 1 ? sd.y - dd.y : sd.z - dd.z)) + st;
+                        return true;
+                    } else {
+                        ivec4 info = texelFetch(u_BlockAABBInfo, int(v));
+                        for (int k = 0; k < info.y; k++) {
+                            vec3 bMi = texelFetch(u_BlockAABBs, info.x + k * 2).xyz + vec3(mp);
+                            vec3 bMa = texelFetch(u_BlockAABBs, info.x + k * 2 + 1).xyz + vec3(mp);
+                            float itn, itf; if (intersectAABB(ro, rd, bMi, bMa, itn, itf)) {
+                                if (itn < min(sd.x, min(sd.y, sd.z)) + st) { resVoxel = v; resSide = side; resT = itn; return true; }
+                            }
+                        }
+                    }
+                }
+                side = advanceDDA(mp, sd, dd, s);
+                if (any(notEqual(mp >> 4, cc))) break;
+            }
+        }
+        if (st + min(sd.x, min(sd.y, sd.z)) > tf) break;
     }
-
-    // -------------------------------------------------
-    // MOON
-    // -------------------------------------------------
-    else if (moonDir.y > -0.15) {
-
-        vec3 moonL = vec3(0.15, 0.25, 0.6) * 0.009;
-
-        // Step 0
-        float t0 = (0.0 + jitter) * stepLen;
-        vec3 p0 = ro + rd * t0;
-
-        // Step 1
-        float t1 = (1.0 + jitter) * stepLen;
-        vec3 p1 = ro + rd * t1;
-
-        scattering += moonL * traceShadow(p0, moonDir, 80.0);
-        scattering += moonL * traceShadow(p1, moonDir, 80.0);
-    }
-
-    return scattering * stepLen * 0.015;
+    return false;
 }
-
 
 void main() {
-    ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size = imageSize(imgOutput);
-    if (any(greaterThanEqual(pixelCoords, size))) return;
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy); ivec2 sz = imageSize(imgOutput);
+    if (any(greaterThanEqual(px, sz))) return;
+    vec2 ndc = ((vec2(px) + 0.5) / vec2(sz)) * 2.0 - 1.0;
+    vec3 rd = normalize(camForward + ndc.x * (float(sz.x)/sz.y) * camRight + ndc.y * camUp);
+    vec3 sDir, mDir; GetCelestialDirections(u_Time, sDir, mDir);
+    vec3 final = vec3(0.0), throu = vec3(1.0); bool skip = false; vec3 ro = camPos;
 
-    float jitter = interleavedGradientNoise(vec2(pixelCoords));
-    vec2 ndc = ((vec2(pixelCoords) + 0.5) / vec2(size)) * 2.0 - 1.0;
-    vec3 rayRo = camPos;
-    vec3 rayDir = normalize(camForward + ndc.x * (float(size.x)/size.y) * camRight + ndc.y * camUp);
-
-    vec3 sunDir, moonDir;
-    GetCelestialDirections(u_Time, sunDir, moonDir);
-
-    vec3 finalColor = vec3(0.0);
-    vec3 throughput = vec3(1.0);
-    bool skip = false;
-    float firstHitT = 200.0;
-
-    for (int bounce = 0; bounce < 8; bounce++) {
-        float t; int side; uint voxel; int aabbIdx;
-        bool hitWorld = traceWorld(rayRo, rayDir, true, skip, t, side, voxel, aabbIdx);
-        
-        float et; vec3 en; int etex; vec2 euv;
-        bool hitEntity = traceEntities(rayRo, rayDir, et, en, etex, euv);
-
-        if (!hitWorld && !hitEntity) {
-            finalColor += throughput * (GetSkyAtmosphere(rayDir, sunDir, moonDir) + GetCelestialDisks(rayDir, sunDir, moonDir));
+    for (int b = 0; b < 8; b++) {
+        if (max(throu.r, max(throu.g, throu.b)) < 0.05) break;
+        float t; int side; uint voxel;
+        if (!traceWorld(ro, rd, skip, t, side, voxel)) {
+            final += throu * (GetSky(rd, sDir) + pow(max(0.0, dot(rd, sDir)), 2000.0) * vec3(1, 0.9, 0.7) * 0.5);
             break;
         }
 
-        vec3 hitPos;
-        vec3 normal = vec3(0.0);
-        vec3 albedo = vec3(1.0);
-        float trans = 0.0;
-        float refl = 0.0;
-        int texIdx = -1;
-        vec2 uv = vec2(0.0);
+        vec3 hp = ro + rd * t, n = side == 0 ? vec3(-sign(rd.x),0,0) : (side == 1 ? vec3(0,-sign(rd.y),0) : vec3(0,0,-sign(rd.z)));
+        ivec4 d0 = texelFetch(u_BlockData, int(voxel) * 3), d1 = texelFetch(u_BlockData, int(voxel) * 3 + 1), d2 = texelFetch(u_BlockData, int(voxel) * 3 + 2);
+        float trans = float(d1.z)/255.0, refl = float(d1.w & 0xFF)/255.0; int isTintable = (d1.w >> 8) & 1;
+        vec3 alb = vec3(d2.rgb)/255.0;
 
-        if (hitEntity && (!hitWorld || et < t)) {
-            t = et; hitPos = rayRo + rayDir * t;
-            normal = en; texIdx = etex; uv = euv;
-            refl = 0.1; // Default for entities
-        } else {
-            hitPos = rayRo + rayDir * t;
-            if (side == 0) normal.x = -sign(rayDir.x); else if (side == 1) normal.y = -sign(rayDir.y); else normal.z = -sign(rayDir.z);
-            ivec4 d0 = texelFetch(u_BlockData, int(voxel) * 3);
-            ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 3 + 1);
-            ivec4 d2 = texelFetch(u_BlockData, int(voxel) * 3 + 2);
-            trans = float(d1.z) / 255.0; refl = float(d1.w & 0xFF) / 255.0; albedo = vec3(d2.rgb) / 255.0;
-            texIdx = (side == 0 ? (rayDir.x > 0 ? d1.x : d1.y) : (side == 1 ? (rayDir.y > 0 ? d0.x : d0.y) : (rayDir.z > 0 ? d0.z : d0.w)));
-            if (texIdx >= 0) {
-                uv = (side == 0 ? fract(hitPos.zy) : (side == 1 ? fract(hitPos.xz) : fract(hitPos.xy)));
-                if (((d1.w >> 9) & 1) == 0 && aabbIdx != -1) {
-                    vec3 bMin = texelFetch(u_BlockAABBs, aabbIdx * 2).xyz;
-                    vec3 bMax = texelFetch(u_BlockAABBs, aabbIdx * 2 + 1).xyz;
-                    uv = (side == 0 ? (hitPos.zy - (floor(hitPos.zy) + bMin.zy)) / (bMax.zy - bMin.zy) : (side == 1 ? (hitPos.xz - (floor(hitPos.xz) + bMin.xz)) / (bMax.xz - bMin.xz) : (hitPos.xy - (floor(hitPos.xy) + bMin.xy)) / (bMax.xy - bMin.xy)));
-                }
-            }
-            if (((d1.w >> 8) & 1) == 1) {
-                vec2 b = texture(u_BiomeMap, hitPos.xz / 2048.0).rg;
-                albedo *= texture(u_GrassColormap, vec2(1.0 - b.x, 1.0 - b.y)).rgb;
-            }
-        }
-
+        int face = (side==0)?(rd.x>0?4:5):(side==1?(rd.y>0?0:1):(rd.z>0?2:3));
+        int texIdx = (face==0?d0.x:(face==1?d0.y:(face==2?d0.z:(face==3?d0.w:(face==4?d1.x:d1.y)))));
         if (texIdx >= 0) {
-            vec4 tex = texture(u_BlockTextures, vec3(uv.x, 1.0 - uv.y, float(texIdx)));
-            albedo *= tex.rgb;
-            if (trans > 0.0 && tex.a < 0.1) { trans = 1.0; albedo = vec3(1.0); }
-        }
-
-        if (bounce == 0) firstHitT = t;
-
-        vec3 light = getSurfaceLight(hitPos, normal);
-        
-        // Direct Lighting - Optimized logic
-        vec3 direct = vec3(0.0);
-        if (sunDir.y > -0.1) {
-            float sShadow = traceShadow(hitPos + normal * 0.02, sunDir, 1000.0);
-            if (sShadow > 0.0) {
-                float diffuse = max(0.0, dot(normal, sunDir));
-                vec3 halfV = normalize(sunDir - rayDir);
-                float spec = D_GGX(max(0.0, dot(normal, halfV)), mix(0.5, 0.05, refl)) * refl;
-                direct += GetCelestialLight(sunDir, true) * (diffuse + spec) * sShadow;
-            }
-        }
-        
-        if (moonDir.y > -0.1) {
-            float mShadow = traceShadow(hitPos + normal * 0.02, moonDir, 1000.0);
-            if (mShadow > 0.0) {
-                float diffuse = max(0.0, dot(normal, moonDir));
-                direct += GetCelestialLight(moonDir, false) * diffuse * mShadow * 0.5;
+            vec2 uv = (side==0?fract(hp.zy):(side==1?fract(hp.xz):fract(hp.xy)));
+            alb *= texture(u_BlockTextures, vec3(uv.x, 1.0 - uv.y, float(texIdx))).rgb;
+            if (isTintable == 1) {
+                vec2 bp = texture(u_BiomeMap, hp.xz / 2048.0).rg;
+                alb *= texture(u_GrassColormap, vec2(1.0 - bp.x, 1.0 - bp.y)).rgb;
             }
         }
 
-        vec3 brdf = albedo * (light + direct + 0.03);
-        if (side == 0) brdf *= 0.85; else if (side == 2) brdf *= 0.92;
+        float shad = (b == 0) ? fastShadow(hp + n * 0.05, sDir, 100.0) : 1.0;
+        vec3 light = getSurfaceLight(hp, n) + GetCelestialLight(sDir) * max(0.0, dot(n, sDir)) * shad;
+        
+        vec3 diff = alb * (light + 0.02);
+        if (side == 0) diff *= 0.85; else if (side == 2) diff *= 0.92;
 
-        // Fresnel for reflections
-        vec3 F0 = mix(vec3(0.04), albedo, refl);
-        vec3 F = fresnelSchlick(max(0.0, dot(normal, -rayDir)), F0);
-        float reflectionFactor = max(refl, F.r);
+        float fogFactor = clamp(1.0 - exp(-t * FOG_DENSITY), 0.0, 1.0);
+        diff = mix(diff, GetSky(rd, sDir), fogFactor);
 
-        // Fog
-        float fog = 1.0 - exp(-t * 0.0007);
-        brdf = mix(brdf, GetSkyAtmosphere(rayDir, sunDir, moonDir), fog);
-
-        if (refl > 0.0 && trans < 1.0) {
-            finalColor += throughput * brdf * (1.0 - reflectionFactor) * (1.0 - trans);
-            throughput *= reflectionFactor;
-            rayRo = hitPos + normal * 0.01; rayDir = reflect(rayDir, normal); skip = false;
+        if (refl > 0.0 && b < 2) { 
+            final += throu * diff * (1.0 - refl); throu *= refl; ro = hp + n * 0.01; rd = reflect(rd, n); skip = false;
         } else if (trans > 0.0) {
-            finalColor += throughput * brdf * (1.0 - trans);
-            throughput *= trans * albedo;
-            rayRo = hitPos + rayDir * 0.01; skip = true;
+            final += throu * diff * (1.0 - trans); throu *= trans * alb; ro = hp + rd * 0.01; skip = true;
         } else {
-            finalColor += throughput * brdf;
-            break;
+            final += throu * diff; break;
         }
     }
-
-    vec3 godRayColor = calculateVolumetric(camPos, rayDir, firstHitT, jitter, sunDir, moonDir);
-    
-    // Lens: Vignette
-    float vignette = 1.0 - 0.4 * length(ndc);
-    finalColor *= vignette;
-    godRayColor *= vignette;
-    
-    // Tonemap and Gamma correct scene
-    vec3 sceneColor = ACESFilm(finalColor);
-    sceneColor = pow(sceneColor, vec3(1.0 / 2.2));
-    imageStore(imgOutput, pixelCoords, vec4(sceneColor, 1.0));
-    
-    // Tonemap and Gamma correct god rays
-    vec3 godRays = ACESFilm(godRayColor);
-    godRays = pow(godRays, vec3(1.0 / 2.2));
-    imageStore(godRayOutput, pixelCoords, vec4(godRays, 1.0));
+    imageStore(imgOutput, px, vec4(pow(ACESFilm(final), vec3(1.0/2.2)), 1.0));
 }

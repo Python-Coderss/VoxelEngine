@@ -23,12 +23,12 @@ public class Player {
     public void update(float dt, World world, BlockDataManager blockDataManager) {
         if (!flying) {
             // Adjust gravity to be per-second (0.001f might be too small for dt in seconds)
-            velocity.y -= 25.0f * dt; 
+            velocity.y -= 0.981f * dt; 
         }
 
         // 1. Calculate the factor (how much velocity REMAINS)
         // Ground friction: 0.01f (stops very fast) | Air friction: 0.9f (drifts a bit)
-        float frictionFactor = (float) Math.pow(onGround ? 0.01f : 0.9f, dt);
+        float frictionFactor = (float) Math.pow(onGround ? 0.9f : 0.9f, dt);
 
         // 2. Multiply directly
         velocity.x *= frictionFactor;
