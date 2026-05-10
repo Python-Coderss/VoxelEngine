@@ -31,8 +31,8 @@ import static org.lwjgl.system.MemoryUtil.NULL;
 public class Main {
     private long window;
     private int quadProgram, computeProgram;
-    private int quadVAO, quadVBO, renderTexture, godRayTexture, blurTexture, blurFBO;
-    private int indirectionSSBO, chunkPoolSSBO, lightPoolSSBO;
+    private int quadVAO, quadVBO, renderTexture;
+    private int indirectionSSBO, chunkPoolSSBO, lightPoolSSBO, bitmaskSSBO;
 
     private com.voxel.entity.EntityManager entityManager;
     private World world;
@@ -48,7 +48,6 @@ public class Main {
     private float lastMouseX = width / 2f, lastMouseY = height / 2f;
     private boolean firstMouse = true;
     private float yaw = -90, pitch = 0;
-    private float forwardX, forwardY, forwardZ, rightX, rightY, rightZ, upX, upY, upZ;
 
     private Thread logicThread;
     private volatile boolean running = true;
@@ -74,12 +73,10 @@ public class Main {
         glDeleteBuffers(quadVBO);
         glDeleteVertexArrays(quadVAO);
         glDeleteTextures(renderTexture);
-        glDeleteTextures(godRayTexture);
-        glDeleteTextures(blurTexture);
-        glDeleteFramebuffers(blurFBO);
         glDeleteBuffers(indirectionSSBO);
         glDeleteBuffers(chunkPoolSSBO);
         glDeleteBuffers(lightPoolSSBO);
+        glDeleteBuffers(bitmaskSSBO);
         chunkManager.shutdown();
 
         glfwDestroyWindow(window);
@@ -97,7 +94,7 @@ public class Main {
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-        window = glfwCreateWindow(width, height, "Voxel Engine | Advanced Shader Mode", NULL, NULL);
+        window = glfwCreateWindow(width, height, "Voxel Engine | 8-Bounce PBR", NULL, NULL);
         if (window == NULL) throw new RuntimeException("Failed to create window");
 
         glfwSetKeyCallback(window, (w, key, scancode, action, mods) -> {
@@ -136,19 +133,16 @@ public class Main {
         setupResources();
         
         world = new World();
-        com.voxel.world.WorldGenerator generator = new com.voxel.world.WorldGenerator(System.currentTimeMillis());
+        com.voxel.world.WorldGenerator generator = new com.voxel.world.WorldGenerator(97 /*seed*/);
         chunkManager = new com.voxel.world.ChunkManager(world, generator, 8);
         
         chunkManager.update(player.getPosition());
         uploadWorldToGpu();
     }
 
-    /**
-     * Logic Loop (Runs on background thread at 10 TPS).
-     */
     private void logicLoop() {
         long lastTime = System.nanoTime();
-        final long targetNanos = 100_000_000L; // 100ms for 10 TPS
+        final long targetNanos = 100_000_000L; 
 
         while (running) {
             long now = System.nanoTime();
@@ -157,10 +151,8 @@ public class Main {
             if (elapsed >= targetNanos) {
                 float dt = elapsed / 1_000_000_000f;
                 lastTime = now;
-
                 tick(dt);
                 
-                // Sleep to save CPU if we have time left in this tick
                 long workTime = System.nanoTime() - now;
                 long sleepTime = (targetNanos - workTime) / 1_000_000L;
                 if (sleepTime > 0) {
@@ -174,44 +166,38 @@ public class Main {
 
     private void tick(float dt) {
         if (!running) return;
-        
         player.setYaw(yaw);
         player.setPitch(pitch);
-        
         handleInput(dt);
-        
         player.update(dt, world, blockDataManager);
         entityManager.update(dt);
         chunkManager.update(player.getPosition());
     }
 
     private void handleInput(float dt) {
-        float speed = player.isFlying() ? 15f : 4f;
-        double radYaw = Math.toRadians(yaw), radPitch = Math.toRadians(pitch);
+        float speed = player.isFlying() ? 1.5f : 0.4f;
+        double ry = Math.toRadians(yaw), rp = Math.toRadians(pitch);
+        float fx = (float) (Math.cos(ry) * Math.cos(rp)), fz = (float) (Math.sin(ry) * Math.cos(rp));
+        float rx = -fz, rz = fx;
+        float rl = (float) Math.sqrt(rx*rx + rz*rz); if (rl > 0) { rx /= rl; rz /= rl; }
 
-        forwardX = (float) (Math.cos(radYaw) * Math.cos(radPitch));
-        forwardY = (float) Math.sin(radPitch);
-        forwardZ = (float) (Math.sin(radYaw) * Math.cos(radPitch));
-        
-        rightX = -forwardZ; rightZ = forwardX;
-        float hLen = (float) Math.sqrt(rightX*rightX + rightZ*rightZ);
-        if (hLen > 0) { rightX /= hLen; rightZ /= hLen; }
-
-        float dx = 0, dy = 0, dz = 0;
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { dx += forwardX; if (player.isFlying()) dy += forwardY; dz += forwardZ; }
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) { dx -= forwardX; if (player.isFlying()) dy -= forwardY; dz -= forwardZ; }
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) { dx -= rightX; dz -= rightZ; }
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) { dx += rightX; dz += rightZ; }
+        float dx = 0, dz = 0;
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { dx += fx; dz += fz; }
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) { dx -= fx; dz -= fz; }
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) { dx -= rx; dz -= rz; }
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) { dx += rx; dz += rz; }
         
         float mvLen = (float) Math.sqrt(dx*dx + dz*dz);
         if (mvLen > 0) { dx /= mvLen; dz /= mvLen; }
-        player.move(dx * speed, dy * speed, dz * speed, speed * 2.0f);
+        player.move(dx * speed, 0, dz * speed, speed * 2.0f);
 
         if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
             if (player.isFlying()) player.move(0, speed, 0, speed * 2.0f);
             else player.jump();
         }
-        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS && player.isFlying()) player.move(0, -speed, 0, speed * 2.0f);
+        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+            if (player.isFlying()) player.move(0, -speed, 0, speed * 2.0f);
+        }
         
         if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS) player.setFlying(true);
         if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS) player.setFlying(false);
@@ -219,13 +205,11 @@ public class Main {
 
     private void loop() {
         float lastTime = (float) glfwGetTime();
-        int frames = 0;
-        float fpsTime = 0;
+        int frames = 0; float fpsTime = 0;
 
         while (!glfwWindowShouldClose(window)) {
             float currentTime = (float) glfwGetTime();
-            float dt = currentTime - lastTime;
-            lastTime = currentTime;
+            float dt = currentTime - lastTime; lastTime = currentTime;
             fpsTime += dt; frames++;
             if (fpsTime >= 1.0f) {
                 glfwSetWindowTitle(window, String.format("Voxel Engine | FPS: %d", frames));
@@ -243,10 +227,11 @@ public class Main {
             float fx = (float)(Math.cos(ry)*Math.cos(rp)), fy = (float)Math.sin(rp), fz = (float)(Math.sin(ry)*Math.cos(rp));
             float rx = -fz, rz = fx; 
             float rl = (float)Math.sqrt(rx*rx+rz*rz); if(rl>0){rx/=rl; rz/=rl;}
+            float ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;
             
             glProgramUniform3f(computeProgram, 1, fx, fy, fz);
             glProgramUniform3f(computeProgram, 2, rx, 0, rz);
-            glProgramUniform3f(computeProgram, 3, 0, 1, 0); 
+            glProgramUniform3f(computeProgram, 3, ux, uy, uz); 
             glProgramUniform1f(computeProgram, 4, currentTime);
             glProgramUniform1i(computeProgram, 5, entityManager.getEntityCount());
 
@@ -255,31 +240,21 @@ public class Main {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lightPoolSSBO);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, bitmaskSSBO);
             entityManager.bind(3, 4);
 
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
-            glBindImageTexture(1, godRayTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
             glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
             
-            // God Ray Blur
-            glBindFramebuffer(GL_FRAMEBUFFER, blurFBO);
-            glViewport(0, 0, width, height);
-            glClear(GL_COLOR_BUFFER_BIT);
-            glUseProgram(quadProgram);
-            glBindTextureUnit(0, godRayTexture);
-            glUniform1i(glGetUniformLocation(quadProgram, "u_Pass"), 0);
-            glBindVertexArray(quadVAO);
-            glDrawArrays(GL_TRIANGLES, 0, 6);
-
-            // Final Pass
+            // Single Pass: Draw renderTexture to screen
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glViewport(0, 0, width, height);
             glClear(GL_COLOR_BUFFER_BIT);
+            glUseProgram(quadProgram);
             glBindTextureUnit(0, renderTexture);
-            glBindTextureUnit(1, blurTexture);
-            glUniform1i(glGetUniformLocation(quadProgram, "u_GodRayTexture"), 1);
             glUniform1i(glGetUniformLocation(quadProgram, "u_Pass"), 1);
+            glBindVertexArray(quadVAO);
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
             glfwSwapBuffers(window);
@@ -336,19 +311,6 @@ public class Main {
         glTextureStorage2D(renderTexture, 1, GL_RGBA8, width, height);
         glTextureParameteri(renderTexture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTextureParameteri(renderTexture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-        godRayTexture = glCreateTextures(GL_TEXTURE_2D);
-        glTextureStorage2D(godRayTexture, 1, GL_RGBA8, width, height);
-        glTextureParameteri(godRayTexture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTextureParameteri(godRayTexture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-        blurTexture = glCreateTextures(GL_TEXTURE_2D);
-        glTextureStorage2D(blurTexture, 1, GL_RGBA8, width, height);
-        glTextureParameteri(blurTexture, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTextureParameteri(blurTexture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-        blurFBO = glCreateFramebuffers();
-        glNamedFramebufferTexture(blurFBO, GL_COLOR_ATTACHMENT0, blurTexture, 0);
     }
 
     private void uploadWorldToGpu() {
@@ -356,16 +318,18 @@ public class Main {
         IntBuffer buf = MemoryUtil.memAllocInt(table.length); buf.put(table).flip();
         indirectionSSBO = glCreateBuffers(); glNamedBufferStorage(indirectionSSBO, buf, GL_DYNAMIC_STORAGE_BIT);
         MemoryUtil.memFree(buf);
-
         chunkPoolSSBO = glCreateBuffers();
         glNamedBufferStorage(chunkPoolSSBO, (long)POOL_SIZE * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * Integer.BYTES, GL_DYNAMIC_STORAGE_BIT);
-
         int[] lightPool = world.getLightPool();
         IntBuffer lbuf = MemoryUtil.memAllocInt(lightPool.length); lbuf.put(lightPool).flip();
         lightPoolSSBO = glCreateBuffers();
         glNamedBufferStorage(lightPoolSSBO, lbuf, GL_DYNAMIC_STORAGE_BIT);
         MemoryUtil.memFree(lbuf);
-        
+        int[] bitmaskPool = world.getBitmaskPool();
+        IntBuffer bbuf = MemoryUtil.memAllocInt(bitmaskPool.length); bbuf.put(bitmaskPool).flip();
+        bitmaskSSBO = glCreateBuffers();
+        glNamedBufferStorage(bitmaskSSBO, bbuf, GL_DYNAMIC_STORAGE_BIT);
+        MemoryUtil.memFree(bbuf);
         uploadDirtyChunks();
     }
 
@@ -377,10 +341,13 @@ public class Main {
             IntBuffer buf = MemoryUtil.memAllocInt(table.length); buf.put(table).flip();
             glNamedBufferSubData(indirectionSSBO, 0, buf); MemoryUtil.memFree(buf);
         }
-        int[] pool = world.getChunkPool(); int vpc = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+        int[] pool = world.getChunkPool(); int[] masks = world.getBitmaskPool();
+        int vpc = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
         for (int s : dirty) {
             IntBuffer buf = MemoryUtil.memAllocInt(vpc); buf.put(pool, s * vpc, vpc).flip();
             glNamedBufferSubData(chunkPoolSSBO, (long)s * vpc * Integer.BYTES, buf); MemoryUtil.memFree(buf);
+            IntBuffer mbuf = MemoryUtil.memAllocInt(128); mbuf.put(masks, s * 128, 128).flip();
+            glNamedBufferSubData(bitmaskSSBO, (long)s * 128 * Integer.BYTES, mbuf); MemoryUtil.memFree(mbuf);
         }
         chunkManager.clearDirty();
     }

@@ -32,6 +32,10 @@ public class World {
     // Each integer stores packed RGB light levels (e.g., 4 bits per channel).
     private final int[] lightPool;
 
+    // The bitmask pool stores 1 bit per voxel to indicate solidity (1 = solid, 0 = air).
+    // Each chunk (16x16x16 = 4096 voxels) requires 4096 bits = 128 integers.
+    private final int[] bitmaskPool;
+
     /**
      * Initializes the world with empty tables and pools.
      */
@@ -44,6 +48,7 @@ public class World {
         // Allocate memory for the voxel and light pools
         chunkPool = new int[POOL_SIZE * voxelsPerChunk];
         lightPool = new int[POOL_SIZE * voxelsPerChunk];
+        bitmaskPool = new int[POOL_SIZE * (voxelsPerChunk / 32)];
     }
 
     /**
@@ -119,6 +124,7 @@ public class World {
     public int[] getIndirectionTable() { return indirectionTable; }
     public int[] getChunkPool() { return chunkPool; }
     public int[] getLightPool() { return lightPool; }
+    public int[] getBitmaskPool() { return bitmaskPool; }
 
     /**
      * Assigns a chunk slot to a specific region in the indirection table.
@@ -142,8 +148,17 @@ public class World {
      * Sets a voxel ID directly into a chunk pool slot at local coordinates.
      */
     public void setVoxelInPool(int slot, int lx, int ly, int lz, int type) {
-        int poolIdx = (slot * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) + (lx + ly * CHUNK_SIZE + lz * CHUNK_SIZE * CHUNK_SIZE);
+        int bitIdx = lx + ly * CHUNK_SIZE + lz * CHUNK_SIZE * CHUNK_SIZE;
+        int poolIdx = (slot * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) + bitIdx;
         chunkPool[poolIdx] = type;
+
+        // Update Bitmask (1 bit per voxel)
+        int wordIdx = (slot * 128) + (bitIdx / 32);
+        if (type > 0) {
+            bitmaskPool[wordIdx] |= (1 << (bitIdx % 32));
+        } else {
+            bitmaskPool[wordIdx] &= ~(1 << (bitIdx % 32));
+        }
     }
 
     /**
@@ -155,6 +170,11 @@ public class World {
         for (int i = 0; i < voxelsPerChunk; i++) {
             chunkPool[startIdx + i] = 0;
             lightPool[startIdx + i] = 0;
+        }
+
+        int startBitWord = slot * 128;
+        for (int i = 0; i < 128; i++) {
+            bitmaskPool[startBitWord + i] = 0;
         }
     }
 
