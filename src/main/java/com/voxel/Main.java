@@ -222,22 +222,13 @@ public class Main {
             uploadDirtyChunks();
             entityManager.uploadToGPU();
 
-            // Demo Setup: Rotating Block Light Source
-            float demoLightRadius = 50.0f;
-            float rotSpeed = currentTime * 1.5f;
-            Vector3f pPos = player.getPosition();
-            float lx = pPos.x + (float)Math.cos(rotSpeed) * 15.0f;
-            float lz = pPos.z + (float)Math.sin(rotSpeed) * 15.0f;
-            float ly = pPos.y + 10.0f; // Floating above the player
-
-            FloatBuffer plBuf = MemoryUtil.memAllocFloat(4 + 8); // Header (4 ints) + 1 light (8 floats)
-            plBuf.put(0, Float.intBitsToFloat(1)); // numPointLights = 1
-            plBuf.put(1, 0).put(2, 0).put(3, 0); // padding
-            plBuf.put(4, lx).put(5, ly).put(6, lz).put(7, demoLightRadius); // Position + Radius
-            plBuf.put(8, 1.0f).put(9, 0.6f).put(10, 0.2f).put(11, 2.5f); // Color (Warm Orange) + Intensity
+            // Reset Point Light count to 0
+            FloatBuffer plBuf = MemoryUtil.memAllocFloat(4);
+            plBuf.put(0, Float.intBitsToFloat(0));
             glNamedBufferSubData(pointLightSSBO, 0, plBuf);
             MemoryUtil.memFree(plBuf);
 
+            Vector3f pPos = player.getPosition();
             glUseProgram(computeProgram);
             glProgramUniform3f(computeProgram, 0, pPos.x, pPos.y + 1.6f, pPos.z);
             
