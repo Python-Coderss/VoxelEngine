@@ -19,8 +19,10 @@ import static org.lwjgl.opengl.GL31.*;
 
 /**
  * Manages properties for each type of block (voxel) in the engine.
- * It parses Minecraft-style JSON models to determine which texture goes on which face,
- * and handles uploading this property data to the GPU in a TBO (Texture Buffer Object).
+ * It parses Minecraft-style JSON models to determine which texture goes on
+ * which face,
+ * and handles uploading this property data to the GPU in a TBO (Texture Buffer
+ * Object).
  */
 public class BlockDataManager {
     // Stores block data indexed by their integer ID.
@@ -35,13 +37,14 @@ public class BlockDataManager {
     private int aabbTextureId;
     private int infoTboId;
     private int infoTextureId;
-    
+
     /**
      * Inner class representing the properties of a single block type.
      */
     public static class BlockData {
         // Texture indices for each of the 6 faces:
-        // 0: -Y (Bottom), 1: +Y (Top), 2: -Z (North), 3: +Z (South), 4: -X (West), 5: +X (East)
+        // 0: -Y (Bottom), 1: +Y (Top), 2: -Z (North), 3: +Z (South), 4: -X (West), 5:
+        // +X (East)
         public int[] tex = new int[6];
 
         // Opacity level (0 = fully opaque, 255 = fully transparent).
@@ -49,34 +52,39 @@ public class BlockDataManager {
 
         // Reflection intensity (0 = matte, 255 = perfect mirror).
         public int reflectivity;
-        
+
         // Whether the block color should be modified by the biome (e.g., grass).
         public int isTintable;
 
-        // Whether this block occupies the full voxel space (true for most blocks, false for slabs/stairs/fences).
+        // Whether this block occupies the full voxel space (true for most blocks, false
+        // for slabs/stairs/fences).
         public boolean isFullBlock;
 
         // The average albedo (color) of the block, extracted from its textures.
         public java.awt.Color albedo = java.awt.Color.WHITE;
 
-        // List of AABBs for the block shape (each float[6]: minx,miny,minz,maxx,maxy,maxz in 0-1 range) 
+        // List of AABBs for the block shape (each float[6]:
+        // minx,miny,minz,maxx,maxy,maxz in 0-1 range)
         public List<float[]> aabbs = new ArrayList<>();
         // List of UVs for each face of each AABB (6 packed uints per AABB)
         public List<int[]> aabbUvs = new ArrayList<>();
 
         /** Initializes a block with no textures. */
         public BlockData() {
-            for(int i=0; i<6; i++) tex[i] = -1;
+            for (int i = 0; i < 6; i++)
+                tex[i] = -1;
             isFullBlock = true; // Default to full block
         }
     }
 
     /**
      * Registers a new block by parsing its JSON model and mapping textures.
-     * @param id The integer ID to assign to this block (must be > 0).
-     * @param name The name of the block (matches the model and texture names).
+     * 
+     * @param id             The integer ID to assign to this block (must be > 0).
+     * @param name           The name of the block (matches the model and texture
+     *                       names).
      * @param textureManager The manager containing loaded textures.
-     * @param modelsDir Directory where model JSON files are located.
+     * @param modelsDir      Directory where model JSON files are located.
      */
     public void registerBlock(int id, String name, TextureManager textureManager, String modelsDir) {
         BlockData data = new BlockData();
@@ -95,12 +103,13 @@ public class BlockDataManager {
         String representativeTexture = textureMap.getOrDefault("up", top != null ? top : (end != null ? end : all));
 
         // Map common Minecraft JSON keys to the 6 face indices.
-        assignFace(data, 0, textureMap.getOrDefault("down",  bottom != null ? bottom : (end != null ? end : all)), textureManager);
+        assignFace(data, 0, textureMap.getOrDefault("down", bottom != null ? bottom : (end != null ? end : all)),
+                textureManager);
         assignFace(data, 1, representativeTexture, textureManager);
         assignFace(data, 2, textureMap.getOrDefault("north", side != null ? side : all), textureManager);
         assignFace(data, 3, textureMap.getOrDefault("south", side != null ? side : all), textureManager);
-        assignFace(data, 4, textureMap.getOrDefault("west",  side != null ? side : all), textureManager);
-        assignFace(data, 5, textureMap.getOrDefault("east",  side != null ? side : all), textureManager);
+        assignFace(data, 4, textureMap.getOrDefault("west", side != null ? side : all), textureManager);
+        assignFace(data, 5, textureMap.getOrDefault("east", side != null ? side : all), textureManager);
 
         // Calculate albedo using TextureUtils
         if (representativeTexture != null) {
@@ -125,11 +134,11 @@ public class BlockDataManager {
 
         // Set isFullBlock based on block type
         if (name.contains("slab") || name.contains("stairs") || name.contains("fence") ||
-            name.contains("wall") || name.contains("door") || name.contains("trapdoor") ||
-            name.contains("pane") || name.contains("carpet") || name.contains("pressure_plate") ||
-            name.contains("button") || name.contains("lever") || name.contains("torch") ||
-            name.contains("rail") || name.contains("sign") || name.contains("banner") ||
-            name.contains("flower") || name.contains("sapling") || name.contains("mushroom")) {
+                name.contains("wall") || name.contains("door") || name.contains("trapdoor") ||
+                name.contains("pane") || name.contains("carpet") || name.contains("pressure_plate") ||
+                name.contains("button") || name.contains("lever") || name.contains("torch") ||
+                name.contains("rail") || name.contains("sign") || name.contains("banner") ||
+                name.contains("flower") || name.contains("sapling") || name.contains("mushroom")) {
             data.isFullBlock = false;
         }
 
@@ -145,9 +154,11 @@ public class BlockDataManager {
 
     /** Helper to resolve a texture key to its index in the TextureManager. */
     private void assignFace(BlockData data, int face, String texName, TextureManager textureManager) {
-        if (texName == null) return;
-        if (texName.startsWith("#")) return; // Unresolved variable reference
-        
+        if (texName == null)
+            return;
+        if (texName.startsWith("#"))
+            return; // Unresolved variable reference
+
         // Strip path to get the texture name
         if (texName.contains("/")) {
             texName = texName.substring(texName.lastIndexOf('/') + 1);
@@ -156,13 +167,17 @@ public class BlockDataManager {
     }
 
     /**
-     * Recursively parses JSON files to handle model inheritance (e.g., 'cube_all' inherits from 'cube').
+     * Recursively parses JSON files to handle model inheritance (e.g., 'cube_all'
+     * inherits from 'cube').
      */
-    private void resolveModelRecursive(String modelName, String modelsDir, Map<String, String> textureMap, BlockData data) {
-        if (modelName.startsWith("block/")) modelName = modelName.substring(6);
+    private void resolveModelRecursive(String modelName, String modelsDir, Map<String, String> textureMap,
+            BlockData data) {
+        if (modelName.startsWith("block/"))
+            modelName = modelName.substring(6);
         String jsonPath = modelsDir + "/" + modelName + ".json";
-        
-        if (!Files.exists(Paths.get(jsonPath))) return;
+
+        if (!Files.exists(Paths.get(jsonPath)))
+            return;
 
         try {
             String content = new String(Files.readAllBytes(Paths.get(jsonPath)));
@@ -188,8 +203,9 @@ public class BlockDataManager {
             // Recurse into the parent model if one is specified.
             if (json.has("parent")) {
                 String parent = json.getString("parent");
-                if (!parent.equals("block/block") && !parent.equals("block/cube") && !parent.equals("block/cube_all") && !parent.equals("block/cube_column")) {
-                     resolveModelRecursive(parent, modelsDir, textureMap, data);
+                if (!parent.equals("block/block") && !parent.equals("block/cube") && !parent.equals("block/cube_all")
+                        && !parent.equals("block/cube_column")) {
+                    resolveModelRecursive(parent, modelsDir, textureMap, data);
                 }
             }
 
@@ -201,16 +217,19 @@ public class BlockDataManager {
                     JSONArray from = el.getJSONArray("from");
                     JSONArray to = el.getJSONArray("to");
                     float[] aabb = new float[6];
-                    for (int j = 0; j < 3; j++) aabb[j] = (float) from.getDouble(j) / 16.0f;
-                    for (int j = 0; j < 3; j++) aabb[j + 3] = (float) to.getDouble(j) / 16.0f;
+                    for (int j = 0; j < 3; j++)
+                        aabb[j] = (float) from.getDouble(j) / 16.0f;
+                    for (int j = 0; j < 3; j++)
+                        aabb[j + 3] = (float) to.getDouble(j) / 16.0f;
                     data.aabbs.add(aabb);
 
                     // Parse faces for UVs
                     int[] uvs = new int[6];
-                    for (int j = 0; j < 6; j++) uvs[j] = packUV(0, 0, 16, 16); // Default
+                    for (int j = 0; j < 6; j++)
+                        uvs[j] = packUV(0, 0, 16, 16); // Default
                     if (el.has("faces")) {
                         JSONObject faces = el.getJSONObject("faces");
-                        String[] names = {"down", "up", "north", "south", "west", "east"};
+                        String[] names = { "down", "up", "north", "south", "west", "east" };
                         for (int j = 0; j < 6; j++) {
                             if (faces.has(names[j])) {
                                 JSONObject face = faces.getJSONObject(names[j]);
@@ -235,13 +254,15 @@ public class BlockDataManager {
     }
 
     /**
-     * Packs the block property data into a compact format and uploads it to the GPU.
+     * Packs the block property data into a compact format and uploads it to the
+     * GPU.
      * Each block uses 12 integers (3 ivec4 in GLSL).
      */
     public void uploadToGPU() {
         int maxId = 0;
         for (int id : blockRegistry.keySet()) {
-            if (id > maxId) maxId = id;
+            if (id > maxId)
+                maxId = id;
         }
 
         // Allocate memory for the property buffer (12 ints per block).
@@ -260,7 +281,8 @@ public class BlockDataManager {
                 buffer.put(data.tex[4]);
                 buffer.put(data.tex[5]);
                 buffer.put(data.transparency);
-                int packed = (data.reflectivity & 0xFF) | ((data.isTintable & 1) << 8) | ((data.isFullBlock ? 1 : 0) << 9);
+                int packed = (data.reflectivity & 0xFF) | ((data.isTintable & 1) << 8)
+                        | ((data.isFullBlock ? 1 : 0) << 9);
                 buffer.put(packed);
 
                 // ivec4 2: (albedoR, albedoG, albedoB, unused)
@@ -270,7 +292,8 @@ public class BlockDataManager {
                 buffer.put(0); // Unused
             } else {
                 // Fill with -1 for unused IDs.
-                for(int j = 0; j < 12; j++) buffer.put(-1);
+                for (int j = 0; j < 12; j++)
+                    buffer.put(-1);
             }
         }
         buffer.flip();
@@ -280,7 +303,8 @@ public class BlockDataManager {
         glBindBuffer(GL_TEXTURE_BUFFER, tboId);
         glBufferData(GL_TEXTURE_BUFFER, buffer, GL_STATIC_DRAW);
 
-        // 2. Create a Texture Buffer Object (TBO) which interprets the buffer as a texture.
+        // 2. Create a Texture Buffer Object (TBO) which interprets the buffer as a
+        // texture.
         textureId = glGenTextures();
         glBindTexture(GL_TEXTURE_BUFFER, textureId);
         // Link the texture to the buffer with an integer format.
@@ -302,22 +326,23 @@ public class BlockDataManager {
             BlockData data = blockRegistry.get(id);
             List<float[]> aabbs = (data != null) ? data.aabbs : null;
             if (aabbs != null && !aabbs.isEmpty()) {
-                blockInfo.put(id, new int[]{offset, aabbs.size()});
+                blockInfo.put(id, new int[] { offset, aabbs.size() });
                 for (int i = 0; i < aabbs.size(); i++) {
                     float[] aabb = aabbs.get(i);
-                    allAABBs.add(new float[]{aabb[0], aabb[1], aabb[2]}); // min
-                    allAABBs.add(new float[]{aabb[3], aabb[4], aabb[5]}); // max
+                    allAABBs.add(new float[] { aabb[0], aabb[1], aabb[2] }); // min
+                    allAABBs.add(new float[] { aabb[3], aabb[4], aabb[5] }); // max
                     allUVs.add(data.aabbUvs.get(i));
                 }
                 offset += aabbs.size() * 2;
             } else {
-                blockInfo.put(id, new int[]{0, 0});
+                blockInfo.put(id, new int[] { 0, 0 });
             }
         }
 
         // AABB data buffer
         FloatBuffer aabbBuffer = MemoryUtil.memAllocFloat(allAABBs.size() * 3);
-        for (float[] v : allAABBs) aabbBuffer.put(v);
+        for (float[] v : allAABBs)
+            aabbBuffer.put(v);
         aabbBuffer.flip();
 
         aabbTboId = glGenBuffers();
@@ -333,7 +358,8 @@ public class BlockDataManager {
         // UV data buffer
         IntBuffer uvBuffer = MemoryUtil.memAllocInt(allUVs.size() * 6);
         for (int[] uvs : allUVs) {
-            for (int uv : uvs) uvBuffer.put(uv);
+            for (int uv : uvs)
+                uvBuffer.put(uv);
         }
         uvBuffer.flip();
 
@@ -389,6 +415,7 @@ public class BlockDataManager {
 
     /**
      * Checks if the block with the given ID occupies the full voxel space.
+     * 
      * @param blockId The block ID to check.
      * @return True if it's a full block, false if partial (e.g., slabs, stairs).
      */

@@ -28,13 +28,13 @@ public class World {
     // It's a flat array where each chunk occupies CHUNK_SIZE^3 integers.
     private final int[] chunkPool;
 
-    // The light pool stores the lighting information for each voxel.
-    // Each integer stores packed RGB light levels (e.g., 4 bits per channel).
-    private final int[] lightPool;
-
     // The bitmask pool stores 1 bit per voxel to indicate solidity (1 = solid, 0 = air).
     // Each chunk (16x16x16 = 4096 voxels) requires 4096 bits = 128 integers.
     private final int[] bitmaskPool;
+
+    // The occlusion pool stores a 14-bit mask for directional sky visibility
+    // 1 short per voxel = 4096 shorts per chunk.
+    private final short[] occlusionPool;
 
     /**
      * Initializes the world with empty tables and pools.
@@ -47,8 +47,8 @@ public class World {
         int voxelsPerChunk = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
         // Allocate memory for the voxel and light pools
         chunkPool = new int[POOL_SIZE * voxelsPerChunk];
-        lightPool = new int[POOL_SIZE * voxelsPerChunk];
         bitmaskPool = new int[POOL_SIZE * (voxelsPerChunk / 32)];
+        occlusionPool = new short[POOL_SIZE * voxelsPerChunk];
     }
 
     /**
@@ -101,30 +101,14 @@ public class World {
     }
 
     /**
-     * Sets the packed light value for a voxel at the specified coordinates.
+     * Checks if the chunk at the given position is currently loaded/allocated.
      */
-    public void setLight(int x, int y, int z, int packedLight) {
-        int cx = x / CHUNK_SIZE;
-        int cy = y / CHUNK_SIZE;
-        int cz = z / CHUNK_SIZE;
-        int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
-        int slot = indirectionTable[tableIdx];
-
-        // Light can only be set in allocated chunks
-        if (slot == EMPTY) return;
-
-        int lx = x % CHUNK_SIZE;
-        int ly = y % CHUNK_SIZE;
-        int lz = z % CHUNK_SIZE;
-        int poolIdx = (slot * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) + (lx + ly * CHUNK_SIZE + lz * CHUNK_SIZE * CHUNK_SIZE);
-        lightPool[poolIdx] = packedLight;
-    }
 
     // Standard getters for internal data structures
     public int[] getIndirectionTable() { return indirectionTable; }
     public int[] getChunkPool() { return chunkPool; }
-    public int[] getLightPool() { return lightPool; }
     public int[] getBitmaskPool() { return bitmaskPool; }
+    public short[] getOcclusionPool() { return occlusionPool; }
 
     /**
      * Assigns a chunk slot to a specific region in the indirection table.
@@ -169,7 +153,7 @@ public class World {
         int startIdx = slot * voxelsPerChunk;
         for (int i = 0; i < voxelsPerChunk; i++) {
             chunkPool[startIdx + i] = 0;
-            lightPool[startIdx + i] = 0;
+            occlusionPool[startIdx + i] = 0;
         }
 
         int startBitWord = slot * 128;

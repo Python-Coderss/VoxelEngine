@@ -3,6 +3,7 @@ package com.voxel;
 import com.voxel.utils.BlockDataManager;
 import com.voxel.utils.ShaderUtil;
 import com.voxel.utils.TextureManager;
+import com.voxel.lighting.LightPropagationEngine;
 
 import org.joml.Vector3f;
 import org.lwjgl.glfw.GLFWErrorCallback;
@@ -32,7 +33,7 @@ public class Main {
     private long window;
     private int quadProgram, computeProgram;
     private int quadVAO, quadVBO, renderTexture;
-    private int indirectionSSBO, chunkPoolSSBO, lightPoolSSBO, bitmaskSSBO;
+    private int indirectionSSBO, chunkPoolSSBO, bitmaskSSBO, occlusionSSBO, pointLightSSBO;
 
     private com.voxel.entity.EntityManager entityManager;
     private World world;
@@ -75,8 +76,9 @@ public class Main {
         glDeleteTextures(renderTexture);
         glDeleteBuffers(indirectionSSBO);
         glDeleteBuffers(chunkPoolSSBO);
-        glDeleteBuffers(lightPoolSSBO);
         glDeleteBuffers(bitmaskSSBO);
+        glDeleteBuffers(occlusionSSBO);
+        glDeleteBuffers(pointLightSSBO);
         chunkManager.shutdown();
 
         glfwDestroyWindow(window);
@@ -134,7 +136,8 @@ public class Main {
         
         world = new World();
         com.voxel.world.WorldGenerator generator = new com.voxel.world.WorldGenerator(97 /*seed*/);
-        chunkManager = new com.voxel.world.ChunkManager(world, generator, 8);
+        LightPropagationEngine lightEngine = new LightPropagationEngine(world, blockDataManager);
+        chunkManager = new com.voxel.world.ChunkManager(world, generator, lightEngine, 8);
         
         chunkManager.update(player.getPosition());
         uploadWorldToGpu();
@@ -142,7 +145,7 @@ public class Main {
 
     private void logicLoop() {
         long lastTime = System.nanoTime();
-        final long targetNanos = 100_000_000L; 
+        final long targetNanos = 16_666_666L; // 60 TPS (physics/logic tick rate)
 
         while (running) {
             long now = System.nanoTime();
@@ -219,8 +222,23 @@ public class Main {
             uploadDirtyChunks();
             entityManager.uploadToGPU();
 
-            glUseProgram(computeProgram);
+            // Demo Setup: Rotating Block Light Source
+            float demoLightRadius = 50.0f;
+            float rotSpeed = currentTime * 1.5f;
             Vector3f pPos = player.getPosition();
+            float lx = pPos.x + (float)Math.cos(rotSpeed) * 15.0f;
+            float lz = pPos.z + (float)Math.sin(rotSpeed) * 15.0f;
+            float ly = pPos.y + 10.0f; // Floating above the player
+
+            FloatBuffer plBuf = MemoryUtil.memAllocFloat(4 + 8); // Header (4 ints) + 1 light (8 floats)
+            plBuf.put(0, Float.intBitsToFloat(1)); // numPointLights = 1
+            plBuf.put(1, 0).put(2, 0).put(3, 0); // padding
+            plBuf.put(4, lx).put(5, ly).put(6, lz).put(7, demoLightRadius); // Position + Radius
+            plBuf.put(8, 1.0f).put(9, 0.6f).put(10, 0.2f).put(11, 2.5f); // Color (Warm Orange) + Intensity
+            glNamedBufferSubData(pointLightSSBO, 0, plBuf);
+            MemoryUtil.memFree(plBuf);
+
+            glUseProgram(computeProgram);
             glProgramUniform3f(computeProgram, 0, pPos.x, pPos.y + 1.6f, pPos.z);
             
             double ry = Math.toRadians(yaw), rp = Math.toRadians(pitch);
@@ -239,9 +257,10 @@ public class Main {
             
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lightPoolSSBO);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, bitmaskSSBO);
-            entityManager.bind(3, 4);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, bitmaskSSBO);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, occlusionSSBO);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, pointLightSSBO);
+            entityManager.bind(6, 7);
 
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
             glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
@@ -290,6 +309,8 @@ public class Main {
         blockDataManager = new BlockDataManager();
         blockDataManager.registerBlock(1, "grass_normal", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(2, "stone", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(3, "glass", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(4, "oak_leaves", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(13, "dirt", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(14, "sand", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.uploadToGPU();
@@ -320,16 +341,22 @@ public class Main {
         MemoryUtil.memFree(buf);
         chunkPoolSSBO = glCreateBuffers();
         glNamedBufferStorage(chunkPoolSSBO, (long)POOL_SIZE * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * Integer.BYTES, GL_DYNAMIC_STORAGE_BIT);
-        int[] lightPool = world.getLightPool();
-        IntBuffer lbuf = MemoryUtil.memAllocInt(lightPool.length); lbuf.put(lightPool).flip();
-        lightPoolSSBO = glCreateBuffers();
-        glNamedBufferStorage(lightPoolSSBO, lbuf, GL_DYNAMIC_STORAGE_BIT);
-        MemoryUtil.memFree(lbuf);
+        
         int[] bitmaskPool = world.getBitmaskPool();
         IntBuffer bbuf = MemoryUtil.memAllocInt(bitmaskPool.length); bbuf.put(bitmaskPool).flip();
         bitmaskSSBO = glCreateBuffers();
         glNamedBufferStorage(bitmaskSSBO, bbuf, GL_DYNAMIC_STORAGE_BIT);
         MemoryUtil.memFree(bbuf);
+        
+        short[] occlusionPool = world.getOcclusionPool();
+        java.nio.ShortBuffer obuf = MemoryUtil.memAllocShort(occlusionPool.length); obuf.put(occlusionPool).flip();
+        occlusionSSBO = glCreateBuffers();
+        glNamedBufferStorage(occlusionSSBO, obuf, GL_DYNAMIC_STORAGE_BIT);
+        MemoryUtil.memFree(obuf);
+        
+        pointLightSSBO = glCreateBuffers();
+        glNamedBufferStorage(pointLightSSBO, 4096, GL_DYNAMIC_STORAGE_BIT); // 4KB buffer for roughly 128 lights
+        
         uploadDirtyChunks();
     }
 
@@ -342,12 +369,16 @@ public class Main {
             glNamedBufferSubData(indirectionSSBO, 0, buf); MemoryUtil.memFree(buf);
         }
         int[] pool = world.getChunkPool(); int[] masks = world.getBitmaskPool();
+        short[] occs = world.getOcclusionPool();
         int vpc = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
         for (int s : dirty) {
             IntBuffer buf = MemoryUtil.memAllocInt(vpc); buf.put(pool, s * vpc, vpc).flip();
             glNamedBufferSubData(chunkPoolSSBO, (long)s * vpc * Integer.BYTES, buf); MemoryUtil.memFree(buf);
             IntBuffer mbuf = MemoryUtil.memAllocInt(128); mbuf.put(masks, s * 128, 128).flip();
             glNamedBufferSubData(bitmaskSSBO, (long)s * 128 * Integer.BYTES, mbuf); MemoryUtil.memFree(mbuf);
+            
+            java.nio.ShortBuffer obuf = MemoryUtil.memAllocShort(vpc); obuf.put(occs, s * vpc, vpc).flip();
+            glNamedBufferSubData(occlusionSSBO, (long)s * vpc * Short.BYTES, obuf); MemoryUtil.memFree(obuf);
         }
         chunkManager.clearDirty();
     }
