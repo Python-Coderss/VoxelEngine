@@ -105,4 +105,9 @@ public class EntityManager {
     public int getEntityCount() {
         return entities.size();
     }
+
+    public Entity getEntity(int index) {
+        if (index < 0 || index >= entities.size()) return null;
+        return entities.get(index);
+    }
 }
