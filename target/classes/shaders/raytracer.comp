@@ -1,8 +1,8 @@
 #version 430 core
 
 /**
- * High-Performance Voxel PBR Shader.
- * 14-Direction Occlusion + Analytic Shadows + Texture Mapping + God Rays.
+ * Advanced Voxel Atmosphere & PBR Shader.
+ * 24-Minute Cycle + Dynamic Scattering + Occ-Gated God Rays.
  */
 
 layout(local_size_x = 16, local_size_y = 16) in;
@@ -58,22 +58,67 @@ const vec3 OCC_DIRS[14] = vec3[](
     vec3(0.0, 0.3, 0.0)
 );
 
-const vec3 SKY_DAY_ZENITH    = vec3(0.22, 0.38, 0.75);
-const vec3 SKY_DAY_HORIZON   = vec3(0.60, 0.72, 0.95);
-const vec3 SUN_COLOR         = vec3(1.0, 0.95, 0.85);
+struct Atmosphere {
+    vec3 sunDir;
+    vec3 moonDir;
+    vec3 sunColor;
+    vec3 moonColor;
+    vec3 skyZenith;
+    vec3 skyHorizon;
+    vec3 ambient;
+};
+
+Atmosphere GetAtmosphere(float t) {
+    float cycle = fract(t / 1440.0); // 24 minute cycle
+    float angle = cycle * 2.0 * PI - (PI * 0.5);
+    
+    Atmosphere at;
+    at.sunDir = normalize(vec3(cos(angle), sin(angle), 0.3));
+    at.moonDir = -at.sunDir;
+    
+    float h = at.sunDir.y;
+    
+    // Dynamic Skies
+    vec3 dayZenith = vec3(0.1, 0.35, 0.75);
+    vec3 nightZenith = vec3(0.01, 0.02, 0.05);
+    at.skyZenith = mix(nightZenith, dayZenith, smoothstep(-0.15, 0.15, h));
+    
+    vec3 dayHorizon = vec3(0.5, 0.7, 0.9);
+    vec3 sunsetHorizon = vec3(0.9, 0.4, 0.2);
+    vec3 nightHorizon = vec3(0.02, 0.03, 0.08);
+    
+    at.skyHorizon = mix(nightHorizon, mix(sunsetHorizon, dayHorizon, smoothstep(0.0, 0.3, h)), smoothstep(-0.15, 0.1, h));
+    
+    // Light Colors
+    at.sunColor = mix(vec3(1.0, 0.5, 0.2), vec3(1.0, 0.98, 0.9), smoothstep(0.0, 0.4, h)) * smoothstep(-0.1, 0.1, h);
+    at.moonColor = vec3(0.2, 0.25, 0.4) * smoothstep(-0.1, 0.1, -h);
+    
+    at.ambient = mix(vec3(0.02, 0.03, 0.07), at.skyZenith * 0.4, smoothstep(-0.2, 0.2, h));
+    
+    return at;
+}
 
 vec3 ACESFilm(vec3 x) { 
     return clamp((x*(2.51*x + 0.03))/(x*(2.43*x + 0.59) + 0.14), 0.0, 1.0); 
 }
 
-void GetCelestialDirections(float t, out vec3 sDir, out vec3 mDir) {
-    float a = t * 0.05;
-    sDir = normalize(vec3(sin(a), cos(a), 0.5)); mDir = -sDir;
+float interleaved_gradient_noise(vec2 n) {
+    return fract(52.9829189 * fract(dot(n, vec2(0.06339546, 0.02474039))));
 }
 
-vec3 GetSky(vec3 rd, vec3 sd) {
+vec3 GetSky(vec3 rd, Atmosphere at) {
     float d = max(0.0, rd.y);
-    return mix(SKY_DAY_HORIZON, SKY_DAY_ZENITH, pow(d, 0.6));
+    vec3 sky = mix(at.skyHorizon, at.skyZenith, pow(d, 0.7));
+    
+    // Sun
+    float sunMask = pow(max(0.0, dot(rd, at.sunDir)), 1500.0);
+    sky += sunMask * at.sunColor * 5.0;
+    
+    // Moon
+    float moonMask = pow(max(0.0, dot(rd, at.moonDir)), 1000.0);
+    sky += moonMask * at.moonColor * 2.0;
+    
+    return sky;
 }
 
 bool intersectAABB(vec3 ro, vec3 rd, vec3 bMin, vec3 bMax, out float tn, out float tf) {
@@ -214,13 +259,36 @@ void main() {
     if (any(greaterThanEqual(px, sz))) return;
     vec2 ndc = ((vec2(px) + 0.5) / vec2(sz)) * 2.0 - 1.0;
     vec3 rd = normalize(camForward + ndc.x * (float(sz.x)/sz.y) * camRight + ndc.y * camUp);
-    vec3 sDir, mDir; GetCelestialDirections(u_Time, sDir, mDir);
+    
+    Atmosphere at = GetAtmosphere(u_Time);
     vec3 final = vec3(0.0), throu = vec3(1.0); bool skip = false; vec3 ro = camPos;
 
     for (int b = 0; b < 6; b++) {
         float t; int side; uint voxel;
-        if (!traceWorld(ro, rd, skip, t, side, voxel)) {
-            final += throu * (GetSky(rd, sDir) + pow(max(0.0, dot(rd, sDir)), 2000.0) * SUN_COLOR * 0.5);
+        bool hit = traceWorld(ro, rd, skip, t, side, voxel);
+        float vT = hit ? t : 100.0;
+        
+        // God Rays (Occlusion-Gated Scattering)
+        float vMax = min(vT, 48.0);
+        float dither = interleaved_gradient_noise(vec2(px) + u_Time);
+        vec3 godRays = vec3(0.0);
+        float vStep = 4.0;
+        for(float dt = dither * vStep; dt < vMax; dt += vStep) {
+            vec3 vPos = ro + rd * dt;
+            uint mask = getVoxelOcclusion(ivec3(floor(vPos)));
+            // User Condition: Only do god rays if more than 2 directions are BLOCKED (<= 12 open)
+            // Wait, he said: "more than 2 of 14 directions are OPEN, DON'T do god rays"
+            // So ONLY do if <= 2 are OPEN.
+            if (bitCount(mask) <= 2) {
+                float visS = computeOcclusionVis(ivec3(floor(vPos)), at.sunDir);
+                float visM = computeOcclusionVis(ivec3(floor(vPos)), at.moonDir);
+                godRays += (at.sunColor * visS + at.moonColor * visM * 0.5) * 0.02 * vStep;
+            }
+        }
+        final += throu * godRays;
+
+        if (!hit) {
+            final += throu * GetSky(rd, at);
             break;
         }
 
@@ -231,39 +299,21 @@ void main() {
         ivec4 d1 = texelFetch(u_BlockData, int(voxel) * 3 + 1);
         ivec4 d2 = texelFetch(u_BlockData, int(voxel) * 3 + 2);
         
-        // Face selection
-        int faceIdx = 0;
-        if (side == 1) faceIdx = (n.y > 0.0) ? 1 : 0;
-        else if (side == 2) faceIdx = (n.z > 0.0) ? 3 : 2;
-        else faceIdx = (n.x > 0.0) ? 5 : 4;
-        
+        int faceIdx = (side == 1) ? (n.y > 0.0 ? 1 : 0) : (side == 2 ? (n.z > 0.0 ? 3 : 2) : (n.x > 0.0 ? 5 : 4));
         int texIdx = (faceIdx == 0) ? d0.x : (faceIdx == 1 ? d0.y : (faceIdx == 2 ? d0.z : (faceIdx == 3 ? d0.w : (faceIdx == 4 ? d1.x : d1.y))));
         
-        // UV calculation
-        vec2 uv = (side == 0) ? hp.zy : ((side == 1) ? hp.xz : hp.xy);
-        uv = fract(uv);
+        vec2 uv = fract((side == 0) ? hp.zy : ((side == 1) ? hp.xz : hp.xy));
+        vec3 alb = texture(u_BlockTextures, vec3(uv, float(texIdx))).rgb * (vec3(d2.rgb) / 255.0);
         
-        vec3 texColor = texture(u_BlockTextures, vec3(uv, float(texIdx))).rgb;
-        vec3 alb = texColor * (vec3(d2.rgb) / 255.0); // Modulate with albedo
-        
-        float trans = float(d1.z) / 255.0;
-        float refl = float(d1.w & 0xFF) / 255.0;
+        float trans = float(d1.z) / 255.0, refl = float(d1.w & 0xFF) / 255.0;
 
-        // Tint / Biome (Grass/Leaves)
         if (((d1.w >> 8) & 1) == 1) {
             vec2 bp = texture(u_BiomeMap, hp.xz / 2048.0).rg;
             alb *= texture(u_GrassColormap, vec2(1.0 - bp.x, 1.0 - bp.y)).rgb;
         }
 
-        // God Rays
-        vec3 godRays = vec3(0.0);
-        float vMax = min(t, 24.0);
-        for(float dt=2.0; dt<vMax; dt+=4.0) {
-            godRays += SUN_COLOR * computeOcclusionVis(ivec3(floor(ro + rd * dt)), sDir) * 0.05;
-        }
-        final += throu * godRays * SUN_COLOR;
-
-        float shad = fastShadow(hp + n * 0.05, sDir, 100.0);
+        float shadS = fastShadow(hp + n * 0.05, at.sunDir, 100.0);
+        float shadM = fastShadow(hp + n * 0.05, at.moonDir, 100.0);
         float occAmb = float(bitCount(getVoxelOcclusion(ivec3(floor(hp + n * 0.5))))) / 14.0;
         
         vec3 pointLightIllun = vec3(0.0);
@@ -273,20 +323,23 @@ void main() {
             if (lDist < pointLights[i].radius) {
                 lDir /= lDist; float att = pow(max(0.0, 1.0 - (lDist/pointLights[i].radius)), 2.0);
                 float NdotL = max(0.0, dot(n, lDir));
-                if (NdotL > 0.0) {
-                    pointLightIllun += pointLights[i].color * pointLights[i].intensity * NdotL * att * fastShadow(hp + n * 0.05, lDir, lDist);
-                }
+                if (NdotL > 0.0) pointLightIllun += pointLights[i].color * pointLights[i].intensity * NdotL * att * fastShadow(hp + n * 0.05, lDir, lDist);
             }
         }
 
-        vec3 beam = SUN_COLOR * max(0.0, dot(n, sDir)) * shad + pointLightIllun + (SKY_DAY_ZENITH * occAmb * 0.2);
-        final += throu * alb * beam * (1.0 - trans - refl);
+        vec3 beam = at.sunColor * max(0.0, dot(n, at.sunDir)) * shadS;
+        beam += at.moonColor * max(0.0, dot(n, at.moonDir)) * shadM;
+        beam += pointLightIllun + (at.ambient * occAmb);
+        
+        vec3 bounceColor = alb * beam * (1.0 - trans - refl);
+        float fog = 1.0 - exp(-t * 0.003);
+        bounceColor = mix(bounceColor, GetSky(rd, at), fog);
+        
+        final += throu * bounceColor;
 
         if (refl > 0.0) { throu *= refl; ro = hp + n * 0.01; rd = reflect(rd, n); skip = false; }
         else if (trans > 0.0) { throu *= trans * alb; ro = hp + rd * 0.01; skip = true; }
         else break;
     }
-    
-    // Tonemapping and Gamma
     imageStore(imgOutput, px, vec4(pow(ACESFilm(final), vec3(1.0/2.2)), 1.0));
 }
