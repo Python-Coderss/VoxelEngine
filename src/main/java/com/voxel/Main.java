@@ -139,6 +139,21 @@ public class Main {
         LightPropagationEngine lightEngine = new LightPropagationEngine(world, blockDataManager);
         chunkManager = new com.voxel.world.ChunkManager(world, generator, lightEngine, 8);
         
+        // RTX Demo Entities (AABB-aligned)
+        for (int i = 0; i < 5; i++) {
+            com.voxel.entity.Entity e = new com.voxel.entity.Entity(i, new org.joml.Vector3f(1024 + (i - 2) * 15, 75, 1024 + (i - 2) * 8));
+            // Add a mirror cube part (Texture 3 = glass/mirror in demo logic)
+            e.addPart(new com.voxel.entity.ModelPart("cube", new org.joml.Vector3f(0, 0, 0), new org.joml.Vector3f(32, 32, 32), 3));
+            entityManager.addEntity(e);
+        }
+
+        // Add some Zombies
+        for (int i = 0; i < 3; i++) {
+            com.voxel.entity.Entity zombie = new com.voxel.entity.Entity(100 + i, new org.joml.Vector3f(1030 + i * 10, 64, 1030));
+            zombie.loadModel("src/main/resources/assets/minecraft/models/entity/zombie.json", textureManager);
+            entityManager.addEntity(zombie);
+        }
+        
         chunkManager.update(player.getPosition());
         uploadWorldToGpu();
     }
@@ -173,6 +188,22 @@ public class Main {
         player.setPitch(pitch);
         handleInput(dt);
         player.update(dt, world, blockDataManager);
+        
+        // Move Entities for Demo
+        float time = (float)glfwGetTime();
+        for (int i = 0; i < entityManager.getEntityCount(); i++) {
+            com.voxel.entity.Entity e = entityManager.getEntity(i);
+            if (e.id < 100) {
+                e.rotation.y += dt * 45.0f;
+                e.rotation.x += dt * 15.0f;
+                e.position.y = 75.0f + (float)Math.sin(time + i) * 5.0f;
+            } else {
+                // Zombie AI (very simple)
+                e.position.x += (float)Math.cos(time * 0.5f + i) * 0.05f;
+                e.position.z += (float)Math.sin(time * 0.5f + i) * 0.05f;
+            }
+        }
+        
         entityManager.update(dt);
         chunkManager.update(player.getPosition());
     }
@@ -241,7 +272,7 @@ public class Main {
             glProgramUniform3f(computeProgram, 1, fx, fy, fz);
             glProgramUniform3f(computeProgram, 2, rx, 0, rz);
             glProgramUniform3f(computeProgram, 3, ux, uy, uz); 
-            glProgramUniform1f(computeProgram, 4, currentTime);
+            glProgramUniform1f(computeProgram, 4, currentTime * 60);
             glProgramUniform1i(computeProgram, 5, entityManager.getEntityCount());
 
             bindTextures();
@@ -304,6 +335,7 @@ public class Main {
         blockDataManager.registerBlock(4, "oak_leaves", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(13, "dirt", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(14, "sand", textureManager, "src/main/resources/assets/minecraft/models/block");
+        
         blockDataManager.uploadToGPU();
     }
 
