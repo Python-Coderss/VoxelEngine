@@ -1,6 +1,7 @@
 package com.voxel.world;
 
 import com.voxel.World;
+import com.voxel.lighting.LightPropagationEngine;
 import org.joml.Vector3f;
 import java.util.*;
 import java.util.concurrent.*;
@@ -12,6 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ChunkManager {
     private final World world;
     private final WorldGenerator generator;
+    private final LightPropagationEngine lightEngine;
     private final int renderDistance;
     private final int chunkHeight = 16;
 
@@ -25,9 +27,10 @@ public class ChunkManager {
 
     private int lastPlayerCX = -1000, lastPlayerCZ = -1000;
 
-    public ChunkManager(World world, WorldGenerator generator, int renderDistance) {
+    public ChunkManager(World world, WorldGenerator generator, LightPropagationEngine lightEngine, int renderDistance) {
         this.world = world;
         this.generator = generator;
+        this.lightEngine = lightEngine;
         this.renderDistance = renderDistance;
 
         for (int i = 0; i < World.POOL_SIZE; i++) {
@@ -90,6 +93,7 @@ public class ChunkManager {
             int slot = freeSlots.poll();
             slots[cy] = slot;
             generateStorageChunk(cx, cy, cz, slot);
+            lightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
             world.setChunkSlot(cx, cy, cz, slot);
             dirtySlots.add(slot);
         }
