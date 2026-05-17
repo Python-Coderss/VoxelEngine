@@ -6,7 +6,10 @@ import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import org.joml.Matrix4f;
 import org.joml.Vector2f;
+import org.joml.Vector2i;
 import org.joml.Vector4f;
+import java.util.HashMap;
+import java.util.Map;
 import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL20.*;
 import static org.lwjgl.opengl.GL30.*;
@@ -22,6 +25,8 @@ public class UIManager {
     private int fbo, uiTexture;
     private int width, height;
     private Matrix4f projection;
+    private int uUVOffsetLoc, uUVScaleLoc;
+    private static final Map<Integer, Vector2i> textureSizes = new HashMap<>();
     
     public UIManager(int width, int height) {
         this.width = width;
@@ -32,6 +37,9 @@ public class UIManager {
             ShaderUtil.compileShader("src/main/resources/shaders/ui.vert", GL_VERTEX_SHADER),
             ShaderUtil.compileShader("src/main/resources/shaders/ui.frag", GL_FRAGMENT_SHADER)
         );
+        
+        uUVOffsetLoc = glGetUniformLocation(program, "uUVOffset");
+        uUVScaleLoc = glGetUniformLocation(program, "uUVScale");
         
         setupGeometry();
         setupFBO();
@@ -68,6 +76,8 @@ public class UIManager {
         glTextureStorage2D(uiTexture, 1, GL_RGBA8, width, height);
         glTextureParameteri(uiTexture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTextureParameteri(uiTexture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTextureParameteri(uiTexture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(uiTexture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         
         glNamedFramebufferTexture(fbo, GL_COLOR_ATTACHMENT0, uiTexture, 0);
         if (glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
@@ -91,11 +101,17 @@ public class UIManager {
     }
     
     public void drawQuad(Vector2f pos, Vector2f size, float rotation, Vector4f color, int textureId) {
+        drawQuad(pos, size, rotation, color, textureId, new Vector2f(0, 0), new Vector2f(1, 1));
+    }
+    
+    public void drawQuad(Vector2f pos, Vector2f size, float rotation, Vector4f color, int textureId, Vector2f uvOffset, Vector2f uvScale) {
         glUniform2f(1, pos.x, pos.y);
         glUniform2f(2, size.x, size.y);
         glUniform1f(3, (float)Math.toRadians(rotation));
         glUniform1f(4, 0.0f);
         glUniform4f(10, color.x, color.y, color.z, color.w);
+        glUniform2f(uUVOffsetLoc, uvOffset.x, uvOffset.y);
+        glUniform2f(uUVScaleLoc, uvScale.x, uvScale.y);
         
         if (textureId != 0) {
             glUniform1f(11, 1.0f);
@@ -116,6 +132,10 @@ public class UIManager {
     public int getUITexture() {
         return uiTexture;
     }
+    
+    public static Vector2i getTextureSize(int textureId) {
+        return textureSizes.getOrDefault(textureId, new Vector2i(1, 1));
+    }
 
     public static int loadTexture(String path) {
         int textureId = glCreateTextures(GL_TEXTURE_2D);
@@ -129,10 +149,13 @@ public class UIManager {
             glTextureStorage2D(textureId, 1, GL_RGBA8, w.get(0), h.get(0));
             glTextureSubImage2D(textureId, 0, 0, 0, w.get(0), h.get(0), GL_RGBA, GL_UNSIGNED_BYTE, data);
             
+            textureSizes.put(textureId, new Vector2i(w.get(0), h.get(0)));
             STBImage.stbi_image_free(data);
         }
-        glTextureParameteri(textureId, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTextureParameteri(textureId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(textureId, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTextureParameteri(textureId, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTextureParameteri(textureId, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(textureId, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         return textureId;
     }
 }
