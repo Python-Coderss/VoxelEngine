@@ -41,6 +41,8 @@ public class Main {
     private TextureManager textureManager;
     private BlockDataManager blockDataManager;
     private com.voxel.utils.BiomeManager biomeManager;
+    private com.voxel.ui.UIManager uiManager;
+    private java.util.List<com.voxel.ui.UILayer> uiLayers = new java.util.ArrayList<>();
     private Player player;
     
     private int width = 1280, height = 720;
@@ -114,6 +116,14 @@ public class Main {
             if (pitch > 89.0f) pitch = 89.0f; if (pitch < -89.0f) pitch = -89.0f;
         });
 
+        glfwSetMouseButtonCallback(window, (w, button, action, mods) -> {
+            if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+                for (int i = uiLayers.size() - 1; i >= 0; i--) {
+                    if (uiLayers.get(i).handleMouseClick(lastMouseX, lastMouseY)) return;
+                }
+            }
+        });
+
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
         glfwMakeContextCurrent(window);
         glfwSwapInterval(0);
@@ -133,6 +143,38 @@ public class Main {
         setupQuad();
         setupTexture();
         setupResources();
+        
+        uiManager = new com.voxel.ui.UIManager(width, height);
+        com.voxel.ui.UILayer hudLayer = new com.voxel.ui.UILayer();
+        // Crosshair
+        hudLayer.addElement(new com.voxel.ui.UILayer.UIElement(
+            new org.joml.Vector2f(width/2 - 2, height/2 - 2), 
+            new org.joml.Vector2f(4, 4), 
+            new org.joml.Vector4f(1, 1, 1, 1)
+        ));
+        // Demo Panel
+        com.voxel.ui.UILayer.UIElement panel = new com.voxel.ui.UILayer.UIElement(
+            new org.joml.Vector2f(20, 20), new org.joml.Vector2f(100, 40), new org.joml.Vector4f(0, 0, 0, 0.7f)
+        );
+        panel.onClick = () -> System.out.println("Panel Clicked!");
+        hudLayer.addElement(panel);
+        
+        // Load UI Texture (Safely)
+        try {
+            java.io.File uiFile = new java.io.File("src/main/resources/ui/ui.png");
+            if (uiFile.exists()) {
+                int uiTex = com.voxel.ui.UIManager.loadTexture(uiFile.getPath());
+                com.voxel.ui.UILayer.UIElement texturedElement = new com.voxel.ui.UILayer.UIElement(
+                    new org.joml.Vector2f(20, 80), new org.joml.Vector2f(64, 64), new org.joml.Vector4f(1, 1, 1, 1)
+                );
+                texturedElement.textureId = uiTex;
+                hudLayer.addElement(texturedElement);
+            }
+        } catch (Exception e) {
+            System.err.println("Note: ui.png not found at src/main/resources/ui/");
+        }
+        
+        uiLayers.add(hudLayer);
         
         world = new World();
         com.voxel.world.WorldGenerator generator = new com.voxel.world.WorldGenerator(97 /*seed*/);
@@ -251,6 +293,12 @@ public class Main {
             }
 
             uploadDirtyChunks();
+            
+            // Render UI First
+            uiManager.begin();
+            for (com.voxel.ui.UILayer layer : uiLayers) layer.render(uiManager);
+            uiManager.end();
+
             entityManager.uploadToGPU();
 
             // Reset Point Light count to 0
@@ -272,7 +320,7 @@ public class Main {
             glProgramUniform3f(computeProgram, 1, fx, fy, fz);
             glProgramUniform3f(computeProgram, 2, rx, 0, rz);
             glProgramUniform3f(computeProgram, 3, ux, uy, uz); 
-            glProgramUniform1f(computeProgram, 4, currentTime * 60);
+            glProgramUniform1f(computeProgram, 4, currentTime);
             glProgramUniform1i(computeProgram, 5, entityManager.getEntityCount());
 
             bindTextures();
@@ -318,8 +366,10 @@ public class Main {
         glUniform1i(glGetUniformLocation(computeProgram, "u_BiomeMap"), 8);
         glActiveTexture(GL_TEXTURE9); glBindTexture(GL_TEXTURE_2D, biomeManager.getGrassColormapId());
         glUniform1i(glGetUniformLocation(computeProgram, "u_GrassColormap"), 9);
-        glActiveTexture(GL_TEXTURE10); glBindTexture(GL_TEXTURE_2D, biomeManager.getFoliageColormapId());
-        glUniform1i(glGetUniformLocation(computeProgram, "u_FoliageColormap"), 10);
+        glActiveTexture(GL_TEXTURE10); glBindTexture(GL_TEXTURE_2D, uiManager.getUITexture());
+        glUniform1i(glGetUniformLocation(computeProgram, "u_UITexture"), 10);
+        glActiveTexture(GL_TEXTURE14); glBindTexture(GL_TEXTURE_2D, biomeManager.getFoliageColormapId());
+        glUniform1i(glGetUniformLocation(computeProgram, "u_FoliageColormap"), 14);
     }
 
     private void setupResources() {

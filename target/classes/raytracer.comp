@@ -45,6 +45,7 @@ uniform isamplerBuffer u_BlockAABBUVs;
 uniform sampler2D u_BiomeMap;
 uniform sampler2D u_GrassColormap;
 uniform sampler2D u_FoliageColormap;
+uniform sampler2D u_UITexture;
 
 const int WORLD_SIZE = 2048;
 const uint EMPTY = 0xFFFFFFFF;
@@ -217,6 +218,14 @@ void main() {
     if (any(greaterThanEqual(px, sz))) return;
     vec2 ndc = ((vec2(px) + 0.5) / vec2(sz)) * 2.0 - 1.0;
     vec3 rd = normalize(camForward + ndc.x * (float(sz.x)/sz.y) * camRight + ndc.y * camUp);
+    
+    // UI Early Exit / Skip
+    vec4 uiCol = texture(u_UITexture, (vec2(px) + 0.5) / vec2(sz));
+    if (uiCol.a >= 0.99) {
+        imageStore(imgOutput, px, vec4(pow(uiCol.rgb, vec3(1.0/2.2)), 1.0));
+        return;
+    }
+
     Atmosphere at = GetAtmosphere(u_Time);
     vec3 final = vec3(0.0), throu = vec3(1.0), ro = camPos; bool skip = false;
 
@@ -255,5 +264,11 @@ void main() {
         else if (trans > 0.0) { throu *= trans * alb; ro = hp + rd * 0.01; skip = true; }
         else break;
     }
-    imageStore(imgOutput, px, vec4(pow(ACESFilm(final), vec3(1.0/2.2)), 1.0));
+    
+    vec3 result = ACESFilm(final);
+    // Blend UI if semi-transparent
+    if (uiCol.a > 0.0) {
+        result = mix(result, uiCol.rgb, uiCol.a);
+    }
+    imageStore(imgOutput, px, vec4(pow(result, vec3(1.0/2.2)), 1.0));
 }
