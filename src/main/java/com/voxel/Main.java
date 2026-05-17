@@ -101,6 +101,8 @@ public class Main {
 
     private int uiTextureId = 0;
     private Vector2i uiTextureSize = new Vector2i(1, 1);
+    private int fontTextureId = 0;
+    private Vector2i fontTextureSize = new Vector2i(1, 1);
     private UILayer.UIElement crosshairElement;
     private UILayer.UIElement hotbarActiveElement;
     private UILayer.UIElement inventoryPanelElement;
@@ -108,6 +110,12 @@ public class Main {
     private final UILayer.UIElement[] slotBackgrounds = new UILayer.UIElement[INVENTORY_SIZE];
     private final UILayer.UIElement[] slotItemElements = new UILayer.UIElement[INVENTORY_SIZE];
     private final UILayer.UIElement[] slotCountBars = new UILayer.UIElement[INVENTORY_SIZE];
+    private final UILayer.UIElement[] slotCountDigit1 = new UILayer.UIElement[INVENTORY_SIZE];
+    private final UILayer.UIElement[] slotCountDigit2 = new UILayer.UIElement[INVENTORY_SIZE];
+    private UILayer.UITextElement itemNameElement;
+    private double itemNameDisplayUntil = 0.0;
+    private UILayer.UITextElement commandTextElement;
+    private UILayer.UITextElement statusTextElement;
 
     private Thread logicThread;
     private volatile boolean running = true;
@@ -134,16 +142,18 @@ public class Main {
         final String displayName;
         final ItemKind kind;
         final int blockId;
+        final int iconLayer;
         final ToolType toolType;
         final float miningSpeed;
         final int maxStack;
         final Vector4f color;
 
-        ItemDefinition(String id, String displayName, ItemKind kind, int blockId, ToolType toolType, float miningSpeed, int maxStack, Vector4f color) {
+        ItemDefinition(String id, String displayName, ItemKind kind, int blockId, int iconLayer, ToolType toolType, float miningSpeed, int maxStack, Vector4f color) {
             this.id = id;
             this.displayName = displayName;
             this.kind = kind;
             this.blockId = blockId;
+            this.iconLayer = iconLayer;
             this.toolType = toolType;
             this.miningSpeed = miningSpeed;
             this.maxStack = maxStack;
@@ -282,6 +292,7 @@ public class Main {
         hudLayer.addElement(inventoryPanelElement);
 
         tryLoadUiTexture();
+        tryLoadFontTexture();
         buildInventoryUi(hudLayer);
 
         uiLayers.add(hudLayer);
@@ -297,6 +308,18 @@ public class Main {
             }
         } catch (Exception e) {
             System.err.println("Note: ui.png not found at src/main/resources/ui/");
+        }
+    }
+
+    private void tryLoadFontTexture() {
+        try {
+            java.io.File fontFile = new java.io.File("src/main/resources/assets/minecraft/textures/font/ascii.png");
+            if (fontFile.exists()) {
+                fontTextureId = UIManager.loadTexture(fontFile.getPath());
+                fontTextureSize = UIManager.getTextureSize(fontTextureId);
+            }
+        } catch (Exception e) {
+            System.err.println("Note: ascii.png not found");
         }
     }
 
@@ -342,6 +365,26 @@ public class Main {
             countBar.visible = false;
             slotCountBars[index] = countBar;
             layer.addElement(countBar);
+
+            UILayer.UIElement digit1 = new UILayer.UIElement(
+                new Vector2f(x + SLOT_W - 32, y + SLOT_H - 24),
+                new Vector2f(16, 16),
+                new Vector4f(1, 1, 1, 1)
+            );
+            digit1.visible = false;
+            digit1.textureId = fontTextureId;
+            slotCountDigit1[index] = digit1;
+            layer.addElement(digit1);
+
+            UILayer.UIElement digit2 = new UILayer.UIElement(
+                new Vector2f(x + SLOT_W - 18, y + SLOT_H - 24),
+                new Vector2f(16, 16),
+                new Vector4f(1, 1, 1, 1)
+            );
+            digit2.visible = false;
+            digit2.textureId = fontTextureId;
+            slotCountDigit2[index] = digit2;
+            layer.addElement(digit2);
         }
 
         hotbarActiveElement = new UILayer.UIElement(
@@ -363,6 +406,36 @@ public class Main {
         );
         carriedItemElement.visible = false;
         layer.addElement(carriedItemElement);
+
+        itemNameElement = new UILayer.UITextElement(
+            new Vector2f(HOTBAR_X + 100, HOTBAR_Y - 40),
+            "",
+            2.5f,
+            new Vector4f(1, 1, 1, 1),
+            fontTextureId
+        );
+        itemNameElement.visible = false;
+        layer.addElement(itemNameElement);
+
+        commandTextElement = new UILayer.UITextElement(
+            new Vector2f(20, height - 40),
+            "",
+            2.0f,
+            new Vector4f(1, 1, 1, 1),
+            fontTextureId
+        );
+        commandTextElement.visible = false;
+        layer.addElement(commandTextElement);
+
+        statusTextElement = new UILayer.UITextElement(
+            new Vector2f(20, height - 70),
+            "",
+            2.0f,
+            new Vector4f(1, 1, 0.5f, 1),
+            fontTextureId
+        );
+        statusTextElement.visible = false;
+        layer.addElement(statusTextElement);
     }
 
     private void setupItemRegistry() {
@@ -370,26 +443,27 @@ public class Main {
         itemAliases.clear();
         blockItemByBlockId.clear();
 
-        registerBlockItem("grass", "Grass Block", 1);
-        registerBlockItem("stone", "Stone", 2);
-        registerBlockItem("glass", "Glass", 3);
-        registerBlockItem("leaves", "Oak Leaves", 4);
-        registerBlockItem("dirt", "Dirt", 13);
-        registerBlockItem("sand", "Sand", 14);
+        registerBlockItem("grass", "Grass Block", 1, "grass_side");
+        registerBlockItem("stone", "Stone", 2, "stone");
+        registerBlockItem("glass", "Glass", 3, "glass");
+        registerBlockItem("leaves", "Oak Leaves", 4, "leaves_oak");
+        registerBlockItem("dirt", "Dirt", 13, "dirt");
+        registerBlockItem("sand", "Sand", 14, "sand");
 
-        registerToolItem("wood_pickaxe", "Wood Pickaxe", ToolType.PICKAXE, 4.5f, new Vector4f(0.62f, 0.46f, 0.28f, 1.0f));
-        registerToolItem("wood_shovel", "Wood Shovel", ToolType.SHOVEL, 4.0f, new Vector4f(0.74f, 0.58f, 0.35f, 1.0f));
-        registerToolItem("wood_axe", "Wood Axe", ToolType.AXE, 4.2f, new Vector4f(0.82f, 0.52f, 0.24f, 1.0f));
+        registerToolItem("wood_pickaxe", "Wood Pickaxe", "wood_pickaxe", ToolType.PICKAXE, 4.5f, new Vector4f(1, 1, 1, 1));
+        registerToolItem("wood_shovel", "Wood Shovel", "wood_shovel", ToolType.SHOVEL, 4.0f, new Vector4f(1, 1, 1, 1));
+        registerToolItem("wood_axe", "Wood Axe", "wood_axe", ToolType.AXE, 4.2f, new Vector4f(1, 1, 1, 1));
 
         registerAlias("pickaxe", "wood_pickaxe");
         registerAlias("shovel", "wood_shovel");
         registerAlias("axe", "wood_axe");
     }
 
-    private void registerBlockItem(String itemId, String displayName, int blockId) {
+    private void registerBlockItem(String itemId, String displayName, int blockId, String textureName) {
         Color albedo = blockDataManager.getAlbedo(blockId);
         Vector4f color = new Vector4f(albedo.getRed() / 255.0f, albedo.getGreen() / 255.0f, albedo.getBlue() / 255.0f, 1.0f);
-        ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.BLOCK, blockId, ToolType.HAND, 1.0f, 64, color);
+        int iconLayer = textureManager.getTextureIndex(textureName);
+        ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.BLOCK, blockId, iconLayer, ToolType.HAND, 1.0f, 64, color);
         itemRegistry.put(itemId, definition);
         blockItemByBlockId.put(blockId, itemId);
         registerAlias(itemId, itemId);
@@ -397,8 +471,9 @@ public class Main {
         registerAlias(displayName.toLowerCase(Locale.ROOT).replace(' ', '_'), itemId);
     }
 
-    private void registerToolItem(String itemId, String displayName, ToolType toolType, float miningSpeed, Vector4f color) {
-        ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.TOOL, 0, toolType, miningSpeed, 1, color);
+    private void registerToolItem(String itemId, String displayName, String textureName, ToolType toolType, float miningSpeed, Vector4f color) {
+        int iconLayer = textureManager.getTextureIndex(textureName);
+        ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.TOOL, 0, iconLayer, toolType, miningSpeed, 1, color);
         itemRegistry.put(itemId, definition);
         registerAlias(itemId, itemId);
         registerAlias(displayName.toLowerCase(Locale.ROOT).replace(' ', '_'), itemId);
@@ -452,8 +527,15 @@ public class Main {
 
         player.setYaw(yaw);
         player.setPitch(pitch);
-        handleInput(dt);
-        player.update(dt, world, blockDataManager);
+
+        int pcx = (int) Math.floor(player.getPosition().x) >> 4;
+        int pcz = (int) Math.floor(player.getPosition().z) >> 4;
+        boolean chunksReady = chunkManager.isChunkLoaded(pcx, pcz);
+
+        if (chunksReady) {
+            handleInput(dt);
+            player.update(dt, world, blockDataManager);
+        }
 
         worldTime += dt;
         updateMining(dt);
@@ -621,12 +703,14 @@ public class Main {
 
             if (key == GLFW_KEY_E) {
                 toggleInventory();
+                showSelectedItemName();
                 return;
             }
 
             if (key == GLFW_KEY_ESCAPE) {
                 if (inventoryOpen) {
                     setInventoryOpen(false);
+                    showSelectedItemName();
                     return;
                 }
                 glfwSetWindowShouldClose(win, true);
@@ -635,6 +719,7 @@ public class Main {
 
             if (key >= GLFW_KEY_1 && key < GLFW_KEY_1 + HOTBAR_SIZE) {
                 selectedSlot = key - GLFW_KEY_1;
+                showSelectedItemName();
                 return;
             }
         }
@@ -752,6 +837,12 @@ public class Main {
     private void updateWindowTitle() {
         StringBuilder title = new StringBuilder("Voxel Engine | FPS: ").append(lastMeasuredFps);
         title.append(" | ").append(gameMode == GameMode.CREATIVE ? "creative" : "survival");
+
+        int pcx = (int) Math.floor(player.getPosition().x) >> 4;
+        int pcz = (int) Math.floor(player.getPosition().z) >> 4;
+        if (!chunkManager.isChunkLoaded(pcx, pcz)) {
+            title.append(" [WAITING FOR CHUNKS]");
+        }
 
         if (commandMode) {
             title.append(" | CMD ").append(commandBuffer);
@@ -938,6 +1029,7 @@ public class Main {
     }
 
     private void updateInventoryUi() {
+        double time = glfwGetTime();
         crosshairElement.visible = !inventoryOpen && !commandMode;
         inventoryPanelElement.visible = inventoryOpen;
         hotbarActiveElement.visible = true;
@@ -950,22 +1042,37 @@ public class Main {
             ItemStack stack = inventory[index];
             UILayer.UIElement itemElement = slotItemElements[index];
             UILayer.UIElement countBar = slotCountBars[index];
+            UILayer.UIElement digit1 = slotCountDigit1[index];
+            UILayer.UIElement digit2 = slotCountDigit2[index];
 
             if (!slotVisible || stack == null) {
                 itemElement.visible = false;
                 countBar.visible = false;
+                digit1.visible = false;
+                digit2.visible = false;
                 continue;
             }
 
             ItemDefinition definition = getItemDefinition(stack.itemId);
             itemElement.visible = true;
-            itemElement.color.set(definition.color);
+            itemElement.textureId = textureManager.getTextureArrayId();
+            itemElement.textureType = 2; // Array
+            itemElement.layer = definition.iconLayer;
+            itemElement.color.set(1, 1, 1, 1);
+            
             if (definition.kind == ItemKind.TOOL) {
-                itemElement.size.set(20, 44);
-                itemElement.pos.set(slotBackgrounds[index].pos.x + 34, slotBackgrounds[index].pos.y + 14);
+                itemElement.size.set(40, 40);
+                itemElement.pos.set(slotBackgrounds[index].pos.x + 24, slotBackgrounds[index].pos.y + 14);
             } else {
                 itemElement.size.set(40, 40);
                 itemElement.pos.set(slotBackgrounds[index].pos.x + 24, slotBackgrounds[index].pos.y + 16);
+            }
+
+            if (inventoryOpen && slotBackgrounds[index].isPointInside(lastMouseX, lastMouseY)) {
+                itemNameElement.text = definition.displayName;
+                itemNameElement.visible = true;
+                itemNameElement.color.w = 1.0f;
+                itemNameDisplayUntil = time + 0.1; // Stay while hovering
             }
 
             if (definition.maxStack > 1 && stack.count > 1) {
@@ -973,17 +1080,81 @@ public class Main {
                 countBar.color.set(definition.color.x, definition.color.y, definition.color.z, 0.85f);
                 countBar.pos.set(slotBackgrounds[index].pos.x + 12, slotBackgrounds[index].pos.y + SLOT_H - 12);
                 countBar.size.set((SLOT_W - 24) * Math.min(stack.count, definition.maxStack) / (float) definition.maxStack, 6);
+
+                if (fontTextureId != 0) {
+                    if (stack.count >= 10) {
+                        digit1.visible = true;
+                        int d1 = stack.count / 10;
+                        int charCode = 48 + d1;
+                        digit1.uvOffset.set((charCode % 16) / 16.0f, (charCode / 16) / 16.0f);
+                        digit1.uvScale.set(1 / 16.0f, 1 / 16.0f);
+                        
+                        digit2.visible = true;
+                        int d2 = stack.count % 10;
+                        charCode = 48 + d2;
+                        digit2.uvOffset.set((charCode % 16) / 16.0f, (charCode / 16) / 16.0f);
+                        digit2.uvScale.set(1 / 16.0f, 1 / 16.0f);
+                    } else {
+                        digit1.visible = false;
+                        digit2.visible = true;
+                        int d2 = stack.count;
+                        int charCode = 48 + d2;
+                        digit2.uvOffset.set((charCode % 16) / 16.0f, (charCode / 16) / 16.0f);
+                        digit2.uvScale.set(1 / 16.0f, 1 / 16.0f);
+                    }
+                } else {
+                    digit1.visible = false;
+                    digit2.visible = false;
+                }
             } else {
                 countBar.visible = false;
+                digit1.visible = false;
+                digit2.visible = false;
             }
         }
 
         carriedItemElement.visible = inventoryOpen && carriedStack != null;
         if (carriedItemElement.visible) {
             ItemDefinition definition = getItemDefinition(carriedStack.itemId);
-            carriedItemElement.color.set(definition.color.x, definition.color.y, definition.color.z, 0.9f);
+            carriedItemElement.textureId = textureManager.getTextureArrayId();
+            carriedItemElement.textureType = 2; // Array
+            carriedItemElement.layer = definition.iconLayer;
+            carriedItemElement.color.set(1, 1, 1, 0.9f);
             carriedItemElement.pos.set(lastMouseX - 14, lastMouseY - 14);
-            carriedItemElement.size.set(definition.kind == ItemKind.TOOL ? 16 : 28, definition.kind == ItemKind.TOOL ? 30 : 28);
+            carriedItemElement.size.set(28, 28);
+        }
+
+        if (itemNameDisplayUntil > time) {
+            itemNameElement.visible = true;
+            float alpha = (float) Math.min(1.0, (itemNameDisplayUntil - time) / 0.5);
+            itemNameElement.color.w = alpha;
+        } else {
+            itemNameElement.visible = false;
+        }
+
+        commandTextElement.visible = commandMode;
+        if (commandMode) {
+            commandTextElement.text = commandBuffer.toString() + "_";
+        }
+
+        statusTextElement.visible = !statusMessage.isEmpty() && time < statusUntil;
+        if (statusTextElement.visible) {
+            statusTextElement.text = statusMessage;
+            float alpha = (float) Math.min(1.0, (statusUntil - time) / 0.5);
+            statusTextElement.color.w = alpha;
+        }
+    }
+
+    private void showSelectedItemName() {
+        ItemStack stack = inventory[selectedSlot];
+        if (stack != null) {
+            ItemDefinition definition = getItemDefinition(stack.itemId);
+            if (definition != null) {
+                itemNameElement.text = definition.displayName;
+                itemNameDisplayUntil = glfwGetTime() + 3.0;
+            }
+        } else {
+            itemNameDisplayUntil = 0.0;
         }
     }
 

@@ -134,6 +134,10 @@ public class ChunkManager {
     private int unpackX(long key) { return (int) (key >> 32); }
     private int unpackZ(long key) { return (int) key; }
 
+    public boolean isChunkLoaded(int cx, int cz) {
+        return loadedChunks.containsKey(chunkKey(cx, cz));
+    }
+
     public boolean setVoxel(int x, int y, int z, int type) {
         int slot = world.getChunkSlot(x, y, z);
         if (slot == World.EMPTY) return false;
