@@ -47,6 +47,8 @@ public class UILayer {
         public Vector4f color;
         public float rotation;
         public int textureId;
+        public int textureType = 0; // 0: single, 1: font, 2: array
+        public int layer = 0;
         public Vector2f uvOffset = new Vector2f(0, 0);
         public Vector2f uvScale = new Vector2f(1, 1);
         public boolean visible = true;
@@ -60,12 +62,30 @@ public class UILayer {
         
         public void render(UIManager manager) {
             if (!visible) return;
-            manager.drawQuad(pos, size, rotation, color, textureId, uvOffset, uvScale);
+            manager.drawQuad(pos, size, rotation, color, textureId, uvOffset, uvScale, textureType, layer);
         }
         
         public boolean isPointInside(float x, float y) {
             if (!visible) return false;
             return x >= pos.x && x <= pos.x + size.x && y >= pos.y && y <= pos.y + size.y;
+        }
+    }
+
+    public static class UITextElement extends UIElement {
+        public String text;
+        public float scale;
+        
+        public UITextElement(Vector2f pos, String text, float scale, Vector4f color, int fontTextureId) {
+            super(pos, new Vector2f(0, 0), color);
+            this.text = text;
+            this.scale = scale;
+            this.textureId = fontTextureId;
+        }
+        
+        @Override
+        public void render(UIManager manager) {
+            if (!visible || text == null || text.isEmpty()) return;
+            manager.drawString(text, pos.x, pos.y, scale, color, textureId);
         }
     }
 }

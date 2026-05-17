@@ -12,7 +12,7 @@ public class Player {
     private final Vector3f size = new Vector3f(0.6f, 1.8f, 0.6f);
 
     private boolean onGround = false;
-    private boolean flying = true;
+    private boolean flying = false;
 
     private float yaw = -90, pitch = 0;
 

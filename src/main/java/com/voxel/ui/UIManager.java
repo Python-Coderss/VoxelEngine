@@ -25,7 +25,7 @@ public class UIManager {
     private int fbo, uiTexture;
     private int width, height;
     private Matrix4f projection;
-    private int uUVOffsetLoc, uUVScaleLoc;
+    private int uUVOffsetLoc, uUVScaleLoc, uTextureTypeLoc, uLayerLoc;
     private static final Map<Integer, Vector2i> textureSizes = new HashMap<>();
     
     public UIManager(int width, int height) {
@@ -40,6 +40,8 @@ public class UIManager {
         
         uUVOffsetLoc = glGetUniformLocation(program, "uUVOffset");
         uUVScaleLoc = glGetUniformLocation(program, "uUVScale");
+        uTextureTypeLoc = glGetUniformLocation(program, "uTextureType");
+        uLayerLoc = glGetUniformLocation(program, "uLayer");
         
         setupGeometry();
         setupFBO();
@@ -105,6 +107,10 @@ public class UIManager {
     }
     
     public void drawQuad(Vector2f pos, Vector2f size, float rotation, Vector4f color, int textureId, Vector2f uvOffset, Vector2f uvScale) {
+        drawQuad(pos, size, rotation, color, textureId, uvOffset, uvScale, 0, 0);
+    }
+
+    public void drawQuad(Vector2f pos, Vector2f size, float rotation, Vector4f color, int textureId, Vector2f uvOffset, Vector2f uvScale, int textureType, int layer) {
         glUniform2f(1, pos.x, pos.y);
         glUniform2f(2, size.x, size.y);
         glUniform1f(3, (float)Math.toRadians(rotation));
@@ -112,16 +118,44 @@ public class UIManager {
         glUniform4f(10, color.x, color.y, color.z, color.w);
         glUniform2f(uUVOffsetLoc, uvOffset.x, uvOffset.y);
         glUniform2f(uUVScaleLoc, uvScale.x, uvScale.y);
+        glUniform1i(uTextureTypeLoc, textureType);
+        glUniform1i(uLayerLoc, layer);
         
         if (textureId != 0) {
             glUniform1f(11, 1.0f);
-            glBindTextureUnit(0, textureId);
+            if (textureType == 2) {
+                glBindTextureUnit(1, textureId);
+            } else {
+                glBindTextureUnit(0, textureId);
+            }
         } else {
             glUniform1f(11, 0.0f);
         }
         
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+
+    public void drawString(String text, float x, float y, float scale, Vector4f color, int fontTextureId) {
+        if (fontTextureId == 0) return;
+        
+        float charSize = 8 * scale;
+        float uvStep = 1.0f / 16.0f;
+        
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == ' ') {
+                x += charSize;
+                continue;
+            }
+            
+            int charCode = (int) c;
+            float u = (charCode % 16) * uvStep;
+            float v = (charCode / 16) * uvStep;
+            
+            drawQuad(new Vector2f(x, y), new Vector2f(charSize, charSize), 0, color, fontTextureId, new Vector2f(u, v), new Vector2f(uvStep, uvStep));
+            x += charSize;
+        }
     }
     
     public void end() {
