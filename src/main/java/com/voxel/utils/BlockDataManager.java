@@ -27,6 +27,7 @@ import static org.lwjgl.opengl.GL31.*;
 public class BlockDataManager {
     // Stores block data indexed by their integer ID.
     private final Map<Integer, BlockData> blockRegistry = new HashMap<>();
+    private final Map<String, Integer> nameToId = new HashMap<>();
 
     // OpenGL IDs for the Buffer and the Texture Buffer Object (TBO).
     private int tboId;
@@ -62,6 +63,9 @@ public class BlockDataManager {
 
         // The average albedo (color) of the block, extracted from its textures.
         public java.awt.Color albedo = java.awt.Color.WHITE;
+        public String name = "";
+        public float hardness = 1.0f;
+        public String preferredTool = "hand";
 
         // List of AABBs for the block shape (each float[6]:
         // minx,miny,minz,maxx,maxy,maxz in 0-1 range)
@@ -88,6 +92,7 @@ public class BlockDataManager {
      */
     public void registerBlock(int id, String name, TextureManager textureManager, String modelsDir) {
         BlockData data = new BlockData();
+        data.name = name;
         Map<String, String> textureMap = new HashMap<>();
 
         // Recursively resolve the block's model hierarchy to find all textures.
@@ -141,6 +146,7 @@ public class BlockDataManager {
                 name.contains("flower") || name.contains("sapling") || name.contains("mushroom")) {
             data.isFullBlock = false;
         }
+        applyMiningDefaults(name, data);
 
         // Validate that we found a texture for every face.
         for (int i = 0; i < 6; i++) {
@@ -150,6 +156,38 @@ public class BlockDataManager {
         }
 
         blockRegistry.put(id, data);
+        registerNameAlias(name, id);
+        if (name.endsWith("_normal")) registerNameAlias(name.substring(0, name.length() - "_normal".length()), id);
+        if (name.contains("grass")) registerNameAlias("grass", id);
+        if (name.contains("stone")) registerNameAlias("stone", id);
+        if (name.contains("glass")) registerNameAlias("glass", id);
+        if (name.contains("leaves")) registerNameAlias("leaves", id);
+        if (name.contains("dirt")) registerNameAlias("dirt", id);
+        if (name.contains("sand")) registerNameAlias("sand", id);
+    }
+
+    private void registerNameAlias(String alias, int id) {
+        nameToId.put(alias.toLowerCase(), id);
+    }
+
+    private void applyMiningDefaults(String name, BlockData data) {
+        String lower = name.toLowerCase();
+        if (lower.contains("stone")) {
+            data.hardness = 1.6f;
+            data.preferredTool = "pickaxe";
+        } else if (lower.contains("glass")) {
+            data.hardness = 0.4f;
+            data.preferredTool = "hand";
+        } else if (lower.contains("sand")) {
+            data.hardness = 0.6f;
+            data.preferredTool = "shovel";
+        } else if (lower.contains("dirt") || lower.contains("grass")) {
+            data.hardness = 0.7f;
+            data.preferredTool = "shovel";
+        } else if (lower.contains("leaves")) {
+            data.hardness = 0.3f;
+            data.preferredTool = "axe";
+        }
     }
 
     /** Helper to resolve a texture key to its index in the TextureManager. */
@@ -422,5 +460,30 @@ public class BlockDataManager {
     public boolean isFullBlock(int blockId) {
         BlockData data = blockRegistry.get(blockId);
         return data != null && data.isFullBlock;
+    }
+
+    public float getHardness(int blockId) {
+        BlockData data = blockRegistry.get(blockId);
+        return data != null ? data.hardness : 1.0f;
+    }
+
+    public String getPreferredTool(int blockId) {
+        BlockData data = blockRegistry.get(blockId);
+        return data != null ? data.preferredTool : "hand";
+    }
+
+    public java.awt.Color getAlbedo(int blockId) {
+        BlockData data = blockRegistry.get(blockId);
+        return data != null ? data.albedo : java.awt.Color.WHITE;
+    }
+
+    public String getName(int blockId) {
+        BlockData data = blockRegistry.get(blockId);
+        return data != null ? data.name : "unknown";
+    }
+
+    public Integer findBlockId(String name) {
+        if (name == null) return null;
+        return nameToId.get(name.toLowerCase());
     }
 }

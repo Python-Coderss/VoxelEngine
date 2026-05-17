@@ -10,6 +10,8 @@ layout(location = 1) uniform vec2 uPos;
 layout(location = 2) uniform vec2 uSize;
 layout(location = 3) uniform float uRotation;
 layout(location = 4) uniform float uZ;
+uniform vec2 uUVOffset;
+uniform vec2 uUVScale;
 
 void main() {
     float s = sin(uRotation);
@@ -21,5 +23,5 @@ void main() {
     p += uPos;
     
     gl_Position = uProjection * vec4(p, uZ, 1.0);
-    vUV = inUV;
+    vUV = uUVOffset + inUV * uUVScale;
 }

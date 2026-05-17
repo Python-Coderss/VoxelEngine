@@ -134,6 +134,20 @@ public class ChunkManager {
     private int unpackX(long key) { return (int) (key >> 32); }
     private int unpackZ(long key) { return (int) key; }
 
+    public boolean setVoxel(int x, int y, int z, int type) {
+        int slot = world.getChunkSlot(x, y, z);
+        if (slot == World.EMPTY) return false;
+
+        world.setVoxel(x, y, z, type);
+
+        int cx = x >> 4;
+        int cy = y >> 4;
+        int cz = z >> 4;
+        lightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
+        dirtySlots.add(slot);
+        return true;
+    }
+
     public Set<Integer> getDirtySlots() { return dirtySlots; }
     public boolean isTableDirty() { return tableDirty.get(); }
     public void clearDirty() { tableDirty.set(false); dirtySlots.clear(); }

@@ -47,6 +47,9 @@ public class UILayer {
         public Vector4f color;
         public float rotation;
         public int textureId;
+        public Vector2f uvOffset = new Vector2f(0, 0);
+        public Vector2f uvScale = new Vector2f(1, 1);
+        public boolean visible = true;
         public Runnable onClick;
         
         public UIElement(Vector2f pos, Vector2f size, Vector4f color) {
@@ -56,10 +59,12 @@ public class UILayer {
         }
         
         public void render(UIManager manager) {
-            manager.drawQuad(pos, size, rotation, color, textureId);
+            if (!visible) return;
+            manager.drawQuad(pos, size, rotation, color, textureId, uvOffset, uvScale);
         }
         
         public boolean isPointInside(float x, float y) {
+            if (!visible) return false;
             return x >= pos.x && x <= pos.x + size.x && y >= pos.y && y <= pos.y + size.y;
         }
     }

@@ -167,15 +167,20 @@ public class World {
      */
     public void setVoxel(int x, int y, int z, int type) {
         if (x < 0 || y < 0 || z < 0 || x >= REGION_SIZE * CHUNK_SIZE || y >= REGION_SIZE * CHUNK_SIZE || z >= REGION_SIZE * CHUNK_SIZE) return;
-        int cx = x / CHUNK_SIZE;
-        int cy = y / CHUNK_SIZE;
-        int cz = z / CHUNK_SIZE;
-        int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
-        int slot = indirectionTable[tableIdx];
+        int slot = getChunkSlot(x, y, z);
         if (slot == EMPTY) return;
         int lx = x % CHUNK_SIZE;
         int ly = y % CHUNK_SIZE;
         int lz = z % CHUNK_SIZE;
         setVoxelInPool(slot, lx, ly, lz, type);
+    }
+
+    public int getChunkSlot(int x, int y, int z) {
+        if (x < 0 || y < 0 || z < 0 || x >= REGION_SIZE * CHUNK_SIZE || y >= REGION_SIZE * CHUNK_SIZE || z >= REGION_SIZE * CHUNK_SIZE) return EMPTY;
+        int cx = x / CHUNK_SIZE;
+        int cy = y / CHUNK_SIZE;
+        int cz = z / CHUNK_SIZE;
+        int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
+        return indirectionTable[tableIdx];
     }
 }
