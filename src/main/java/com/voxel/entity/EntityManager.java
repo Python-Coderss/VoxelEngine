@@ -22,7 +22,7 @@ public class EntityManager {
     
     // Entity data size: position(3) + padding(1) + rotation(3) + padding(1) + partCount(1) + partOffset(1) + padding(2) = 12 floats (48 bytes)
     private static final int ENTITY_STRIDE = 12;
-    // Part data size: offset(3) + padding(1) + absoluteOffset(3) + padding(1) + size(3) + textureIndex(1) + rotation(3) + padding(1) = 16 floats (64 bytes)
+    // Part data size: offset(3) + padding(1) + absoluteOffset(3) + padding(1) + size(3) + textureIndex(1) + rotation(3) + textureMapping(1) = 16 floats (64 bytes)
     private static final int PART_STRIDE = 16;
 
     public EntityManager() {
@@ -89,7 +89,7 @@ public class EntityManager {
                 partBuffer.putFloat((float)Math.toRadians(part.rotation.x));
                 partBuffer.putFloat((float)Math.toRadians(part.rotation.y));
                 partBuffer.putFloat((float)Math.toRadians(part.rotation.z));
-                partBuffer.putFloat(0); // Padding
+                partBuffer.putFloat((float) part.textureMapping);
             }
             partBuffer.flip();
             glNamedBufferSubData(partSSBO, 0, partBuffer);

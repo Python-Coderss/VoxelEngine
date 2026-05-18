@@ -4,37 +4,43 @@
       "name": "head",
       "from": [-7.2, 43.2, -7.2],
       "size": [14.4, 14.4, 14.4],
-      "texture": "player_skin_head"
+      "texture": "player_skin_head",
+      "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "body",
       "from": [-7.2, 21.6, -3.6],
       "size": [14.4, 21.6, 7.2],
-      "texture": "player_skin_body"
+      "texture": "player_skin_body",
+      "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "left_arm",
       "from": [-14.4, 21.6, -3.6],
       "size": [7.2, 21.6, 7.2],
-      "texture": "player_skin_left_arm"
+      "texture": "player_skin_left_arm",
+      "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "right_arm",
       "from": [7.2, 21.6, -3.6],
       "size": [7.2, 21.6, 7.2],
-      "texture": "player_skin_right_arm"
+      "texture": "player_skin_right_arm",
+      "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "left_leg",
       "from": [-7.2, 0.0, -3.6],
       "size": [7.2, 21.6, 7.2],
-      "texture": "player_skin_left_leg"
+      "texture": "player_skin_left_leg",
+      "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "right_leg",
       "from": [0.0, 0.0, -3.6],
       "size": [7.2, 21.6, 7.2],
-      "texture": "player_skin_right_leg"
+      "texture": "player_skin_right_leg",
+      "texture_mapping": "cuboid_atlas"
     }
   ]
 }
