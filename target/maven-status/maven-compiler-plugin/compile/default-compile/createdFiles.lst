@@ -5,6 +5,7 @@ com\voxel\utils\Direction.class
 com\voxel\World.class
 com\voxel\utils\BlockDataManager.class
 com\voxel\utils\PerlinNoise.class
+com\voxel\entity\PlayerEntity.class
 com\voxel\Main$GameMode.class
 com\voxel\entity\ZombieEntity.class
 com\voxel\lighting\LightNode.class
@@ -20,4 +21,5 @@ com\voxel\Main$ItemDefinition.class
 com\voxel\entity\Entity.class
 com\voxel\utils\BlockDataManager$BlockData.class
 com\voxel\Main$ItemStack.class
+com\voxel\Main$CameraMode.class
 com\voxel\utils\GLUtil.class
