@@ -1395,32 +1395,139 @@ public class Main {
                 return;
             }
 
-            writeSkinPartTexture(skin, SKIN_HEAD_REGION, "player_skin_head");
-            writeSkinPartTexture(skin, SKIN_BODY_REGION, "player_skin_body");
-            writeSkinPartTexture(skin, SKIN_RIGHT_ARM_REGION, "player_skin_right_arm");
-            writeSkinPartTexture(skin, SKIN_LEFT_ARM_REGION, "player_skin_left_arm");
-            writeSkinPartTexture(skin, SKIN_RIGHT_LEG_REGION, "player_skin_right_leg");
-            writeSkinPartTexture(skin, SKIN_LEFT_LEG_REGION, "player_skin_left_leg");
+            writeSkinCuboidAtlas(
+                skin,
+                "player_skin_head",
+                8, 8, 8,
+                new int[]{16, 8, 8, 8},
+                new int[]{0, 8, 8, 8},
+                new int[]{8, 8, 8, 8},
+                new int[]{24, 8, 8, 8},
+                new int[]{8, 0, 8, 8},
+                new int[]{16, 0, 8, 8}
+            );
+            writeSkinCuboidAtlas(
+                skin,
+                "player_skin_body",
+                8, 4, 12,
+                new int[]{16, 20, 4, 12},
+                new int[]{28, 20, 4, 12},
+                new int[]{20, 20, 8, 12},
+                new int[]{32, 20, 8, 12},
+                new int[]{20, 16, 8, 4},
+                new int[]{28, 16, 8, 4}
+            );
+            writeSkinCuboidAtlas(
+                skin,
+                "player_skin_right_arm",
+                4, 4, 12,
+                new int[]{40, 20, 4, 12},
+                new int[]{48, 20, 4, 12},
+                new int[]{44, 20, 4, 12},
+                new int[]{52, 20, 4, 12},
+                new int[]{44, 16, 4, 4},
+                new int[]{48, 16, 4, 4}
+            );
+            writeSkinCuboidAtlas(
+                skin,
+                "player_skin_left_arm",
+                4, 4, 12,
+                new int[]{32, 52, 4, 12},
+                new int[]{40, 52, 4, 12},
+                new int[]{36, 52, 4, 12},
+                new int[]{44, 52, 4, 12},
+                new int[]{36, 48, 4, 4},
+                new int[]{40, 48, 4, 4}
+            );
+            writeSkinCuboidAtlas(
+                skin,
+                "player_skin_right_leg",
+                4, 4, 12,
+                new int[]{0, 20, 4, 12},
+                new int[]{8, 20, 4, 12},
+                new int[]{4, 20, 4, 12},
+                new int[]{12, 20, 4, 12},
+                new int[]{4, 16, 4, 4},
+                new int[]{8, 16, 4, 4}
+            );
+            writeSkinCuboidAtlas(
+                skin,
+                "player_skin_left_leg",
+                4, 4, 12,
+                new int[]{16, 52, 4, 12},
+                new int[]{24, 52, 4, 12},
+                new int[]{20, 52, 4, 12},
+                new int[]{28, 52, 4, 12},
+                new int[]{20, 48, 4, 4},
+                new int[]{24, 48, 4, 4}
+            );
         } catch (IOException e) {
             throw new RuntimeException("Failed to prepare player skin textures", e);
         }
     }
 
-    private void writeSkinPartTexture(BufferedImage skin, int[] region, String textureName) throws IOException {
-        writeSkinPartTexture(skin, region[0], region[1], region[2], region[3], textureName);
-    }
+    private void writeSkinCuboidAtlas(
+        BufferedImage skin,
+        String textureName,
+        int frontWidth,
+        int depthWidth,
+        int faceHeight,
+        int[] leftRegion,
+        int[] rightRegion,
+        int[] frontRegion,
+        int[] backRegion,
+        int[] topRegion,
+        int[] bottomRegion
+    ) throws IOException {
+        float atlasWidth = (depthWidth * 2.0f) + (frontWidth * 2.0f);
+        float atlasHeight = depthWidth + faceHeight;
 
-    private void writeSkinPartTexture(BufferedImage skin, int x, int y, int w, int h, String textureName) throws IOException {
-        BufferedImage cropped = skin.getSubimage(x, y, w, h);
-        BufferedImage scaled = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D graphics = scaled.createGraphics();
+        BufferedImage atlas = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = atlas.createGraphics();
         graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
         graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-        graphics.drawImage(cropped, 0, 0, 16, 16, null);
+
+        drawSkinRegion(graphics, skin, leftRegion,
+            scaledCoord(0.0f, atlasWidth), scaledCoord(depthWidth, atlasWidth),
+            scaledCoord(depthWidth, atlasHeight), scaledCoord(depthWidth + faceHeight, atlasHeight));
+        drawSkinRegion(graphics, skin, frontRegion,
+            scaledCoord(depthWidth, atlasWidth), scaledCoord(depthWidth + frontWidth, atlasWidth),
+            scaledCoord(depthWidth, atlasHeight), scaledCoord(depthWidth + faceHeight, atlasHeight));
+        drawSkinRegion(graphics, skin, rightRegion,
+            scaledCoord(depthWidth + frontWidth, atlasWidth), scaledCoord((depthWidth * 2.0f) + frontWidth, atlasWidth),
+            scaledCoord(depthWidth, atlasHeight), scaledCoord(depthWidth + faceHeight, atlasHeight));
+        drawSkinRegion(graphics, skin, backRegion,
+            scaledCoord((depthWidth * 2.0f) + frontWidth, atlasWidth), scaledCoord((depthWidth * 2.0f) + (frontWidth * 2.0f), atlasWidth),
+            scaledCoord(depthWidth, atlasHeight), scaledCoord(depthWidth + faceHeight, atlasHeight));
+        drawSkinRegion(graphics, skin, topRegion,
+            scaledCoord(depthWidth, atlasWidth), scaledCoord(depthWidth + frontWidth, atlasWidth),
+            scaledCoord(0.0f, atlasHeight), scaledCoord(depthWidth, atlasHeight));
+        drawSkinRegion(graphics, skin, bottomRegion,
+            scaledCoord(depthWidth + frontWidth, atlasWidth), scaledCoord((depthWidth + frontWidth) + frontWidth, atlasWidth),
+            scaledCoord(0.0f, atlasHeight), scaledCoord(depthWidth, atlasHeight));
         graphics.dispose();
 
         File output = new File("src/main/resources/assets/minecraft/textures/blocks/" + textureName + ".png");
-        ImageIO.write(scaled, "png", output);
+        ImageIO.write(atlas, "png", output);
+    }
+
+    private int scaledCoord(float value, float total) {
+        return Math.round((value / total) * 16.0f);
+    }
+
+    private void drawSkinRegion(Graphics2D graphics, BufferedImage skin, int[] src, int dstX0, int dstX1, int dstY0, int dstY1) {
+        graphics.drawImage(
+            skin,
+            dstX0,
+            dstY0,
+            dstX1,
+            dstY1,
+            src[0],
+            src[1],
+            src[0] + src[2],
+            src[1] + src[3],
+            null
+        );
     }
 
     private void setupQuad() {

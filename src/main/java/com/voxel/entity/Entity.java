@@ -97,6 +97,15 @@ public class Entity {
                         JSONArray rot = p.getJSONArray("rotation");
                         part.rotation.set((float)rot.getDouble(0), (float)rot.getDouble(1), (float)rot.getDouble(2));
                     }
+
+                    if (p.has("texture_mapping")) {
+                        String mapping = p.getString("texture_mapping");
+                        if ("cuboid_atlas".equals(mapping)) {
+                            part.textureMapping = ModelPart.TEXTURE_MAPPING_CUBOID_ATLAS;
+                        } else {
+                            part.textureMapping = ModelPart.TEXTURE_MAPPING_PLANAR;
+                        }
+                    }
                 }
             }
         } catch (IOException e) {

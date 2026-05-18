@@ -31,7 +31,7 @@ layout(std430, binding = 5) buffer readonly restrict PointLightBuffer {
 
 // Entities
 struct EntityData { vec3 position; float pad1; vec3 rotation; float pad2; int partCount; int partOffset; float pad3, pad4; };
-struct PartData { vec3 offset; float pad1; vec3 absoluteOffset; float pad2; vec3 size; float textureIndex; vec3 rotation; float pad3; };
+struct PartData { vec3 offset; float pad1; vec3 absoluteOffset; float pad2; vec3 size; float textureIndex; vec3 rotation; float textureMapping; };
 layout(std430, binding = 6) buffer readonly restrict EntityBuffer { EntityData entities[]; };
 layout(std430, binding = 7) buffer readonly restrict PartBuffer { PartData parts[]; };
 layout(location = 5) uniform int u_EntityCount;
@@ -150,7 +150,7 @@ bool intersectOrientedBox(vec3 ro, vec3 rd, vec3 center, vec3 halfSize, mat3 rot
     return true;
 }
 
-vec2 entityBoxUv(vec3 localPos, vec3 localNormal, vec3 halfSize) {
+vec2 entityPlanarUv(vec3 localPos, vec3 localNormal, vec3 halfSize) {
     vec3 p = clamp((localPos + halfSize) / max(halfSize * 2.0, vec3(0.0001)), 0.0, 1.0);
     if (abs(localNormal.x) > 0.5) {
         return vec2(p.z, 1.0 - p.y);
@@ -159,6 +159,49 @@ vec2 entityBoxUv(vec3 localPos, vec3 localNormal, vec3 halfSize) {
         return vec2(p.x, p.z);
     }
     return vec2(p.x, 1.0 - p.y);
+}
+
+vec2 entityCuboidAtlasUv(vec3 localPos, vec3 localNormal, vec3 halfSize) {
+    vec3 p = clamp((localPos + halfSize) / max(halfSize * 2.0, vec3(0.0001)), 0.0, 1.0);
+
+    float depthUnits = 1.0;
+    float widthUnits = max(halfSize.x / max(halfSize.z, 0.0001), 1.0);
+    float heightUnits = max(halfSize.y / max(halfSize.z, 0.0001), 1.0);
+
+    float atlasWidth = depthUnits + widthUnits + depthUnits + widthUnits;
+    float atlasHeight = depthUnits + heightUnits;
+
+    vec2 uvInFace;
+    vec2 faceOrigin;
+    vec2 faceSize;
+
+    if (localNormal.z > 0.5) {
+        uvInFace = vec2(p.x, 1.0 - p.y);
+        faceOrigin = vec2(depthUnits, depthUnits);
+        faceSize = vec2(widthUnits, heightUnits);
+    } else if (localNormal.z < -0.5) {
+        uvInFace = vec2(1.0 - p.x, 1.0 - p.y);
+        faceOrigin = vec2(depthUnits * 2.0 + widthUnits, depthUnits);
+        faceSize = vec2(widthUnits, heightUnits);
+    } else if (localNormal.x > 0.5) {
+        uvInFace = vec2(1.0 - p.z, 1.0 - p.y);
+        faceOrigin = vec2(0.0, depthUnits);
+        faceSize = vec2(depthUnits, heightUnits);
+    } else if (localNormal.x < -0.5) {
+        uvInFace = vec2(p.z, 1.0 - p.y);
+        faceOrigin = vec2(depthUnits + widthUnits, depthUnits);
+        faceSize = vec2(depthUnits, heightUnits);
+    } else if (localNormal.y > 0.5) {
+        uvInFace = vec2(p.x, p.z);
+        faceOrigin = vec2(depthUnits, 0.0);
+        faceSize = vec2(widthUnits, depthUnits);
+    } else {
+        uvInFace = vec2(p.x, 1.0 - p.z);
+        faceOrigin = vec2(depthUnits + widthUnits, 0.0);
+        faceSize = vec2(widthUnits, depthUnits);
+    }
+
+    return (faceOrigin + uvInFace * faceSize) / vec2(atlasWidth, atlasHeight);
 }
 
 int advanceDDA(inout ivec3 mp, inout vec3 sd, vec3 dd, ivec3 s) {
@@ -276,7 +319,9 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, out float resT, out vec3 resN, o
                     resT = tn;
                     isEnt = true;
                     resTex = uint(part.textureIndex);
-                    resEntUv = entityBoxUv(localHit, localNormal, halfSize);
+                    resEntUv = part.textureMapping > 0.5
+                        ? entityCuboidAtlasUv(localHit, localNormal, halfSize)
+                        : entityPlanarUv(localHit, localNormal, halfSize);
                     resN = partNormal;
                 }
             }
