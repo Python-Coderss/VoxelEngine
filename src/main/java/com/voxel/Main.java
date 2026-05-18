@@ -15,7 +15,13 @@ import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
+import javax.imageio.ImageIO;
 import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
@@ -51,6 +57,16 @@ public class Main {
     private static final float DAY_START_TIME = 720.0f;
     private static final float PLAYER_HALF_WIDTH = 0.3f;
     private static final float PLAYER_HEIGHT = 1.8f;
+    private static final float PLAYER_EYE_HEIGHT = 1.6f;
+    private static final float THIRD_PERSON_DISTANCE = 4.0f;
+    private static final float THIRD_PERSON_TARGET_HEIGHT = 1.35f;
+    private static final float CAMERA_COLLISION_STEP = 0.1f;
+    private static final int[] SKIN_HEAD_REGION = {8, 8, 8, 8};
+    private static final int[] SKIN_BODY_REGION = {20, 20, 8, 12};
+    private static final int[] SKIN_RIGHT_ARM_REGION = {44, 20, 4, 12};
+    private static final int[] SKIN_LEFT_ARM_REGION = {36, 52, 4, 12};
+    private static final int[] SKIN_RIGHT_LEG_REGION = {4, 20, 4, 12};
+    private static final int[] SKIN_LEFT_LEG_REGION = {20, 52, 4, 12};
 
     private long window;
     private int quadProgram, computeProgram;
@@ -66,6 +82,7 @@ public class Main {
     private UIManager uiManager;
     private final List<UILayer> uiLayers = new ArrayList<>();
     private Player player;
+    private com.voxel.entity.PlayerEntity playerEntity;
 
     private int width = 1280, height = 720;
     private final int CHUNK_SIZE = 16, REGION_SIZE = 128, POOL_SIZE = 16384;
@@ -73,6 +90,7 @@ public class Main {
     private float lastMouseX = width / 2f, lastMouseY = height / 2f;
     private boolean firstMouse = true;
     private float yaw = -90, pitch = 0;
+    private float playerYaw = -90;
 
     private int selectedSlot = 0;
     private final ItemStack[] inventory = new ItemStack[INVENTORY_SIZE];
@@ -119,10 +137,16 @@ public class Main {
 
     private Thread logicThread;
     private volatile boolean running = true;
+    private CameraMode cameraMode = CameraMode.FIRST_PERSON;
 
     private enum GameMode {
         SURVIVAL,
         CREATIVE
+    }
+
+    private enum CameraMode {
+        FIRST_PERSON,
+        THIRD_PERSON
     }
 
     private enum ItemKind {
@@ -266,6 +290,9 @@ public class Main {
             zombie.loadModel("src/main/resources/assets/minecraft/models/entity/zombie.json", textureManager);
             entityManager.addEntity(zombie);
         }
+
+        playerEntity = new com.voxel.entity.PlayerEntity(10_000, new Vector3f(player.getPosition()), textureManager);
+        entityManager.addEntity(playerEntity);
 
         chunkManager.update(player.getPosition());
         uploadWorldToGpu();
@@ -525,8 +552,9 @@ public class Main {
     private void tick(float dt) {
         if (!running) return;
 
-        player.setYaw(yaw);
-        player.setPitch(pitch);
+        if (cameraMode == CameraMode.FIRST_PERSON) {
+            playerYaw = yaw;
+        }
 
         int pcx = (int) Math.floor(player.getPosition().x) >> 4;
         int pcz = (int) Math.floor(player.getPosition().z) >> 4;
@@ -537,12 +565,22 @@ public class Main {
             player.update(dt, world, blockDataManager);
         }
 
+        player.setYaw(playerYaw);
+        player.setPitch(pitch);
+
+        if (playerEntity != null) {
+            playerEntity.syncFromPlayer(player, playerYaw, pitch, cameraMode == CameraMode.THIRD_PERSON, dt);
+        }
+
         worldTime += dt;
         updateMining(dt);
 
         float entityTime = (float) glfwGetTime();
         for (int i = 0; i < entityManager.getEntityCount(); i++) {
             com.voxel.entity.Entity e = entityManager.getEntity(i);
+            if (e == playerEntity) {
+                continue;
+            }
             if (e.id < 100) {
                 e.rotation.y += dt * 45.0f;
                 e.rotation.x += dt * 15.0f;
@@ -561,8 +599,8 @@ public class Main {
         if (inventoryOpen || commandMode) return;
 
         float speed = player.isFlying() ? 1.5f : 0.4f;
-        double ry = Math.toRadians(yaw), rp = Math.toRadians(pitch);
-        float fx = (float) (Math.cos(ry) * Math.cos(rp)), fz = (float) (Math.sin(ry) * Math.cos(rp));
+        double ry = Math.toRadians(yaw);
+        float fx = (float) Math.cos(ry), fz = (float) Math.sin(ry);
         float rx = -fz, rz = fx;
         float rl = (float) Math.sqrt(rx * rx + rz * rz);
         if (rl > 0) {
@@ -592,6 +630,9 @@ public class Main {
         if (mvLen > 0) {
             dx /= mvLen;
             dz /= mvLen;
+            if (cameraMode == CameraMode.THIRD_PERSON) {
+                playerYaw = (float) Math.toDegrees(Math.atan2(dz, dx));
+            }
         }
         player.move(dx * speed, 0, dz * speed, speed * 2.0f);
 
@@ -641,9 +682,9 @@ public class Main {
             glNamedBufferSubData(pointLightSSBO, 0, plBuf);
             MemoryUtil.memFree(plBuf);
 
-            Vector3f pPos = player.getPosition();
+            Vector3f cameraPos = getActiveCameraPosition();
             glUseProgram(computeProgram);
-            glProgramUniform3f(computeProgram, 0, pPos.x, pPos.y + 1.6f, pPos.z);
+            glProgramUniform3f(computeProgram, 0, cameraPos.x, cameraPos.y, cameraPos.z);
 
             double ry = Math.toRadians(yaw), rp = Math.toRadians(pitch);
             float fx = (float) (Math.cos(ry) * Math.cos(rp)), fy = (float) Math.sin(rp), fz = (float) (Math.sin(ry) * Math.cos(rp));
@@ -693,6 +734,11 @@ public class Main {
         if (action == GLFW_PRESS) {
             if (commandMode) {
                 handleCommandModeKey(key);
+                return;
+            }
+
+            if (key == GLFW_KEY_F5) {
+                toggleCameraMode();
                 return;
             }
 
@@ -822,6 +868,11 @@ public class Main {
         setInventoryOpen(!inventoryOpen);
     }
 
+    private void toggleCameraMode() {
+        cameraMode = cameraMode == CameraMode.FIRST_PERSON ? CameraMode.THIRD_PERSON : CameraMode.FIRST_PERSON;
+        setStatus("Camera: " + (cameraMode == CameraMode.FIRST_PERSON ? "first person" : "third person"));
+    }
+
     private void setInventoryOpen(boolean open) {
         inventoryOpen = open;
         if (!open) carriedStack = null;
@@ -837,9 +888,11 @@ public class Main {
     private void updateWindowTitle() {
         StringBuilder title = new StringBuilder("Voxel Engine | FPS: ").append(lastMeasuredFps);
         title.append(" | ").append(gameMode == GameMode.CREATIVE ? "creative" : "survival");
+        Vector3f pos = player.getPosition();
+        title.append(String.format(Locale.US, " | XYZ: %.2f, %.2f, %.2f", pos.x, pos.y, pos.z));
 
-        int pcx = (int) Math.floor(player.getPosition().x) >> 4;
-        int pcz = (int) Math.floor(player.getPosition().z) >> 4;
+        int pcx = (int) Math.floor(pos.x) >> 4;
+        int pcz = (int) Math.floor(pos.z) >> 4;
         if (!chunkManager.isChunkLoaded(pcx, pcz)) {
             title.append(" [WAITING FOR CHUNKS]");
         }
@@ -1311,6 +1364,7 @@ public class Main {
     }
 
     private void setupResources() {
+        generatePlayerSkinTextures();
         textureManager = new TextureManager();
         textureManager.loadTextures("src/main/resources/assets/minecraft/textures/blocks");
         biomeManager = new com.voxel.utils.BiomeManager();
@@ -1327,6 +1381,46 @@ public class Main {
         blockDataManager.registerBlock(13, "dirt", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(14, "sand", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.uploadToGPU();
+    }
+
+    private void generatePlayerSkinTextures() {
+        File skinFile = new File("src/main/resources/assets/minecraft/textures/entity/player_skin.png");
+        if (!skinFile.exists()) {
+            return;
+        }
+
+        try {
+            BufferedImage skin = ImageIO.read(skinFile);
+            if (skin == null) {
+                return;
+            }
+
+            writeSkinPartTexture(skin, SKIN_HEAD_REGION, "player_skin_head");
+            writeSkinPartTexture(skin, SKIN_BODY_REGION, "player_skin_body");
+            writeSkinPartTexture(skin, SKIN_RIGHT_ARM_REGION, "player_skin_right_arm");
+            writeSkinPartTexture(skin, SKIN_LEFT_ARM_REGION, "player_skin_left_arm");
+            writeSkinPartTexture(skin, SKIN_RIGHT_LEG_REGION, "player_skin_right_leg");
+            writeSkinPartTexture(skin, SKIN_LEFT_LEG_REGION, "player_skin_left_leg");
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to prepare player skin textures", e);
+        }
+    }
+
+    private void writeSkinPartTexture(BufferedImage skin, int[] region, String textureName) throws IOException {
+        writeSkinPartTexture(skin, region[0], region[1], region[2], region[3], textureName);
+    }
+
+    private void writeSkinPartTexture(BufferedImage skin, int x, int y, int w, int h, String textureName) throws IOException {
+        BufferedImage cropped = skin.getSubimage(x, y, w, h);
+        BufferedImage scaled = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = scaled.createGraphics();
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+        graphics.drawImage(cropped, 0, 0, 16, 16, null);
+        graphics.dispose();
+
+        File output = new File("src/main/resources/assets/minecraft/textures/blocks/" + textureName + ".png");
+        ImageIO.write(scaled, "png", output);
     }
 
     private void setupQuad() {
@@ -1428,9 +1522,52 @@ public class Main {
         ).normalize();
     }
 
+    private Vector3f getPlayerEyePosition() {
+        return new Vector3f(player.getPosition()).add(0, PLAYER_EYE_HEIGHT, 0);
+    }
+
+    private Vector3f getActiveCameraPosition() {
+        Vector3f eye = getPlayerEyePosition();
+        if (cameraMode == CameraMode.FIRST_PERSON) {
+            return eye;
+        }
+
+        Vector3f target = new Vector3f(player.getPosition()).add(0, THIRD_PERSON_TARGET_HEIGHT, 0);
+        Vector3f desired = new Vector3f(target).sub(new Vector3f(getLookDirection()).mul(THIRD_PERSON_DISTANCE));
+        return resolveCameraCollision(target, desired);
+    }
+
+    private Vector3f resolveCameraCollision(Vector3f origin, Vector3f desired) {
+        Vector3f delta = new Vector3f(desired).sub(origin);
+        float length = delta.length();
+        if (length <= 0.0001f) {
+            return new Vector3f(origin);
+        }
+
+        Vector3f direction = delta.div(length);
+        Vector3f lastFree = new Vector3f(origin);
+        for (float traveled = CAMERA_COLLISION_STEP; traveled <= length; traveled += CAMERA_COLLISION_STEP) {
+            Vector3f sample = new Vector3f(origin).fma(traveled, direction);
+            if (isSolidCameraSample(sample)) {
+                return lastFree;
+            }
+            lastFree.set(sample);
+        }
+        return desired;
+    }
+
+    private boolean isSolidCameraSample(Vector3f sample) {
+        int voxel = world.getVoxel(
+            (int) Math.floor(sample.x),
+            (int) Math.floor(sample.y),
+            (int) Math.floor(sample.z)
+        );
+        return voxel > 0 && blockDataManager.isFullBlock(voxel);
+    }
+
     private int[] raycastBlock(float maxDist) {
         Vector3f dir = getLookDirection();
-        Vector3f pos = new Vector3f(player.getPosition()).add(0, 1.7f, 0);
+        Vector3f pos = getActiveCameraPosition();
         float step = 0.05f;
         int lastX = (int) Math.floor(pos.x);
         int lastY = (int) Math.floor(pos.y);
