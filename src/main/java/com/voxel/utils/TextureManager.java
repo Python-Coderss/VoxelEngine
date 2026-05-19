@@ -4,6 +4,9 @@ import org.lwjgl.stb.STBImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
+import javax.imageio.ImageIO;
+import java.awt.*;
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -24,30 +27,17 @@ import static org.lwjgl.opengl.GL42.*;
 
 /**
  * Manages the loading and organization of textures.
- * It uses a "Texture Array", which is a single OpenGL object that can store
- * many individual textures of the same size. This allows the GPU to access
- * any texture efficiently using an index.
+ * Uses a unified 64x64 Texture Array to support both high-res skins and blocks.
  */
 public class TextureManager {
-    // The standard size for Minecraft textures is 16x16 pixels.
-    private static final int TEXTURE_SIZE = 16;
+    private static final int TEXTURE_SIZE = 64;
 
-    // OpenGL ID for the generated Texture Array
     private int textureArrayId;
-
-    // Maps a texture name (e.g., "stone") to its index in the array.
     private final Map<String, Integer> textureToIndex = new HashMap<>();
-
-    // Stores the file paths of all discovered textures.
     private final List<String> texturePaths = new ArrayList<>();
 
-    /**
-     * Finds and loads all .png textures from a directory into an OpenGL Texture Array.
-     * @param directoryPath Path to the textures folder.
-     */
     public void loadTextures(String directoryPath) {
         try {
-            // Find all .png files in the directory and subdirectories
             List<Path> files = Files.walk(Paths.get(directoryPath))
                     .filter(Files::isRegularFile)
                     .filter(p -> p.toString().endsWith(".png"))
@@ -56,86 +46,94 @@ public class TextureManager {
             for (Path path : files) {
                 String fileName = path.getFileName().toString();
                 String name = fileName.substring(0, fileName.lastIndexOf('.'));
-                // Store the mapping and path
-                textureToIndex.put(name, texturePaths.size());
-                texturePaths.add(path.toString());
+                if (!textureToIndex.containsKey(name)) {
+                    textureToIndex.put(name, texturePaths.size());
+                    texturePaths.add(path.toString());
+                }
             }
 
-            if (texturePaths.isEmpty()) {
-                throw new RuntimeException("No textures found in " + directoryPath);
+            if (texturePaths.isEmpty()) return;
+
+            if (textureArrayId == 0) {
+                textureArrayId = glGenTextures();
+                glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
+                // Allocate enough layers for all textures found so far (blocks + potential entities)
+                // We'll reallocate if needed, but for now let's just use a large enough number or do it once.
+                glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8, TEXTURE_SIZE, TEXTURE_SIZE, 1024);
             }
 
-            // 1. Create a new texture name (ID)
-            textureArrayId = glGenTextures();
-
-            // 2. Bind it as a 2D Texture Array
             glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
-
-            // 3. Allocate storage for the array (Immutable Storage)
-            // 5 mipmap levels, RGBA format, 16x16 size, and N layers (textures)
-            glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8, TEXTURE_SIZE, TEXTURE_SIZE, texturePaths.size());
-
-            // 4. Load each image file and upload it to its specific layer in the array
             for (int i = 0; i < texturePaths.size(); i++) {
                 loadAndUploadTexture(texturePaths.get(i), i);
             }
 
-            // 5. Set texture filtering parameters
-            // NEAREST filtering preserves the "blocky" voxel look
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
-
-            // 6. Generate mipmaps for better rendering at a distance
             glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
 
         } catch (IOException e) {
-            throw new RuntimeException("Failed to load textures from directory: " + directoryPath, e);
+            throw new RuntimeException("Failed to load textures: " + directoryPath, e);
         }
     }
 
-    /**
-     * Loads a single image file from disk and uploads it to a specific layer in the 2D Texture Array.
-     */
     private void loadAndUploadTexture(String path, int layer) {
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            // Allocate memory for image metadata
-            IntBuffer w = stack.mallocInt(1);
-            IntBuffer h = stack.mallocInt(1);
-            IntBuffer comp = stack.mallocInt(1);
+        try {
+            BufferedImage img = ImageIO.read(new File(path));
+            if (img == null) return;
 
-            // Load image using STBImage
-            ByteBuffer image = STBImage.stbi_load(path, w, h, comp, 4);
-            if (image == null) {
-                throw new RuntimeException("Failed to load texture: " + path + " - " + STBImage.stbi_failure_reason());
+            // Scale all textures to 64x64 to unify the sampler
+            if (img.getWidth() != TEXTURE_SIZE || img.getHeight() != TEXTURE_SIZE) {
+                BufferedImage scaled = new BufferedImage(TEXTURE_SIZE, TEXTURE_SIZE, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g = scaled.createGraphics();
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+                g.drawImage(img, 0, 0, TEXTURE_SIZE, TEXTURE_SIZE, null);
+                g.dispose();
+                img = scaled;
             }
 
-            // Handle animated textures (which are vertical strips) by only reading the first 16x16 frame.
-            glPixelStorei(GL_UNPACK_ROW_LENGTH, w.get(0));
+            int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
+            img.getRGB(0, 0, TEXTURE_SIZE, TEXTURE_SIZE, pixels, 0, TEXTURE_SIZE);
 
-            // Upload the pixel data to the GPU at the specified 'layer'
-            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, layer, TEXTURE_SIZE, TEXTURE_SIZE, 1, GL_RGBA, GL_UNSIGNED_BYTE, image);
-
-            // Reset row length
-            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-            
-            // Free the image data after upload
-            STBImage.stbi_image_free(image);
+            ByteBuffer buffer = MemoryUtil.memAlloc(TEXTURE_SIZE * TEXTURE_SIZE * 4);
+            for (int y = 0; y < TEXTURE_SIZE; y++) {
+                for (int x = 0; x < TEXTURE_SIZE; x++) {
+                    int pixel = pixels[y * TEXTURE_SIZE + x];
+                    buffer.put((byte) ((pixel >> 16) & 0xFF)); // R
+                    buffer.put((byte) ((pixel >> 8) & 0xFF));  // G
+                    buffer.put((byte) (pixel & 0xFF));         // B
+                    buffer.put((byte) ((pixel >> 24) & 0xFF)); // A
+                }
+            }
+            buffer.flip();
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, layer, TEXTURE_SIZE, TEXTURE_SIZE, 1, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+            MemoryUtil.memFree(buffer);
+        } catch (IOException e) {
+            System.err.println("Failed to upload texture: " + path);
         }
     }
 
-    /** @return The OpenGL ID of the texture array. */
+    public void loadEntityTextures(String directoryPath) {
+        loadTextures(directoryPath);
+    }
+
     public int getTextureArrayId() {
         return textureArrayId;
     }
 
-    /** @return The index of the texture in the array, or -1 if not found. */
+    public int getEntityTextureArrayId() {
+        return textureArrayId;
+    }
+
     public int getTextureIndex(String name) {
         return textureToIndex.getOrDefault(name, -1);
     }
+
+    public int getEntityTextureIndex(String name) {
+        return getTextureIndex(name);
+    }
     
-    /** @return Total number of textures loaded. */
     public int getTextureCount() {
         return texturePaths.size();
     }

@@ -2,44 +2,50 @@
   "parts": [
     {
       "name": "head",
-      "from": [-7.2, 43.2, -7.2],
-      "size": [14.4, 14.4, 14.4],
-      "texture": "player_skin_head",
+      "from": [-4.0, 24.0, -4.0],
+      "size": [8.0, 8.0, 8.0],
+      "texture": "player_skin",
+      "uv": [0, 0],
       "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "body",
-      "from": [-7.2, 21.6, -3.6],
-      "size": [14.4, 21.6, 7.2],
-      "texture": "player_skin_body",
+      "from": [-4.0, 12.0, -2.0],
+      "size": [8.0, 12.0, 4.0],
+      "texture": "player_skin",
+      "uv": [16, 16],
       "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "left_arm",
-      "from": [-14.4, 21.6, -3.6],
-      "size": [7.2, 21.6, 7.2],
-      "texture": "player_skin_left_arm",
+      "from": [-8.0, 12.0, -2.0],
+      "size": [4.0, 12.0, 4.0],
+      "texture": "player_skin",
+      "uv": [32, 48],
       "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "right_arm",
-      "from": [7.2, 21.6, -3.6],
-      "size": [7.2, 21.6, 7.2],
-      "texture": "player_skin_right_arm",
+      "from": [4.0, 12.0, -2.0],
+      "size": [4.0, 12.0, 4.0],
+      "texture": "player_skin",
+      "uv": [40, 16],
       "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "left_leg",
-      "from": [-7.2, 0.0, -3.6],
-      "size": [7.2, 21.6, 7.2],
-      "texture": "player_skin_left_leg",
+      "from": [-4.0, 0.0, -2.0],
+      "size": [4.0, 12.0, 4.0],
+      "texture": "player_skin",
+      "uv": [16, 48],
       "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "right_leg",
-      "from": [0.0, 0.0, -3.6],
-      "size": [7.2, 21.6, 7.2],
-      "texture": "player_skin_right_leg",
+      "from": [0.0, 0.0, -2.0],
+      "size": [4.0, 12.0, 4.0],
+      "texture": "player_skin",
+      "uv": [0, 16],
       "texture_mapping": "cuboid_atlas"
     }
   ]
