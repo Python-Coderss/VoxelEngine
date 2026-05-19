@@ -1632,8 +1632,15 @@ public class Main {
             return eye;
         }
 
+        // Story Mode Style: Over-the-shoulder with slight offset
+        Vector3f look = getLookDirection();
+        Vector3f right = new Vector3f(look).cross(new Vector3f(0, 1, 0)).normalize();
+        
         Vector3f target = new Vector3f(player.getPosition()).add(0, THIRD_PERSON_TARGET_HEIGHT, 0);
-        Vector3f desired = new Vector3f(target).sub(new Vector3f(getLookDirection()).mul(THIRD_PERSON_DISTANCE));
+        // Offset camera slightly to the right of the player
+        target.add(right.mul(0.6f)); 
+
+        Vector3f desired = new Vector3f(target).sub(new Vector3f(look).mul(THIRD_PERSON_DISTANCE));
         return resolveCameraCollision(target, desired);
     }
 
