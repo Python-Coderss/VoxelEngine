@@ -289,9 +289,14 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, out float resT, out vec3 resN, o
         for(int j=0; j<ent.partCount; j++) {
             PartData part = parts[ent.partOffset + j];
             vec3 halfSize = part.size / 32.0;
-            vec3 localCenter = part.absoluteOffset + (part.offset / 16.0) + halfSize;
+            vec3 pivot = part.absoluteOffset / 16.0;
+            vec3 geomCenter = (part.offset / 16.0) + halfSize;
+            
+            mat3 localRot = rotationMatrix(part.rotation);
+            vec3 localCenter = pivot + localRot * (geomCenter - pivot);
+            
             vec3 center = ent.position + entRotation * localCenter;
-            mat3 partRotation = entRotation * rotationMatrix(part.rotation);
+            mat3 partRotation = entRotation * localRot;
             float tn;
             vec3 partNormal, localHit, localNormal;
             if (intersectOrientedBox(ro, rd, center, halfSize, partRotation, tn, partNormal, localHit, localNormal)) {
