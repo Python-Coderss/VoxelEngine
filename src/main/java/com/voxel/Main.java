@@ -61,12 +61,6 @@ public class Main {
     private static final float THIRD_PERSON_DISTANCE = 4.0f;
     private static final float THIRD_PERSON_TARGET_HEIGHT = 1.35f;
     private static final float CAMERA_COLLISION_STEP = 0.1f;
-    private static final int[] SKIN_HEAD_REGION = {8, 8, 8, 8};
-    private static final int[] SKIN_BODY_REGION = {20, 20, 8, 12};
-    private static final int[] SKIN_RIGHT_ARM_REGION = {44, 20, 4, 12};
-    private static final int[] SKIN_LEFT_ARM_REGION = {36, 52, 4, 12};
-    private static final int[] SKIN_RIGHT_LEG_REGION = {4, 20, 4, 12};
-    private static final int[] SKIN_LEFT_LEG_REGION = {20, 52, 4, 12};
 
     private long window;
     private int quadProgram, computeProgram;
@@ -138,6 +132,12 @@ public class Main {
     private Thread logicThread;
     private volatile boolean running = true;
     private CameraMode cameraMode = CameraMode.FIRST_PERSON;
+
+    private float cameraShake = 0.0f;
+    private float hitStop = 0.0f;
+    private float combatTime = 0.0f;
+    private double lastAttackTime = 0;
+    private double lastRollTime = 0;
 
     private enum GameMode {
         SURVIVAL,
@@ -279,25 +279,23 @@ public class Main {
         LightPropagationEngine lightEngine = new LightPropagationEngine(world, blockDataManager);
         chunkManager = new com.voxel.world.ChunkManager(world, generator, lightEngine, 8);
 
-        for (int i = 0; i < 5; i++) {
-            com.voxel.entity.Entity e = new com.voxel.entity.Entity(i, new Vector3f(1024 + (i - 2) * 15, 75, 1024 + (i - 2) * 8));
-            e.addPart(new com.voxel.entity.ModelPart("cube", new Vector3f(0, 0, 0), new Vector3f(32, 32, 32), 3));
-            entityManager.addEntity(e);
-        }
-
-        for (int i = 0; i < 3; i++) {
-            com.voxel.entity.Entity zombie = new com.voxel.entity.Entity(100 + i, new Vector3f(1030 + i * 10, 64, 1030));
-            zombie.loadModel("src/main/resources/assets/minecraft/models/entity/zombie.json", textureManager);
-            entityManager.addEntity(zombie);
-        }
-
         playerEntity = new com.voxel.entity.PlayerEntity(10_000, new Vector3f(player.getPosition()), textureManager);
         entityManager.addEntity(playerEntity);
+
+        // Spawn initial enemies
+        spawnInitialEnemies();
 
         chunkManager.update(player.getPosition());
         uploadWorldToGpu();
         updateCursorMode();
         setStatus("Mode: survival. Press E for inventory, / for commands.");
+    }
+
+    private void spawnInitialEnemies() {
+        for (int i = 0; i < 5; i++) {
+            com.voxel.entity.EnemyEntity zombie = new com.voxel.entity.EnemyEntity(100 + i, new Vector3f(1030 + i * 10, 64, 1030), textureManager);
+            entityManager.addEntity(zombie);
+        }
     }
 
     private void setupUi() {
@@ -575,19 +573,26 @@ public class Main {
         worldTime += dt;
         updateMining(dt);
 
-        float entityTime = (float) glfwGetTime();
+        if (cameraShake > 0) cameraShake -= dt * 5.0f;
+
+        // --- Enemy AI and Combat ---
+        Vector3f pPos = player.getPosition();
         for (int i = 0; i < entityManager.getEntityCount(); i++) {
             com.voxel.entity.Entity e = entityManager.getEntity(i);
-            if (e == playerEntity) {
-                continue;
-            }
-            if (e.id < 100) {
-                e.rotation.y += dt * 45.0f;
-                e.rotation.x += dt * 15.0f;
-                e.position.y = 75.0f + (float) Math.sin(entityTime + i) * 5.0f;
-            } else {
-                e.position.x += (float) Math.cos(entityTime * 0.5f + i) * 0.05f;
-                e.position.z += (float) Math.sin(entityTime * 0.5f + i) * 0.05f;
+            if (e == playerEntity) continue;
+            
+            if (e instanceof com.voxel.entity.EnemyEntity) {
+                com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) e;
+                if (enemy.isDead()) continue;
+                
+                // Simple Follow AI
+                Vector3f toPlayer = new Vector3f(pPos).sub(enemy.position);
+                float dist = toPlayer.length();
+                if (dist < 20.0f && dist > 1.4f) {
+                    toPlayer.normalize().mul(dt * 2.2f);
+                    enemy.position.add(toPlayer.x, 0, toPlayer.z);
+                    enemy.rotation.y = (float) Math.toDegrees(Math.atan2(toPlayer.x, toPlayer.z));
+                }
             }
         }
 
@@ -597,6 +602,26 @@ public class Main {
 
     private void handleInput(float dt) {
         if (inventoryOpen || commandMode) return;
+
+        // Roll / Dash (Left Alt)
+        if (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS && cameraMode == CameraMode.THIRD_PERSON) {
+            double now = glfwGetTime();
+            if (now - lastRollTime > 0.8) {
+                playerEntity.startRoll();
+                Vector3f forward = getLookDirection();
+                player.move(forward.x * 15, 0, forward.z * 15, 10.0f);
+                lastRollTime = now;
+            }
+        }
+
+        if (leftMousePressedThisFrame && !inventoryOpen) {
+            double now = glfwGetTime();
+            if (now - lastAttackTime > 0.25) {
+                playerEntity.startAttack();
+                performCombatAttack();
+                lastAttackTime = now;
+            }
+        }
 
         float speed = player.isFlying() ? 1.5f : 0.4f;
         double ry = Math.toRadians(yaw);
@@ -650,6 +675,32 @@ public class Main {
         }
     }
 
+    private void performCombatAttack() {
+        Vector3f pPos = player.getPosition();
+        Vector3f pDir = getLookDirection();
+        
+        for (int i = 0; i < entityManager.getEntityCount(); i++) {
+            com.voxel.entity.Entity e = entityManager.getEntity(i);
+            if (e instanceof com.voxel.entity.EnemyEntity) {
+                com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) e;
+                if (enemy.isDead()) continue;
+                
+                Vector3f toEnemy = new Vector3f(enemy.position).sub(pPos);
+                float dist = toEnemy.length();
+                
+                if (dist < 4.0f) {
+                    toEnemy.normalize();
+                    float dot = toEnemy.dot(pDir);
+                    if (dot > 0.5f) {
+                        Vector3f knockback = new Vector3f(toEnemy).mul(0.8f);
+                        enemy.takeDamage(5.0f, knockback);
+                        cameraShake = 1.0f;
+                    }
+                }
+            }
+        }
+    }
+
     private void loop() {
         float lastTime = (float) glfwGetTime();
         int frames = 0;
@@ -683,6 +734,14 @@ public class Main {
             MemoryUtil.memFree(plBuf);
 
             Vector3f cameraPos = getActiveCameraPosition();
+            
+            // Add Camera Shake
+            if (cameraShake > 0.01f) {
+                cameraPos.x += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
+                cameraPos.y += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
+                cameraPos.z += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
+            }
+
             glUseProgram(computeProgram);
             glProgramUniform3f(computeProgram, 0, cameraPos.x, cameraPos.y, cameraPos.z);
 
@@ -1366,8 +1425,7 @@ public class Main {
 
     private void setupResources() {
         textureManager = new TextureManager();
-        // Load blocks first, then entities into the same pool
-        textureManager.loadTextures("src/main/resources/assets/minecraft/textures/blocks");
+        textureManager.loadTextures("src/main/resources/assets/minecraft/textures/blocks", "src/main/resources/assets/minecraft/textures/items");
         textureManager.loadEntityTextures("src/main/resources/assets/minecraft/textures/entity");
         
         biomeManager = new com.voxel.utils.BiomeManager();
@@ -1384,143 +1442,6 @@ public class Main {
         blockDataManager.registerBlock(13, "dirt", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(14, "sand", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.uploadToGPU();
-    }
-
-    private void generatePlayerSkinTextures() {
-        File skinFile = new File("src/main/resources/assets/minecraft/textures/entity/player_skin.png");
-        if (!skinFile.exists()) {
-            return;
-        }
-
-        try {
-            BufferedImage skin = ImageIO.read(skinFile);
-            if (skin == null) {
-                return;
-            }
-
-            writeSkinCuboidAtlas(
-                skin,
-                "player_skin_head",
-                8, 8, 8,
-                new int[]{16, 8, 8, 8},
-                new int[]{0, 8, 8, 8},
-                new int[]{8, 8, 8, 8},
-                new int[]{24, 8, 8, 8},
-                new int[]{8, 0, 8, 8},
-                new int[]{16, 0, 8, 8}
-            );
-            writeSkinCuboidAtlas(
-                skin,
-                "player_skin_body",
-                8, 4, 12,
-                new int[]{16, 20, 4, 12},
-                new int[]{28, 20, 4, 12},
-                new int[]{20, 20, 8, 12},
-                new int[]{32, 20, 8, 12},
-                new int[]{20, 16, 8, 4},
-                new int[]{28, 16, 8, 4}
-            );
-            writeSkinCuboidAtlas(
-                skin,
-                "player_skin_right_arm",
-                4, 4, 12,
-                new int[]{40, 20, 4, 12},
-                new int[]{48, 20, 4, 12},
-                new int[]{44, 20, 4, 12},
-                new int[]{52, 20, 4, 12},
-                new int[]{44, 16, 4, 4},
-                new int[]{48, 16, 4, 4}
-            );
-            writeSkinCuboidAtlas(
-                skin,
-                "player_skin_left_arm",
-                4, 4, 12,
-                new int[]{32, 52, 4, 12},
-                new int[]{40, 52, 4, 12},
-                new int[]{36, 52, 4, 12},
-                new int[]{44, 52, 4, 12},
-                new int[]{36, 48, 4, 4},
-                new int[]{40, 48, 4, 4}
-            );
-            writeSkinCuboidAtlas(
-                skin,
-                "player_skin_right_leg",
-                4, 4, 12,
-                new int[]{0, 20, 4, 12},
-                new int[]{8, 20, 4, 12},
-                new int[]{4, 20, 4, 12},
-                new int[]{12, 20, 4, 12},
-                new int[]{4, 16, 4, 4},
-                new int[]{8, 16, 4, 4}
-            );
-            writeSkinCuboidAtlas(
-                skin,
-                "player_skin_left_leg",
-                4, 4, 12,
-                new int[]{16, 52, 4, 12},
-                new int[]{24, 52, 4, 12},
-                new int[]{20, 52, 4, 12},
-                new int[]{28, 52, 4, 12},
-                new int[]{20, 48, 4, 4},
-                new int[]{24, 48, 4, 4}
-            );
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to prepare player skin textures", e);
-        }
-    }
-
-    private void writeSkinCuboidAtlas(
-        BufferedImage skin,
-        String textureName,
-        int frontWidth,
-        int depthWidth,
-        int faceHeight,
-        int[] leftRegion,
-        int[] rightRegion,
-        int[] frontRegion,
-        int[] backRegion,
-        int[] topRegion,
-        int[] bottomRegion
-    ) throws IOException {
-        BufferedImage atlas = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D graphics = atlas.createGraphics();
-        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-
-        // 1:1 Pixel Mapping for the 16x16 atlas
-        // Layout:
-        // [TOP   ][BOTTOM]
-        // [LEFT  ][FRONT ][RIGHT ][BACK  ]
-        
-        // Row 0: Top and Bottom
-        drawSkinRegion(graphics, skin, topRegion, depthWidth, 0, depthWidth + frontWidth, depthWidth);
-        drawSkinRegion(graphics, skin, bottomRegion, depthWidth + frontWidth, 0, depthWidth + frontWidth * 2, depthWidth);
-
-        // Row 1: Left, Front, Right, Back
-        drawSkinRegion(graphics, skin, leftRegion, 0, depthWidth, depthWidth, depthWidth + faceHeight);
-        drawSkinRegion(graphics, skin, frontRegion, depthWidth, depthWidth, depthWidth + frontWidth, depthWidth + faceHeight);
-        drawSkinRegion(graphics, skin, rightRegion, depthWidth + frontWidth, depthWidth, (depthWidth * 2) + frontWidth, depthWidth + faceHeight);
-        drawSkinRegion(graphics, skin, backRegion, (depthWidth * 2) + frontWidth, depthWidth, (depthWidth * 2) + (frontWidth * 2), depthWidth + faceHeight);
-        
-        graphics.dispose();
-
-        File output = new File("src/main/resources/assets/minecraft/textures/blocks/" + textureName + ".png");
-        ImageIO.write(atlas, "png", output);
-    }
-
-    private void drawSkinRegion(Graphics2D graphics, BufferedImage skin, int[] src, int dstX0, int dstY0, int dstX1, int dstY1) {
-        graphics.drawImage(
-            skin,
-            dstX0,
-            dstY0,
-            dstX1,
-            dstY1,
-            src[0],
-            src[1],
-            src[0] + src[2],
-            src[1] + src[3],
-            null
-        );
     }
 
     private void setupQuad() {
