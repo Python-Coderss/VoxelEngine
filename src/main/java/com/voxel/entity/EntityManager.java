@@ -78,10 +78,10 @@ public class EntityManager {
             java.nio.ByteBuffer partBuffer = MemoryUtil.memAlloc(allParts.size() * PART_STRIDE * 4);
             for (ModelPart part : allParts) {
                 partBuffer.putFloat(part.offset.x).putFloat(part.offset.y).putFloat(part.offset.z);
-                partBuffer.putFloat(0); // Padding
+                partBuffer.putFloat(part.uvOrigin.x); // UV Origin U
                 
                 partBuffer.putFloat(part.absoluteOffset.x).putFloat(part.absoluteOffset.y).putFloat(part.absoluteOffset.z);
-                partBuffer.putFloat(0); // Padding
+                partBuffer.putFloat(part.uvOrigin.y); // UV Origin V
                 
                 partBuffer.putFloat(part.size.x).putFloat(part.size.y).putFloat(part.size.z);
                 partBuffer.putFloat((float)part.textureIndex);

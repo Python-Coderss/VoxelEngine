@@ -1,6 +1,7 @@
 package com.voxel.entity;
 
 import org.joml.Vector3f;
+import org.joml.Vector2f;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.IOException;
@@ -33,6 +34,10 @@ public class Entity {
         this.parts.addAll(loadedParts.values());
     }
 
+    private int resolveTextureIndex(String texName, com.voxel.utils.TextureManager textureManager) {
+        return textureManager.getTextureIndex(texName);
+    }
+
     private void loadModelRecursive(String path, com.voxel.utils.TextureManager textureManager, java.util.Map<String, ModelPart> loadedParts) {
         try {
             String content = new String(Files.readAllBytes(Paths.get(path)));
@@ -62,8 +67,8 @@ public class Entity {
                         // New part - requires basic fields
                         JSONArray from = p.getJSONArray("from");
                         JSONArray size = p.getJSONArray("size");
-                        String texture = p.getString("texture");
-                        int texIdx = textureManager.getTextureIndex(texture);
+                        String texName = p.getString("texture");
+                        int texIdx = resolveTextureIndex(texName, textureManager);
                         
                         part = new ModelPart(
                             name,
@@ -71,6 +76,12 @@ public class Entity {
                             new Vector3f((float)size.getDouble(0), (float)size.getDouble(1), (float)size.getDouble(2)),
                             texIdx
                         );
+                        
+                        if (p.has("uv")) {
+                            JSONArray uv = p.getJSONArray("uv");
+                            part.uvOrigin.set((float)uv.getDouble(0), (float)uv.getDouble(1));
+                        }
+                        
                         loadedParts.put(name, part);
                     } else {
                         // Override existing part properties
@@ -83,7 +94,11 @@ public class Entity {
                             part.size.set((float)size.getDouble(0), (float)size.getDouble(1), (float)size.getDouble(2));
                         }
                         if (p.has("texture")) {
-                            part.textureIndex = textureManager.getTextureIndex(p.getString("texture"));
+                            part.textureIndex = resolveTextureIndex(p.getString("texture"), textureManager);
+                        }
+                        if (p.has("uv")) {
+                            JSONArray uv = p.getJSONArray("uv");
+                            part.uvOrigin.set((float)uv.getDouble(0), (float)uv.getDouble(1));
                         }
                     }
 

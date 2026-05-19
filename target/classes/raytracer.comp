@@ -1,8 +1,7 @@
 #version 430 core
 
 /**
- * Optimized Voxel RTX Shader with Entity Support.
- * Fixed Signature Mismatches (ivec3 s vs vec3 s).
+ * Optimized Voxel RTX Shader with Unified 64x64 Texture Support.
  */
 
 layout(local_size_x = 16, local_size_y = 16) in;
@@ -31,7 +30,7 @@ layout(std430, binding = 5) buffer readonly restrict PointLightBuffer {
 
 // Entities
 struct EntityData { vec3 position; float pad1; vec3 rotation; float pad2; int partCount; int partOffset; float pad3, pad4; };
-struct PartData { vec3 offset; float pad1; vec3 absoluteOffset; float pad2; vec3 size; float textureIndex; vec3 rotation; float textureMapping; };
+struct PartData { vec3 offset; float uvU; vec3 absoluteOffset; float uvV; vec3 size; float textureIndex; vec3 rotation; float textureMapping; };
 layout(std430, binding = 6) buffer readonly restrict EntityBuffer { EntityData entities[]; };
 layout(std430, binding = 7) buffer readonly restrict PartBuffer { PartData parts[]; };
 layout(location = 5) uniform int u_EntityCount;
@@ -97,29 +96,17 @@ bool intersectAABB(vec3 ro, vec3 rd, vec3 bMin, vec3 bMax, out float tn, out flo
 
 mat3 rotateX(float a) {
     float s = sin(a), c = cos(a);
-    return mat3(
-        1.0, 0.0, 0.0,
-        0.0, c, s,
-        0.0, -s, c
-    );
+    return mat3(1,0,0, 0,c,s, 0,-s,c);
 }
 
 mat3 rotateY(float a) {
     float s = sin(a), c = cos(a);
-    return mat3(
-        c, 0.0, -s,
-        0.0, 1.0, 0.0,
-        s, 0.0, c
-    );
+    return mat3(c,0,-s, 0,1,0, s,0,c);
 }
 
 mat3 rotateZ(float a) {
     float s = sin(a), c = cos(a);
-    return mat3(
-        c, s, 0.0,
-        -s, c, 0.0,
-        0.0, 0.0, 1.0
-    );
+    return mat3(c,s,0, -s,c,0, 0,0,1);
 }
 
 mat3 rotationMatrix(vec3 euler) {
@@ -152,56 +139,49 @@ bool intersectOrientedBox(vec3 ro, vec3 rd, vec3 center, vec3 halfSize, mat3 rot
 
 vec2 entityPlanarUv(vec3 localPos, vec3 localNormal, vec3 halfSize) {
     vec3 p = clamp((localPos + halfSize) / max(halfSize * 2.0, vec3(0.0001)), 0.0, 1.0);
-    if (abs(localNormal.x) > 0.5) {
-        return vec2(p.z, 1.0 - p.y);
-    }
-    if (abs(localNormal.y) > 0.5) {
-        return vec2(p.x, p.z);
-    }
+    if (abs(localNormal.x) > 0.5) return vec2(p.z, 1.0 - p.y);
+    if (abs(localNormal.y) > 0.5) return vec2(p.x, p.z);
     return vec2(p.x, 1.0 - p.y);
 }
 
-vec2 entityCuboidAtlasUv(vec3 localPos, vec3 localNormal, vec3 halfSize) {
+vec2 entityCuboidAtlasUv(vec3 localPos, vec3 localNormal, vec3 halfSize, PartData part) {
     vec3 p = clamp((localPos + halfSize) / max(halfSize * 2.0, vec3(0.0001)), 0.0, 1.0);
 
-    float depthUnits = 1.0;
-    float widthUnits = max(halfSize.x / max(halfSize.z, 0.0001), 1.0);
-    float heightUnits = max(halfSize.y / max(halfSize.z, 0.0001), 1.0);
+    float w = round(halfSize.x * 32.0);
+    float h = round(halfSize.y * 32.0);
+    float d = round(halfSize.z * 32.0);
 
-    float atlasWidth = depthUnits + widthUnits + depthUnits + widthUnits;
-    float atlasHeight = depthUnits + heightUnits;
+    vec2 p0, p1, uvInFace;
+    vec2 uvOrigin = vec2(part.uvU, part.uvV);
 
-    vec2 uvInFace;
-    vec2 faceOrigin;
-    vec2 faceSize;
-
-    if (localNormal.z > 0.5) {
-        uvInFace = vec2(p.x, 1.0 - p.y);
-        faceOrigin = vec2(depthUnits, depthUnits);
-        faceSize = vec2(widthUnits, heightUnits);
-    } else if (localNormal.z < -0.5) {
-        uvInFace = vec2(1.0 - p.x, 1.0 - p.y);
-        faceOrigin = vec2(depthUnits * 2.0 + widthUnits, depthUnits);
-        faceSize = vec2(widthUnits, heightUnits);
-    } else if (localNormal.x > 0.5) {
-        uvInFace = vec2(1.0 - p.z, 1.0 - p.y);
-        faceOrigin = vec2(0.0, depthUnits);
-        faceSize = vec2(depthUnits, heightUnits);
-    } else if (localNormal.x < -0.5) {
-        uvInFace = vec2(p.z, 1.0 - p.y);
-        faceOrigin = vec2(depthUnits + widthUnits, depthUnits);
-        faceSize = vec2(depthUnits, heightUnits);
-    } else if (localNormal.y > 0.5) {
+    // Standard Minecraft Skin Layout:
+    if (localNormal.y > 0.5) { // TOP (+Y)
+        p0 = uvOrigin + vec2(d, 0.0);
+        p1 = p0 + vec2(w, d);
         uvInFace = vec2(p.x, p.z);
-        faceOrigin = vec2(depthUnits, 0.0);
-        faceSize = vec2(widthUnits, depthUnits);
-    } else {
+    } else if (localNormal.y < -0.5) { // BOTTOM (-Y)
+        p0 = uvOrigin + vec2(d + w, 0.0);
+        p1 = p0 + vec2(w, d);
         uvInFace = vec2(p.x, 1.0 - p.z);
-        faceOrigin = vec2(depthUnits + widthUnits, 0.0);
-        faceSize = vec2(widthUnits, depthUnits);
+    } else if (localNormal.x > 0.5) { // RIGHT (+X)
+        p0 = uvOrigin + vec2(0.0, d);
+        p1 = p0 + vec2(d, h);
+        uvInFace = vec2(1.0 - p.z, 1.0 - p.y);
+    } else if (localNormal.z > 0.5) { // FRONT (+Z)
+        p0 = uvOrigin + vec2(d, d);
+        p1 = p0 + vec2(w, h);
+        uvInFace = vec2(p.x, 1.0 - p.y);
+    } else if (localNormal.x < -0.5) { // LEFT (-X)
+        p0 = uvOrigin + vec2(d + w, d);
+        p1 = p0 + vec2(d, h);
+        uvInFace = vec2(p.z, 1.0 - p.y);
+    } else { // BACK (-Z)
+        p0 = uvOrigin + vec2(d * 2.0 + w, d);
+        p1 = p0 + vec2(w, h);
+        uvInFace = vec2(1.0 - p.x, 1.0 - p.y);
     }
 
-    return (faceOrigin + uvInFace * faceSize) / vec2(atlasWidth, atlasHeight);
+    return (p0 + uvInFace * (p1 - p0)) / 64.0;
 }
 
 int advanceDDA(inout ivec3 mp, inout vec3 sd, vec3 dd, ivec3 s) {
@@ -308,20 +288,16 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, out float resT, out vec3 resN, o
         mat3 entRotation = rotationMatrix(ent.rotation);
         for(int j=0; j<ent.partCount; j++) {
             PartData part = parts[ent.partOffset + j];
-            vec3 halfSize = part.size / 64.0;
-            vec3 localCenter = part.absoluteOffset + (part.offset / 32.0) + halfSize;
+            vec3 halfSize = part.size / 32.0;
+            vec3 localCenter = part.absoluteOffset + (part.offset / 16.0) + halfSize;
             vec3 center = ent.position + entRotation * localCenter;
             mat3 partRotation = entRotation * rotationMatrix(part.rotation);
             float tn;
             vec3 partNormal, localHit, localNormal;
             if (intersectOrientedBox(ro, rd, center, halfSize, partRotation, tn, partNormal, localHit, localNormal)) {
                 if (tn < resT) {
-                    resT = tn;
-                    isEnt = true;
-                    resTex = uint(part.textureIndex);
-                    resEntUv = part.textureMapping > 0.5
-                        ? entityCuboidAtlasUv(localHit, localNormal, halfSize)
-                        : entityPlanarUv(localHit, localNormal, halfSize);
+                    resT = tn; isEnt = true; resTex = uint(part.textureIndex);
+                    resEntUv = part.textureMapping > 0.5 ? entityCuboidAtlasUv(localHit, localNormal, halfSize, part) : entityPlanarUv(localHit, localNormal, halfSize);
                     resN = partNormal;
                 }
             }
@@ -336,12 +312,8 @@ void main() {
     vec2 ndc = ((vec2(px) + 0.5) / vec2(sz)) * 2.0 - 1.0;
     vec3 rd = normalize(camForward + ndc.x * (float(sz.x)/sz.y) * camRight + ndc.y * camUp);
     
-    // UI Early Exit / Skip
     vec4 uiCol = texture(u_UITexture, (vec2(px) + 0.5) / vec2(sz));
-    if (uiCol.a >= 0.99) {
-        imageStore(imgOutput, px, vec4(pow(uiCol.rgb, vec3(1.0/2.2)), 1.0));
-        return;
-    }
+    if (uiCol.a >= 0.99) { imageStore(imgOutput, px, vec4(pow(uiCol.rgb, vec3(1.0/2.2)), 1.0)); return; }
 
     Atmosphere at = GetAtmosphere(u_Time);
     vec3 final = vec3(0.0), throu = vec3(1.0), ro = camPos; bool skip = false;
@@ -366,13 +338,9 @@ void main() {
             int face = (n.y > 0.9) ? 1 : ((n.y < -0.9) ? 0 : ((n.z < -0.9) ? 2 : ((n.z > 0.9) ? 3 : ((n.x < -0.9) ? 4 : 5))));
             int tex = (face == 0) ? d0.x : (face == 1 ? d0.y : (face == 2 ? d0.z : (face == 3 ? d0.w : (face == 4 ? d1.x : d1.y))));
             vec2 uv;
-            if (abs(n.x) > 0.5) {
-                uv = vec2(fract(hp.z), 1.0 - fract(hp.y));
-            } else if (abs(n.y) > 0.5) {
-                uv = fract(hp.xz);
-            } else {
-                uv = vec2(fract(hp.x), 1.0 - fract(hp.y));
-            }
+            if (abs(n.x) > 0.5) uv = vec2(fract(hp.z), 1.0 - fract(hp.y));
+            else if (abs(n.y) > 0.5) uv = fract(hp.xz);
+            else uv = vec2(fract(hp.x), 1.0 - fract(hp.y));
             alb = texture(u_BlockTextures, vec3(uv, float(tex))).rgb * (vec3(d2.rgb)/255.0);
             trans = float(d1.z)/255.0; refl = float(d1.w & 0xFF)/255.0;
             if (((d1.w >> 8) & 1) == 1) { vec2 bp = texture(u_BiomeMap, hp.xz/2048.0).rg; alb *= texture(u_GrassColormap, vec2(1.0-bp.x, 1.0-bp.y)).rgb; }
@@ -391,9 +359,6 @@ void main() {
     }
     
     vec3 result = ACESFilm(final);
-    // Blend UI if semi-transparent
-    if (uiCol.a > 0.0) {
-        result = mix(result, uiCol.rgb, uiCol.a);
-    }
+    if (uiCol.a > 0.0) result = mix(result, uiCol.rgb, uiCol.a);
     imageStore(imgOutput, px, vec4(pow(result, vec3(1.0/2.2)), 1.0));
 }

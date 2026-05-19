@@ -1337,6 +1337,7 @@ public class Main {
         glActiveTexture(GL_TEXTURE6);
         glBindTexture(GL_TEXTURE_2D_ARRAY, textureManager.getTextureArrayId());
         glUniform1i(glGetUniformLocation(computeProgram, "u_BlockTextures"), 6);
+
         glActiveTexture(GL_TEXTURE7);
         glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getTextureId());
         glUniform1i(glGetUniformLocation(computeProgram, "u_BlockData"), 7);
@@ -1364,9 +1365,11 @@ public class Main {
     }
 
     private void setupResources() {
-        generatePlayerSkinTextures();
         textureManager = new TextureManager();
+        // Load blocks first, then entities into the same pool
         textureManager.loadTextures("src/main/resources/assets/minecraft/textures/blocks");
+        textureManager.loadEntityTextures("src/main/resources/assets/minecraft/textures/entity");
+        
         biomeManager = new com.voxel.utils.BiomeManager();
         biomeManager.loadColormaps(
             "src/main/resources/assets/minecraft/textures/colormap/grass.png",
@@ -1479,43 +1482,33 @@ public class Main {
         int[] topRegion,
         int[] bottomRegion
     ) throws IOException {
-        float atlasWidth = (depthWidth * 2.0f) + (frontWidth * 2.0f);
-        float atlasHeight = depthWidth + faceHeight;
-
         BufferedImage atlas = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = atlas.createGraphics();
         graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
         graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
 
-        drawSkinRegion(graphics, skin, leftRegion,
-            scaledCoord(0.0f, atlasWidth), scaledCoord(depthWidth, atlasWidth),
-            scaledCoord(depthWidth, atlasHeight), scaledCoord(depthWidth + faceHeight, atlasHeight));
-        drawSkinRegion(graphics, skin, frontRegion,
-            scaledCoord(depthWidth, atlasWidth), scaledCoord(depthWidth + frontWidth, atlasWidth),
-            scaledCoord(depthWidth, atlasHeight), scaledCoord(depthWidth + faceHeight, atlasHeight));
-        drawSkinRegion(graphics, skin, rightRegion,
-            scaledCoord(depthWidth + frontWidth, atlasWidth), scaledCoord((depthWidth * 2.0f) + frontWidth, atlasWidth),
-            scaledCoord(depthWidth, atlasHeight), scaledCoord(depthWidth + faceHeight, atlasHeight));
-        drawSkinRegion(graphics, skin, backRegion,
-            scaledCoord((depthWidth * 2.0f) + frontWidth, atlasWidth), scaledCoord((depthWidth * 2.0f) + (frontWidth * 2.0f), atlasWidth),
-            scaledCoord(depthWidth, atlasHeight), scaledCoord(depthWidth + faceHeight, atlasHeight));
-        drawSkinRegion(graphics, skin, topRegion,
-            scaledCoord(depthWidth, atlasWidth), scaledCoord(depthWidth + frontWidth, atlasWidth),
-            scaledCoord(0.0f, atlasHeight), scaledCoord(depthWidth, atlasHeight));
-        drawSkinRegion(graphics, skin, bottomRegion,
-            scaledCoord(depthWidth + frontWidth, atlasWidth), scaledCoord((depthWidth + frontWidth) + frontWidth, atlasWidth),
-            scaledCoord(0.0f, atlasHeight), scaledCoord(depthWidth, atlasHeight));
+        // 1:1 Pixel Mapping for the 16x16 atlas
+        // Layout:
+        // [TOP   ][BOTTOM]
+        // [LEFT  ][FRONT ][RIGHT ][BACK  ]
+        
+        // Row 0: Top and Bottom
+        drawSkinRegion(graphics, skin, topRegion, depthWidth, 0, depthWidth + frontWidth, depthWidth);
+        drawSkinRegion(graphics, skin, bottomRegion, depthWidth + frontWidth, 0, depthWidth + frontWidth * 2, depthWidth);
+
+        // Row 1: Left, Front, Right, Back
+        drawSkinRegion(graphics, skin, leftRegion, 0, depthWidth, depthWidth, depthWidth + faceHeight);
+        drawSkinRegion(graphics, skin, frontRegion, depthWidth, depthWidth, depthWidth + frontWidth, depthWidth + faceHeight);
+        drawSkinRegion(graphics, skin, rightRegion, depthWidth + frontWidth, depthWidth, (depthWidth * 2) + frontWidth, depthWidth + faceHeight);
+        drawSkinRegion(graphics, skin, backRegion, (depthWidth * 2) + frontWidth, depthWidth, (depthWidth * 2) + (frontWidth * 2), depthWidth + faceHeight);
+        
         graphics.dispose();
 
         File output = new File("src/main/resources/assets/minecraft/textures/blocks/" + textureName + ".png");
         ImageIO.write(atlas, "png", output);
     }
 
-    private int scaledCoord(float value, float total) {
-        return Math.round((value / total) * 16.0f);
-    }
-
-    private void drawSkinRegion(Graphics2D graphics, BufferedImage skin, int[] src, int dstX0, int dstX1, int dstY0, int dstY1) {
+    private void drawSkinRegion(Graphics2D graphics, BufferedImage skin, int[] src, int dstX0, int dstY0, int dstX1, int dstY1) {
         graphics.drawImage(
             skin,
             dstX0,
