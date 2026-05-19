@@ -1,7 +1,5 @@
 package com.voxel.utils;
 
-import org.lwjgl.stb.STBImage;
-import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
 import javax.imageio.ImageIO;
@@ -10,11 +8,11 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.IntBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,48 +34,63 @@ public class TextureManager {
     private final Map<String, Integer> textureToIndex = new HashMap<>();
     private final List<String> texturePaths = new ArrayList<>();
 
-    public void loadTextures(String directoryPath) {
-        try {
-            List<Path> files = Files.walk(Paths.get(directoryPath))
+    public void loadTextures(String... directoryPaths) {
+        List<Path> allFiles = new ArrayList<>();
+
+        for (String directoryPath : directoryPaths) {
+            File dir = new File(directoryPath);
+            if (!dir.exists()) {
+                System.err.println("Texture directory not found: " + directoryPath);
+                continue;
+            }
+
+            try {
+            	
+            	Path[] files2 = Files.walk(Paths.get(directoryPath))
                     .filter(Files::isRegularFile)
                     .filter(p -> p.toString().endsWith(".png"))
-                    .collect(Collectors.toList());
+                    .toArray(Path[]::new);
 
-            for (Path path : files) {
-                String fileName = path.getFileName().toString();
-                String name = fileName.substring(0, fileName.lastIndexOf('.'));
-                if (!textureToIndex.containsKey(name)) {
-                    textureToIndex.put(name, texturePaths.size());
-                    texturePaths.add(path.toString());
-                }
+            	allFiles.addAll(Arrays.asList(files2));
+
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to scan textures: " + directoryPath, e);
             }
-
-            if (texturePaths.isEmpty()) return;
-
-            if (textureArrayId == 0) {
-                textureArrayId = glGenTextures();
-                glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
-                // Allocate enough layers for all textures found so far (blocks + potential entities)
-                // We'll reallocate if needed, but for now let's just use a large enough number or do it once.
-                glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8, TEXTURE_SIZE, TEXTURE_SIZE, 1024);
-            }
-
-            glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
-            for (int i = 0; i < texturePaths.size(); i++) {
-                loadAndUploadTexture(texturePaths.get(i), i);
-            }
-
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
-
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to load textures: " + directoryPath, e);
         }
-    }
 
+        for (Path path : allFiles) {
+            String fileName = path.getFileName().toString();
+            String name = fileName.substring(0, fileName.lastIndexOf('.'));
+
+            if (!textureToIndex.containsKey(name)) {
+                textureToIndex.put(name, texturePaths.size());
+                texturePaths.add(path.toString());
+            }
+        }
+
+        if (texturePaths.isEmpty()) return;
+
+        if (textureArrayId == 0) {
+            textureArrayId = glGenTextures();
+            glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
+
+            glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8,
+                    TEXTURE_SIZE, TEXTURE_SIZE, 1024);
+        }
+
+        glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
+
+        for (int i = 0; i < texturePaths.size(); i++) {
+            loadAndUploadTexture(texturePaths.get(i), i);
+        }
+
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+        glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    }
     private void loadAndUploadTexture(String path, int layer) {
         try {
             BufferedImage img = ImageIO.read(new File(path));
