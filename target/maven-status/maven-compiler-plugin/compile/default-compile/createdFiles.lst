@@ -5,6 +5,7 @@ com\voxel\utils\Direction.class
 com\voxel\World.class
 com\voxel\utils\BlockDataManager.class
 com\voxel\utils\PerlinNoise.class
+com\voxel\entity\EnemyEntity$2.class
 com\voxel\entity\PlayerEntity.class
 com\voxel\Main$GameMode.class
 com\voxel\entity\ZombieEntity.class

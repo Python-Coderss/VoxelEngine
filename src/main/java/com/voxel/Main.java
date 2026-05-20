@@ -284,7 +284,7 @@ public class Main {
         entityManager.addEntity(playerEntity);
 
         // Spawn initial enemies
-        spawnInitialEnemies();
+        spawnInitialEnemies(player);
 
         chunkManager.update(player.getPosition());
         uploadWorldToGpu();
@@ -292,9 +292,9 @@ public class Main {
         setStatus("Mode: survival. Press E for inventory, / for commands.");
     }
 
-    private void spawnInitialEnemies() {
+    private void spawnInitialEnemies(Player p) {
         for (int i = 0; i < 5; i++) {
-            com.voxel.entity.ZombieEntity zombie = new com.voxel.entity.ZombieEntity(100 + i, new Vector3f(1030 + i * 10, 64, 1030), textureManager);
+            com.voxel.entity.ZombieEntity zombie = new com.voxel.entity.ZombieEntity(100 + i, new Vector3f(1030 + i * 10, 64, 1030), textureManager, p);
             zombie.setWorld(world);
             entityManager.addEntity(zombie);
         }
