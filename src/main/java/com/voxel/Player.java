@@ -13,46 +13,83 @@ public class Player {
 
     private boolean onGround = false;
     private boolean flying = false;
+    private boolean isSwimming = false;
+
+    private float health = 20.0f;
+    private float maxHealth = 20.0f;
+    private boolean isDead = false;
+    private float fallDistance = 0.0f;
+    private Vector3f spawnPoint = new Vector3f();
 
     private float yaw = -90, pitch = 0;
 
     public Player(float x, float y, float z) {
         position.set(x, y, z);
+        spawnPoint.set(x, y, z);
     }
 
     public void update(float dt, World world, BlockDataManager blockDataManager) {
+        if (isDead) return;
+
+        // Check if in liquid
+        isSwimming = checkInLiquid(world, blockDataManager);
+
         if (!flying) {
-            // Adjust gravity to be per-second (0.001f might be too small for dt in seconds)
-            velocity.y -= 9.81f * dt; 
+            if (isSwimming) {
+                velocity.y -= 2.0f * dt; // Slow sinking
+                if (velocity.y < -1.5f) velocity.y = -1.5f; // Terminal velocity in water
+                fallDistance = 0; // Negate fall damage in water
+            } else {
+                velocity.y -= 22.0f * dt;
+                if (velocity.y < 0) {
+                    fallDistance += -velocity.y * dt;
+                }
+            }
+        } else {
+            fallDistance = 0;
         }
 
-        // 1. Calculate the factor (how much velocity REMAINS)
-        // Ground friction: 0.5f (stops very fast) | Air friction: 0.6f (drifts a bit)
-        float frictionFactor = (float) Math.pow(onGround ? 0.5f : 0.6f, dt);
+        // Apply friction
+        float frictionFactor;
+        if (isSwimming) {
+            frictionFactor = (float) Math.pow(0.15f, dt); // Thick drag in water
+        } else {
+            frictionFactor = (float) Math.pow(onGround ? 0.05f : 0.95f, dt);
+        }
 
-        // 2. Multiply directly
         velocity.x *= frictionFactor;
         velocity.z *= frictionFactor;
         
-        if (flying) {
+        if (flying || isSwimming) {
             velocity.y *= frictionFactor;
         }
 
-        // Resolve collision axis-by-axis
         moveAndCollide(dt, world, blockDataManager);
         
         if (velocity.y > 0) onGround = false;
     }
 
+    private boolean checkInLiquid(World world, BlockDataManager blockDataManager) {
+        int x = (int) Math.floor(position.x);
+        int y = (int) Math.floor(position.y + 0.5f); // Check at waist height
+        int z = (int) Math.floor(position.z);
+        int voxel = world.getVoxel(x, y, z);
+        if (voxel <= 0) return false;
+        
+        // This is a bit hacky since BlockDataManager doesn't expose a clean isLiquid(id) yet
+        // but we know name contains "water" or "lava"
+        String name = blockDataManager.getName(voxel);
+        return name.contains("water") || name.contains("lava");
+    }
+
     private void moveAndCollide(float dt, World world, BlockDataManager blockDataManager) {
-        // X Movement
+        // ... (X and Z movements)
         position.x += velocity.x * dt;
         if (checkCollision(world, blockDataManager)) {
             position.x -= velocity.x * dt;
             velocity.x = 0;
         }
 
-        // Z Movement
         position.z += velocity.z * dt;
         if (checkCollision(world, blockDataManager)) {
             position.z -= velocity.z * dt;
@@ -60,14 +97,55 @@ public class Player {
         }
 
         // Y Movement
+        float prevYVel = velocity.y;
         onGround = false;
         position.y += velocity.y * dt;
         if (checkCollision(world, blockDataManager)) {
-            if (velocity.y < 0) onGround = true;
+            if (prevYVel < 0) {
+                onGround = true;
+                handleFallDamage();
+            }
             position.y -= velocity.y * dt;
             velocity.y = 0;
         }
     }
+
+    private void handleFallDamage() {
+        if (fallDistance > 4.0f) { // Safe fall height of 4 blocks
+            float damage = (fallDistance - 3.0f) * 1.5f;
+            takeDamage(damage);
+        }
+        fallDistance = 0;
+    }
+
+    public void takeDamage(float amount) {
+        if (isDead || flying) return;
+        health = Math.max(0, health - amount);
+        if (health <= 0) {
+            die();
+        }
+    }
+
+    private void die() {
+        isDead = true;
+        velocity.set(0);
+    }
+
+    public void respawn() {
+        position.set(spawnPoint);
+        velocity.set(0);
+        health = maxHealth;
+        isDead = false;
+        fallDistance = 0;
+    }
+
+    public void setSpawnPoint(Vector3f point) {
+        spawnPoint.set(point);
+    }
+
+    public float getHealth() { return health; }
+    public float getMaxHealth() { return maxHealth; }
+    public boolean isDead() { return isDead; }
 
     private boolean checkCollision(World world, BlockDataManager blockDataManager) {
         int minX = (int) Math.floor(position.x - size.x / 2);
@@ -91,6 +169,19 @@ public class Player {
     }
 
     public void move(float dx, float dy, float dz, float speed) {
+        if (flying || isSwimming) {
+            // Apply pitch-based vertical movement if looking up/down while moving forward/backward
+            float pitchRad = (float) Math.toRadians(pitch);
+            float verticalFactor = -(float) Math.sin(pitchRad);
+            
+            // Assuming dz corresponds to forward/backward movement in the local frame
+            // We need to know if the move was intentional forward movement.
+            // Since dx/dz are passed as multipliers, we can check their magnitude.
+            float horizontalSpeed = (float) Math.sqrt(dx * dx + dz * dz);
+            if (horizontalSpeed > 0.1f) {
+                velocity.y += verticalFactor * horizontalSpeed * speed;
+            }
+        }
         velocity.x += dx * speed;
         velocity.y += dy * speed;
         velocity.z += dz * speed;
@@ -100,6 +191,9 @@ public class Player {
         if (onGround) {
             velocity.y = 8.5f;
             onGround = false;
+        } else if (isSwimming) {
+            velocity.y += 0.5f; // Swim up (legacy style)
+            if (velocity.y > 4.0f) velocity.y = 4.0f;
         }
     }
 
