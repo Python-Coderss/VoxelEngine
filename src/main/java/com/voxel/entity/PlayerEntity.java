@@ -78,7 +78,7 @@ public class PlayerEntity extends Entity {
         float attackSwing = 0;
         if (attackAnimTime > 0) {
             attackAnimTime -= dt * 5.0f;
-            attackSwing = (float) Math.sin(Math.max(0, attackAnimTime) * Math.PI) * 1.5f; // Radians approx 85 deg
+            attackSwing = (float) Math.sin(Math.max(0, attackAnimTime) * Math.PI) * 85.0f; // Degrees
         }
 
         if (head != null) {
@@ -88,18 +88,18 @@ public class PlayerEntity extends Entity {
         if (horizontalSpeed > 0.1f && player.isOnGround() && !isRolling) {
             walkAnimTime += dt * horizontalSpeed * 0.2f;
 
-            // 1. Exaggerated Limb Swing
-            float swingAngle = (float) Math.sin(walkAnimTime * 10.0f) * 0.95f; 
+            // 1. Exaggerated Limb Swing (degrees)
+            float swingAngle = (float) Math.sin(walkAnimTime * 12.0f) * 35.0f; 
             if (leftLeg != null) leftLeg.rotation.x = -swingAngle;
             if (rightLeg != null) rightLeg.rotation.x = swingAngle;
             
             if (leftArm != null) {
-                leftArm.rotation.x = swingAngle;
-                leftArm.rotation.z = (float) Math.toRadians(-5.0f);
+                leftArm.rotation.x = swingAngle * 0.7f;
+                leftArm.rotation.z = -5.0f;
             }
             if (rightArm != null) {
-                rightArm.rotation.x = -swingAngle + attackSwing;
-                rightArm.rotation.z = (float) Math.toRadians(5.0f);
+                rightArm.rotation.x = -swingAngle * 0.7f + attackSwing;
+                rightArm.rotation.z = 5.0f;
             }
 
             // 2. Body Bob (Y-oscillation) - Apply relative to base position

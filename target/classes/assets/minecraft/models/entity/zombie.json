@@ -1,29 +1,58 @@
 {
-  "parent": "humanoid.json",
   "parts": [
     {
       "name": "head",
-      "texture": "concrete_green"
+      "from": [-4.0, 24.0, -4.0],
+      "size": [8.0, 8.0, 8.0],
+      "absolute_offset": [0.0, 24.0, 0.0],
+      "texture": "zombie_skin",
+      "uv": [0, 0],
+      "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "body",
-      "texture": "concrete_cyan"
+      "from": [-4.0, 12.0, -2.0],
+      "size": [8.0, 12.0, 4.0],
+      "absolute_offset": [0.0, 12.0, 0.0],
+      "texture": "zombie_skin",
+      "uv": [16, 16],
+      "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "left_arm",
-      "texture": "concrete_lime"
+      "from": [-8.0, 12.0, -2.0],
+      "size": [4.0, 12.0, 4.0],
+      "absolute_offset": [-6.0, 22.0, 0.0],
+      "texture": "zombie_skin",
+      "uv": [32, 48],
+      "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "right_arm",
-      "texture": "concrete_lime"
+      "from": [4.0, 12.0, -2.0],
+      "size": [4.0, 12.0, 4.0],
+      "absolute_offset": [6.0, 22.0, 0.0],
+      "texture": "zombie_skin",
+      "uv": [40, 16],
+      "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "left_leg",
-      "texture": "concrete_blue"
+      "from": [-4.0, 0.0, -2.0],
+      "size": [4.0, 12.0, 4.0],
+      "absolute_offset": [-2.0, 10.0, 0.0],
+      "texture": "zombie_skin",
+      "uv": [16, 48],
+      "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "right_leg",
-      "texture": "concrete_blue"
+      "from": [0.0, 0.0, -2.0],
+      "size": [4.0, 12.0, 4.0],
+      "absolute_offset": [2.0, 10.0, 0.0],
+      "texture": "zombie_skin",
+      "uv": [0, 16],
+      "texture_mapping": "cuboid_atlas"
     }
   ]
 }
