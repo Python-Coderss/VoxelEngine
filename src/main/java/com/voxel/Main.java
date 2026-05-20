@@ -138,6 +138,7 @@ public class Main {
     private float combatTime = 0.0f;
     private double lastAttackTime = 0;
     private double lastRollTime = 0;
+    private boolean combatMode = false;
 
     private enum GameMode {
         SURVIVAL,
@@ -293,7 +294,8 @@ public class Main {
 
     private void spawnInitialEnemies() {
         for (int i = 0; i < 5; i++) {
-            com.voxel.entity.EnemyEntity zombie = new com.voxel.entity.EnemyEntity(100 + i, new Vector3f(1030 + i * 10, 64, 1030), textureManager);
+            com.voxel.entity.ZombieEntity zombie = new com.voxel.entity.ZombieEntity(100 + i, new Vector3f(1030 + i * 10, 64, 1030), textureManager);
+            zombie.setWorld(world);
             entityManager.addEntity(zombie);
         }
     }
@@ -575,23 +577,14 @@ public class Main {
 
         if (cameraShake > 0) cameraShake -= dt * 5.0f;
 
-        // --- Enemy AI and Combat ---
+        // --- Enemy AI (now handled inside EnemyEntity) ---
         Vector3f pPos = player.getPosition();
         for (int i = 0; i < entityManager.getEntityCount(); i++) {
             com.voxel.entity.Entity e = entityManager.getEntity(i);
-            if (e == playerEntity) continue;
-            
             if (e instanceof com.voxel.entity.EnemyEntity) {
                 com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) e;
-                if (enemy.isDead()) continue;
-                
-                // Simple Follow AI
-                Vector3f toPlayer = new Vector3f(pPos).sub(enemy.position);
-                float dist = toPlayer.length();
-                if (dist < 20.0f && dist > 1.4f) {
-                    toPlayer.normalize().mul(dt * 2.2f);
-                    enemy.position.add(toPlayer.x, 0, toPlayer.z);
-                    enemy.rotation.y = (float) Math.toDegrees(Math.atan2(toPlayer.x, toPlayer.z));
+                if (!enemy.isDead()) {
+                    enemy.updateAI(pPos, dt);
                 }
             }
         }
@@ -616,7 +609,8 @@ public class Main {
 
         if (leftMousePressedThisFrame && !inventoryOpen) {
             double now = glfwGetTime();
-            if (now - lastAttackTime > 0.25) {
+            float attackCooldown = combatMode ? 0.6f : 0.25f;
+            if (now - lastAttackTime > attackCooldown) {
                 playerEntity.startAttack();
                 performCombatAttack();
                 lastAttackTime = now;
@@ -655,6 +649,16 @@ public class Main {
         if (mvLen > 0) {
             dx /= mvLen;
             dz /= mvLen;
+
+            if (combatMode) {
+                // Restrict to 1 line of movement (axis-aligned)
+                if (Math.abs(dx) > Math.abs(dz)) {
+                    dz = 0;
+                } else {
+                    dx = 0;
+                }
+            }
+
             if (cameraMode == CameraMode.THIRD_PERSON) {
                 playerYaw = (float) Math.toDegrees(Math.atan2(dz, dx));
             }
@@ -678,23 +682,23 @@ public class Main {
     private void performCombatAttack() {
         Vector3f pPos = player.getPosition();
         Vector3f pDir = getLookDirection();
-        
+
         for (int i = 0; i < entityManager.getEntityCount(); i++) {
             com.voxel.entity.Entity e = entityManager.getEntity(i);
             if (e instanceof com.voxel.entity.EnemyEntity) {
                 com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) e;
                 if (enemy.isDead()) continue;
-                
+
                 Vector3f toEnemy = new Vector3f(enemy.position).sub(pPos);
                 float dist = toEnemy.length();
-                
-                if (dist < 4.0f) {
+
+                if (dist < 4.5f) {
                     toEnemy.normalize();
                     float dot = toEnemy.dot(pDir);
-                    if (dot > 0.5f) {
-                        Vector3f knockback = new Vector3f(toEnemy).mul(0.8f);
-                        enemy.takeDamage(5.0f, knockback);
-                        cameraShake = 1.0f;
+                    if (dot > 0.45f) {
+                        Vector3f knockback = new Vector3f(toEnemy).mul(1.1f);
+                        enemy.takeDamage(7.0f, knockback);   // Uses EnemyEntity's takeDamage → onHit → die
+                        cameraShake = 1.3f;
                     }
                 }
             }
@@ -809,6 +813,15 @@ public class Main {
             if (key == GLFW_KEY_E) {
                 toggleInventory();
                 showSelectedItemName();
+                return;
+            }
+
+            if (key == GLFW_KEY_C) {
+                combatMode = !combatMode;
+                if (combatMode) {
+                    cameraMode = CameraMode.THIRD_PERSON;
+                }
+                setStatus("Combat Mode: " + (combatMode ? "ON (Story Mode style)" : "OFF"));
                 return;
             }
 

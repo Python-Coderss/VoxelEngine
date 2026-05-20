@@ -33,6 +33,7 @@ public class TextureManager {
     private int textureArrayId;
     private final Map<String, Integer> textureToIndex = new HashMap<>();
     private final List<String> texturePaths = new ArrayList<>();
+    private static final int MAX_LAYERS = 1024;
 
     public void loadTextures(String... directoryPaths) {
         List<Path> allFiles = new ArrayList<>();
@@ -75,7 +76,7 @@ public class TextureManager {
             glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
 
             glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8,
-                    TEXTURE_SIZE, TEXTURE_SIZE, 1024);
+                    TEXTURE_SIZE, TEXTURE_SIZE, 1100);
         }
 
         glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
@@ -91,6 +92,7 @@ public class TextureManager {
 
         glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
     }
+
     private void loadAndUploadTexture(String path, int layer) {
         try {
             BufferedImage img = ImageIO.read(new File(path));
