@@ -1,6 +1,9 @@
 package com.voxel.entity;
 
 import org.joml.Vector3f;
+
+import com.voxel.Player;
+
 import java.util.ArrayList;
 
 /**
@@ -9,8 +12,8 @@ import java.util.ArrayList;
 public class ZombieEntity extends EnemyEntity {
     private ModelPart leftArm, rightArm, leftLeg, rightLeg;
 
-    public ZombieEntity(int id, Vector3f position, com.voxel.utils.TextureManager textureManager) {
-        super(id, position, textureManager);
+    public ZombieEntity(int id, Vector3f position, com.voxel.utils.TextureManager textureManager, Player p2) {
+        super(id, position, textureManager, p2);
         loadModel("src/main/resources/assets/minecraft/models/entity/zombie.json", textureManager);
 
         for (ModelPart p : parts) {

@@ -56,11 +56,7 @@ public class EntityManager {
             int partOffset = allParts.size();
             int partCount = entity.parts.size();
             
-            float renderY = entity.position.y;
-            if (entity instanceof EnemyEntity) {
-                renderY += 1.0f; // Render zombie model 1 block above collider
-            }
-            entityBuffer.putFloat(entity.position.x).putFloat(renderY).putFloat(entity.position.z);
+            entityBuffer.putFloat(entity.position.x).putFloat(entity.position.y).putFloat(entity.position.z);
             entityBuffer.putFloat(0); // Padding
             
             entityBuffer.putFloat((float) Math.toRadians(entity.rotation.x));

@@ -2,47 +2,53 @@ package com.voxel.entity;
 
 import com.voxel.Player;
 import com.voxel.World;
+import org.joml.Vector2f;
 import org.joml.Vector3f;
 import org.joml.Vector3i;
-import org.json.JSONArray;
-import org.json.JSONObject;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.List;
-import java.util.PriorityQueue;
-import java.util.Set;
+import java.util.*;
 
 /**
- * Basic enemy entity with simple AI and Story Mode style animations.
- * Now uses the same humanoid model as the player.
+ * EnemyEntity - Omnipotent beings confined to a physical body.
+ * Java 8 compatible + Anti-phasing fixes
  */
 public class EnemyEntity extends Entity {
-    private ModelPart head;
-    private ModelPart leftArm, rightArm;
-    private ModelPart leftLeg, rightLeg;
+
+    private ModelPart head, leftArm, rightArm, leftLeg, rightLeg;
+
     protected float animTime = 0.0f;
-    private float health = 20.0f;
+    private float health = 25.0f;
     private boolean isDead = false;
     private float hitFlashTime = 0.0f;
 
     private World world;
+
+    private enum State { OBSERVING, PREDICTING, HUNTING, ATTACKING }
+    private State state = State.OBSERVING;
+
     private List<Vector3i> path = new ArrayList<>();
     private int pathIndex = 0;
     private long lastPathfindTime = 0;
 
-    protected EnemyEntity(int id, Vector3f position, com.voxel.utils.TextureManager textureManager) {
+    private Vector3f lastKnownPlayerPos = new Vector3f();
+    private Vector3f predictedPlayerPos = new Vector3f();
+
+    private long lastSawPlayerTime = 0;
+    private float attackCooldown = 0.0f;
+    private float frustration = 0.0f;
+
+    private Vector3f prevPosition = new Vector3f();
+    private float lastBob = 0.0f;
+
+    private Player player;
+
+    // ==================== DEBUG ====================
+    private static final boolean DEBUG_AI = false;
+
+    protected EnemyEntity(int id, Vector3f position, com.voxel.utils.TextureManager textureManager, Player p) {
         super(id, position);
-        
-        // Load dedicated zombie model (identical to player except uses zombie_skin texture)
+
         loadModel("src/main/resources/assets/minecraft/models/entity/zombie.json", textureManager);
 
-        // Cache parts for animation
         for (ModelPart part : parts) {
             if (part.name.equals("head")) head = part;
             else if (part.name.equals("left_arm")) leftArm = part;
@@ -50,183 +56,319 @@ public class EnemyEntity extends Entity {
             else if (part.name.equals("left_leg")) leftLeg = part;
             else if (part.name.equals("right_leg")) rightLeg = part;
         }
+        this.player = p;
     }
-
-    private float lastBob = 0.0f;
-    private Vector3f prevPosition = new Vector3f();
 
     @Override
     public void update(float dt) {
-    	super.update(dt);
+        super.update(dt);
         if (isDead) return;
 
-        // Calculate movement speed for responsive animation
+        attackCooldown = Math.max(0, attackCooldown - dt);
+        frustration = Math.max(0, frustration - dt * 0.25f);
+
         Vector3f velocity = new Vector3f(position).sub(prevPosition);
         float speed = velocity.length() / Math.max(dt, 0.00001f);
         prevPosition.set(position);
 
-        animTime += dt * Math.max(0.6f, speed);
+        animTime += dt * Math.max(0.9f, speed);
 
-        float walkIntensity = Math.min(1.0f, speed * 0.18f);
+        float walkIntensity = Math.min(1.0f, speed * 0.24f);
 
-
-        // Bobbing + subtle body tilt
-        float bob = (float) Math.abs(Math.sin(animTime * 5.5f)) * 0.09f * walkIntensity;
+        float bob = (float) Math.sin(animTime * 7.0f) * 0.092f * walkIntensity;
         position.y -= lastBob;
         position.y += bob;
         lastBob = bob;
 
-        rotation.z = (float) Math.sin(animTime * 5.0f) * 3.5f * walkIntensity;
+        rotation.z = (float) Math.sin(animTime * 6.2f) * 4.8f * walkIntensity;
 
         if (hitFlashTime > 0) hitFlashTime -= dt;
     }
 
-    public void takeDamage(float amount, Vector3f knockback) {
-        if (isDead) return;
+    public void updateAI(Vector3f playerPos, Vector3f playerVelocity, float dt) {
+        if (isDead || world == null) return;
 
-        health -= amount;
-        position.add(knockback);
-        hitFlashTime = 0.3f;
+        float distance = position.distance(playerPos);
 
-        // Per-enemy hit reaction
-        onHit();
-
-        if (health <= 0) {
-            die();
+        if (DEBUG_AI) {
+            System.out.printf("[AI] Entity(%.1f, %.1f, %.1f) | Player(%.1f, %.1f, %.1f) | Dist: %.2f | State: %s%n",
+                    position.x, position.y, position.z,
+                    playerPos.x, playerPos.y, playerPos.z,
+                    distance, state);
         }
-    }
 
-    protected void onHit() {
-        // Default hit behavior - override in subclasses for custom effects
-    }
+        // Update last known player position
+        if (distance < 26f) {
+            lastKnownPlayerPos.set(playerPos);
+            lastSawPlayerTime = System.currentTimeMillis();
 
-    public void performAttack(Player player) {
-        // Default enemy attack behavior - override per enemy type
-        if (player != null && !isDead) {
-            Vector3f toPlayer = new Vector3f(player.getPosition()).sub(this.position);
-            if (toPlayer.length() < 2.5f) {
-                // TODO: Deal damage to player
-                System.out.println("Enemy attacked player!");
+            if (playerVelocity != null) {
+                predictedPlayerPos.set(playerPos).add(new Vector3f(playerVelocity).mul(0.75f));
+            } else {
+                predictedPlayerPos.set(playerPos);
+            }
+
+            if (DEBUG_AI) {
+                System.out.printf("[AI] Saw player → Predicted: (%.1f, %.1f, %.1f)%n",
+                        predictedPlayerPos.x, predictedPlayerPos.y, predictedPlayerPos.z);
             }
         }
-    }
 
-    private void die() {
-        isDead = true;
-        rotation.x = 90.0f; // Fall over
-        // position.y -= 0.3f;
-    }
+        // Determine state
+        State newState;
+        if (distance < 2.7f) {
+            newState = State.ATTACKING;
+        } else if (distance < 20f || (System.currentTimeMillis() - lastSawPlayerTime) < 7000) {
+            newState = State.HUNTING;
+        } else {
+            newState = State.PREDICTING;
+        }
 
-    public boolean isDead() { return isDead; }
+        if (newState != state) {
+            if (DEBUG_AI) System.out.println("[AI] State changed: " + state + " → " + newState);
+            state = newState;
+        }
 
-    public void setWorld(World world) {
-        this.world = world;
+        switch (state) {
+            case PREDICTING:
+                observeAndPredict(dt);
+                break;
+            case HUNTING:
+                hunt(dt);
+                break;
+            case ATTACKING:
+                attackPlayer(playerPos, dt);
+                break;
+        }
     }
 
     public void updateAI(Vector3f playerPos, float dt) {
-        if (isDead || world == null) return;
+        updateAI(playerPos, player.getVelocity(), dt);
+    }
 
+    private void observeAndPredict(float dt) {
+        if (DEBUG_AI) System.out.println("[AI] PREDICTING - moving toward predicted position");
+        moveToward(predictedPlayerPos, dt, 1.45f);
+        frustration += dt * 0.35f;
+    }
+
+    private void hunt(float dt) {
         long now = System.currentTimeMillis();
 
-        // Recalculate path every 800ms or when path is empty
-        if (path.isEmpty() || now - lastPathfindTime > 800) {
-            path = findPath(this.position, playerPos);
-            pathIndex = 0;
-            lastPathfindTime = now;
+        boolean shouldRepath = path.isEmpty() || pathIndex >= path.size() || now - lastPathfindTime > 420;
+
+        if (DEBUG_AI && shouldRepath) {
+            System.out.printf("[AI] Repathing triggered | Empty: %b | Index: %d/%d | Time: %dms%n",
+                    path.isEmpty(), pathIndex, path.size(), now - lastPathfindTime);
         }
 
-        if (path.isEmpty() || pathIndex >= path.size()) {
-            // Fallback: direct movement if no path
-            Vector3f toPlayer = new Vector3f(playerPos).sub(this.position);
-            if (toPlayer.length() > 1.5f && toPlayer.length() < 25f) {
-                toPlayer.normalize().mul(dt * 2.0f);
-                this.position.add(toPlayer.x, 0, toPlayer.z);
-                this.rotation.y = (float) Math.toDegrees(Math.atan2(toPlayer.x, toPlayer.z));
+        if (shouldRepath) {
+            path = findPath(this.position, predictedPlayerPos);
+            pathIndex = 0;
+            lastPathfindTime = now;
+
+            if (DEBUG_AI) {
+                System.out.println("[AI] Pathfinding complete. Path length: " + path.size());
+                if (!path.isEmpty()) {
+                    Vector3i start = path.get(0);
+                    Vector3i end = path.get(path.size() - 1);
+                    System.out.printf("[AI] Path: (%d,%d,%d) ... → (%d,%d,%d)%n",
+                            start.x, start.y, start.z, end.x, end.y, end.z);
+                }
             }
+        }
+
+        if (!path.isEmpty() && pathIndex < path.size()) {
+            followPath(dt);
+        } else {
+            if (DEBUG_AI) System.out.println("[AI] No valid path - falling back to direct movement");
+            moveToward(predictedPlayerPos, dt, 2.4f);
+        }
+    }
+
+    private void attackPlayer(Vector3f playerPos, float dt) {
+        if (DEBUG_AI) System.out.println("[AI] ATTACKING");
+
+        Vector3f toPlayer = new Vector3f(playerPos).sub(position);
+        float dist = toPlayer.length();
+
+        if (dist > 0.01f) {
+            rotation.y = (float) Math.toDegrees(Math.atan2(toPlayer.x, toPlayer.z));
+        }
+
+        if (attackCooldown <= 0 && dist < 3.1f) {
+            performAttack(playerPos);
+            attackCooldown = 1.25f;
+            frustration += 1.0f;
+        }
+
+        if (dist < 1.5f) {
+            toPlayer.normalize().mul(-dt * 3.2f);
+            tryMove(toPlayer.x, 0, toPlayer.z);
+        }
+    }
+
+    public void performAttack(Vector3f playerPos) {
+        if (DEBUG_AI) System.out.println("The confined entity strikes with unnatural hatred!");
+    }
+
+    // ====================== MOVEMENT ======================
+
+    private void moveToward(Vector3f target, float dt, float speed) {
+        Vector3f dir = new Vector3f(target).sub(position);
+        // Allow some vertical direction, but collision will keep us grounded
+        float len = dir.length();
+
+        if (DEBUG_AI) {
+            System.out.printf("[MOVE] Target(%.1f,%.1f,%.1f) Dist=%.2f Speed=%.2f%n",
+                    target.x, target.y, target.z, len, speed);
+        }
+
+        if (len > 0.35f) {
+            dir.normalize().mul(speed * dt);
+            tryMove(dir.x, dir.y, dir.z);
+
+            if (new Vector2f(dir.x, dir.z).length() > 0.001f) {
+                rotation.y = (float) Math.toDegrees(Math.atan2(dir.x, dir.z));
+            }
+        }
+    }
+
+    private void followPath(float dt) {
+        Vector3i targetNode = path.get(Math.min(pathIndex, path.size() - 1));
+        // Target the center of the node, but keep Y as the base
+        Vector3f targetPos = new Vector3f(targetNode.x + 0.5f, (float)targetNode.y, targetNode.z + 0.5f);
+
+        if (DEBUG_AI) {
+            System.out.printf("[PATH] Following node %d/%d → (%.1f, %.1f, %.1f)%n",
+                    pathIndex, path.size(), targetPos.x, targetPos.y, targetPos.z);
+        }
+
+        moveToward(targetPos, dt, 2.45f);
+
+        // Distance check in 2D (XZ) is often more reliable for pathing
+        float distSq = new Vector2f(position.x - targetPos.x, position.z - targetPos.z).lengthSquared();
+        if (distSq < 0.36f && Math.abs(position.y - targetPos.y) < 1.1f) {
+            if (DEBUG_AI) System.out.println("[PATH] Reached node " + pathIndex);
+            pathIndex++;
+        }
+    }
+
+    private void tryMove(float dx, float dy, float dz) {
+        if (DEBUG_AI) {
+            System.out.printf("[TRY MOVE] dx=%.3f, dy=%.3f, dz=%.3f | Current(%.2f,%.2f,%.2f)%n",
+                    dx, dy, dz, position.x, position.y, position.z);
+        }
+
+        // 1. Try full move (including intended verticality)
+        if (canOccupy(position.x + dx, position.y + dy, position.z + dz)) {
+            position.add(dx, dy, dz);
+            if (DEBUG_AI) System.out.println("[TRY MOVE] Full move SUCCESS");
             return;
         }
 
-        // Follow current path node
-        Vector3i target = path.get(Math.min(pathIndex, path.size() - 1));
-        Vector3f targetPos = new Vector3f(target.x + 0.5f, target.y, target.z + 0.5f);
+        // 2. Auto-step UP (Minecraft style)
+        // If blocked horizontally, check if we can step up 1 block
+        if (canOccupy(position.x + dx, position.y + 1.0f, position.z + dz)) {
+            position.add(dx, 1.0f, dz);
+            if (DEBUG_AI) System.out.println("[TRY MOVE] Auto-step UP success");
+            return;
+        }
 
-        Vector3f toTarget = new Vector3f(targetPos).sub(this.position);
-        float dist = toTarget.length();
+        // 3. Auto-step DOWN
+        // If no ground at current level, check if there's ground 1 block below
+        if (canOccupy(position.x + dx, position.y - 1.0f, position.z + dz)) {
+            position.add(dx, -1.0f, dz);
+            if (DEBUG_AI) System.out.println("[TRY MOVE] Auto-step DOWN success");
+            return;
+        }
 
-        if (dist < 0.6f) {
-            pathIndex++;
-        } else {
-            toTarget.normalize().mul(dt * 2.3f);
-            this.position.add(toTarget.x, 0, toTarget.z);
-            this.rotation.y = (float) Math.toDegrees(Math.atan2(toTarget.x, toTarget.z));
+        if (DEBUG_AI) System.out.println("[TRY MOVE] Collision detected - trying X/Z separately");
+
+        // 4. Try X only
+        if (canOccupy(position.x + dx, position.y, position.z)) {
+            position.x += dx;
+            if (DEBUG_AI) System.out.println("[TRY MOVE] X move accepted");
+        }
+
+        // 5. Try Z only
+        if (canOccupy(position.x, position.y, position.z + dz)) {
+            position.z += dz;
+            if (DEBUG_AI) System.out.println("[TRY MOVE] Z move accepted");
         }
     }
 
-    private boolean isWalkable(int x, int y, int z) {
-        if (world == null) return true;
+    private boolean canOccupy(float x, float y, float z) {
+        int ix = (int) Math.floor(x);
+        int iy = (int) Math.floor(y + 0.1f); // Add epsilon to handle bobbing/jitter
+        int iz = (int) Math.floor(z);
 
-        // Check two blocks high (zombie height) + ground below
-        boolean ground = world.getVoxel(x, y - 1, z) != 0;           // solid block below
-        boolean feet   = world.getVoxel(x, y,     z) == 0;           // air at feet
-        boolean head   = world.getVoxel(x, y + 1, z) == 0;           // air at head
+        // Simplification: isWalkable already checks ground, feet, and head.
+        // Checking iy and iy+1 was logically impossible as it required iy to be both AIR and SOLID.
+        boolean walkable = isWalkable(ix, iy, iz);
 
-        return ground && feet && head;
+        if (DEBUG_AI) {
+            System.out.printf("[CAN OCCUPY] (%d,%d,%d) -> %b%n", ix, iy, iz, walkable);
+        }
+        return walkable;
     }
 
+    // ====================== PATHFINDING ======================
+
     private List<Vector3i> findPath(Vector3f start, Vector3f goal) {
-        if (world == null) return Collections.emptyList();
+        if (world == null) {
+            if (DEBUG_AI) System.out.println("[PATHFIND] ERROR: World is null");
+            return Collections.emptyList();
+        }
 
-        int sx = (int) Math.floor(start.x);
-        int sy = (int) Math.floor(start.y);
-        int sz = (int) Math.floor(start.z);
+        // Apply epsilon to Y coordinates to ensure we are checking the correct block level
+        int sx = (int) Math.floor(start.x), sy = (int) Math.floor(start.y + 0.1f), sz = (int) Math.floor(start.z);
+        int gx = (int) Math.floor(goal.x), gy = (int) Math.floor(goal.y + 0.1f), gz = (int) Math.floor(goal.z);
 
-        int gx = (int) Math.floor(goal.x);
-        int gy = (int) Math.floor(goal.y);
-        int gz = (int) Math.floor(goal.z);
+        if (DEBUG_AI) {
+            System.out.printf("[PATHFIND] Start(%d,%d,%d) → Goal(%d,%d,%d)%n", sx, sy, sz, gx, gy, gz);
+        }
 
-        // Simple A* for short range
-        PriorityQueue<Node> open = new PriorityQueue<>(Comparator.comparingDouble(n -> n.f));
+        PriorityQueue<Node> open = new PriorityQueue<>(new Comparator<Node>() {
+            public int compare(Node n1, Node n2) {
+                return Double.compare(n1.f, n2.f);
+            }
+        });
+
         Set<Vector3i> closed = new HashSet<>();
+        Map<Vector3i, Vector3i> cameFrom = new HashMap<>();
 
         Node startNode = new Node(sx, sy, sz, 0, heuristic(sx, sy, sz, gx, gy, gz));
         open.add(startNode);
 
-        java.util.Map<Vector3i, Vector3i> cameFrom = new java.util.HashMap<>();
+        int nodesSearched = 0;
+        final int MAX_NODES = 500; // Increased search limit for 3D
 
-        int maxNodes = 200; // limit search
-        int count = 0;
-
-        while (!open.isEmpty() && count < maxNodes) {
+        while (!open.isEmpty() && nodesSearched < MAX_NODES) {
             Node current = open.poll();
             Vector3i cpos = new Vector3i(current.x, current.y, current.z);
 
-            if (current.x == gx && current.z == gz && Math.abs(current.y - gy) <= 1) {
-                // Reconstruct path
-                List<Vector3i> path = new ArrayList<>();
-                Vector3i curr = cpos;
-                while (curr != null) {
-                    path.add(curr);
-                    curr = cameFrom.get(curr);
-                }
-                Collections.reverse(path);
-                return path;
+            if (Math.abs(current.x - gx) <= 1 && Math.abs(current.z - gz) <= 1 &&
+                Math.abs(current.y - gy) <= 1) { // Tightened Y tolerance
+                List<Vector3i> result = reconstructPath(cameFrom, cpos);
+                if (DEBUG_AI) System.out.println("[PATHFIND] Path found successfully! Length: " + result.size());
+                return result;
             }
 
             closed.add(cpos);
-            count++;
+            nodesSearched++;
 
-            // 4 directions (grid movement)
-            int[][] dirs = {{1,0}, {-1,0}, {0,1}, {0,-1}};
-            for (int[] d : dirs) {
-                int nx = current.x + d[0];
-                int nz = current.z + d[1];
-                int ny = current.y;
+            for (int[] dir : NEIGHBOR_DIRECTIONS) {
+                int nx = current.x + dir[0];
+                int ny = current.y + dir[1];
+                int nz = current.z + dir[2];
 
                 Vector3i neighbor = new Vector3i(nx, ny, nz);
-                if (closed.contains(neighbor)) continue;
-                if (!isWalkable(nx, ny, nz)) continue;
+                if (closed.contains(neighbor) || !isWalkable(nx, ny, nz)) continue;
 
-                double g = current.g + 1;
+                double g = current.g + ((dir[0] != 0 && dir[2] != 0) ? 1.414 : 1.0);
+                if (dir[1] != 0) g += 0.5; // Slight penalty for vertical movement
+                
                 double h = heuristic(nx, ny, nz, gx, gy, gz);
                 Node next = new Node(nx, ny, nz, g, h);
 
@@ -235,13 +377,68 @@ public class EnemyEntity extends Entity {
             }
         }
 
+        if (DEBUG_AI) System.out.println("[PATHFIND] No path found or search limit reached");
         return Collections.emptyList();
     }
 
-    private double heuristic(int x, int y, int z, int gx, int gy, int gz) {
-        return Math.abs(x - gx) + Math.abs(z - gz) + Math.abs(y - gy) * 0.5;
+    private List<Vector3i> reconstructPath(Map<Vector3i, Vector3i> cameFrom, Vector3i end) {
+        List<Vector3i> pathList = new ArrayList<>();
+        Vector3i current = end;
+        while (current != null) {
+            pathList.add(current);
+            current = cameFrom.get(current);
+        }
+        Collections.reverse(pathList);
+        return pathList;
     }
 
+    private static final int[][] NEIGHBOR_DIRECTIONS = {
+            {1,0,0}, {-1,0,0}, {0,0,1}, {0,0,-1}, // Horizontal
+            {1,0,1}, {1,0,-1}, {-1,0,1}, {-1,0,-1}, // Diagonal
+            {1,1,0}, {-1,1,0}, {0,1,1}, {0,1,-1}, // Step up
+            {1,-1,0}, {-1,-1,0}, {0,-1,1}, {0,-1,-1} // Step down
+    };
+
+    private boolean isWalkable(int x, int y, int z) {
+        if (world.getVoxel(x, y - 1, z) == 0) return false; // no ground
+        if (world.getVoxel(x, y, z) != 0) return false;     // feet blocked
+        if (world.getVoxel(x, y + 1, z) != 0) return false; // head blocked
+        return true;
+    }
+
+    private double heuristic(int x, int y, int z, int gx, int gy, int gz) {
+        return Math.abs(x - gx) + Math.abs(y - gy) + Math.abs(z - gz);
+    }
+
+    public void takeDamage(float amount, Vector3f knockback) {
+        if (isDead) return;
+
+        health -= amount;
+        position.add(knockback);
+        hitFlashTime = 0.35f;
+        frustration += 3.0f;
+
+        if (DEBUG_AI) System.out.printf("[DAMAGE] Took %.1f damage. Remaining health: %.1f%n", amount, health);
+
+        if (health <= 0) {
+            die();
+        }
+    }
+
+    private void die() {
+        isDead = true;
+        rotation.x = 78.0f;
+        if (DEBUG_AI) System.out.println("The omnipotent being is released from its fleshly cage...");
+    }
+
+    public boolean isDead() { return isDead; }
+    public void setWorld(World world) { this.world = world; }
+
+    // Optional helper
+    public void setDebugEnabled(boolean enabled) {
+        // You can make DEBUG_AI non-final and modify it here if needed
+    }
+    
     private static class Node {
         int x, y, z;
         double g, h, f;
@@ -255,4 +452,6 @@ public class EnemyEntity extends Entity {
             this.f = g + h;
         }
     }
+
+    
 }
