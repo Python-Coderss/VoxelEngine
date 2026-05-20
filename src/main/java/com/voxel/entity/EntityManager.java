@@ -20,9 +20,9 @@ public class EntityManager {
     private static final int MAX_ENTITIES = 1024;
     private static final int MAX_PARTS = 8192;
     
-    // Entity data size: position(3) + padding(1) + rotation(3) + padding(1) + partCount(1) + partOffset(1) + padding(2) = 12 floats (48 bytes)
+    // Entity data size: position(3) + health(1) + rotation(3) + maxHealth(1) + partCount(1) + partOffset(1) + padding(2) = 12 floats (48 bytes)
     private static final int ENTITY_STRIDE = 12;
-    // Part data size: offset(3) + padding(1) + absoluteOffset(3) + padding(1) + size(3) + textureIndex(1) + rotation(3) + textureMapping(1) = 16 floats (64 bytes)
+    // Part data size: offset(3) + uvU(1) + absOffset(3) + uvV(1) + size(3) + texIdx(1) + rotation(3) + mapping(1) = 16 floats (64 bytes)
     private static final int PART_STRIDE = 16;
 
     public EntityManager() {
@@ -33,7 +33,7 @@ public class EntityManager {
     private void setupBuffers() {
         entitySSBO = glCreateBuffers();
         glNamedBufferStorage(entitySSBO, (long) MAX_ENTITIES * ENTITY_STRIDE * 4, GL_DYNAMIC_STORAGE_BIT);
-        
+
         partSSBO = glCreateBuffers();
         glNamedBufferStorage(partSSBO, (long) MAX_PARTS * PART_STRIDE * 4, GL_DYNAMIC_STORAGE_BIT);
     }
@@ -51,23 +51,35 @@ public class EntityManager {
     public void uploadToGPU() {
         java.nio.ByteBuffer entityBuffer = MemoryUtil.memAlloc(entities.size() * ENTITY_STRIDE * 4);
         List<ModelPart> allParts = new ArrayList<>();
-        
+
         for (Entity entity : entities) {
             int partOffset = allParts.size();
             int partCount = entity.parts.size();
-            
+
+            // position
             entityBuffer.putFloat(entity.position.x).putFloat(entity.position.y).putFloat(entity.position.z);
-            entityBuffer.putFloat(0); // Padding
-            
+
+            float health = 1.0f;
+            float maxHealth = 1.0f;
+            if (entity instanceof EnemyEntity) {
+                health = ((EnemyEntity) entity).getHealth();
+                maxHealth = ((EnemyEntity) entity).getMaxHealth();
+            }
+            // health
+            entityBuffer.putFloat(health);
+
+            // rotation
             entityBuffer.putFloat((float) Math.toRadians(entity.rotation.x));
             entityBuffer.putFloat((float) Math.toRadians(entity.rotation.y));
             entityBuffer.putFloat((float) Math.toRadians(entity.rotation.z));
-            entityBuffer.putFloat(0); // Padding
             
+            // maxHealth
+            entityBuffer.putFloat(maxHealth);
+
+            // counts and offsets
             entityBuffer.putInt(partCount);
             entityBuffer.putInt(partOffset);
             entityBuffer.putFloat(0).putFloat(0); // Padding
-            
             allParts.addAll(entity.parts);
         }
         entityBuffer.flip();

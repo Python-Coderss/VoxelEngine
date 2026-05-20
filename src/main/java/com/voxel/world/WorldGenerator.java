@@ -33,7 +33,10 @@ public class WorldGenerator {
                 return 0; // Hollow inside
             }
             if (y == 78) {
-                // Roof with holes for god rays
+                // Observatory Floor for the top pool
+                if (distSq < 49) return 15; // Water pool (7x7 approx)
+                if (distSq < 64) return 2; // Stone rim
+                // Roof with holes for god rays (further out)
                 if ((x % 4 == 0) && (z % 4 == 0)) return 0; 
                 return 2;
             }

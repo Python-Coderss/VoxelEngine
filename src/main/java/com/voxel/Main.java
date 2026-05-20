@@ -126,6 +126,7 @@ public class Main {
     private final UILayer.UIElement[] slotCountDigit2 = new UILayer.UIElement[INVENTORY_SIZE];
     private UILayer.UITextElement itemNameElement;
     private double itemNameDisplayUntil = 0.0;
+    private final UILayer.UIElement[] playerHearts = new UILayer.UIElement[10];
     private UILayer.UITextElement commandTextElement;
     private UILayer.UITextElement statusTextElement;
 
@@ -139,6 +140,10 @@ public class Main {
     private double lastAttackTime = 0;
     private double lastRollTime = 0;
     private boolean combatMode = false;
+
+    private Vector4f uvHeartFull = new Vector4f(70, 0, 9, 9);
+    private Vector4f uvHeartHalf = new Vector4f(61, 0, 9, 9);
+    private Vector4f uvHeartEmpty = new Vector4f(52, 0, 9, 9);
 
     private enum GameMode {
         SURVIVAL,
@@ -264,6 +269,7 @@ public class Main {
         );
 
         entityManager = new com.voxel.entity.EntityManager();
+        com.voxel.entity.EnemyEntity.setEntityManager(entityManager);
         player = new Player(1024, 100, 1024);
 
         setupQuad();
@@ -289,7 +295,7 @@ public class Main {
         chunkManager.update(player.getPosition());
         uploadWorldToGpu();
         updateCursorMode();
-        setStatus("Mode: survival. Press E for inventory, / for commands.");
+        setStatus("Mode: survival. Press E for inventory, / for commands. R to respawn.");
     }
 
     private void spawnInitialEnemies(Player p) {
@@ -444,6 +450,17 @@ public class Main {
         itemNameElement.visible = false;
         layer.addElement(itemNameElement);
 
+        for (int i = 0; i < 10; i++) {
+            playerHearts[i] = new UILayer.UIElement(
+                new Vector2f(HOTBAR_X + i * 20, HOTBAR_Y - 30),
+                new Vector2f(18, 18),
+                new Vector4f(1, 1, 1, 1)
+            );
+            playerHearts[i].textureId = uiTextureId;
+            playerHearts[i].visible = true;
+            layer.addElement(playerHearts[i]);
+        }
+
         commandTextElement = new UILayer.UITextElement(
             new Vector2f(20, height - 40),
             "",
@@ -594,7 +611,7 @@ public class Main {
     }
 
     private void handleInput(float dt) {
-        if (inventoryOpen || commandMode) return;
+        if (inventoryOpen || commandMode || player.isDead()) return;
 
         // Roll / Dash (Left Alt)
         if (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS && cameraMode == CameraMode.THIRD_PERSON) {
@@ -697,7 +714,7 @@ public class Main {
                     float dot = toEnemy.dot(pDir);
                     if (dot > 0.45f) {
                         Vector3f knockback = new Vector3f(toEnemy).mul(1.1f);
-                        enemy.takeDamage(7.0f, knockback);   // Uses EnemyEntity's takeDamage → onHit → die
+                        enemy.takeDamage(4.0f, knockback);   // 5 hits for 20 HP
                         cameraShake = 1.3f;
                     }
                 }
@@ -720,6 +737,11 @@ public class Main {
                 lastMeasuredFps = frames;
                 frames = 0;
                 fpsTime = 0;
+            }
+
+            if (player.isDead()) {
+                statusMessage = "YOU DIED! Press R to respawn.";
+                statusUntil = glfwGetTime() + 1.0;
             }
 
             uploadDirtyChunks();
@@ -765,7 +787,17 @@ public class Main {
             glProgramUniform1f(computeProgram, 4, worldTime);
             glProgramUniform1i(computeProgram, 5, entityManager.getEntityCount());
 
+            // Upload UI UVs
+            int locUv = glGetUniformLocation(computeProgram, "u_HeartUVs");
+            glUniform4f(locUv, uvHeartFull.x, uvHeartFull.y, uvHeartFull.z, uvHeartFull.w);
+            glUniform4f(locUv + 1, uvHeartHalf.x, uvHeartHalf.y, uvHeartHalf.z, uvHeartHalf.w);
+            glUniform4f(locUv + 2, uvHeartEmpty.x, uvHeartEmpty.y, uvHeartEmpty.z, uvHeartEmpty.w);
+
             bindTextures();
+
+            glActiveTexture(GL_TEXTURE15);
+            glBindTexture(GL_TEXTURE_2D, uiTextureId);
+            glUniform1i(glGetUniformLocation(computeProgram, "u_UISource"), 15);
 
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
@@ -797,6 +829,12 @@ public class Main {
         if (action == GLFW_PRESS) {
             if (commandMode) {
                 handleCommandModeKey(key);
+                return;
+            }
+
+            if (key == GLFW_KEY_R && player.isDead()) {
+                player.respawn();
+                setStatus("Respawned.");
                 return;
             }
 
@@ -1001,9 +1039,42 @@ public class Main {
             case "slotclear":
                 handleSlotClearCommand(parts);
                 break;
+            case "spawn":
+                player.respawn();
+                setStatus("Teleported to spawn.");
+                break;
+            case "setuv":
+                handleSetUvCommand(parts);
+                break;
             default:
                 setStatus("Unknown command: /" + command);
                 break;
+        }
+    }
+
+    private void handleSetUvCommand(String[] parts) {
+        if (parts.length < 4) {
+            setStatus("Usage: /setuv <full|half|empty> <x> <y> [w] [h]");
+            return;
+        }
+        try {
+            String type = parts[1].toLowerCase(Locale.ROOT);
+            float x = Float.parseFloat(parts[2]);
+            float y = Float.parseFloat(parts[3]);
+            float w = parts.length > 4 ? Float.parseFloat(parts[4]) : 9;
+            float h = parts.length > 5 ? Float.parseFloat(parts[5]) : 9;
+            
+            Vector4f uv = new Vector4f(x, y, w, h);
+            if (type.equals("full")) uvHeartFull = uv;
+            else if (type.equals("half")) uvHeartHalf = uv;
+            else if (type.equals("empty")) uvHeartEmpty = uv;
+            else {
+                setStatus("Invalid heart type: " + type);
+                return;
+            }
+            setStatus("Updated " + type + " UVs: " + x + "," + y + " (" + w + "x" + h + ")");
+        } catch (Exception e) {
+            setStatus("Error parsing values.");
         }
     }
 
@@ -1040,7 +1111,7 @@ public class Main {
         }
 
         ItemDefinition definition = getItemDefinition(itemId);
-        int amount = definition.maxStack == 1 ? 1 : 1;
+        int amount = 1;
         if (parts.length >= 3) {
             try {
                 amount = Math.max(1, Integer.parseInt(parts[2]));
@@ -1268,6 +1339,23 @@ public class Main {
             float alpha = (float) Math.min(1.0, (statusUntil - time) / 0.5);
             statusTextElement.color.w = alpha;
         }
+
+        // Update Player Hearts
+        float hp = player.getHealth();
+        for (int i = 0; i < 10; i++) {
+            UILayer.UIElement heart = playerHearts[i];
+            heart.visible = !commandMode;
+            heart.pos.set(HOTBAR_X + i * 20, height - 40); // Bottom left area
+
+            float heartValue = hp - (i * 2);
+            Vector4f uv;
+            if (heartValue >= 2.0f) uv = uvHeartFull;
+            else if (heartValue >= 1.0f) uv = uvHeartHalf;
+            else uv = uvHeartEmpty;
+
+            heart.uvOffset.set(uv.x / uiTextureSize.x, uv.y / uiTextureSize.y);
+            heart.uvScale.set(uv.z / uiTextureSize.x, uv.w / uiTextureSize.y);
+        }
     }
 
     private void showSelectedItemName() {
@@ -1284,7 +1372,7 @@ public class Main {
     }
 
     private void updateMining(float dt) {
-        if (inventoryOpen || commandMode || !leftMouseHeld) {
+        if (inventoryOpen || commandMode || !leftMouseHeld || player.isDead()) {
             resetMining();
             return;
         }
@@ -1356,6 +1444,7 @@ public class Main {
     }
 
     private void attemptPlaceBlock() {
+        if (player.isDead()) return;
         int[] hit = raycastBlock(6.0f);
         if (hit == null) return;
 
@@ -1454,7 +1543,17 @@ public class Main {
         blockDataManager.registerBlock(4, "oak_leaves", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(13, "dirt", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(14, "sand", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(15, "water_still", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.uploadToGPU();
+    }
+
+    private void createWaterPool() {
+        int cx = 1024, cy = 99, cz = 1024;
+        for (int x = cx - 3; x <= cx + 3; x++) {
+            for (int z = cz - 3; z <= cz + 3; z++) {
+                chunkManager.setVoxel(x, cy, z, 15);
+            }
+        }
     }
 
     private void setupQuad() {

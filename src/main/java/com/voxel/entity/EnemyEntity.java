@@ -16,9 +16,13 @@ public class EnemyEntity extends Entity {
     private ModelPart head, leftArm, rightArm, leftLeg, rightLeg;
 
     protected float animTime = 0.0f;
-    private float health = 25.0f;
+    private float health = 20.0f;
+    private float maxHealth = 20.0f;
     private boolean isDead = false;
     private float hitFlashTime = 0.0f;
+
+    private static EntityManager entityManager;
+    public static void setEntityManager(EntityManager em) { entityManager = em; }
 
     private World world;
 
@@ -210,6 +214,9 @@ public class EnemyEntity extends Entity {
 
     public void performAttack(Vector3f playerPos) {
         if (DEBUG_AI) System.out.println("The confined entity strikes with unnatural hatred!");
+        if (player != null) {
+            player.takeDamage(2.0f); // 2 HP damage per strike
+        }
     }
 
     // ====================== MOVEMENT ======================
@@ -260,24 +267,22 @@ public class EnemyEntity extends Entity {
                     dx, dy, dz, position.x, position.y, position.z);
         }
 
-        // 1. Try full move (including intended verticality)
-        if (canOccupy(position.x + dx, position.y + dy, position.z + dz)) {
+        // 1. Try full move
+        if (canOccupy(position.x + dx, position.y + dy, position.z + dz) && !isCollidingWithOtherEntities(position.x + dx, position.y + dy, position.z + dz)) {
             position.add(dx, dy, dz);
             if (DEBUG_AI) System.out.println("[TRY MOVE] Full move SUCCESS");
             return;
         }
 
-        // 2. Auto-step UP (Minecraft style)
-        // If blocked horizontally, check if we can step up 1 block
-        if (canOccupy(position.x + dx, position.y + 1.0f, position.z + dz)) {
+        // 2. Auto-step UP
+        if (canOccupy(position.x + dx, position.y + 1.0f, position.z + dz) && !isCollidingWithOtherEntities(position.x + dx, position.y + 1.0f, position.z + dz)) {
             position.add(dx, 1.0f, dz);
             if (DEBUG_AI) System.out.println("[TRY MOVE] Auto-step UP success");
             return;
         }
 
         // 3. Auto-step DOWN
-        // If no ground at current level, check if there's ground 1 block below
-        if (canOccupy(position.x + dx, position.y - 1.0f, position.z + dz)) {
+        if (canOccupy(position.x + dx, position.y - 1.0f, position.z + dz) && !isCollidingWithOtherEntities(position.x + dx, position.y - 1.0f, position.z + dz)) {
             position.add(dx, -1.0f, dz);
             if (DEBUG_AI) System.out.println("[TRY MOVE] Auto-step DOWN success");
             return;
@@ -286,17 +291,35 @@ public class EnemyEntity extends Entity {
         if (DEBUG_AI) System.out.println("[TRY MOVE] Collision detected - trying X/Z separately");
 
         // 4. Try X only
-        if (canOccupy(position.x + dx, position.y, position.z)) {
+        if (canOccupy(position.x + dx, position.y, position.z) && !isCollidingWithOtherEntities(position.x + dx, position.y, position.z)) {
             position.x += dx;
             if (DEBUG_AI) System.out.println("[TRY MOVE] X move accepted");
         }
 
         // 5. Try Z only
-        if (canOccupy(position.x, position.y, position.z + dz)) {
+        if (canOccupy(position.x, position.y, position.z + dz) && !isCollidingWithOtherEntities(position.x, position.y, position.z + dz)) {
             position.z += dz;
             if (DEBUG_AI) System.out.println("[TRY MOVE] Z move accepted");
         }
     }
+
+    private boolean isCollidingWithOtherEntities(float x, float y, float z) {
+        if (entityManager == null) return false;
+        Vector3f target = new Vector3f(x, y, z);
+        for (int i = 0; i < entityManager.getEntityCount(); i++) {
+            Entity other = entityManager.getEntity(i);
+            if (other == null || other == this || other.position == null) continue;
+            // Ignore dead enemies
+            if (other instanceof EnemyEntity && ((EnemyEntity)other).isDead()) continue;
+            
+            float distSq = target.distanceSquared(other.position);
+            if (distSq < 0.36f) return true; // Collision radius of 0.6 blocks
+        }
+        return false;
+    }
+
+    public float getHealth() { return health; }
+    public float getMaxHealth() { return maxHealth; }
 
     private boolean canOccupy(float x, float y, float z) {
         int ix = (int) Math.floor(x);
@@ -304,7 +327,6 @@ public class EnemyEntity extends Entity {
         int iz = (int) Math.floor(z);
 
         // Simplification: isWalkable already checks ground, feet, and head.
-        // Checking iy and iy+1 was logically impossible as it required iy to be both AIR and SOLID.
         boolean walkable = isWalkable(ix, iy, iz);
 
         if (DEBUG_AI) {
@@ -434,11 +456,6 @@ public class EnemyEntity extends Entity {
     public boolean isDead() { return isDead; }
     public void setWorld(World world) { this.world = world; }
 
-    // Optional helper
-    public void setDebugEnabled(boolean enabled) {
-        // You can make DEBUG_AI non-final and modify it here if needed
-    }
-    
     private static class Node {
         int x, y, z;
         double g, h, f;
@@ -452,6 +469,4 @@ public class EnemyEntity extends Entity {
             this.f = g + h;
         }
     }
-
-    
 }

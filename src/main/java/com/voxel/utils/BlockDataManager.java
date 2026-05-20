@@ -57,6 +57,9 @@ public class BlockDataManager {
         // Whether the block color should be modified by the biome (e.g., grass).
         public int isTintable;
 
+        // Whether this block is a liquid (water, lava).
+        public boolean isLiquid;
+
         // Whether this block occupies the full voxel space (true for most blocks, false
         // for slabs/stairs/fences).
         public boolean isFullBlock;
@@ -143,8 +146,12 @@ public class BlockDataManager {
                 name.contains("pane") || name.contains("carpet") || name.contains("pressure_plate") ||
                 name.contains("button") || name.contains("lever") || name.contains("torch") ||
                 name.contains("rail") || name.contains("sign") || name.contains("banner") ||
-                name.contains("flower") || name.contains("sapling") || name.contains("mushroom")) {
+                name.contains("flower") || name.contains("sapling") || name.contains("mushroom") ||
+                name.contains("water") || name.contains("lava")) {
             data.isFullBlock = false;
+        }
+        if (name.contains("water") || name.contains("lava")) {
+            data.isLiquid = true;
         }
         applyMiningDefaults(name, data);
 
@@ -320,7 +327,7 @@ public class BlockDataManager {
                 buffer.put(data.tex[5]);
                 buffer.put(data.transparency);
                 int packed = (data.reflectivity & 0xFF) | ((data.isTintable & 1) << 8)
-                        | ((data.isFullBlock ? 1 : 0) << 9);
+                        | ((data.isFullBlock ? 1 : 0) << 9) | ((data.isLiquid ? 1 : 0) << 10);
                 buffer.put(packed);
 
                 // ivec4 2: (albedoR, albedoG, albedoB, unused)
