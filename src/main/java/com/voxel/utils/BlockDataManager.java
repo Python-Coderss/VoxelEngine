@@ -175,7 +175,7 @@ public class BlockDataManager {
         // Set isFullBlock based on block type
         if (name.contains("slab") || name.contains("stairs") || name.contains("fence") ||
                 name.contains("wall") || name.contains("door") || name.contains("trapdoor") ||
-                name.contains("pane") || name.contains("carpet") || name.contains("pressure_plate") ||
+                name.contains("pane") || name.contains("carpet") || name.contains("dust") || name.contains("pressure_plate") ||
                 name.contains("button") || name.contains("lever") || name.contains("torch") ||
                 name.contains("rail") || name.contains("sign") || name.contains("banner") ||
                 name.contains("flower") || name.contains("sapling") || name.contains("mushroom") ||
@@ -527,6 +527,14 @@ public class BlockDataManager {
     public java.awt.Color getAlbedo(int blockId) {
         BlockData data = blockRegistry.get(blockId);
         return data != null ? data.albedo : java.awt.Color.WHITE;
+    }
+
+    /** Override isTintable flag after registration (disable biome coloring). */
+    public void setBlockTintable(int blockId, boolean tintable) {
+        BlockData data = blockRegistry.get(blockId);
+        if (data != null) {
+            data.isTintable = tintable ? 1 : 0;
+        }
     }
 
     public String getName(int blockId) {

@@ -30,7 +30,10 @@ public class BlockInteraction {
         if (blockId == 0) { resetMining(); return; }
 
         if (ctx.gameMode == GameMode.CREATIVE) {
-            if (ctx.leftMousePressedThisFrame) breakBlock(hit[0], hit[1], hit[2], blockId, false);
+            if (ctx.leftMousePressedThisFrame) {
+                ctx.leftMousePressedThisFrame = false; // consume the flag
+                breakBlock(hit[0], hit[1], hit[2], blockId, false);
+            }
             return;
         }
 
@@ -63,6 +66,7 @@ public class BlockInteraction {
     public void breakBlock(int x, int y, int z, int blockId, boolean collectDrop) {
         if (!ctx.chunkManager.setVoxel(x, y, z, 0)) return;
         ctx.redstoneManager.onBlockChanged(x, y, z);
+        ctx.redstoneManager.notifyNeighbors(x, y, z);
         if (collectDrop) {
             String dropItem;
             int dropCount = 1;
@@ -84,15 +88,20 @@ public class BlockInteraction {
         ItemDefinitions.ItemStack selected = ctx.playerInventory.getSelected();
         if (selected == null) { ctx.setStatus("Selected slot is empty"); return; }
         ItemDefinitions.ItemDefinition def = ctx.itemDefinitions.getDefinition(selected.itemId);
-        if (def == null || def.kind != ItemDefinitions.ItemKind.BLOCK) {
-            ctx.setStatus("Select a block item to place"); return;
+        if (def == null) return;
+        if (def.kind != ItemDefinitions.ItemKind.BLOCK) {
+            ctx.setStatus("Select a block item to place");
+            return;
         }
 
         int px = hit[3], py = hit[4], pz = hit[5];
-        if (ctx.world.getVoxel(px, py, pz) != 0) return;
+        int existing = ctx.world.getVoxel(px, py, pz);
+        if (existing != 0) return;
         if (intersectsPlayer(px, py, pz)) return;
         if (!ctx.chunkManager.setVoxel(px, py, pz, def.blockId)) return;
+
         ctx.redstoneManager.onBlockChanged(px, py, pz);
+        ctx.redstoneManager.notifyNeighbors(px, py, pz);
 
         if (ctx.gameMode == GameMode.SURVIVAL) {
             selected.count--;
