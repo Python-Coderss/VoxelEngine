@@ -114,6 +114,7 @@ public class GameContext {
         world = dimensionManager.getActiveWorld();
         chunkManager = dimensionManager.getActiveChunkManager();
         redstoneManager = new RedstoneManager(world, chunkManager);
+        com.voxel.world.RedstoneLogger.log("DIMENSION SWITCH: created new RedstoneManager for " + target.name + " (was " + previous.name + ")");
         if (previous != target) dimensionManager.unloadDimension(previous);
         int spawnY = target.baseHeight + 3;
         player.getPosition().set(1024, spawnY, 1024);

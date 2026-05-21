@@ -125,7 +125,9 @@ public class World {
 
     /**
      * Gets the voxel ID at the specified absolute world coordinates.
-     * @return The voxel ID, or 0 if out of bounds or empty.
+     * The lower 16 bits contain the block type; upper bits may hold
+     * extra data (e.g. redstone power level).
+     * @return The voxel type (block ID), or 0 if out of bounds or empty.
      */
     public int getVoxel(int x, int y, int z) {
         int rx = x - offsetX;
@@ -142,7 +144,7 @@ public class World {
         if (slot == EMPTY) return 0;
 
         int poolIdx = (slot << 12) | ((rx & 15) | ((ry & 15) << 4) | ((rz & 15) << 8));
-        return chunkPool[poolIdx];
+        return chunkPool[poolIdx] & 0xFFFF;  // lower 16 bits = block type
     }
 
     /**
@@ -200,11 +202,24 @@ public class World {
 
     /**
      * Sets a voxel ID directly into a chunk pool slot at local coordinates.
+     * Stores the type in the lower 16 bits with no extra data.
      */
     public void setVoxelInPool(int slot, int lx, int ly, int lz, int type) {
+        setVoxelInPool(slot, lx, ly, lz, type, 0);
+    }
+
+    /**
+     * Sets a voxel ID with extra data packed into the upper bits.
+     * The type occupies the lower 16 bits, and extra data occupies bits 16-23.
+     * Callers that need to store additional per-voxel information (e.g. redstone
+     * power level) should use this method. The extra data can be retrieved via
+     * {@link #getRawVoxel(int, int, int)} and masking the appropriate bits.
+     */
+    public void setVoxelInPool(int slot, int lx, int ly, int lz, int type, int extra) {
+        int packed = (type & 0xFFFF) | ((extra & 0xFF) << 16);
         int bitIdx = lx | (ly << 4) | (lz << 8);
         int poolIdx = (slot << 12) | bitIdx;
-        chunkPool[poolIdx] = type;
+        chunkPool[poolIdx] = packed;
 
         // Update Bitmask (1 bit per voxel)
         int wordIdx = (slot << 7) | (bitIdx >> 5);
@@ -237,6 +252,16 @@ public class World {
      * Sets a voxel ID at world coordinates. Does nothing if the chunk is not allocated.
      */
     public void setVoxel(int x, int y, int z, int type) {
+        setVoxelWithData(x, y, z, type, 0);
+    }
+
+    /**
+     * Sets a voxel ID with extra data at world coordinates.
+     * The extra data is packed into bits 16-23 of the stored int,
+     * useful for per-voxel metadata like redstone power level.
+     * Does nothing if the chunk is not allocated.
+     */
+    public void setVoxelWithData(int x, int y, int z, int type, int extra) {
         int rx = x - offsetX;
         int ry = y - offsetY;
         int rz = z - offsetZ;
@@ -249,7 +274,28 @@ public class World {
         int slot = indirectionTable[tableIdx];
         if (slot == EMPTY) return;
 
-        setVoxelInPool(slot, rx & 15, ry & 15, rz & 15, type);
+        setVoxelInPool(slot, rx & 15, ry & 15, rz & 15, type, extra);
+    }
+
+    /**
+     * Returns the full raw voxel value (including extra data in upper bits).
+     * Use {@link #getVoxel(int, int, int)} to get just the block type.
+     */
+    public int getRawVoxel(int x, int y, int z) {
+        int rx = x - offsetX;
+        int ry = y - offsetY;
+        int rz = z - offsetZ;
+        if (rx < 0 || ry < 0 || rz < 0 || rx >= REGION_SIZE * CHUNK_SIZE || ry >= REGION_SIZE * CHUNK_SIZE || rz >= REGION_SIZE * CHUNK_SIZE) return 0;
+
+        int cx = rx >> 4;
+        int cy = ry >> 4;
+        int cz = rz >> 4;
+        int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
+        int slot = indirectionTable[tableIdx];
+        if (slot == EMPTY) return 0;
+
+        int poolIdx = (slot << 12) | ((rx & 15) | ((ry & 15) << 4) | ((rz & 15) << 8));
+        return chunkPool[poolIdx];
     }
 
     /**

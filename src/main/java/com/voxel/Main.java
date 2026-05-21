@@ -18,6 +18,7 @@ import com.voxel.game.ItemDefinitions.ItemDefinition;
 import com.voxel.game.ItemDefinitions.ItemStack;
 import com.voxel.game.PlayerInventory;
 import com.voxel.game.PortalSystem;
+import com.voxel.world.RedstoneLogger;
 import com.voxel.world.RedstoneManager;
 import org.joml.Vector2f;
 import org.joml.Vector2i;
@@ -212,6 +213,7 @@ public class Main {
         glDeleteBuffers(occlusionSSBO);
         glDeleteBuffers(pointLightSSBO);
         chunkManager.shutdown();
+        RedstoneLogger.shutdown();
 
         glfwDestroyWindow(window);
         glfwTerminate();
@@ -257,7 +259,7 @@ public class Main {
 
         setupQuad();
         setupTexture();
-        // Generate cape texture BEFORE loading textures so it's available in the texture array
+        // Generate procedural textures BEFORE loading so they're available in the texture array
         generateCapeTexture();
         setupResources();
 
@@ -311,6 +313,7 @@ public class Main {
         ctx.dimensionManager = dimensionManager;
 
         redstoneManager = new RedstoneManager(world, chunkManager);
+        ctx.redstoneManager = redstoneManager;
 
         playerEntity = new com.voxel.entity.PlayerEntity(10_000, new Vector3f(player.getPosition()), textureManager);
         entityManager.addEntity(playerEntity);
@@ -908,6 +911,7 @@ public class Main {
             glfwSwapBuffers(window);
             glfwPollEvents();
             leftMousePressedThisFrame = false;
+            // ctx.leftMousePressedThisFrame is consumed/reset by the logic thread in tick()
         }
     }
 
@@ -1021,15 +1025,22 @@ public class Main {
         pitch += yoffset * sensitivity;
         if (pitch > 89.0f) pitch = 89.0f;
         if (pitch < -89.0f) pitch = -89.0f;
+
+        // Sync with GameContext so BlockInteraction uses the same camera angles
+        ctx.yaw = yaw;
+        ctx.pitch = pitch;
     }
 
     private void handleMouseButton(long win, int button, int action, int mods) {
         if (button == GLFW_MOUSE_BUTTON_LEFT) {
             if (action == GLFW_PRESS) {
                 leftMouseHeld = true;
+                ctx.leftMouseHeld = true;
                 leftMousePressedThisFrame = true;
+                ctx.leftMousePressedThisFrame = true;
             } else if (action == GLFW_RELEASE) {
                 leftMouseHeld = false;
+                ctx.leftMouseHeld = false;
                 blockInteraction.resetMining();
             }
         }
@@ -1058,6 +1069,7 @@ public class Main {
         if (inventoryOpen) setInventoryOpen(false);
         commandMode = true;
         ctx.commandMode = true;
+        ctx.leftMousePressedThisFrame = false; // prevent stale press from inventory
         commandBuffer.setLength(0);
         updateCursorMode();
     }
@@ -1082,7 +1094,13 @@ public class Main {
     private void setInventoryOpen(boolean open) {
         inventoryOpen = open;
         ctx.inventoryOpen = open;
-        if (!open) playerInventory.setCarriedStack(null);
+        if (open) {
+            ctx.leftMousePressedThisFrame = false; // prevent stale press from world
+        }
+        if (!open) {
+            playerInventory.setCarriedStack(null);
+            ctx.leftMousePressedThisFrame = false; // prevent stale press from inventory
+        }
         updateCursorMode();
     }
 

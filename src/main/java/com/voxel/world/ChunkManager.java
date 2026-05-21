@@ -241,6 +241,23 @@ public class ChunkManager {
         return true;
     }
 
+    /**
+     * Sets a voxel with extra data packed into the upper bits and marks the
+     * chunk as dirty so the GPU gets updated. The block type occupies the
+     * lower 16 bits; extra data occupies bits 16-23.
+     * This is used for per-voxel metadata like redstone power level.
+     * Unlike {@link #setVoxel}, this does NOT re-bake occlusion, since the
+     * block type is unchanged.
+     */
+    public boolean setVoxelWithData(int x, int y, int z, int type, int extra) {
+        int slot = world.getChunkSlot(x, y, z);
+        if (slot == World.EMPTY) return false;
+
+        world.setVoxelWithData(x, y, z, type, extra);
+        dirtySlots.add(slot);
+        return true;
+    }
+
     public Set<Integer> getDirtySlots() { return dirtySlots; }
     public boolean isTableDirty() { return tableDirty.get(); }
     public void clearDirty() { tableDirty.set(false); dirtySlots.clear(); }

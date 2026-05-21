@@ -294,14 +294,36 @@ float fastShadow(vec3 ro, vec3 rd, float maxDist) {
         uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
         if (slot == EMPTY) { skipChunk(mp, sd, dd, s); }
         else {
-            if (isBitSolid(slot, mp)) return 0.0;
+            if (isBitSolid(slot, mp)) {
+                int bi = (mp.x&15)|((mp.y&15)<<4)|((mp.z&15)<<8);
+                uint rawVoxel = voxelPool[(slot << 12) | bi];
+                uint v = rawVoxel & 0xFFFFu;
+                ivec4 d1 = texelFetch(u_BlockData, int(v) * 3 + 1);
+                if (((d1.w >> 9) & 1) == 1) return 0.0; // Full block occludes
+                // Non-full block: check AABBs
+                ivec4 info = texelFetch(u_BlockAABBInfo, int(v));
+                int aabbCount = info.y;
+                if (aabbCount > 0) {
+                    int aabbOffset = info.x;
+                    vec3 blockOrigin = floor(vec3(mp));
+                    float exitT = min(sd.x, min(sd.y, sd.z));
+                    for (int k = 0; k < min(aabbCount, 8); k++) {
+                        vec3 bMin = texelFetch(u_BlockAABBs, aabbOffset + k * 2).xyz + blockOrigin;
+                        vec3 bMax = texelFetch(u_BlockAABBs, aabbOffset + k * 2 + 1).xyz + blockOrigin;
+                        float aTn, aTf;
+                        if (intersectAABB(ro, rd, bMin, bMax, aTn, aTf)) {
+                            if (aTn < exitT) return 0.0; // AABB occludes
+                        }
+                    }
+                }
+            }
             advanceDDA(mp, sd, dd, s);
         }
     }
     return 1.0;
 }
 
-bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, out float resT, out int resSide, out uint resVoxel) { 
+bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out int resAabbIdx) { 
     ivec3 bufMin = u_WorldOffset;
     ivec3 bufMax = u_WorldOffset + ivec3(WORLD_SIZE);
     float tn, tf; if (!intersectAABB(ro, rd, vec3(bufMin), vec3(bufMax), tn, tf)) return false;
@@ -319,9 +341,63 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, out float resT, out int resSid
             for (int j = 0; j < 32; j++) {
                 int bi = (mp.x&15)|((mp.y&15)<<4)|((mp.z&15)<<8);
                 if ((bitmasks[maskBase | (bi >> 5)] & (1u << (bi & 31))) != 0) {
-                    resVoxel = voxelPool[(slot << 12) | bi]; resSide = side; 
-                    resT = (side == 0 ? sd.x - dd.x : (side == 1 ? sd.y - dd.y : sd.z - dd.z)) + st;
-                    return true;
+                    uint rawVoxel = voxelPool[(slot << 12) | bi];
+                    uint voxelType = rawVoxel & 0xFFFFu;
+                    uint wirePower = (rawVoxel >> 16) & 0xFu;
+                    
+                    // Check if this block is a full cube or has custom AABBs
+                    ivec4 d1 = texelFetch(u_BlockData, int(voxelType) * 3 + 1);
+                    if (((d1.w >> 9) & 1) == 1) {
+                        // Full block: return hit immediately
+                        resVoxel = voxelType;
+                        resWirePower = wirePower;
+                        resSide = side; 
+                        resT = (side == 0 ? sd.x - dd.x : (side == 1 ? sd.y - dd.y : sd.z - dd.z)) + st;
+                        resAabbIdx = -1;
+                        return true;
+                    }
+                    
+                    // Non-full block: check custom AABBs
+                    ivec4 info = texelFetch(u_BlockAABBInfo, int(voxelType));
+                    int aabbOffset = info.x;
+                    int aabbCount = info.y;
+                    if (aabbCount == 0) {
+                        // No custom AABBs (e.g., water, lava): treat as full block hit
+                        resVoxel = voxelType;
+                        resWirePower = wirePower;
+                        resSide = side;
+                        resT = (side == 0 ? sd.x - dd.x : (side == 1 ? sd.y - dd.y : sd.z - dd.z)) + st;
+                        resAabbIdx = -1;
+                        return true;
+                    }
+                    float exitT = st + min(sd.x, min(sd.y, sd.z));
+                    vec3 blockOrigin = floor(vec3(mp));
+                    for (int k = 0; k < min(aabbCount, 8); k++) {
+                        vec3 bMin = texelFetch(u_BlockAABBs, aabbOffset + k * 2).xyz + blockOrigin;
+                        vec3 bMax = texelFetch(u_BlockAABBs, aabbOffset + k * 2 + 1).xyz + blockOrigin;
+                        float aTn, aTf;
+                        if (intersectAABB(ro, rd, bMin, bMax, aTn, aTf)) {
+                            if (aTn < exitT) {
+                                resVoxel = voxelType;
+                                resWirePower = wirePower;
+                                resT = aTn;
+                                resAabbIdx = (aabbOffset / 2) + k;
+                                // Compute hit side from position within AABB
+                                vec3 hp = ro + rd * aTn;
+                                vec3 center = (bMin + bMax) * 0.5;
+                                vec3 halfSize = (bMax - bMin) * 0.5;
+                                vec3 localP = abs((hp - center) / max(halfSize, vec3(0.0001)));
+                                if (localP.x >= localP.y && localP.x >= localP.z) {
+                                    resSide = 0;
+                                } else if (localP.y >= localP.z) {
+                                    resSide = 1;
+                                } else {
+                                    resSide = 2;
+                                }
+                                return true;
+                            }
+                        }
+                    }
                 }
                 side = advanceDDA(mp, sd, dd, s);
                 if (any(notEqual(mp >> 4, cc))) break;
@@ -332,10 +408,13 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, out float resT, out int resSid
     return false;
 }
 
-bool traceAll(vec3 ro, vec3 rd, bool skipFirst, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio) {
-    resT = 1e30; resEntUv = vec2(0.5); isEnt = false; isHpBar = false; hpRatio = 1.0;
-    float tV; int sideV; uint voxelV;
-    if (traceWorld(ro, rd, skipFirst, tV, sideV, voxelV)) {
+bool traceAll(vec3 ro, vec3 rd, bool skipFirst, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio, out uint resWirePower, out int resAabbIdx) {
+    resT = 1e30; resEntUv = vec2(0.5); isEnt = false; isHpBar = false; hpRatio = 1.0; resWirePower = 0u; resAabbIdx = -1;
+    float tV; int sideV; uint voxelV, wirePowerV; int aabbIdxV;
+    if (traceWorld(ro, rd, skipFirst, tV, sideV, voxelV, wirePowerV, aabbIdxV)) {
+        resT = tV; resVoxel = voxelV;
+        resWirePower = wirePowerV;
+        resAabbIdx = aabbIdxV;
         resT = tV; resVoxel = voxelV;
         resN = (sideV == 0) ? vec3(-sign(rd.x), 0, 0) : ((sideV == 1) ? vec3(0, -sign(rd.y), 0) : vec3(0, 0, -sign(rd.z)));
     }
@@ -400,8 +479,8 @@ void main() {
     vec3 final = vec3(0.0), throu = vec3(1.0), ro = camPos; bool skip = false;
 
     for (int b = 0; b < 6; b++) {
-        float t; vec3 n; uint voxel, eTex; vec2 eUv; bool isEnt, isHpBar; float hpRatio;
-        if (!traceAll(ro, rd, skip, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio)) { final += throu * GetSky(rd, at); break; }
+        float t; vec3 n; uint voxel, eTex, wirePower; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx;
+        if (!traceAll(ro, rd, skip, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, aabbIdx)) { final += throu * GetSky(rd, at); break; }
         
         float vMax = min(t, 48.0); float dither = IGN(vec2(px) + u_Time);
         vec3 godRays = vec3(0.0); float vStep = 4.0;
@@ -443,9 +522,35 @@ void main() {
             int face = (n.y > 0.9) ? 1 : ((n.y < -0.9) ? 0 : ((n.z < -0.9) ? 2 : ((n.z > 0.9) ? 3 : ((n.x < -0.9) ? 4 : 5))));
             int tex = (face == 0) ? d0.x : (face == 1 ? d0.y : (face == 2 ? d0.z : (face == 3 ? d0.w : (face == 4 ? d1.x : d1.y))));
             vec2 uv;
-            if (abs(n.x) > 0.5) uv = vec2(fract(hp.z), 1.0 - fract(hp.y));
-            else if (abs(n.y) > 0.5) uv = fract(hp.xz);
-            else uv = vec2(fract(hp.x), 1.0 - fract(hp.y));
+            if (aabbIdx >= 0) {
+                // Use model-defined UVs from u_BlockAABBUVs for non-full blocks
+                vec3 bMin = texelFetch(u_BlockAABBs, aabbIdx * 2).xyz;
+                vec3 bMax = texelFetch(u_BlockAABBs, aabbIdx * 2 + 1).xyz;
+                vec3 blockFrac = hp - floor(hp);
+                vec3 rel = (blockFrac - bMin) / max(bMax - bMin, vec3(0.0001));
+                // Compute relative UV within face
+                float relU, relV;
+                if (abs(n.x) > 0.5) {
+                    relU = rel.z; relV = 1.0 - rel.y;
+                } else if (abs(n.y) > 0.5) {
+                    relU = rel.x; relV = rel.z;
+                } else {
+                    relU = rel.x; relV = 1.0 - rel.y;
+                }
+                // Fetch model UVs for this face from AABB UV buffer (packed int)
+                int packedUv = texelFetch(u_BlockAABBUVs, aabbIdx * 6 + face).r;
+                int u1 = packedUv & 0xFF;
+                int v1 = (packedUv >> 8) & 0xFF;
+                int u2 = (packedUv >> 16) & 0xFF;
+                int v2 = (packedUv >> 24) & 0xFF;
+                // Map relative UV through the model-specified texture region, normalized to [0,1]
+                uv = vec2(float(u1) + relU * float(u2 - u1), float(v1) + relV * float(v2 - v1)) / 16.0;
+            } else {
+                // Full-block planar UV
+                if (abs(n.x) > 0.5) uv = vec2(fract(hp.z), 1.0 - fract(hp.y));
+                else if (abs(n.y) > 0.5) uv = fract(hp.xz);
+                else uv = vec2(fract(hp.x), 1.0 - fract(hp.y));
+            }
 
             // Animated texture: d2.w contains [isAnimated(bit0) | frameCount(bit1-4)]
             int animPacked = d2.w;
@@ -457,11 +562,23 @@ void main() {
                 tex = tex + frame;
             }
 
-            alb = texture(u_BlockTextures, vec3(uv, float(tex))).rgb * (vec3(d2.rgb)/255.0);
-            
+            vec4 texSample = texture(u_BlockTextures, vec3(uv, float(tex)));
+            alb = texSample.rgb * (vec3(d2.rgb)/255.0);
+
+            // Initialize trans/refl from block data
             bool isLiquid = ((d1.w >> 10) & 1) == 1;
             trans = float(d1.z)/255.0; refl = float(d1.w & 0xFF)/255.0;
-            
+
+            // Alpha-based transparency: treat pixels with alpha < 0.1 as fully transparent
+            // This must come AFTER trans initialization so it can override it
+            if (texSample.a < 0.1) { trans = 1.0; alb = vec3(1.0); }
+
+            // Redstone dust: tint by power level (only on actual texture pixels, not transparent ones)
+            if (voxel == 29u && texSample.a >= 0.1) {
+                float pf = float(wirePower) / 15.0;
+                alb *= (vec3(0.6, 0.1, 0.1) + vec3(0.4, 0.1, 0.0) * pf);
+            }
+
             if (isLiquid) {
                 if (voxel == 21u) { // Lava: opaque with red/orange tint
                     trans = 0.0;
