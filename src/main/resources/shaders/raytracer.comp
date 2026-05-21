@@ -504,11 +504,11 @@ void main() {
                     float heartValueRatio = (hpRatio * numHearts) - heartIdx;
                     
                     vec2 uvBase;
-                    if (heartValueRatio >= 0.9) uvBase = vec2(70, 0);
-                    else if (heartValueRatio >= 0.4) uvBase = vec2(61, 0);
-                    else uvBase = vec2(52, 0);
+                    if (heartValueRatio >= 0.9) uvBase = vec2(99, 2);
+                    else if (heartValueRatio >= 0.4) uvBase = vec2(108, 2);
+                    else uvBase = vec2(90, 2);
                     
-                    vec2 texUv = (uvBase + vec2(u * 9.0, heartV * 9.0)) / 256.0;
+                    vec2 texUv = (uvBase + vec2(u * 7.0, heartV * 7.0)) / 256.0;
                     vec4 heartCol = texture(u_UISource, texUv);
                     if (heartCol.a < 0.2) { alb = vec3(0); trans = 1.0; }
                     else alb = heartCol.rgb;

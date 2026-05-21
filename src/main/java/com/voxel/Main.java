@@ -166,6 +166,7 @@ public class Main {
     private final UILayer.UIElement[] craftingSlotItems = new UILayer.UIElement[CRAFTING_SLOTS];
     private double itemNameDisplayUntil = 0.0;
     private final UILayer.UIElement[] playerHearts = new UILayer.UIElement[10];
+    private final UILayer.UIElement[] heartBases = new UILayer.UIElement[10];
     private UILayer.UITextElement commandTextElement;
     private UILayer.UITextElement statusTextElement;
 
@@ -183,9 +184,10 @@ public class Main {
     private double lastRollTime = 0;
     private boolean combatMode = false;
 
-    private Vector4f uvHeartFull = new Vector4f(70, 0, 9, 9);
-    private Vector4f uvHeartHalf = new Vector4f(61, 0, 9, 9);
-    private Vector4f uvHeartEmpty = new Vector4f(52, 0, 9, 9);
+    private Vector4f uvHeartFull = new Vector4f(99, 2, 7, 7);
+    private Vector4f uvHeartHalf = new Vector4f(108, 2, 7, 7);
+    private Vector4f uvHeartEmpty = new Vector4f(90, 2, 7, 7);
+    private Vector4f uvHeartBase = new Vector4f(62, 1, 9, 9);
 
     public void run() {
         init();
@@ -549,9 +551,20 @@ public class Main {
         layer.addElement(itemNameElement);
 
         for (int i = 0; i < 10; i++) {
+            // Heart base/container rendered behind each heart (add first = render behind)
+            heartBases[i] = new UILayer.UIElement(
+                new Vector2f(HOTBAR_X + i * 30 - 3, HOTBAR_Y - 30 - 3),
+                new Vector2f(27, 27),
+                new Vector4f(1, 1, 1, 1)
+            );
+            heartBases[i].textureId = uiTextureId;
+            heartBases[i].visible = true;
+            layer.addElement(heartBases[i]);
+            
+            // Heart icon on top (centered within the 27x27 base)
             playerHearts[i] = new UILayer.UIElement(
-                new Vector2f(HOTBAR_X + i * 20, HOTBAR_Y - 30),
-                new Vector2f(18, 18),
+                new Vector2f(HOTBAR_X + i * 30, HOTBAR_Y - 30),
+                new Vector2f(21, 21),
                 new Vector4f(1, 1, 1, 1)
             );
             playerHearts[i].textureId = uiTextureId;
@@ -1297,18 +1310,31 @@ public class Main {
         // Update Player Hearts
         float hp = player.getHealth();
         for (int i = 0; i < 10; i++) {
-            UILayer.UIElement heart = playerHearts[i];
-            heart.visible = !commandMode;
-            heart.pos.set(HOTBAR_X + i * 20, height - 40); // Bottom left area
+            float texW = uiTextureSize.x;
+            float texH = uiTextureSize.y;
 
+            // Heart base/container behind each heart (always visible, 27x27)
+            UILayer.UIElement heartBase = heartBases[i];
+            heartBase.visible = !commandMode;
+            heartBase.pos.set(HOTBAR_X + i * 30 - 3, height - 40 - 3);
+            heartBase.uvOffset.set((uvHeartBase.x + 0.5f) / texW, (uvHeartBase.y + 0.5f) / texH);
+            heartBase.uvScale.set((uvHeartBase.z - 1.0f) / texW, (uvHeartBase.w - 1.0f) / texH);
+
+            // Heart icon on top (only show when not empty — base alone handles the empty look)
             float heartValue = hp - (i * 2);
-            Vector4f uv;
-            if (heartValue >= 2.0f) uv = uvHeartFull;
-            else if (heartValue >= 1.0f) uv = uvHeartHalf;
-            else uv = uvHeartEmpty;
+            UILayer.UIElement heart = playerHearts[i];
+            if (heartValue < 1.0f) {
+                // Empty: hide heart icon, base container shows through
+                heart.visible = false;
+            } else {
+                heart.visible = !commandMode;
+                heart.pos.set(HOTBAR_X + i * 30, height - 40);
 
-            heart.uvOffset.set(uv.x / uiTextureSize.x, uv.y / uiTextureSize.y);
-            heart.uvScale.set(uv.z / uiTextureSize.x, uv.w / uiTextureSize.y);
+                Vector4f uv = (heartValue >= 2.0f) ? uvHeartFull : uvHeartHalf;
+                // Inset UV by half a pixel to prevent texture atlas bleeding
+                heart.uvOffset.set((uv.x + 0.5f) / texW, (uv.y + 0.5f) / texH);
+                heart.uvScale.set((uv.z - 1.0f) / texW, (uv.w - 1.0f) / texH);
+            }
         }
     }
 
