@@ -1,0 +1,6 @@
+{
+  "parent": "nitrogen_internals:block/template_translucent_wall_plus_tall",
+  "textures": {
+    "wall": "aether:block/construction/aerogel"
+  }
+}

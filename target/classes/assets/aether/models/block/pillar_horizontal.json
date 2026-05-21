@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cube_column_horizontal",
+  "textures": {
+    "end": "aether:block/dungeon/pillar_top",
+    "side": "aether:block/dungeon/pillar_side"
+  }
+}

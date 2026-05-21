@@ -12,10 +12,16 @@ public class PlayerEntity extends Entity {
     private ModelPart head;
     private ModelPart leftArm, rightArm;
     private ModelPart leftLeg, rightLeg;
+    private ModelPart cape;
     private float walkAnimTime = 0.0f;
     private float rollAnimTime = 0.0f;
     private float attackAnimTime = 0.0f;
     private boolean isRolling = false;
+
+    // Cape physics state
+    private float capeAngle = 0.0f;
+    private float capeAngularVel = 0.0f;
+    private float prevHorizontalSpeed = 0.0f;
 
     public PlayerEntity(int id, Vector3f position, com.voxel.utils.TextureManager textureManager) {
         super(id, position);
@@ -27,6 +33,7 @@ public class PlayerEntity extends Entity {
             else if (part.name.equals("right_arm")) rightArm = part;
             else if (part.name.equals("left_leg")) leftLeg = part;
             else if (part.name.equals("right_leg")) rightLeg = part;
+            else if (part.name.equals("cape")) cape = part;
         }
     }
 
@@ -83,6 +90,38 @@ public class PlayerEntity extends Entity {
 
         if (head != null) {
             head.rotation.set(pitch, 0.0f, 0.0f);
+        }
+
+        // --- Cape Physics ---
+        // Cape swings based on acceleration and vertical velocity
+        float verticalVel = vel.y;
+        float acceleration = (horizontalSpeed - prevHorizontalSpeed) / Math.max(dt, 0.001f);
+        prevHorizontalSpeed = horizontalSpeed;
+
+        // Target angle: when moving forward, cape flows behind (positive rotation = lean back)
+        // When falling, cape flaps upward
+        float targetAngle;
+        if (horizontalSpeed > 0.1f) {
+            targetAngle = horizontalSpeed * 30.0f; // Flows back proportional to speed
+        } else {
+            targetAngle = 0.0f;
+        }
+        // Add upward fling when falling fast
+        if (verticalVel < -2.0f) {
+            targetAngle += Math.min(-verticalVel * 15.0f, 90.0f);
+        }
+
+        // Spring physics for the cape
+        float stiffness = 8.0f;
+        float damping = 3.0f;
+        float force = (targetAngle - capeAngle) * stiffness - capeAngularVel * damping;
+        capeAngularVel += force * dt;
+        capeAngularVel *= Math.max(0.0f, 1.0f - dt * 0.5f); // Friction
+        capeAngle += capeAngularVel * dt;
+        capeAngle = Math.max(-90.0f, Math.min(90.0f, capeAngle));
+
+        if (cape != null) {
+            cape.rotation.x = capeAngle;
         }
 
         if (horizontalSpeed > 0.1f && player.isOnGround() && !isRolling) {

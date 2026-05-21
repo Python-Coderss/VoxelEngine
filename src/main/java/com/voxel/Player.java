@@ -187,14 +187,46 @@ public class Player {
         velocity.z += dz * speed;
     }
 
-    public void jump() {
+    public void jump(World world, BlockDataManager blockDataManager) {
         if (onGround) {
             velocity.y = 8.5f;
             onGround = false;
         } else if (isSwimming) {
-            velocity.y += 0.5f; // Swim up (legacy style)
-            if (velocity.y > 4.0f) velocity.y = 4.0f;
+            // Check if at a pool edge — if so, launch the player out
+            if (isAtWaterEdge(world, blockDataManager)) {
+                velocity.y = 14.0f; // Huge vertical boost to escape the pool
+            } else {
+                velocity.y += 0.5f; // Swim up (legacy style)
+                if (velocity.y > 4.0f) velocity.y = 4.0f;
+            }
         }
+    }
+
+    /**
+     * Detects if the player is swimming at the edge of a water pool
+     * with a climbable solid block adjacent, within 1 block above the water surface.
+     */
+    private boolean isAtWaterEdge(World world, BlockDataManager blockDataManager) {
+        if (!isSwimming) return false;
+
+        int feetY = (int) Math.floor(position.y);
+        int px = (int) Math.floor(position.x);
+        int pz = (int) Math.floor(position.z);
+
+        // Check 4 horizontal neighbors at feet level and 1 block above
+        int[][] offsets = {{-1,0}, {1,0}, {0,-1}, {0,1}};
+        for (int checkY = feetY; checkY <= feetY + 1; checkY++) {
+            for (int[] off : offsets) {
+                int nx = px + off[0];
+                int nz = pz + off[1];
+                int voxel = world.getVoxel(nx, checkY, nz);
+                if (voxel > 0 && blockDataManager.isFullBlock(voxel)) {
+                    // Found a solid block adjacent — the player can climb out here
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // Getters and Setters

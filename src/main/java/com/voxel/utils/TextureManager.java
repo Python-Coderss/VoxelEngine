@@ -32,6 +32,7 @@ public class TextureManager {
 
     private int textureArrayId;
     private final Map<String, Integer> textureToIndex = new HashMap<>();
+    private final Map<String, Integer> textureToFrameCount = new HashMap<>();
     private final List<String> texturePaths = new ArrayList<>();
     private static final int MAX_LAYERS = 1024;
 
@@ -93,40 +94,72 @@ public class TextureManager {
         glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
     }
 
+    /**
+     * Loads a texture, detecting animated vertical strips (height > width).
+     * Each frame (TEXTURE_SIZE x TEXTURE_SIZE) is uploaded to consecutive layers.
+     */
     private void loadAndUploadTexture(String path, int layer) {
         try {
             BufferedImage img = ImageIO.read(new File(path));
             if (img == null) return;
 
-            // Scale all textures to 64x64 to unify the sampler
-            if (img.getWidth() != TEXTURE_SIZE || img.getHeight() != TEXTURE_SIZE) {
-                BufferedImage scaled = new BufferedImage(TEXTURE_SIZE, TEXTURE_SIZE, BufferedImage.TYPE_INT_ARGB);
-                Graphics2D g = scaled.createGraphics();
-                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-                g.drawImage(img, 0, 0, TEXTURE_SIZE, TEXTURE_SIZE, null);
-                g.dispose();
-                img = scaled;
+            int originalWidth = img.getWidth();
+            int originalHeight = img.getHeight();
+
+            // Detect animated textures: vertical strips where height > width
+            // Each frame is TEXTURE_SIZE x TEXTURE_SIZE
+            int frameCount;
+            if (originalHeight > TEXTURE_SIZE && originalWidth == TEXTURE_SIZE && originalHeight % TEXTURE_SIZE == 0) {
+                frameCount = originalHeight / TEXTURE_SIZE;
+            } else {
+                frameCount = 1;
             }
 
-            int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
-            img.getRGB(0, 0, TEXTURE_SIZE, TEXTURE_SIZE, pixels, 0, TEXTURE_SIZE);
+            // Store the frame count for this texture (use the name from textureToIndex)
+            String fileName = new File(path).getName();
+            String name = fileName.substring(0, fileName.lastIndexOf('.'));
+            textureToFrameCount.put(name, frameCount);
 
-            ByteBuffer buffer = MemoryUtil.memAlloc(TEXTURE_SIZE * TEXTURE_SIZE * 4);
-            for (int y = 0; y < TEXTURE_SIZE; y++) {
-                for (int x = 0; x < TEXTURE_SIZE; x++) {
-                    int pixel = pixels[y * TEXTURE_SIZE + x];
-                    buffer.put((byte) ((pixel >> 16) & 0xFF)); // R
-                    buffer.put((byte) ((pixel >> 8) & 0xFF));  // G
-                    buffer.put((byte) (pixel & 0xFF));         // B
-                    buffer.put((byte) ((pixel >> 24) & 0xFF)); // A
+            if (frameCount > 1) {
+                // Animated texture: upload each frame to consecutive layers
+                for (int f = 0; f < frameCount; f++) {
+                    BufferedImage frame = img.getSubimage(0, f * TEXTURE_SIZE, TEXTURE_SIZE, TEXTURE_SIZE);
+                    uploadFrameToLayer(frame, layer + f);
                 }
+            } else {
+                // Non-animated: scale to 64x64 if needed, upload to single layer
+                if (img.getWidth() != TEXTURE_SIZE || img.getHeight() != TEXTURE_SIZE) {
+                    BufferedImage scaled = new BufferedImage(TEXTURE_SIZE, TEXTURE_SIZE, BufferedImage.TYPE_INT_ARGB);
+                    Graphics2D g = scaled.createGraphics();
+                    g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+                    g.drawImage(img, 0, 0, TEXTURE_SIZE, TEXTURE_SIZE, null);
+                    g.dispose();
+                    img = scaled;
+                }
+                uploadFrameToLayer(img, layer);
             }
-            buffer.flip();
-            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, layer, TEXTURE_SIZE, TEXTURE_SIZE, 1, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
-            MemoryUtil.memFree(buffer);
         } catch (IOException e) {
             System.err.println("Failed to upload texture: " + path);
         }
+    }
+
+    private void uploadFrameToLayer(BufferedImage img, int layer) {
+        int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
+        img.getRGB(0, 0, TEXTURE_SIZE, TEXTURE_SIZE, pixels, 0, TEXTURE_SIZE);
+
+        ByteBuffer buffer = MemoryUtil.memAlloc(TEXTURE_SIZE * TEXTURE_SIZE * 4);
+        for (int y = 0; y < TEXTURE_SIZE; y++) {
+            for (int x = 0; x < TEXTURE_SIZE; x++) {
+                int pixel = pixels[y * TEXTURE_SIZE + x];
+                buffer.put((byte) ((pixel >> 16) & 0xFF)); // R
+                buffer.put((byte) ((pixel >> 8) & 0xFF));  // G
+                buffer.put((byte) (pixel & 0xFF));         // B
+                buffer.put((byte) ((pixel >> 24) & 0xFF)); // A
+            }
+        }
+        buffer.flip();
+        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, layer, TEXTURE_SIZE, TEXTURE_SIZE, 1, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+        MemoryUtil.memFree(buffer);
     }
 
     public void loadEntityTextures(String directoryPath) {
@@ -143,6 +176,26 @@ public class TextureManager {
 
     public int getTextureIndex(String name) {
         return textureToIndex.getOrDefault(name, -1);
+    }
+
+    /**
+     * Returns the number of animation frames for a texture.
+     * Returns 1 for non-animated textures.
+     */
+    public int getFrameCount(String name) {
+        return textureToFrameCount.getOrDefault(name, 1);
+    }
+
+    /**
+     * Returns the texture name for a given index, or null if not found.
+     */
+    public String getTextureNameByIndex(int index) {
+        for (Map.Entry<String, Integer> entry : textureToIndex.entrySet()) {
+            if (entry.getValue() == index) {
+                return entry.getKey();
+            }
+        }
+        return null;
     }
 
     public int getEntityTextureIndex(String name) {

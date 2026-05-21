@@ -12,8 +12,8 @@ public class TextureUtils {
         try {
             File file = new File(filePath);
             if (!file.exists()) {
-                System.err.println("File not found: " + filePath);
-                return Color.BLACK;
+                // File not found — default to white so the texture array provides the actual color
+                return Color.WHITE;
             }
 
             BufferedImage image = ImageIO.read(file);

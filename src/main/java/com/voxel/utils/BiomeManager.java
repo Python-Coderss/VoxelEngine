@@ -26,6 +26,11 @@ public class BiomeManager {
     // Noise generators used to create procedural temperature and humidity.
     private final PerlinNoise tempNoise = new PerlinNoise(12345);
     private final PerlinNoise humNoise = new PerlinNoise(67890);
+
+    // CPU-side biome map data for sliding window support.
+    // 2 bytes per pixel (R=temp, G=humidity). Kept in off-heap memory for direct GPU upload.
+    private ByteBuffer biomeData;
+    private int biomeWorldSize;
     
     /**
      * Generates a 2D map covering the entire world where each pixel stores
@@ -33,8 +38,13 @@ public class BiomeManager {
      * @param worldSize The size of the world (e.g., 2048).
      */
     public void generateBiomeMap(int worldSize) {
+        this.biomeWorldSize = worldSize;
+
+        // Free old buffer if it exists
+        if (biomeData != null) MemoryUtil.memFree(biomeData);
+
         // Allocate off-heap memory for the map (2 bytes per pixel: Temperature and Humidity).
-        ByteBuffer buffer = MemoryUtil.memAlloc(worldSize * worldSize * 2);
+        biomeData = MemoryUtil.memAlloc(worldSize * worldSize * 2);
         for (int z = 0; z < worldSize; z++) {
             for (int x = 0; x < worldSize; x++) {
                 // Generate temperature and humidity using Perlin noise.
@@ -42,20 +52,21 @@ public class BiomeManager {
                 float h = (humNoise.noise(x, z, 0.002f) + 1.0f) * 0.5f;
 
                 // Scale to [0, 255] and store in the buffer.
-                buffer.put((byte) (Math.max(0, Math.min(1, t)) * 255));
-                buffer.put((byte) (Math.max(0, Math.min(1, h)) * 255));
+                biomeData.put((byte) (Math.max(0, Math.min(1, t)) * 255));
+                biomeData.put((byte) (Math.max(0, Math.min(1, h)) * 255));
             }
         }
-        buffer.flip();
+        biomeData.flip();
 
         // 1. Create a 2D texture on the GPU.
+        if (biomeMapId != 0) glDeleteTextures(biomeMapId);
         biomeMapId = glCreateTextures(GL_TEXTURE_2D);
 
         // 2. Allocate storage for the map (RG format, 8 bits per channel).
         glTextureStorage2D(biomeMapId, 1, GL_RG8, worldSize, worldSize);
 
         // 3. Upload the generated buffer to the texture.
-        glTextureSubImage2D(biomeMapId, 0, 0, 0, worldSize, worldSize, GL_RG, GL_UNSIGNED_BYTE, buffer);
+        glTextureSubImage2D(biomeMapId, 0, 0, 0, worldSize, worldSize, GL_RG, GL_UNSIGNED_BYTE, biomeData);
         
         // 4. Set texture parameters (Linear filtering for smooth transitions).
         glTextureParameteri(biomeMapId, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -63,8 +74,70 @@ public class BiomeManager {
         glTextureParameteri(biomeMapId, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTextureParameteri(biomeMapId, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-        // Free the CPU-side memory.
-        MemoryUtil.memFree(buffer);
+        // Keep biomeData on CPU for sliding window updates.
+    }
+
+    /**
+     * Slides the biome map to match the new buffer offset.
+     * Copies overlapping pixel data from the old region, and generates fresh
+     * Perlin noise for newly exposed areas.
+     * Must be called on the render thread after this (or before uploading to GPU).
+     *
+     * @param oldOffsetX Previous buffer origin X (block coords)
+     * @param oldOffsetZ Previous buffer origin Z (block coords)
+     * @param newOffsetX New buffer origin X (block coords)
+     * @param newOffsetZ New buffer origin Z (block coords)
+     */
+    public void slideBiomeMap(int oldOffsetX, int oldOffsetZ, int newOffsetX, int newOffsetZ) {
+        if (biomeData == null || biomeWorldSize == 0) return;
+        if (oldOffsetX == newOffsetX && oldOffsetZ == newOffsetZ) return;
+
+        int ws = biomeWorldSize;
+        int shiftX = newOffsetX - oldOffsetX; // in block coords
+        int shiftZ = newOffsetZ - oldOffsetZ;
+
+        // Take a snapshot of the old data before we overwrite it
+        ByteBuffer oldData = MemoryUtil.memAlloc(ws * ws * 2);
+        biomeData.rewind();
+        oldData.put(biomeData);
+        oldData.flip();
+        biomeData.rewind();
+
+        // Fill the new buffer by either copying overlapping old data or generating fresh
+        for (int dz = 0; dz < ws; dz++) {
+            for (int dx = 0; dx < ws; dx++) {
+                int oldDx = dx + shiftX;
+                int oldDz = dz + shiftZ;
+                int newIdx = (dx + dz * ws) * 2;
+
+                if (oldDx >= 0 && oldDx < ws && oldDz >= 0 && oldDz < ws) {
+                    // Copy from overlapping region
+                    int oldIdx = (oldDx + oldDz * ws) * 2;
+                    biomeData.put(newIdx, oldData.get(oldIdx));
+                    biomeData.put(newIdx + 1, oldData.get(oldIdx + 1));
+                } else {
+                    // Generate new biome data for the exposed area
+                    int wx = newOffsetX + dx;
+                    int wz = newOffsetZ + dz;
+                    float t = (tempNoise.noise(wx, wz, 0.002f) + 1.0f) * 0.5f;
+                    float h = (humNoise.noise(wx, wz, 0.002f) + 1.0f) * 0.5f;
+                    biomeData.put(newIdx, (byte) (Math.max(0, Math.min(1, t)) * 255));
+                    biomeData.put(newIdx + 1, (byte) (Math.max(0, Math.min(1, h)) * 255));
+                }
+            }
+        }
+
+        MemoryUtil.memFree(oldData);
+    }
+
+    /**
+     * Uploads the CPU-side biome data to the GPU texture.
+     * Must be called on the render thread.
+     */
+    public void uploadBiomeMap() {
+        if (biomeData == null || biomeMapId == 0) return;
+        biomeData.rewind();
+        glTextureSubImage2D(biomeMapId, 0, 0, 0, biomeWorldSize, biomeWorldSize, GL_RG, GL_UNSIGNED_BYTE, biomeData);
     }
 
     /**

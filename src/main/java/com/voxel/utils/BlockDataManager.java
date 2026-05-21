@@ -60,6 +60,10 @@ public class BlockDataManager {
         // Whether this block is a liquid (water, lava).
         public boolean isLiquid;
 
+        // Animated texture properties
+        public boolean isAnimated;
+        public int frameCount = 1;
+
         // Whether this block occupies the full voxel space (true for most blocks, false
         // for slabs/stairs/fences).
         public boolean isFullBlock;
@@ -119,14 +123,27 @@ public class BlockDataManager {
         assignFace(data, 4, textureMap.getOrDefault("west", side != null ? side : all), textureManager);
         assignFace(data, 5, textureMap.getOrDefault("east", side != null ? side : all), textureManager);
 
-        // Calculate albedo using TextureUtils
+        // Calculate albedo using TextureUtils — search known texture directories
         if (representativeTexture != null) {
             String texName = representativeTexture;
             if (texName.contains("/")) {
                 texName = texName.substring(texName.lastIndexOf('/') + 1);
             }
-            String texPath = "src/main/resources/assets/minecraft/textures/blocks/" + texName + ".png";
-            data.albedo = TextureUtils.getAverageColor(texPath);
+            String[] searchDirs = {
+                "src/main/resources/assets/minecraft/textures/blocks",
+                "src/main/resources/assets/aether/textures/block/natural",
+                "src/main/resources/assets/aether/textures/block/construction",
+                "src/main/resources/assets/aether/textures/block/dungeon",
+                "src/main/resources/assets/aether/textures/block/utility",
+                "src/main/resources/assets/aether/textures/block/miscellaneous"
+            };
+            for (String dir : searchDirs) {
+                String texPath = dir + "/" + texName + ".png";
+                if (Files.exists(Paths.get(texPath))) {
+                    data.albedo = TextureUtils.getAverageColor(texPath);
+                    break;
+                }
+            }
         }
 
         // Set demonstration properties based on block name.
@@ -138,6 +155,21 @@ public class BlockDataManager {
         } else if (name.contains("water")) {
             data.transparency = 150;
             data.reflectivity = 100;
+        }
+
+        // Detect animated textures from the texture manager
+        for (int faceTex : data.tex) {
+            if (faceTex >= 0) {
+                String texName = textureManager.getTextureNameByIndex(faceTex);
+                if (texName != null) {
+                    int fc = textureManager.getFrameCount(texName);
+                    if (fc > 1) {
+                        data.isAnimated = true;
+                        data.frameCount = fc;
+                        break;
+                    }
+                }
+            }
         }
 
         // Set isFullBlock based on block type
@@ -217,6 +249,10 @@ public class BlockDataManager {
      */
     private void resolveModelRecursive(String modelName, String modelsDir, Map<String, String> textureMap,
             BlockData data) {
+        // Strip any domain prefix (e.g., "minecraft:block/cube_all" -> "block/cube_all")
+        if (modelName.contains(":")) {
+            modelName = modelName.substring(modelName.lastIndexOf(':') + 1);
+        }
         if (modelName.startsWith("block/"))
             modelName = modelName.substring(6);
         String jsonPath = modelsDir + "/" + modelName + ".json";
@@ -240,6 +276,10 @@ public class BlockDataManager {
                     String val = texJson.getString(key);
                     // Child models override parents, so only put if key is missing.
                     if (!textureMap.containsKey(key)) {
+                        // Strip domain prefix from texture references too
+                        if (val.contains(":")) {
+                            val = val.substring(val.lastIndexOf(':') + 1);
+                        }
                         textureMap.put(key, val);
                     }
                 }
@@ -248,8 +288,12 @@ public class BlockDataManager {
             // Recurse into the parent model if one is specified.
             if (json.has("parent")) {
                 String parent = json.getString("parent");
+                // Strip any domain prefix
+                if (parent.contains(":")) {
+                    parent = parent.substring(parent.lastIndexOf(':') + 1);
+                }
                 if (!parent.equals("block/block") && !parent.equals("block/cube") && !parent.equals("block/cube_all")
-                        && !parent.equals("block/cube_column")) {
+                        && !parent.equals("block/cube_column") && !parent.equals("block/cube_bottom_top")) {
                     resolveModelRecursive(parent, modelsDir, textureMap, data);
                 }
             }
@@ -330,11 +374,12 @@ public class BlockDataManager {
                         | ((data.isFullBlock ? 1 : 0) << 9) | ((data.isLiquid ? 1 : 0) << 10);
                 buffer.put(packed);
 
-                // ivec4 2: (albedoR, albedoG, albedoB, unused)
+                // ivec4 2: (albedoR, albedoG, albedoB, packedAnim)
                 buffer.put(data.albedo.getRed());
                 buffer.put(data.albedo.getGreen());
                 buffer.put(data.albedo.getBlue());
-                buffer.put(0); // Unused
+                int packedAnim = (data.isAnimated ? 1 : 0) | ((data.frameCount & 0xF) << 1);
+                buffer.put(packedAnim); // Unused -> now stores animation info
             } else {
                 // Fill with -1 for unused IDs.
                 for (int j = 0; j < 12; j++)

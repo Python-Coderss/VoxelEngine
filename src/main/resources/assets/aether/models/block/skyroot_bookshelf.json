@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cube_column",
+  "textures": {
+    "end": "aether:block/construction/skyroot_planks",
+    "side": "aether:block/construction/skyroot_bookshelf"
+  }
+}
