@@ -116,6 +116,7 @@ public class Main {
     private int breakTargetY = Integer.MIN_VALUE;
     private int breakTargetZ = Integer.MIN_VALUE;
     private float breakProgress = 0.0f;
+    private double lastPortalTeleportTime = 0;
 
     private int uiTextureId = 0;
     private Vector2i uiTextureSize = new Vector2i(1, 1);
@@ -318,7 +319,7 @@ public class Main {
         // Spawn initial enemies
         spawnInitialEnemies(player);
 
-        chunkManager.update(player.getPosition());
+        chunkManager.update(player.getPosition(), yaw);
         uploadWorldToGpu();
         updateCursorMode();
         setStatus("Mode: survival. Press E for inventory, / for commands. R to respawn.");
@@ -562,6 +563,14 @@ public class Main {
         registerBlockItem("oak_log", "Oak Log", 5, "log_oak");
         registerBlockItem("dirt", "Dirt", 13, "dirt");
         registerBlockItem("sand", "Sand", 14, "sand");
+        registerBlockItem("obsidian", "Obsidian", 16, "obsidian");
+        registerBlockItem("glowstone", "Glowstone", 17, "glowstone");
+        registerBlockItem("end_stone", "End Stone", 18, "end_stone");
+
+        registerToolItem("flint_and_steel", "Flint and Steel", "flint_and_steel", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
+        registerToolItem("water_bucket", "Water Bucket", "bucket_water", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
+        registerToolItem("eye_of_ender", "Eye of Ender", "ender_eye", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
+
         // --- Aether Items ---
         registerBlockItem("aether_grass", "Aether Grass", 100, "aether_grass_block_top");
         registerBlockItem("holystone", "Holystone", 101, "holystone");
@@ -623,11 +632,19 @@ public class Main {
         inventory[7] = new ItemStack("grass", 32);
         inventory[8] = new ItemStack("sand", 32);
         inventory[9] = new ItemStack("leaves", 24);
+        // Portal items
+        inventory[8] = new ItemStack("flint_and_steel", 1);
+        inventory[9] = new ItemStack("water_bucket", 1);
+        inventory[10] = new ItemStack("eye_of_ender", 1);
+        inventory[11] = new ItemStack("obsidian", 16);
+        inventory[12] = new ItemStack("glowstone", 16);
+        inventory[13] = new ItemStack("end_stone", 16);
+
         // Aether blocks in inventory
-        inventory[10] = new ItemStack("aether_grass", 16);
-        inventory[11] = new ItemStack("holystone", 32);
-        inventory[12] = new ItemStack("skyroot_log", 16);
-        inventory[13] = new ItemStack("aerogel", 16);
+        inventory[14] = new ItemStack("aether_grass", 16);
+        inventory[15] = new ItemStack("holystone", 32);
+        inventory[16] = new ItemStack("skyroot_log", 16);
+        inventory[17] = new ItemStack("aerogel", 16);
     }
 
     private void logicLoop() {
@@ -698,7 +715,9 @@ public class Main {
         }
 
         entityManager.update(dt);
-        chunkManager.update(player.getPosition());
+        checkPortalTeleport();
+
+        chunkManager.update(player.getPosition(), yaw);
     }
 
     private void handleInput(float dt) {
@@ -1062,7 +1081,11 @@ public class Main {
         if (commandMode) return;
 
         if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-            attemptPlaceBlock();
+            if ((mods & GLFW_MOD_SHIFT) != 0) {
+                attemptActivatePortal();
+            } else {
+                attemptPlaceBlock();
+            }
         }
     }
 
@@ -1697,6 +1720,173 @@ public class Main {
         }
     }
 
+    private void checkPortalTeleport() {
+        if (player.isDead()) return;
+        Vector3f pos = player.getPosition();
+        int px = (int) Math.floor(pos.x);
+        int py = (int) Math.floor(pos.y);
+        int pz = (int) Math.floor(pos.z);
+        int voxelFeet = world.getVoxel(px, py, pz);
+        int voxelBody = world.getVoxel(px, py + 1, pz);
+        int voxel = (voxelFeet == 19 || voxelFeet == 106) ? voxelFeet :
+                    (voxelBody == 19 || voxelBody == 106) ? voxelBody : 0;
+
+        if (voxel == 0) return;
+
+        // Teleport cooldown to prevent immediate re-triggering
+        double now = glfwGetTime();
+        if (now - lastPortalTeleportTime < 1.0) return;
+
+        DimensionType target;
+        if (voxel == 19) {
+            target = activeDimension == DimensionType.NETHER ? DimensionType.OVERWORLD : DimensionType.NETHER;
+        } else if (voxel == 106) {
+            target = activeDimension == DimensionType.AETHER ? DimensionType.OVERWORLD : DimensionType.AETHER;
+        } else {
+            return;
+        }
+
+        // Don't teleport if already in the target dimension
+        if (target == activeDimension) return;
+
+        int renderDistance = 6;
+        if (target == DimensionType.OVERWORLD) renderDistance = 8;
+        dimensionManager.ensureDimension(target, renderDistance);
+        dimensionManager.switchTo(target);
+        activeDimension = target;
+        world = dimensionManager.getActiveWorld();
+        chunkManager = dimensionManager.getActiveChunkManager();
+
+        // Place player at target dimension spawn
+        int spawnY = target.baseHeight + 3;
+        player.getPosition().set(1024, spawnY, 1024);
+        uploadWorldToGpu();
+        lastPortalTeleportTime = now;
+        setStatus("Teleported to " + target.name);
+    }
+
+    private void attemptActivatePortal() {
+        if (player.isDead()) return;
+        int[] hit = raycastBlock(6.0f);
+        if (hit == null) return;
+
+        int hitX = hit[0], hitY = hit[1], hitZ = hit[2];
+        int hitBlock = world.getVoxel(hitX, hitY, hitZ);
+
+        ItemStack selected = inventory[selectedSlot];
+        if (selected == null) {
+            setStatus("Select flint & steel, water bucket, or eye of ender");
+            return;
+        }
+
+        String itemId = selected.itemId;
+        int frameBlockId;
+        int portalBlockId;
+        DimensionType portalDim;
+        String activationMsg;
+
+        if (itemId.equals("flint_and_steel")) {
+            frameBlockId = 16; // Obsidian
+            portalBlockId = 19; // Nether portal
+            portalDim = DimensionType.NETHER;
+            activationMsg = "Nether Portal";
+        } else if (itemId.equals("water_bucket")) {
+            frameBlockId = 17; // Glowstone
+            portalBlockId = 106; // Aether portal
+            portalDim = DimensionType.AETHER;
+            activationMsg = "Aether Portal";
+        } else if (itemId.equals("eye_of_ender")) {
+            frameBlockId = 18; // End stone
+            portalBlockId = 19; // Reuse nether portal block for now (or use a different one)
+            portalDim = DimensionType.END;
+            activationMsg = "End Portal";
+        } else {
+            setStatus("Shift+right-click with flint & steel, water bucket, or eye of ender");
+            return;
+        }
+
+        // Only try to light the portal if the clicked block is the correct frame material
+        if (hitBlock != frameBlockId) return;
+
+        if (tryLightPortal(hitX, hitY, hitZ, frameBlockId, portalBlockId)) {
+            setStatus("Lit " + activationMsg);
+        }
+    }
+
+    private boolean tryLightPortal(int hitX, int hitY, int hitZ, int frameBlockId, int portalBlockId) {
+        // Try NS-facing portal (width along X):
+        if (tryPortalOrientation(hitX, hitY, hitZ, 1, 0, frameBlockId, portalBlockId)) return true;
+        // Try EW-facing portal (width along Z):
+        if (tryPortalOrientation(hitX, hitY, hitZ, 0, 1, frameBlockId, portalBlockId)) return true;
+        return false;
+    }
+
+    private boolean tryPortalOrientation(int hitX, int hitY, int hitZ, int dirX, int dirZ, int frameBlockId, int portalBlockId) {
+        // Portal outer dimensions: 4 wide x 5 tall, inner: 2 wide x 3 tall
+        // The clicked block must be part of the frame. Search for the minimal corner.
+        for (int dw = -3; dw <= 0; dw++) {
+            for (int dh = -4; dh <= 0; dh++) {
+                int sx = (dirX == 1) ? hitX + dw : hitX;
+                int sy = hitY + dh;
+                int sz = (dirZ == 1) ? hitZ + dw : hitZ;
+
+                if (isValidPortalFrame(sx, sy, sz, dirX, dirZ, frameBlockId)) {
+                    // Light the portal: fill 2x3 interior with portal blocks
+                    for (int px = 1; px <= 2; px++) {
+                        for (int py = 1; py <= 3; py++) {
+                            int wx = sx + px * dirX;
+                            int wy = sy + py;
+                            int wz = sz + px * dirZ;
+                            chunkManager.setVoxel(wx, wy, wz, portalBlockId);
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean isValidPortalFrame(int sx, int sy, int sz, int dirX, int dirZ, int frameBlockId) {
+        int width = 4;
+        int height = 5;
+
+        // Check bottom row
+        for (int i = 0; i < width; i++) {
+            int wx = sx + i * dirX;
+            int wz = sz + i * dirZ;
+            if (world.getVoxel(wx, sy, wz) != frameBlockId) return false;
+        }
+        // Check top row
+        for (int i = 0; i < width; i++) {
+            int wx = sx + i * dirX;
+            int wz = sz + i * dirZ;
+            if (world.getVoxel(wx, sy + height - 1, wz) != frameBlockId) return false;
+        }
+        // Check left column (excluding corners)
+        for (int i = 1; i < height - 1; i++) {
+            int wx = sx;
+            int wz = sz;
+            if (world.getVoxel(wx, sy + i, wz) != frameBlockId) return false;
+        }
+        // Check right column (excluding corners)
+        for (int i = 1; i < height - 1; i++) {
+            int wx = sx + (width - 1) * dirX;
+            int wz = sz + (width - 1) * dirZ;
+            if (world.getVoxel(wx, sy + i, wz) != frameBlockId) return false;
+        }
+        // Check interior is empty
+        for (int px = 1; px < width - 1; px++) {
+            for (int py = 1; py < height - 1; py++) {
+                int wx = sx + px * dirX;
+                int wy = sy + py;
+                int wz = sz + px * dirZ;
+                if (world.getVoxel(wx, wy, wz) != 0) return false;
+            }
+        }
+        return true;
+    }
+
     private boolean intersectsPlayer(int x, int y, int z) {
         Vector3f pos = player.getPosition();
         float playerMinX = pos.x - PLAYER_HALF_WIDTH;
@@ -1777,6 +1967,10 @@ public class Main {
         blockDataManager.registerBlock(13, "dirt", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(14, "sand", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(15, "water_still", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(16, "obsidian", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(17, "glowstone", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(18, "end_stone", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(19, "nether_portal", textureManager, "src/main/resources/assets/minecraft/models/block");
         // --- Aether Dimension Blocks ---
         String aetherModels = "src/main/resources/assets/aether/models/block";
         blockDataManager.registerBlock(100, "aether_grass_block", textureManager, aetherModels);

@@ -9,6 +9,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Manages ASYNC loading and unloading of chunks.
+ * Supports directional priority: chunks in the player's look direction
+ * are submitted for loading before chunks behind them.
  */
 public class ChunkManager {
     private final World world;
@@ -26,6 +28,7 @@ public class ChunkManager {
     private final Set<Long> pendingLoads = ConcurrentHashMap.newKeySet();
 
     private int lastPlayerCX = -1000, lastPlayerCZ = -1000;
+    private float lastYaw = 0;
 
     // Buffer recentering: when the player gets within this many chunks of the buffer edge,
     // shift the buffer to re-center on the player.
@@ -45,26 +48,28 @@ public class ChunkManager {
         }
     }
 
-    public void update(Vector3f playerPos) {
+    public void update(Vector3f playerPos, float yaw) {
         int pcx = (int) Math.floor(playerPos.x) >> 4;
         int pcz = (int) Math.floor(playerPos.z) >> 4;
 
         if (pcx != lastPlayerCX || pcz != lastPlayerCZ) {
             lastPlayerCX = pcx;
             lastPlayerCZ = pcz;
+            lastYaw = yaw;
             
             // Queue management tasks
-            executor.submit(() -> manageChunks(pcx, pcz));
+            executor.submit(() -> manageChunks(pcx, pcz, yaw));
         }
     }
 
-    private void manageChunks(int pcx, int pcz) {
+    private void manageChunks(int pcx, int pcz, float yaw) {
         // Check if the buffer needs to slide to keep the player centered
         recenterIfNeeded(pcx, pcz);
 
         Set<Long> keep = new HashSet<>();
+        List<int[]> chunksToLoad = new ArrayList<>();
 
-        // Identify chunks to load
+        // Collect all chunks within render distance
         for (int dx = -renderDistance; dx <= renderDistance; dx++) {
             for (int dz = -renderDistance; dz <= renderDistance; dz++) {
                 int cx = pcx + dx;
@@ -74,9 +79,29 @@ public class ChunkManager {
                 keep.add(key);
 
                 if (!loadedChunks.containsKey(key) && !pendingLoads.contains(key)) {
-                    pendingLoads.add(key);
-                    executor.submit(() -> loadChunkAsync(cx, cz));
+                    chunksToLoad.add(new int[]{cx, cz});
                 }
+            }
+        }
+
+        // Sort by directional priority: chunks in the player's look direction load first
+        if (!chunksToLoad.isEmpty()) {
+            float lookX = (float) Math.cos(Math.toRadians(yaw));
+            float lookZ = (float) Math.sin(Math.toRadians(yaw));
+
+            chunksToLoad.sort((a, b) -> {
+                float dotA = (a[0] - pcx) * lookX + (a[1] - pcz) * lookZ;
+                float dotB = (b[0] - pcx) * lookX + (b[1] - pcz) * lookZ;
+                // Higher dot product = more aligned with look direction
+                return Float.compare(dotB, dotA);
+            });
+
+            // Submit loads in priority order
+            for (int[] pos : chunksToLoad) {
+                int cx = pos[0], cz = pos[1];
+                long key = chunkKey(cx, cz);
+                pendingLoads.add(key);
+                executor.submit(() -> loadChunkAsync(cx, cz));
             }
         }
 

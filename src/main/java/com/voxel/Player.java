@@ -54,7 +54,7 @@ public class Player {
         if (isSwimming) {
             frictionFactor = (float) Math.pow(0.15f, dt); // Thick drag in water
         } else {
-            frictionFactor = (float) Math.pow(onGround ? 0.05f : 0.95f, dt);
+            frictionFactor = (float) Math.pow(onGround ? 0.05f : 0.1f, dt);
         }
 
         velocity.x *= frictionFactor;
