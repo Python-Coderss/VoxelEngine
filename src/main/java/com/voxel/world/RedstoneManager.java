@@ -135,6 +135,14 @@ public class RedstoneManager {
         }
     }
 
+    // ---- Connection bitmask constants ----
+    // Stored in bits 4-7 of the voxel extra data (bits 20-23 of packed value)
+    // bit 0: -X (West), bit 1: +X (East), bit 2: -Z (North), bit 3: +Z (South)
+    private static final int CONN_WEST  = 1;
+    private static final int CONN_EAST  = 2;
+    private static final int CONN_NORTH = 4;
+    private static final int CONN_SOUTH = 8;
+
     private boolean isRedstoneComponent(int block) {
         return block == BLOCK_REDSTONE_BLOCK
             || block == BLOCK_REDSTONE_TORCH
@@ -142,6 +150,64 @@ public class RedstoneManager {
             || block == BLOCK_REDSTONE_WIRE
             || block == BLOCK_REDSTONE_LAMP_ON
             || block == BLOCK_REDSTONE_ORE;
+    }
+
+    /**
+     * Computes the 4-bit connection mask for a redstone wire at (x,y,z).
+     * Checks horizontal neighbors AND slope-up connections (wire on adjacent
+     * block 1 level higher, with a solid block beneath it).
+     */
+    private int computeConnections(int x, int y, int z) {
+        int mask = 0;
+        if (isConnectedTo(x, y, z, -1, 0)) mask |= CONN_WEST;
+        if (isConnectedTo(x, y, z, 1, 0))  mask |= CONN_EAST;
+        if (isConnectedTo(x, y, z, 0, -1)) mask |= CONN_NORTH;
+        if (isConnectedTo(x, y, z, 0, 1))  mask |= CONN_SOUTH;
+        return mask;
+    }
+
+    /**
+     * Checks if wire at (x,y,z) should visually/logically connect in direction (dx, dz).
+     * Three connection types:
+     *   1. Direct: redstone component at (x+dx, y, z+dz)
+     *   2. Slope up: redstone component at (x+dx, y+1, z+dz) with solid block below
+     *   3. Slope down: redstone component at (x+dx, y-1, z+dz) — checked from the other wire's perspective
+     */
+    private boolean isConnectedTo(int x, int y, int z, int dx, int dz) {
+        // 1. Direct connection at same Y level
+        int neighbor = world.getVoxel(x + dx, y, z + dz);
+        if (isRedstoneComponent(neighbor)) return true;
+
+        // 2. Slope up: component is on the block above, with a solid block below it
+        int adjacentBlock = world.getVoxel(x + dx, y, z + dz);
+        if (adjacentBlock > 0 && !isRedstoneComponent(adjacentBlock)) {
+            int above = world.getVoxel(x + dx, y + 1, z + dz);
+            if (isRedstoneComponent(above)) return true;
+        }
+
+        // 3. Slope down: current wire sits on a solid block → component below at (x+dx, y-1, z+dz)
+        int blockBelowThis = world.getVoxel(x, y - 1, z);
+        if (blockBelowThis > 0 && !isRedstoneComponent(blockBelowThis)) {
+            int below = world.getVoxel(x + dx, y - 1, z + dz);
+            if (isRedstoneComponent(below)) return true;
+        }
+
+        return false;
+    }
+
+    // ========================================================================
+    //  Connection mask query (for shader / rendering)
+    // ========================================================================
+
+    /**
+     * Returns the 4-bit connection mask for a redstone wire at (x,y,z).
+     * The mask is extracted from the voxel extra data (bits 4-7).
+     * Returns 0 for non-wire blocks or if no wire exists.
+     */
+    public int getConnectionMask(int x, int y, int z) {
+        int raw = world.getRawVoxel(x, y, z);
+        if ((raw & 0xFFFF) != BLOCK_REDSTONE_WIRE) return 0;
+        return (raw >> 20) & 0xF;
     }
 
     // ========================================================================
@@ -224,8 +290,11 @@ public class RedstoneManager {
     // ========================================================================
 
     /**
-     * Encodes the current power level (0-15) into the voxel data for each
-     * redstone wire block. Power is stored in bits 16-23 of the chunk pool int.
+     * Encodes power level AND connection mask into the voxel data for each
+     * redstone wire block.
+     * Extra byte layout (bits 16-23 of packed int):
+     *   bits 0-3: power level (0-15)
+     *   bits 4-7: connection mask (4 bits: W, E, N, S)
      * Called after rebuildNetwork() on the logic thread.
      */
     private void encodeWirePowerLevels() {
@@ -236,8 +305,11 @@ public class RedstoneManager {
             if (block != BLOCK_REDSTONE_WIRE) continue;
 
             int power = powerLevels.getOrDefault(key, 0);
-            RedstoneLogger.log("encodeWirePowerLevels", x, y, z, "encoding power=" + power);
-            chunkManager.setVoxelWithData(x, y, z, BLOCK_REDSTONE_WIRE, power);
+            int connections = computeConnections(x, y, z);
+            // Pack: low 4 bits = power, high 4 bits = connections
+            int extra = (power & 0xF) | ((connections & 0xF) << 4);
+            RedstoneLogger.log("encodeWirePowerLevels", x, y, z, "power=" + power + " connections=" + connections);
+            chunkManager.setVoxelWithData(x, y, z, BLOCK_REDSTONE_WIRE, extra);
             wiresEncoded++;
         }
         if (wiresEncoded > 0) {
@@ -371,29 +443,82 @@ public class RedstoneManager {
             if (cur.power <= 1) continue;    // exhausted signal
 
             int np = cur.power - 1;
-            propagate(queue, cur.x - 1, cur.y, cur.z, np);
-            propagate(queue, cur.x + 1, cur.y, cur.z, np);
-            propagate(queue, cur.x, cur.y - 1, cur.z, np);
-            propagate(queue, cur.x, cur.y + 1, cur.z, np);
-            propagate(queue, cur.x, cur.y, cur.z - 1, np);
-            propagate(queue, cur.x, cur.y, cur.z + 1, np);
+            // Propagate to standard 6 neighbors (connection-checking for wires)
+            propagate(queue, cur.x, cur.y, cur.z, cur.x - 1, cur.y, cur.z, np);
+            propagate(queue, cur.x, cur.y, cur.z, cur.x + 1, cur.y, cur.z, np);
+            propagate(queue, cur.x, cur.y, cur.z, cur.x, cur.y - 1, cur.z, np);
+            propagate(queue, cur.x, cur.y, cur.z, cur.x, cur.y + 1, cur.z, np);
+            propagate(queue, cur.x, cur.y, cur.z, cur.x, cur.y, cur.z - 1, np);
+            propagate(queue, cur.x, cur.y, cur.z, cur.x, cur.y, cur.z + 1, np);
+
+            // If current node is a wire, also propagate via slope connections
+            int thisBlock = world.getVoxel(cur.x, cur.y, cur.z);
+            if (thisBlock == BLOCK_REDSTONE_WIRE) {
+                propagateSlope(queue, cur.x, cur.y, cur.z, np);
+            }
         }
         return count;
     }
 
-    /** Attempt to propagate power into (x,y,z). Only wires and lamps accept power. */
-    private void propagate(Deque<PowerNode> queue, int x, int y, int z, int power) {
-        int block = world.getVoxel(x, y, z);
+    /**
+     * Propagate power via slopes: if there's a solid block at (x+dx, y, z+dz)
+     * and redstone on top at (x+dx, y+1, z+dz), propagate there.
+     */
+    private void propagateSlope(Deque<PowerNode> queue, int x, int y, int z, int power) {
+        int[][] dirs = {{-1,0}, {1,0}, {0,-1}, {0,1}};
+        for (int[] d : dirs) {
+            int dx = d[0], dz = d[1];
+
+            // --- Slope UP: solid block at (x+dx, y, z+dz) → wire on top at (x+dx, y+1, z+dz) ---
+            int belowBlock = world.getVoxel(x + dx, y, z + dz);
+            if (belowBlock > 0 && belowBlock != BLOCK_REDSTONE_WIRE && !isRedstoneComponent(belowBlock)) {
+                propagate(queue, x, y, z, x + dx, y + 1, z + dz, power);
+            }
+
+            // --- Slope DOWN: current wire sits on a solid block → wire below at (x+dx, y-1, z+dz) ---
+            int blockBelowThis = world.getVoxel(x, y - 1, z);
+            if (blockBelowThis > 0 && blockBelowThis != BLOCK_REDSTONE_WIRE && !isRedstoneComponent(blockBelowThis)) {
+                int downNeighbor = world.getVoxel(x + dx, y - 1, z + dz);
+                if (isRedstoneComponent(downNeighbor)) {
+                    propagate(queue, x, y, z, x + dx, y - 1, z + dz, power);
+                }
+            }
+        }
+    }
+
+    /**
+     * Attempt to propagate power from (sx,sy,sz) into (tx,ty,tz).
+     * Only wires and lamps accept power.
+     * For wire targets, checks the connection mask to skip unconnected neighbors.
+     */
+    private void propagate(Deque<PowerNode> queue, int sx, int sy, int sz, int tx, int ty, int tz, int power) {
+        int block = world.getVoxel(tx, ty, tz);
         if (block != BLOCK_REDSTONE_WIRE && block != BLOCK_REDSTONE_LAMP && block != BLOCK_REDSTONE_LAMP_ON)
             return;
 
-        long key = pack(x, y, z);
+        // For wire targets, check if this specific neighbor connection exists.
+        // Skip unconnected neighbors (horizontal only — vertical always propagates).
+        if (block == BLOCK_REDSTONE_WIRE && sy == ty) {
+            int conn = computeConnections(tx, ty, tz);
+            int dx = sx - tx, dz = sz - tz;
+            boolean hasConnection = false;
+            if (dx == -1 && (conn & CONN_WEST) != 0) hasConnection = true;   // source is west of target
+            if (dx == 1 && (conn & CONN_EAST) != 0) hasConnection = true;    // source is east of target
+            if (dz == -1 && (conn & CONN_NORTH) != 0) hasConnection = true;  // source is north of target
+            if (dz == 1 && (conn & CONN_SOUTH) != 0) hasConnection = true;   // source is south of target
+            
+            // Note: slope-up/down connections are handled by propagateSlope()
+            // which is called from bfsPropagate for wire nodes.
+            if (!hasConnection) return;
+        }
+
+        long key = pack(tx, ty, tz);
         int old = powerLevels.getOrDefault(key, 0);
         if (power > old) {
             String name = (block == BLOCK_REDSTONE_WIRE) ? "WIRE" : "LAMP";
-            RedstoneLogger.log("propagate", x, y, z, name + " old=" + old + " new=" + power);
+            RedstoneLogger.log("propagate", tx, ty, tz, name + " old=" + old + " new=" + power);
             powerLevels.put(key, power);
-            queue.add(new PowerNode(x, y, z, power));
+            queue.add(new PowerNode(tx, ty, tz, power));
         }
     }
 
