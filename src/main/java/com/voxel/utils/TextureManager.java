@@ -34,7 +34,13 @@ public class TextureManager {
     private final Map<String, Integer> textureToIndex = new HashMap<>();
     private final Map<String, Integer> textureToFrameCount = new HashMap<>();
     private final List<String> texturePaths = new ArrayList<>();
-    private static final int MAX_LAYERS = 1024;
+    /**
+     * WARNING: This is the max number of layers allocated in the 3D texture array.
+     * If the total number of textures (including animation frames) exceeds this,
+     * glTexSubImage3D will fail with an out-of-bounds error when trying to upload.
+     * Bump this up (e.g., +256 at a time) if you add more blocks/items.
+     */
+    private static final int MAX_LAYERS = 1300;
 
     public void loadTextures(String... directoryPaths) {
         List<Path> allFiles = new ArrayList<>();
@@ -70,14 +76,23 @@ public class TextureManager {
             }
         }
 
-        if (texturePaths.isEmpty()) return;
+        if (texturePaths.isEmpty()) return;        /*
+         * WARNING: MAX_LAYERS must be >= total unique textures + animation frame layers.
+         * Animated textures (vertical strips like portal.png, water_still.png) consume
+         * multiple consecutive layers, so the actual layer usage exceeds texturePaths.size().
+         * The check below uses a conservative estimate (texturePaths.size() + 100 buffer
+         * for animation frames). Increase MAX_LAYERS if this warning triggers.
+         */
+        if (texturePaths.size() + 100 > MAX_LAYERS) {
+            System.err.println("WARNING: " + texturePaths.size() + " + ~100 animation frames may exceed MAX_LAYERS (" + MAX_LAYERS + ")! Increase MAX_LAYERS in TextureManager.java");
+        }
 
         if (textureArrayId == 0) {
             textureArrayId = glGenTextures();
             glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
 
             glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8,
-                    TEXTURE_SIZE, TEXTURE_SIZE, 1100);
+                    TEXTURE_SIZE, TEXTURE_SIZE, MAX_LAYERS);
         }
 
         glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
