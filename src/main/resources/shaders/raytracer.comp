@@ -323,7 +323,7 @@ float fastShadow(vec3 ro, vec3 rd, float maxDist) {
     return 1.0;
 }
 
-bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out int resAabbIdx) { 
+bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx) { 
     ivec3 bufMin = u_WorldOffset;
     ivec3 bufMax = u_WorldOffset + ivec3(WORLD_SIZE);
     float tn, tf; if (!intersectAABB(ro, rd, vec3(bufMin), vec3(bufMax), tn, tf)) return false;
@@ -344,6 +344,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, out float resT, out int resSid
                     uint rawVoxel = voxelPool[(slot << 12) | bi];
                     uint voxelType = rawVoxel & 0xFFFFu;
                     uint wirePower = (rawVoxel >> 16) & 0xFu;
+                    uint wireConn = (rawVoxel >> 20) & 0xFu;
                     
                     // Check if this block is a full cube or has custom AABBs
                     ivec4 d1 = texelFetch(u_BlockData, int(voxelType) * 3 + 1);
@@ -351,6 +352,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, out float resT, out int resSid
                         // Full block: return hit immediately
                         resVoxel = voxelType;
                         resWirePower = wirePower;
+                        resWireConn = wireConn;
                         resSide = side; 
                         resT = (side == 0 ? sd.x - dd.x : (side == 1 ? sd.y - dd.y : sd.z - dd.z)) + st;
                         resAabbIdx = -1;
@@ -365,6 +367,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, out float resT, out int resSid
                         // No custom AABBs (e.g., water, lava): treat as full block hit
                         resVoxel = voxelType;
                         resWirePower = wirePower;
+                        resWireConn = wireConn;
                         resSide = side;
                         resT = (side == 0 ? sd.x - dd.x : (side == 1 ? sd.y - dd.y : sd.z - dd.z)) + st;
                         resAabbIdx = -1;
@@ -380,6 +383,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, out float resT, out int resSid
                             if (aTn < exitT) {
                                 resVoxel = voxelType;
                                 resWirePower = wirePower;
+                                resWireConn = wireConn;
                                 resT = aTn;
                                 resAabbIdx = (aabbOffset / 2) + k;
                                 // Compute hit side from position within AABB
@@ -408,12 +412,13 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, out float resT, out int resSid
     return false;
 }
 
-bool traceAll(vec3 ro, vec3 rd, bool skipFirst, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio, out uint resWirePower, out int resAabbIdx) {
-    resT = 1e30; resEntUv = vec2(0.5); isEnt = false; isHpBar = false; hpRatio = 1.0; resWirePower = 0u; resAabbIdx = -1;
-    float tV; int sideV; uint voxelV, wirePowerV; int aabbIdxV;
-    if (traceWorld(ro, rd, skipFirst, tV, sideV, voxelV, wirePowerV, aabbIdxV)) {
+bool traceAll(vec3 ro, vec3 rd, bool skipFirst, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio, out uint resWirePower, out uint resWireConn, out int resAabbIdx) {
+    resT = 1e30; resEntUv = vec2(0.5); isEnt = false; isHpBar = false; hpRatio = 1.0; resWirePower = 0u; resWireConn = 0u; resAabbIdx = -1;
+    float tV; int sideV; uint voxelV, wirePowerV, wireConnV; int aabbIdxV;
+    if (traceWorld(ro, rd, skipFirst, tV, sideV, voxelV, wirePowerV, wireConnV, aabbIdxV)) {
         resT = tV; resVoxel = voxelV;
         resWirePower = wirePowerV;
+        resWireConn = wireConnV;
         resAabbIdx = aabbIdxV;
         resT = tV; resVoxel = voxelV;
         resN = (sideV == 0) ? vec3(-sign(rd.x), 0, 0) : ((sideV == 1) ? vec3(0, -sign(rd.y), 0) : vec3(0, 0, -sign(rd.z)));
@@ -479,8 +484,8 @@ void main() {
     vec3 final = vec3(0.0), throu = vec3(1.0), ro = camPos; bool skip = false;
 
     for (int b = 0; b < 6; b++) {
-        float t; vec3 n; uint voxel, eTex, wirePower; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx;
-        if (!traceAll(ro, rd, skip, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, aabbIdx)) { final += throu * GetSky(rd, at); break; }
+        float t; vec3 n; uint voxel, eTex, wirePower, wireConn; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx;
+        if (!traceAll(ro, rd, skip, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx)) { final += throu * GetSky(rd, at); break; }
         
         float vMax = min(t, 48.0); float dither = IGN(vec2(px) + u_Time);
         vec3 godRays = vec3(0.0); float vStep = 4.0;
@@ -573,10 +578,63 @@ void main() {
             // This must come AFTER trans initialization so it can override it
             if (texSample.a < 0.1) { trans = 1.0; alb = vec3(1.0); }
 
-            // Redstone dust: tint by power level (only on actual texture pixels, not transparent ones)
+            // Redstone dust: tint by power level and draw connection arms
             if (voxel == 29u && texSample.a >= 0.1) {
                 float pf = float(wirePower) / 15.0;
-                alb *= (vec3(0.6, 0.1, 0.1) + vec3(0.4, 0.1, 0.0) * pf);
+                vec3 wireColor = vec3(0.6, 0.1, 0.1) + vec3(0.4, 0.1, 0.0) * pf;
+                alb *= wireColor;
+                
+                // Connection arms: on the top face, draw lines toward connected neighbors
+                if (abs(n.y) > 0.5) {
+                    // Top face: use UV to determine position within slab
+                    float relX = fract(hp.x);
+                    float relZ = fract(hp.z);
+                    float nearEdge = 0.0625; // 1/16 block = edge region
+                    
+                    // Check if we're near an edge with a connection
+                    bool nearWest  = relX < nearEdge && (wireConn & 1u) != 0u;
+                    bool nearEast  = relX > (1.0 - nearEdge) && (wireConn & 2u) != 0u;
+                    bool nearNorth = relZ < nearEdge && (wireConn & 4u) != 0u;
+                    bool nearSouth = relZ > (1.0 - nearEdge) && (wireConn & 8u) != 0u;
+                    
+                    if (nearWest || nearEast || nearNorth || nearSouth) {
+                        alb = max(alb, vec3(0.3, 0.05, 0.05) + vec3(0.7, 0.15, 0.1) * pf);
+                    }
+                }
+                
+                // Side faces: draw wire on sides that have connections
+                if (abs(n.x) > 0.5) {
+                    // East (+X) or West (-X) face
+                    bool eastFace = n.x > 0.5;
+                    bool westFace = n.x < -0.5;
+                    if ((eastFace && (wireConn & 2u) != 0u) || (westFace && (wireConn & 1u) != 0u)) {                            float nearGround = fract(hp.y);
+                            if (nearGround < 0.125) {
+                            alb = mix(alb, wireColor * 1.5, 0.8);
+                        } else {
+                            trans = 1.0;
+                            alb = vec3(1.0);
+                        }
+                    } else {
+                        trans = 1.0;
+                        alb = vec3(1.0);
+                    }
+                }
+                if (abs(n.z) > 0.5) {
+                    // South (+Z) or North (-Z) face
+                    bool southFace = n.z > 0.5;
+                    bool northFace = n.z < -0.5;
+                    if ((southFace && (wireConn & 8u) != 0u) || (northFace && (wireConn & 4u) != 0u)) {                            float nearGround = fract(hp.y);
+                            if (nearGround < 0.125) {
+                            alb = mix(alb, wireColor * 1.5, 0.8);
+                        } else {
+                            trans = 1.0;
+                            alb = vec3(1.0);
+                        }
+                    } else {
+                        trans = 1.0;
+                        alb = vec3(1.0);
+                    }
+                }
             }
 
             if (isLiquid) {
