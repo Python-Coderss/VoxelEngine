@@ -69,9 +69,10 @@ public class GameContext {
     public Vector2i uiTextureSize = new Vector2i(1, 1);
     public int fontTextureId = 0;
     public Vector2i fontTextureSize = new Vector2i(1, 1);
-    public Vector4f uvHeartFull = new Vector4f(70, 0, 9, 9);
-    public Vector4f uvHeartHalf = new Vector4f(61, 0, 9, 9);
-    public Vector4f uvHeartEmpty = new Vector4f(52, 0, 9, 9);
+    public Vector4f uvHeartFull = new Vector4f(99, 2, 7, 7);
+    public Vector4f uvHeartHalf = new Vector4f(108, 2, 7, 7);
+    public Vector4f uvHeartEmpty = new Vector4f(90, 2, 7, 7);
+    public Vector4f uvHeartBase = new Vector4f(62, 1, 9, 9);
 
     // --- Status / Command ---
     public boolean commandMode = false;
