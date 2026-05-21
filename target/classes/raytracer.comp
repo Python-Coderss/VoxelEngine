@@ -13,6 +13,8 @@ layout(location = 1) uniform vec3 camForward;
 layout(location = 2) uniform vec3 camRight;
 layout(location = 3) uniform vec3 camUp;
 layout(location = 4) uniform float u_Time;
+layout(location = 6) uniform ivec3 u_WorldOffset;
+layout(location = 10) uniform int u_DimensionID;
 
 // SSBOs
 layout(std430, binding = 1) buffer readonly restrict IndirectionTable { uint chunkSlots[]; };
@@ -46,7 +48,7 @@ uniform sampler2D u_GrassColormap;
 uniform sampler2D u_FoliageColormap;
 uniform sampler2D u_UITexture;
 uniform sampler2D u_UISource;
-layout(location = 6) uniform vec4 u_HeartUVs[3]; // [0]=Full, [1]=Half, [2]=Empty
+layout(location = 7) uniform vec4 u_HeartUVs[3]; // [0]=Full, [1]=Half, [2]=Empty
 
 const int WORLD_SIZE = 2048;
 const uint EMPTY = 0xFFFFFFFF;
@@ -62,10 +64,54 @@ const vec3 OCC_DIRS[14] = vec3[](
 
 struct Atmosphere { vec3 sunDir, moonDir, sunColor, moonColor, skyZenith, skyHorizon, ambient; };
 
+// Dimension IDs
+const int DIM_OVERWORLD = 0;
+const int DIM_NETHER = 1;
+const int DIM_END = 2;
+const int DIM_AETHER = 3;
+
 Atmosphere GetAtmosphere(float t) {
+    Atmosphere at;
+    
+    if (u_DimensionID == DIM_NETHER) {
+        // Nether: No day/night cycle, red/orange fog
+        at.sunDir = normalize(vec3(0.0, -0.5, 0.0));
+        at.moonDir = normalize(vec3(0.0, 0.5, 0.0));
+        at.skyZenith = vec3(0.3, 0.05, 0.02);
+        at.skyHorizon = vec3(0.5, 0.15, 0.05);
+        at.sunColor = vec3(0.6, 0.2, 0.05);
+        at.moonColor = vec3(0.0);
+        at.ambient = vec3(0.08, 0.03, 0.01);
+        return at;
+    }
+    
+    if (u_DimensionID == DIM_END) {
+        // End: Dark with purple fog, no sun
+        at.sunDir = normalize(vec3(0.0, 1.0, 0.0));
+        at.moonDir = normalize(vec3(0.0, -1.0, 0.0));
+        at.skyZenith = vec3(0.01, 0.0, 0.05);
+        at.skyHorizon = vec3(0.05, 0.02, 0.1);
+        at.sunColor = vec3(0.1, 0.05, 0.15);
+        at.moonColor = vec3(0.0);
+        at.ambient = vec3(0.02, 0.01, 0.04);
+        return at;
+    }
+    
+    if (u_DimensionID == DIM_AETHER) {
+        // Aether: Bright, always daytime
+        at.sunDir = normalize(vec3(0.0, 1.0, 0.3));
+        at.moonDir = -at.sunDir;
+        at.skyZenith = vec3(0.4, 0.7, 0.95);
+        at.skyHorizon = vec3(0.7, 0.85, 0.95);
+        at.sunColor = vec3(1.0, 0.98, 0.9);
+        at.moonColor = vec3(0.0);
+        at.ambient = vec3(0.3, 0.35, 0.4);
+        return at;
+    }
+    
+    // Overworld (default): Day/night cycle
     float cycle = fract(t / 1440.0);
     float angle = cycle * 2.0 * PI - (PI * 0.5);
-    Atmosphere at;
     at.sunDir = normalize(vec3(cos(angle), sin(angle), 0.3)); at.moonDir = -at.sunDir;
     float h = at.sunDir.y;
     at.skyZenith = mix(vec3(0.01, 0.02, 0.05), vec3(0.1, 0.35, 0.75), smoothstep(-0.15, 0.15, h));
@@ -212,8 +258,9 @@ bool isBitSolid(uint slot, ivec3 p) {
 }
 
 uint getVoxelOcclusion(ivec3 p) {
-    if (any(lessThan(p >> 4, ivec3(0))) || any(greaterThanEqual(p >> 4, ivec3(128)))) return 0x3FFFu;
-    uint slot = chunkSlots[(p.x >> 4) | ((p.y >> 4) << 7) | ((p.z >> 4) << 14)];
+    ivec3 relChunk = (p - u_WorldOffset) >> 4;
+    if (any(lessThan(relChunk, ivec3(0))) || any(greaterThanEqual(relChunk, ivec3(128)))) return 0x3FFFu;
+    uint slot = chunkSlots[relChunk.x | (relChunk.y << 7) | (relChunk.z << 14)];
     if (slot == EMPTY) return 0x3FFFu;
     int voxelIdx = (p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8);
     uint uintIdx = (slot << 11u) | uint(voxelIdx >> 1);
@@ -233,14 +280,17 @@ float computeOcclusionVis(ivec3 p, vec3 targetDir) {
 }
 
 float fastShadow(vec3 ro, vec3 rd, float maxDist) {
-    float tn, tf; if (!intersectAABB(ro, rd, vec3(0), vec3(WORLD_SIZE), tn, tf)) return 1.0;
+    ivec3 bufMin = u_WorldOffset;
+    ivec3 bufMax = u_WorldOffset + ivec3(WORLD_SIZE);
+    float tn, tf; if (!intersectAABB(ro, rd, vec3(bufMin), vec3(bufMax), tn, tf)) return 1.0;
     vec3 p = ro + rd * (max(0.0, tn) + 0.05); ivec3 mp = ivec3(floor(p));
     vec3 dd = abs(1.0 / rd); ivec3 s = ivec3(sign(rd));
     vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
     for (int i = 0; i < 48; i++) {
-        if (any(lessThan(mp, ivec3(0))) || any(greaterThanEqual(mp, ivec3(WORLD_SIZE)))) break;
+        if (any(lessThan(mp, bufMin)) || any(greaterThanEqual(mp, bufMax))) break;
         if (min(sd.x, min(sd.y, sd.z)) > maxDist) break;
-        uint slot = chunkSlots[(mp.x >> 4) | ((mp.y >> 4) << 7) | ((mp.z >> 4) << 14)];
+        ivec3 rel = mp - u_WorldOffset;
+        uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
         if (slot == EMPTY) { skipChunk(mp, sd, dd, s); }
         else {
             if (isBitSolid(slot, mp)) return 0.0;
@@ -251,14 +301,17 @@ float fastShadow(vec3 ro, vec3 rd, float maxDist) {
 }
 
 bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, out float resT, out int resSide, out uint resVoxel) { 
-    float tn, tf; if (!intersectAABB(ro, rd, vec3(0), vec3(WORLD_SIZE), tn, tf)) return false;
+    ivec3 bufMin = u_WorldOffset;
+    ivec3 bufMax = u_WorldOffset + ivec3(WORLD_SIZE);
+    float tn, tf; if (!intersectAABB(ro, rd, vec3(bufMin), vec3(bufMax), tn, tf)) return false;
     float st = max(0.0, tn); vec3 p = ro + rd * st; ivec3 mp = ivec3(floor(p));
     vec3 dd = abs(1.0 / rd); ivec3 s = ivec3(sign(rd));
     vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
     int side = 0; if (skipFirst) side = advanceDDA(mp, sd, dd, s);
     for (int i = 0; i < 256; i++) {
-        if (any(lessThan(mp, ivec3(0))) || any(greaterThanEqual(mp, ivec3(WORLD_SIZE)))) break;
-        uint slot = chunkSlots[(mp.x >> 4) | ((mp.y >> 4) << 7) | ((mp.z >> 4) << 14)];
+        if (any(lessThan(mp, bufMin)) || any(greaterThanEqual(mp, bufMax))) break;
+        ivec3 rel = mp - u_WorldOffset;
+        uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
         if (slot == EMPTY) { side = skipChunk(mp, sd, dd, s); }
         else {
             ivec3 cc = mp >> 4; uint maskBase = slot << 7;
@@ -392,6 +445,17 @@ void main() {
             if (abs(n.x) > 0.5) uv = vec2(fract(hp.z), 1.0 - fract(hp.y));
             else if (abs(n.y) > 0.5) uv = fract(hp.xz);
             else uv = vec2(fract(hp.x), 1.0 - fract(hp.y));
+
+            // Animated texture: d2.w contains [isAnimated(bit0) | frameCount(bit1-4)]
+            int animPacked = d2.w;
+            bool isAnimated = (animPacked & 1) == 1;
+            int frameCount = (animPacked >> 1) & 0xF;
+            if (isAnimated && frameCount > 1) {
+                // Cycle through frames based on time (at ~20 fps)
+                int frame = int(floor(u_Time * 20.0)) % frameCount;
+                tex = tex + frame;
+            }
+
             alb = texture(u_BlockTextures, vec3(uv, float(tex))).rgb * (vec3(d2.rgb)/255.0);
             
             bool isLiquid = ((d1.w >> 10) & 1) == 1;
@@ -403,7 +467,7 @@ void main() {
                 alb = mix(alb, vec3(0.0, 0.3, 0.8), 0.5); // Tint it blue
             }
 
-            if (((d1.w >> 8) & 1) == 1) { vec2 bp = texture(u_BiomeMap, hp.xz/2048.0).rg; alb *= texture(u_GrassColormap, vec2(1.0-bp.x, 1.0-bp.y)).rgb; }
+            if (((d1.w >> 8) & 1) == 1) { vec2 bp = texture(u_BiomeMap, (hp.xz - vec2(u_WorldOffset.xz)) / 2048.0).rg; alb *= texture(u_GrassColormap, vec2(1.0-bp.x, 1.0-bp.y)).rgb; }
         }
 
         float shadS = fastShadow(hp + n * 0.01, at.sunDir, 100.0);

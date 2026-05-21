@@ -53,6 +53,15 @@
       "texture": "player_skin",
       "uv": [0, 16],
       "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "cape",
+      "from": [-4.0, 12.0, -1.0],
+      "size": [8.0, 16.0, 1.0],
+      "absolute_offset": [0.0, 12.0, 2.0],
+      "texture": "cape",
+      "uv": [0, 0],
+      "texture_mapping": "cuboid_atlas"
     }
   ]
 }

@@ -27,6 +27,13 @@ public class ChunkManager {
 
     private int lastPlayerCX = -1000, lastPlayerCZ = -1000;
 
+    // Buffer recentering: when the player gets within this many chunks of the buffer edge,
+    // shift the buffer to re-center on the player.
+    private static final int RECENTER_MARGIN_CHUNKS = 16;
+    // Buffer is REGION_SIZE (128) chunks wide. Half is 64.
+    // We want the player at chunk ~64 in the buffer, so the offset is playerCX - 64.
+    private static final int BUFFER_HALF_CHUNKS = World.REGION_SIZE / 2;
+
     public ChunkManager(World world, WorldGenerator generator, LightPropagationEngine lightEngine, int renderDistance) {
         this.world = world;
         this.generator = generator;
@@ -52,6 +59,9 @@ public class ChunkManager {
     }
 
     private void manageChunks(int pcx, int pcz) {
+        // Check if the buffer needs to slide to keep the player centered
+        recenterIfNeeded(pcx, pcz);
+
         Set<Long> keep = new HashSet<>();
 
         // Identify chunks to load
@@ -59,7 +69,6 @@ public class ChunkManager {
             for (int dz = -renderDistance; dz <= renderDistance; dz++) {
                 int cx = pcx + dx;
                 int cz = pcz + dz;
-                if (cx < 0 || cz < 0 || cx >= World.REGION_SIZE || cz >= World.REGION_SIZE) continue;
 
                 long key = chunkKey(cx, cz);
                 keep.add(key);
@@ -82,6 +91,56 @@ public class ChunkManager {
         });
     }
 
+    /**
+     * Checks if the player is near the edge of the 2048^3 buffer and recenters if needed.
+     * This slides the world window so the player is always in the center region.
+     */
+    private void recenterIfNeeded(int pcx, int pcz) {
+        int bufMinX = world.getOffsetX() >> 4;
+        int bufMinZ = world.getOffsetZ() >> 4;
+        int bufMaxX = bufMinX + World.REGION_SIZE;
+        int bufMaxZ = bufMinZ + World.REGION_SIZE;
+
+        // Check if player is well within the buffer margins
+        if (pcx >= bufMinX + RECENTER_MARGIN_CHUNKS && pcx < bufMaxX - RECENTER_MARGIN_CHUNKS &&
+            pcz >= bufMinZ + RECENTER_MARGIN_CHUNKS && pcz < bufMaxZ - RECENTER_MARGIN_CHUNKS) {
+            return; // Still well within buffer
+        }
+
+        // Compute new offset to put the player at the center of the buffer
+        int newOffsetX = (pcx - BUFFER_HALF_CHUNKS) << 4;
+        int newOffsetZ = (pcz - BUFFER_HALF_CHUNKS) << 4;
+
+        // Clear the indirection table and set new origin
+        world.setOrigin(newOffsetX, 0, newOffsetZ);
+
+        // Re-register ALL currently loaded chunks that fall within the new buffer.
+        // We iterate the LIVE loadedChunks map (as a snapshot) to also catch chunks
+        // that were being loaded concurrently by executor tasks during the recenter.
+        Map<Long, Integer[]> currentChunks = new HashMap<>(loadedChunks);
+        for (Map.Entry<Long, Integer[]> entry : currentChunks.entrySet()) {
+            int absCX = unpackX(entry.getKey());
+            int absCZ = unpackZ(entry.getKey());
+
+            int relCX = absCX - (newOffsetX >> 4);
+            int relCZ = absCZ - (newOffsetZ >> 4);
+
+            if (relCX >= 0 && relCX < World.REGION_SIZE && relCZ >= 0 && relCZ < World.REGION_SIZE) {
+                Integer[] slots = entry.getValue();
+                for (int cy = 0; cy < chunkHeight; cy++) {
+                    world.setChunkSlot(absCX, cy, absCZ, slots[cy]);
+                }
+            } else {
+                // Chunk falls outside new buffer — unload it
+                unloadChunk(entry.getKey(), entry.getValue());
+                loadedChunks.remove(entry.getKey());
+            }
+        }
+
+        tableDirty.set(true);
+        System.out.println("Recentered buffer: offset now (" + newOffsetX + ", 0, " + newOffsetZ + ")");
+    }
+
     private void loadChunkAsync(int cx, int cz) {
         if (freeSlots.size() < chunkHeight) {
             pendingLoads.remove(chunkKey(cx, cz));
@@ -92,9 +151,11 @@ public class ChunkManager {
         for (int cy = 0; cy < chunkHeight; cy++) {
             int slot = freeSlots.poll();
             slots[cy] = slot;
+            // Set the chunk slot BEFORE generation so world.setVoxel()
+            // (called during decoration) can find the correct pool slot.
+            world.setChunkSlot(cx, cy, cz, slot);
             generateStorageChunk(cx, cy, cz, slot);
             lightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
-            world.setChunkSlot(cx, cy, cz, slot);
             dirtySlots.add(slot);
         }
         loadedChunks.put(chunkKey(cx, cz), slots);
@@ -119,6 +180,9 @@ public class ChunkManager {
                 }
             }
         }
+
+        // Decorate chunk with features (trees, etc.)
+        generator.decorate(cx, cy, cz, slot, world);
     }
 
     private void unloadChunk(long key, Integer[] slots) {

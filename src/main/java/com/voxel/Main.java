@@ -1,11 +1,14 @@
 package com.voxel;
 
+import com.voxel.crafting.CraftingManager;
 import com.voxel.lighting.LightPropagationEngine;
 import com.voxel.ui.UILayer;
 import com.voxel.ui.UIManager;
 import com.voxel.utils.BlockDataManager;
 import com.voxel.utils.ShaderUtil;
 import com.voxel.utils.TextureManager;
+import com.voxel.world.DimensionManager;
+import com.voxel.world.DimensionType;
 import org.joml.Vector2f;
 import org.joml.Vector2i;
 import org.joml.Vector3f;
@@ -77,6 +80,9 @@ public class Main {
     private final List<UILayer> uiLayers = new ArrayList<>();
     private Player player;
     private com.voxel.entity.PlayerEntity playerEntity;
+    private CraftingManager craftingManager;
+    private DimensionManager dimensionManager;
+    private DimensionType activeDimension = DimensionType.OVERWORLD;
 
     private int width = 1280, height = 720;
     private final int CHUNK_SIZE = 16, REGION_SIZE = 128, POOL_SIZE = 16384;
@@ -125,6 +131,13 @@ public class Main {
     private final UILayer.UIElement[] slotCountDigit1 = new UILayer.UIElement[INVENTORY_SIZE];
     private final UILayer.UIElement[] slotCountDigit2 = new UILayer.UIElement[INVENTORY_SIZE];
     private UILayer.UITextElement itemNameElement;
+
+    // Crafting grid (4 input slots in 2x2 + 1 result slot)
+    private static final int CRAFTING_SLOTS = 5;
+    private static final int CRAFTING_RESULT_SLOT = 4;
+    private final UILayer.UIElement[] craftingSlotBackgrounds = new UILayer.UIElement[CRAFTING_SLOTS];
+    private final UILayer.UIElement[] craftingSlotItems = new UILayer.UIElement[CRAFTING_SLOTS];
+    private String[][] craftingGrid = new String[2][2]; // The 2x2 crafting pattern
     private double itemNameDisplayUntil = 0.0;
     private final UILayer.UIElement[] playerHearts = new UILayer.UIElement[10];
     private UILayer.UITextElement commandTextElement;
@@ -133,6 +146,9 @@ public class Main {
     private Thread logicThread;
     private volatile boolean running = true;
     private CameraMode cameraMode = CameraMode.FIRST_PERSON;
+
+    private int lastBiomeOffsetX = 0;
+    private int lastBiomeOffsetZ = 0;
 
     private float cameraShake = 0.0f;
     private float hitStop = 0.0f;
@@ -270,24 +286,34 @@ public class Main {
 
         entityManager = new com.voxel.entity.EntityManager();
         com.voxel.entity.EnemyEntity.setEntityManager(entityManager);
-        player = new Player(1024, 100, 1024);
+        player = new Player(1024, 63, 1024); // Spawn above the water pool at y=62
 
         setupQuad();
         setupTexture();
+        // Generate cape texture BEFORE loading textures so it's available in the texture array
+        generateCapeTexture();
         setupResources();
         setupItemRegistry();
         populateStartingInventory();
 
+        // Initialize crafting system (MUST be before setupUi)
+        craftingManager = new CraftingManager();
+
         uiManager = new UIManager(width, height);
         setupUi();
 
-        world = new World();
-        com.voxel.world.WorldGenerator generator = new com.voxel.world.WorldGenerator(97);
-        LightPropagationEngine lightEngine = new LightPropagationEngine(world, blockDataManager);
-        chunkManager = new com.voxel.world.ChunkManager(world, generator, lightEngine, 8);
+        // Initialize dimension system (only create Overworld at startup to save memory)
+        dimensionManager = new DimensionManager(blockDataManager);
+        dimensionManager.createDimension(DimensionType.OVERWORLD, 8);
+        // Other dimensions (Nether, End, Aether) are created lazily when first visited
+
+        // Use Overworld as default
+        world = dimensionManager.getActiveWorld();
+        chunkManager = dimensionManager.getActiveChunkManager();
 
         playerEntity = new com.voxel.entity.PlayerEntity(10_000, new Vector3f(player.getPosition()), textureManager);
         entityManager.addEntity(playerEntity);
+
 
         // Spawn initial enemies
         spawnInitialEnemies(player);
@@ -359,6 +385,48 @@ public class Main {
     private void buildInventoryUi(UILayer layer) {
         float uScale = (float) SLOT_TEX_W / uiTextureSize.x;
         float vScale = (float) SLOT_TEX_H / uiTextureSize.y;
+
+        // Build crafting grid slots (placed to the right of the main inventory)
+        int craftingGridX = HOTBAR_X + 360;
+        int craftingGridY = HOTBAR_Y + 20;
+        for (int index = 0; index < CRAFTING_SLOTS; index++) {
+            boolean isResult = index == CRAFTING_RESULT_SLOT;
+            int row = index / 2;
+            int col = index % 2;
+            float cx = craftingGridX + col * (SLOT_W + 8);
+            float cy = craftingGridY + row * SLOT_H;
+
+            // Result slot is a bit to the right, centered vertically
+            if (isResult) {
+                cx = craftingGridX + 2 * (SLOT_W + 8) + 16;
+                cy = craftingGridY + SLOT_H / 2;
+            }
+
+            UILayer.UIElement background = new UILayer.UIElement(
+                new Vector2f(cx, cy),
+                new Vector2f(SLOT_W, SLOT_H),
+                new Vector4f(isResult ? 1.0f : 0.9f, isResult ? 0.9f : 0.9f, isResult ? 0.8f : 0.9f, 1)
+            );
+            if (uiTextureId != 0) {
+                background.textureId = uiTextureId;
+                background.uvOffset = new Vector2f(0.0f, 0.0f);
+                background.uvScale = new Vector2f(uScale, vScale);
+            }
+            final int slotIndex = index;
+            background.onClick = () -> handleCraftingSlotClick(slotIndex);
+            background.visible = false; // Hidden initially, shown with inventory
+            craftingSlotBackgrounds[index] = background;
+            layer.addElement(background);
+
+            UILayer.UIElement itemElement = new UILayer.UIElement(
+                new Vector2f(cx + 24, cy + 16),
+                new Vector2f(40, 40),
+                new Vector4f(0, 0, 0, 0)
+            );
+            itemElement.visible = false;
+            craftingSlotItems[index] = itemElement;
+            layer.addElement(itemElement);
+        }
 
         for (int index = 0; index < INVENTORY_SIZE; index++) {
             int row = index % HOTBAR_SIZE;
@@ -491,8 +559,25 @@ public class Main {
         registerBlockItem("stone", "Stone", 2, "stone");
         registerBlockItem("glass", "Glass", 3, "glass");
         registerBlockItem("leaves", "Oak Leaves", 4, "leaves_oak");
+        registerBlockItem("oak_log", "Oak Log", 5, "log_oak");
         registerBlockItem("dirt", "Dirt", 13, "dirt");
         registerBlockItem("sand", "Sand", 14, "sand");
+        // --- Aether Items ---
+        registerBlockItem("aether_grass", "Aether Grass", 100, "aether_grass_block_top");
+        registerBlockItem("holystone", "Holystone", 101, "holystone");
+        registerBlockItem("aether_dirt", "Aether Dirt", 102, "aether_dirt");
+        registerBlockItem("skyroot_log", "Skyroot Log", 103, "skyroot_log");
+        registerBlockItem("skyroot_leaves", "Skyroot Leaves", 104, "skyroot_leaves");
+        registerBlockItem("aerogel", "Aerogel", 105, "aerogel");
+        registerBlockItem("aether_portal", "Aether Portal", 106, "aether_portal");
+        registerBlockItem("ambrosium_ore", "Ambrosium Ore", 107, "ambrosium_ore");
+        registerBlockItem("gravitite_ore", "Gravitite Ore", 108, "gravitite_ore");
+        registerBlockItem("quicksoil", "Quicksoil", 109, "quicksoil");
+        registerBlockItem("icestone", "Icestone", 110, "icestone");
+        registerBlockItem("zanite_ore", "Zanite Ore", 111, "zanite_ore");
+        registerBlockItem("skyroot_planks", "Skyroot Planks", 112, "skyroot_planks");
+        registerBlockItem("mossy_holystone", "Mossy Holystone", 113, "mossy_holystone");
+        registerBlockItem("holystone_bricks", "Holystone Bricks", 114, "holystone_bricks");
 
         registerToolItem("wood_pickaxe", "Wood Pickaxe", "wood_pickaxe", ToolType.PICKAXE, 4.5f, new Vector4f(1, 1, 1, 1));
         registerToolItem("wood_shovel", "Wood Shovel", "wood_shovel", ToolType.SHOVEL, 4.0f, new Vector4f(1, 1, 1, 1));
@@ -534,9 +619,15 @@ public class Main {
         inventory[3] = new ItemStack("dirt", 32);
         inventory[4] = new ItemStack("glass", 16);
         inventory[5] = new ItemStack("wood_axe", 1);
-        inventory[6] = new ItemStack("grass", 32);
-        inventory[7] = new ItemStack("sand", 32);
-        inventory[8] = new ItemStack("leaves", 24);
+        inventory[6] = new ItemStack("oak_log", 32);
+        inventory[7] = new ItemStack("grass", 32);
+        inventory[8] = new ItemStack("sand", 32);
+        inventory[9] = new ItemStack("leaves", 24);
+        // Aether blocks in inventory
+        inventory[10] = new ItemStack("aether_grass", 16);
+        inventory[11] = new ItemStack("holystone", 32);
+        inventory[12] = new ItemStack("skyroot_log", 16);
+        inventory[13] = new ItemStack("aerogel", 16);
     }
 
     private void logicLoop() {
@@ -684,7 +775,7 @@ public class Main {
 
         if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
             if (player.isFlying()) player.move(0, speed, 0, speed * 2.0f);
-            else player.jump();
+            else player.jump(world, blockDataManager);
         }
         if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
             if (player.isFlying()) player.move(0, -speed, 0, speed * 2.0f);
@@ -745,6 +836,17 @@ public class Main {
             }
 
             uploadDirtyChunks();
+
+            // Slide the biome map when the world buffer recenters
+            int curOX = world.getOffsetX();
+            int curOZ = world.getOffsetZ();
+            if (curOX != lastBiomeOffsetX || curOZ != lastBiomeOffsetZ) {
+                biomeManager.slideBiomeMap(lastBiomeOffsetX, lastBiomeOffsetZ, curOX, curOZ);
+                biomeManager.uploadBiomeMap();
+                lastBiomeOffsetX = curOX;
+                lastBiomeOffsetZ = curOZ;
+            }
+
             updateInventoryUi();
             updateWindowTitle();
 
@@ -786,6 +888,9 @@ public class Main {
             glProgramUniform3f(computeProgram, 3, ux, uy, uz);
             glProgramUniform1f(computeProgram, 4, worldTime);
             glProgramUniform1i(computeProgram, 5, entityManager.getEntityCount());
+            glProgramUniform1i(computeProgram, 9, activeDimension.id);
+            // Upload world sliding window offset
+            glProgramUniform3i(computeProgram, 6, world.getOffsetX(), world.getOffsetY(), world.getOffsetZ());
 
             // Upload UI UVs
             int locUv = glGetUniformLocation(computeProgram, "u_HeartUVs");
@@ -1046,10 +1151,54 @@ public class Main {
             case "setuv":
                 handleSetUvCommand(parts);
                 break;
+            case "dimension":
+            case "dim":
+                handleDimensionCommand(parts);
+                break;
             default:
                 setStatus("Unknown command: /" + command);
                 break;
         }
+    }
+
+    private void handleDimensionCommand(String[] parts) {
+        if (parts.length < 2) {
+            setStatus("Usage: /dimension <overworld|nether|end|aether>");
+            return;
+        }
+
+        String dimName = parts[1].toLowerCase(Locale.ROOT);
+        DimensionType target;
+        switch (dimName) {
+            case "nether": target = DimensionType.NETHER; break;
+            case "end": target = DimensionType.END; break;
+            case "aether": target = DimensionType.AETHER; break;
+            default: target = DimensionType.OVERWORLD; break;
+        }
+
+        if (target == activeDimension) {
+            setStatus("Already in " + target.name);
+            return;
+        }
+
+        // Lazily create the dimension if it doesn't exist yet
+        int renderDistance = 6;
+        if (target == DimensionType.OVERWORLD) renderDistance = 8;
+        dimensionManager.ensureDimension(target, renderDistance);
+
+        dimensionManager.switchTo(target);
+        activeDimension = target;
+        world = dimensionManager.getActiveWorld();
+        chunkManager = dimensionManager.getActiveChunkManager();
+
+        // Reset player position to the dimension's spawn
+        int spawnY = target.baseHeight + 3;
+        player.getPosition().set(1024, spawnY, 1024);
+        
+        // Upload new world to GPU
+        uploadWorldToGpu();
+        
+        setStatus("Switched to " + target.name);
     }
 
     private void handleSetUvCommand(String[] parts) {
@@ -1192,6 +1341,44 @@ public class Main {
         return remaining == 0;
     }
 
+    private void handleCraftingSlotClick(int slotIndex) {
+        if (!inventoryOpen) return;
+
+        boolean isResult = slotIndex == CRAFTING_RESULT_SLOT;
+
+        if (isResult) {
+            // Try to take the result
+            CraftingManager.CraftingRecipe match = craftingManager.matchRecipe(craftingGrid);
+            if (match != null) {
+                boolean added = addItem(match.resultItemId, match.resultCount);
+                if (added) {
+                    // Consume the crafting ingredients
+                    craftingManager.consumeItems(craftingGrid);
+                }
+            }
+        } else {
+            // Clicked on a crafting input slot
+            int gridRow = slotIndex / 2;
+            int gridCol = slotIndex % 2;
+            String gridItem = craftingGrid[gridRow][gridCol];
+
+            if (carriedStack == null) {
+                if (gridItem != null) {
+                    // Pick up the item from the crafting grid
+                    carriedStack = new ItemStack(gridItem, 1);
+                    craftingGrid[gridRow][gridCol] = null;
+                }
+            } else {
+                if (gridItem == null) {
+                    // Place the carried item into the crafting grid
+                    craftingGrid[gridRow][gridCol] = carriedStack.itemId;
+                    carriedStack.count--;
+                    if (carriedStack.count <= 0) carriedStack = null;
+                }
+            }
+        }
+    }
+
     private void handleInventorySlotClick(int slotIndex) {
         if (!inventoryOpen) return;
 
@@ -1230,6 +1417,43 @@ public class Main {
         inventoryPanelElement.visible = inventoryOpen;
         hotbarActiveElement.visible = true;
         hotbarActiveElement.pos.y = HOTBAR_Y + selectedSlot * SLOT_H;
+
+        // Update crafting grid visibility and content
+        int craftingPanelX = HOTBAR_X + 360;
+        int craftingPanelY = HOTBAR_Y + 20;
+        for (int i = 0; i < CRAFTING_SLOTS; i++) {
+            boolean isResult = i == CRAFTING_RESULT_SLOT;
+            boolean slotVisible = inventoryOpen;
+            craftingSlotBackgrounds[i].visible = slotVisible;
+
+            UILayer.UIElement itemElement = craftingSlotItems[i];
+            String itemId = null;
+
+            if (isResult) {
+                // Show the crafted result if pattern matches
+                CraftingManager.CraftingRecipe match = craftingManager.matchRecipe(craftingGrid);
+                if (match != null) {
+                    itemId = match.resultItemId;
+                }
+            } else {
+                int gridRow = i / 2;
+                int gridCol = i % 2;
+                itemId = craftingGrid[gridRow][gridCol];
+            }
+
+            if (slotVisible && itemId != null) {
+                ItemDefinition definition = getItemDefinition(itemId);
+                itemElement.visible = true;
+                itemElement.textureId = textureManager.getTextureArrayId();
+                itemElement.textureType = 2; // Array
+                itemElement.layer = definition.iconLayer;
+                itemElement.color.set(1, 1, 1, 1);
+                itemElement.pos.set(craftingSlotBackgrounds[i].pos.x + 24, craftingSlotBackgrounds[i].pos.y + 16);
+                itemElement.size.set(40, 40);
+            } else {
+                itemElement.visible = false;
+            }
+        }
 
         for (int index = 0; index < INVENTORY_SIZE; index++) {
             boolean slotVisible = index < HOTBAR_SIZE || inventoryOpen;
@@ -1527,7 +1751,15 @@ public class Main {
 
     private void setupResources() {
         textureManager = new TextureManager();
-        textureManager.loadTextures("src/main/resources/assets/minecraft/textures/blocks", "src/main/resources/assets/minecraft/textures/items");
+        textureManager.loadTextures(
+            "src/main/resources/assets/minecraft/textures/blocks",
+            "src/main/resources/assets/minecraft/textures/items",
+            "src/main/resources/assets/aether/textures/block/natural",
+            "src/main/resources/assets/aether/textures/block/construction",
+            "src/main/resources/assets/aether/textures/block/dungeon",
+            "src/main/resources/assets/aether/textures/block/utility",
+            "src/main/resources/assets/aether/textures/block/miscellaneous"
+        );
         textureManager.loadEntityTextures("src/main/resources/assets/minecraft/textures/entity");
         
         biomeManager = new com.voxel.utils.BiomeManager();
@@ -1541,18 +1773,53 @@ public class Main {
         blockDataManager.registerBlock(2, "stone", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(3, "glass", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(4, "oak_leaves", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(5, "oak_log", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(13, "dirt", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(14, "sand", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(15, "water_still", textureManager, "src/main/resources/assets/minecraft/models/block");
+        // --- Aether Dimension Blocks ---
+        String aetherModels = "src/main/resources/assets/aether/models/block";
+        blockDataManager.registerBlock(100, "aether_grass_block", textureManager, aetherModels);
+        blockDataManager.registerBlock(101, "holystone", textureManager, aetherModels);
+        blockDataManager.registerBlock(102, "aether_dirt", textureManager, aetherModels);
+        blockDataManager.registerBlock(103, "skyroot_log", textureManager, aetherModels);
+        blockDataManager.registerBlock(104, "skyroot_leaves", textureManager, aetherModels);
+        blockDataManager.registerBlock(105, "aerogel", textureManager, aetherModels);
+        blockDataManager.registerBlock(106, "aether_portal", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(107, "ambrosium_ore", textureManager, aetherModels);
+        blockDataManager.registerBlock(108, "gravitite_ore", textureManager, aetherModels);
+        blockDataManager.registerBlock(109, "quicksoil", textureManager, aetherModels);
+        blockDataManager.registerBlock(110, "icestone", textureManager, aetherModels);
+        blockDataManager.registerBlock(111, "zanite_ore", textureManager, aetherModels);
+        blockDataManager.registerBlock(112, "skyroot_planks", textureManager, aetherModels);
+        blockDataManager.registerBlock(113, "mossy_holystone", textureManager, aetherModels);
+        blockDataManager.registerBlock(114, "holystone_bricks", textureManager, aetherModels);
         blockDataManager.uploadToGPU();
     }
 
-    private void createWaterPool() {
-        int cx = 1024, cy = 99, cz = 1024;
-        for (int x = cx - 3; x <= cx + 3; x++) {
-            for (int z = cz - 3; z <= cz + 3; z++) {
-                chunkManager.setVoxel(x, cy, z, 15);
+    private void generateCapeTexture() {
+        try {
+            java.io.File capeFile = new java.io.File("src/main/resources/assets/minecraft/textures/items/cape.png");
+            if (!capeFile.exists()) {
+                // Generate a simple cape texture (64x64)
+                BufferedImage capeImg = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g = capeImg.createGraphics();
+                // Red cape with golden trim
+                g.setColor(new Color(180, 30, 30));
+                g.fillRect(0, 0, 64, 64);
+                // Gold trim at top
+                g.setColor(new Color(255, 200, 50));
+                g.fillRect(0, 0, 64, 4);
+                // Darker shading on edges
+                g.setColor(new Color(120, 20, 20, 100));
+                g.fillRect(0, 0, 4, 64);
+                g.fillRect(60, 0, 4, 64);
+                g.dispose();
+                ImageIO.write(capeImg, "PNG", capeFile);
+                System.out.println("Generated cape texture.");
             }
+        } catch (IOException e) {
+            System.err.println("Failed to generate cape texture.");
         }
     }
 

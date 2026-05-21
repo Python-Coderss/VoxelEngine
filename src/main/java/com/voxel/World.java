@@ -16,12 +16,12 @@ import org.lwjgl.system.MemoryUtil;
 public class World {
     // Constants for world dimensions and structure
     public static final int CHUNK_SIZE = 16; // Each chunk is 16x16x16 voxels
-    public static final int REGION_SIZE = 128; // The world is 128x128x128 chunks (total 2048 voxels in each dimension)
+    public static final int REGION_SIZE = 128; // The world buffer is 128x128x128 chunks (total 2048 voxels in each dimension)
     public static final int POOL_SIZE = 16384; // Maximum number of chunks that can be stored in memory
     public static final int EMPTY = 0xFFFFFFFF; // Value representing an unallocated/empty chunk slot
 
     // The indirection table maps a chunk's position in the world to its index in the chunk pool.
-    // Index = cx + cy * 128 + cz * 128^2
+    // Index = rx + ry * 128 + rz * 128^2, where rx,ry,rz are buffer-relative chunk coords.
     private final int[] indirectionTable;
 
     // The chunk pool stores the voxel IDs (e.g., 1 for grass, 2 for stone).
@@ -36,48 +36,105 @@ public class World {
     // 1 short per voxel = 4096 shorts per chunk.
     private final short[] occlusionPool;
 
+    // Sliding window offset: absolute world coordinate of the buffer's minimum corner.
+    // All coordinates passed to public methods are treated as absolute world coords.
+    private volatile int offsetX = 0;
+    private volatile int offsetY = 0;
+    private volatile int offsetZ = 0;
+
     /**
      * Initializes the world with empty tables and pools.
      */
     public World() {
-        // Initialize the indirection table with the EMPTY value
         indirectionTable = new int[REGION_SIZE * REGION_SIZE * REGION_SIZE];
         for (int i = 0; i < indirectionTable.length; i++) indirectionTable[i] = EMPTY;
-        
+
         int voxelsPerChunk = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
-        // Allocate memory for the voxel and light pools
         chunkPool = new int[POOL_SIZE * voxelsPerChunk];
         bitmaskPool = new int[POOL_SIZE * (voxelsPerChunk / 32)];
         occlusionPool = new short[POOL_SIZE * voxelsPerChunk];
     }
 
+    // ---- Sliding window offset ----
+
     /**
-     * Gets the voxel ID at the specified world coordinates.
+     * Returns the buffer origin in absolute block coordinates.
+     */
+    public int getOffsetX() { return offsetX; }
+    public int getOffsetY() { return offsetY; }
+    public int getOffsetZ() { return offsetZ; }
+
+    /**
+     * Sets the buffer origin, clearing the indirection table.
+     * All existing chunk data in the pool is preserved — callers must
+     * re-register chunks that fall within the new buffer.
+     */
+    public void setOrigin(int newOffsetX, int newOffsetY, int newOffsetZ) {
+        this.offsetX = newOffsetX;
+        this.offsetY = newOffsetY;
+        this.offsetZ = newOffsetZ;
+        java.util.Arrays.fill(indirectionTable, EMPTY);
+    }
+
+    // ---- Coordinate conversion ----
+    // Pre-allocated reusable arrays for relative coordinate results.
+    // Avoids allocating int[3] on every getVoxel/setVoxel call.
+    private static final ThreadLocal<int[]> REL_COORDS = ThreadLocal.withInitial(() -> new int[3]);
+
+    /**
+     * Converts absolute block coords to buffer-relative block coords.
+     * Returns true if the result is within the buffer (0..2047).
+     * Stores results in the provided array, or uses a thread-local array if null.
+     */
+    private boolean toRelative(int absX, int absY, int absZ, int[] out) {
+        int rx = absX - offsetX;
+        int ry = absY - offsetY;
+        int rz = absZ - offsetZ;
+        if (rx < 0 || ry < 0 || rz < 0 || rx >= REGION_SIZE * CHUNK_SIZE || ry >= REGION_SIZE * CHUNK_SIZE || rz >= REGION_SIZE * CHUNK_SIZE) {
+            return false;
+        }
+        out[0] = rx;
+        out[1] = ry;
+        out[2] = rz;
+        return true;
+    }
+
+    private boolean toRelative(int absX, int absY, int absZ) {
+        int rx = absX - offsetX;
+        int ry = absY - offsetY;
+        int rz = absZ - offsetZ;
+        return rx >= 0 && ry >= 0 && rz >= 0 && rx < REGION_SIZE * CHUNK_SIZE && ry < REGION_SIZE * CHUNK_SIZE && rz < REGION_SIZE * CHUNK_SIZE;
+    }
+
+    private int toRelativeChunkCX(int absCX) { return absCX - (offsetX >> 4); }
+    private int toRelativeChunkCY(int absCY) { return absCY - (offsetY >> 4); }
+    private int toRelativeChunkCZ(int absCZ) { return absCZ - (offsetZ >> 4); }
+
+    private boolean isChunkInBuffer(int relCX, int relCY, int relCZ) {
+        return relCX >= 0 && relCY >= 0 && relCZ >= 0 && relCX < REGION_SIZE && relCY < REGION_SIZE && relCZ < REGION_SIZE;
+    }
+
+    // ---- Core accessors ----
+
+    /**
+     * Gets the voxel ID at the specified absolute world coordinates.
      * @return The voxel ID, or 0 if out of bounds or empty.
      */
     public int getVoxel(int x, int y, int z) {
-        // Check if the coordinates are within world boundaries
-        if (x < 0 || y < 0 || z < 0 || x >= REGION_SIZE * CHUNK_SIZE || y >= REGION_SIZE * CHUNK_SIZE || z >= REGION_SIZE * CHUNK_SIZE) return 0;
-        
-        // Convert world coordinates to chunk coordinates
-        int cx = x / CHUNK_SIZE;
-        int cy = y / CHUNK_SIZE;
-        int cz = z / CHUNK_SIZE;
-        
-        // Look up the chunk slot in the indirection table
+        int rx = x - offsetX;
+        int ry = y - offsetY;
+        int rz = z - offsetZ;
+        if (rx < 0 || ry < 0 || rz < 0 || rx >= REGION_SIZE * CHUNK_SIZE || ry >= REGION_SIZE * CHUNK_SIZE || rz >= REGION_SIZE * CHUNK_SIZE) return 0;
+
+        int cx = rx >> 4;
+        int cy = ry >> 4;
+        int cz = rz >> 4;
+
         int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
         int slot = indirectionTable[tableIdx];
-
-        // If the slot is empty, there are no voxels here
         if (slot == EMPTY) return 0;
-        
-        // Convert world coordinates to local coordinates within the chunk
-        int lx = x % CHUNK_SIZE;
-        int ly = y % CHUNK_SIZE;
-        int lz = z % CHUNK_SIZE;
-        
-        // Calculate the index in the flat chunk pool array
-        int poolIdx = (slot * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) + (lx + ly * CHUNK_SIZE + lz * CHUNK_SIZE * CHUNK_SIZE);
+
+        int poolIdx = (slot << 12) | ((rx & 15) | ((ry & 15) << 4) | ((rz & 15) << 8));
         return chunkPool[poolIdx];
     }
 
@@ -89,22 +146,20 @@ public class World {
     }
 
     /**
-     * Checks if the chunk at the given position is currently loaded/allocated.
+     * Checks if the chunk at the given absolute position is currently loaded/allocated.
      */
     public boolean isLoaded(Vector3i pos) {
-        if (pos.x < 0 || pos.y < 0 || pos.z < 0 || pos.x >= REGION_SIZE * CHUNK_SIZE || pos.y >= REGION_SIZE * CHUNK_SIZE || pos.z >= REGION_SIZE * CHUNK_SIZE) return false;
-        int cx = pos.x / CHUNK_SIZE;
-        int cy = pos.y / CHUNK_SIZE;
-        int cz = pos.z / CHUNK_SIZE;
+        int[] rel = new int[3];
+        if (!toRelative(pos.x, pos.y, pos.z, rel)) return false;
+        int cx = rel[0] >> 4;
+        int cy = rel[1] >> 4;
+        int cz = rel[2] >> 4;
         int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
         return indirectionTable[tableIdx] != EMPTY;
     }
 
-    /**
-     * Checks if the chunk at the given position is currently loaded/allocated.
-     */
+    // ---- Getters for GPU upload ----
 
-    // Standard getters for internal data structures
     public int[] getIndirectionTable() { return indirectionTable; }
     public int[] getChunkPool() { return chunkPool; }
     public int[] getBitmaskPool() { return bitmaskPool; }
@@ -112,19 +167,26 @@ public class World {
 
     /**
      * Assigns a chunk slot to a specific region in the indirection table.
+     * Takes absolute chunk coordinates and converts to buffer-relative internally.
      */
-    public void setChunkSlot(int cx, int cy, int cz, int slot) {
-        if (cx < 0 || cy < 0 || cz < 0 || cx >= REGION_SIZE || cy >= REGION_SIZE || cz >= REGION_SIZE) return;
-        int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
+    public void setChunkSlot(int absCX, int absCY, int absCZ, int slot) {
+        int rx = toRelativeChunkCX(absCX);
+        int ry = toRelativeChunkCY(absCY);
+        int rz = toRelativeChunkCZ(absCZ);
+        if (!isChunkInBuffer(rx, ry, rz)) return;
+        int tableIdx = rx + ry * REGION_SIZE + rz * REGION_SIZE * REGION_SIZE;
         indirectionTable[tableIdx] = slot;
     }
 
     /**
-     * Clears the chunk slot at the given coordinates in the indirection table.
+     * Clears the chunk slot at the given absolute chunk coordinates.
      */
-    public void clearChunkSlot(int cx, int cy, int cz) {
-        if (cx < 0 || cy < 0 || cz < 0 || cx >= REGION_SIZE || cy >= REGION_SIZE || cz >= REGION_SIZE) return;
-        int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
+    public void clearChunkSlot(int absCX, int absCY, int absCZ) {
+        int rx = toRelativeChunkCX(absCX);
+        int ry = toRelativeChunkCY(absCY);
+        int rz = toRelativeChunkCZ(absCZ);
+        if (!isChunkInBuffer(rx, ry, rz)) return;
+        int tableIdx = rx + ry * REGION_SIZE + rz * REGION_SIZE * REGION_SIZE;
         indirectionTable[tableIdx] = EMPTY;
     }
 
@@ -132,16 +194,17 @@ public class World {
      * Sets a voxel ID directly into a chunk pool slot at local coordinates.
      */
     public void setVoxelInPool(int slot, int lx, int ly, int lz, int type) {
-        int bitIdx = lx + ly * CHUNK_SIZE + lz * CHUNK_SIZE * CHUNK_SIZE;
-        int poolIdx = (slot * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) + bitIdx;
+        int bitIdx = lx | (ly << 4) | (lz << 8);
+        int poolIdx = (slot << 12) | bitIdx;
         chunkPool[poolIdx] = type;
 
         // Update Bitmask (1 bit per voxel)
-        int wordIdx = (slot * 128) + (bitIdx / 32);
+        int wordIdx = (slot << 7) | (bitIdx >> 5);
+        int bit = 1 << (bitIdx & 31);
         if (type > 0) {
-            bitmaskPool[wordIdx] |= (1 << (bitIdx % 32));
+            bitmaskPool[wordIdx] |= bit;
         } else {
-            bitmaskPool[wordIdx] &= ~(1 << (bitIdx % 32));
+            bitmaskPool[wordIdx] &= ~bit;
         }
     }
 
@@ -150,13 +213,13 @@ public class World {
      */
     public void clearChunkPoolSlot(int slot) {
         int voxelsPerChunk = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
-        int startIdx = slot * voxelsPerChunk;
+        int startIdx = slot << 12;
         for (int i = 0; i < voxelsPerChunk; i++) {
             chunkPool[startIdx + i] = 0;
             occlusionPool[startIdx + i] = 0;
         }
 
-        int startBitWord = slot * 128;
+        int startBitWord = slot << 7;
         for (int i = 0; i < 128; i++) {
             bitmaskPool[startBitWord + i] = 0;
         }
@@ -166,20 +229,33 @@ public class World {
      * Sets a voxel ID at world coordinates. Does nothing if the chunk is not allocated.
      */
     public void setVoxel(int x, int y, int z, int type) {
-        if (x < 0 || y < 0 || z < 0 || x >= REGION_SIZE * CHUNK_SIZE || y >= REGION_SIZE * CHUNK_SIZE || z >= REGION_SIZE * CHUNK_SIZE) return;
-        int slot = getChunkSlot(x, y, z);
+        int rx = x - offsetX;
+        int ry = y - offsetY;
+        int rz = z - offsetZ;
+        if (rx < 0 || ry < 0 || rz < 0 || rx >= REGION_SIZE * CHUNK_SIZE || ry >= REGION_SIZE * CHUNK_SIZE || rz >= REGION_SIZE * CHUNK_SIZE) return;
+
+        int cx = rx >> 4;
+        int cy = ry >> 4;
+        int cz = rz >> 4;
+        int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
+        int slot = indirectionTable[tableIdx];
         if (slot == EMPTY) return;
-        int lx = x % CHUNK_SIZE;
-        int ly = y % CHUNK_SIZE;
-        int lz = z % CHUNK_SIZE;
-        setVoxelInPool(slot, lx, ly, lz, type);
+
+        setVoxelInPool(slot, rx & 15, ry & 15, rz & 15, type);
     }
 
+    /**
+     * Returns the pool slot for the chunk containing the given absolute block position,
+     * or EMPTY if the chunk is not loaded.
+     */
     public int getChunkSlot(int x, int y, int z) {
-        if (x < 0 || y < 0 || z < 0 || x >= REGION_SIZE * CHUNK_SIZE || y >= REGION_SIZE * CHUNK_SIZE || z >= REGION_SIZE * CHUNK_SIZE) return EMPTY;
-        int cx = x / CHUNK_SIZE;
-        int cy = y / CHUNK_SIZE;
-        int cz = z / CHUNK_SIZE;
+        int rx = x - offsetX;
+        int ry = y - offsetY;
+        int rz = z - offsetZ;
+        if (rx < 0 || ry < 0 || rz < 0 || rx >= REGION_SIZE * CHUNK_SIZE || ry >= REGION_SIZE * CHUNK_SIZE || rz >= REGION_SIZE * CHUNK_SIZE) return EMPTY;
+        int cx = rx >> 4;
+        int cy = ry >> 4;
+        int cz = rz >> 4;
         int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
         return indirectionTable[tableIdx];
     }
