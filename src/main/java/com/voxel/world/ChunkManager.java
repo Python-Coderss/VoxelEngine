@@ -43,7 +43,7 @@ public class ChunkManager {
         this.lightEngine = lightEngine;
         this.renderDistance = renderDistance;
 
-        for (int i = 0; i < World.POOL_SIZE; i++) {
+        for (int i = 0; i < world.getPoolSizeForAlloc(); i++) {
             freeSlots.add(i);
         }
     }

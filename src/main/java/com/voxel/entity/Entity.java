@@ -35,7 +35,7 @@ public class Entity {
     }
 
     private int resolveTextureIndex(String texName, com.voxel.utils.TextureManager textureManager) {
-        return textureManager.getTextureIndex(texName);
+        return textureManager.getEntityTextureIndex(texName);
     }
 
     private void loadModelRecursive(String path, com.voxel.utils.TextureManager textureManager, java.util.Map<String, ModelPart> loadedParts) {
