@@ -17,7 +17,6 @@ public class World {
     // Constants for world dimensions and structure
     public static final int CHUNK_SIZE = 16; // Each chunk is 16x16x16 voxels
     public static final int REGION_SIZE = 128; // The world buffer is 128x128x128 chunks (total 2048 voxels in each dimension)
-    public static final int POOL_SIZE = 16384; // Maximum number of chunks that can be stored in memory
     public static final int EMPTY = 0xFFFFFFFF; // Value representing an unallocated/empty chunk slot
 
     // The indirection table maps a chunk's position in the world to its index in the chunk pool.
@@ -36,6 +35,9 @@ public class World {
     // 1 short per voxel = 4096 shorts per chunk.
     private final short[] occlusionPool;
 
+    /** Maximum number of chunks that can be stored in memory. Set at construction. */
+    private final int poolSize;
+
     // Sliding window offset: absolute world coordinate of the buffer's minimum corner.
     // All coordinates passed to public methods are treated as absolute world coords.
     private volatile int offsetX = 0;
@@ -44,16 +46,21 @@ public class World {
 
     /**
      * Initializes the world with empty tables and pools.
+     * @param poolSize Maximum number of 16³ chunks to allocate (affects RAM: ~400 MB per 16384).
      */
-    public World() {
+    public World(int poolSize) {
+        this.poolSize = poolSize;
         indirectionTable = new int[REGION_SIZE * REGION_SIZE * REGION_SIZE];
         for (int i = 0; i < indirectionTable.length; i++) indirectionTable[i] = EMPTY;
 
         int voxelsPerChunk = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
-        chunkPool = new int[POOL_SIZE * voxelsPerChunk];
-        bitmaskPool = new int[POOL_SIZE * (voxelsPerChunk / 32)];
-        occlusionPool = new short[POOL_SIZE * voxelsPerChunk];
+        chunkPool = new int[poolSize * voxelsPerChunk];
+        bitmaskPool = new int[poolSize * (voxelsPerChunk / 32)];
+        occlusionPool = new short[poolSize * voxelsPerChunk];
     }
+
+    /** @return the maximum number of chunks this world supports. */
+    public int getPoolSize() { return poolSize; }
 
     // ---- Sliding window offset ----
 
@@ -164,6 +171,7 @@ public class World {
     public int[] getChunkPool() { return chunkPool; }
     public int[] getBitmaskPool() { return bitmaskPool; }
     public short[] getOcclusionPool() { return occlusionPool; }
+    public int getPoolSizeForAlloc() { return poolSize; }
 
     /**
      * Assigns a chunk slot to a specific region in the indirection table.

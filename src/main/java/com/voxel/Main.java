@@ -9,6 +9,16 @@ import com.voxel.utils.ShaderUtil;
 import com.voxel.utils.TextureManager;
 import com.voxel.world.DimensionManager;
 import com.voxel.world.DimensionType;
+import com.voxel.game.AtmosphereRenderer;
+import com.voxel.game.BlockInteraction;
+import com.voxel.game.CommandProcessor;
+import com.voxel.game.GameContext;
+import com.voxel.game.ItemDefinitions;
+import com.voxel.game.ItemDefinitions.ItemDefinition;
+import com.voxel.game.ItemDefinitions.ItemStack;
+import com.voxel.game.PlayerInventory;
+import com.voxel.game.PortalSystem;
+import com.voxel.world.RedstoneManager;
 import org.joml.Vector2f;
 import org.joml.Vector2i;
 import org.joml.Vector3f;
@@ -17,6 +27,11 @@ import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
+
+
+import com.voxel.game.GameContext.CameraMode;
+import com.voxel.game.GameContext.GameMode;
+
 
 import javax.imageio.ImageIO;
 import java.awt.Color;
@@ -28,10 +43,8 @@ import java.io.IOException;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.GL11.*;
@@ -50,13 +63,16 @@ import static org.lwjgl.system.MemoryUtil.NULL;
  */
 public class Main {
     private static final int HOTBAR_SIZE = 5;
-    private static final int INVENTORY_SIZE = 20;
+    private static final int INVENTORY_SIZE = 30;
     private static final int SLOT_W = 88;
     private static final int SLOT_H = 80;
     private static final int SLOT_TEX_W = 22;
     private static final int SLOT_TEX_H = 20;
     private static final int HOTBAR_X = 10;
     private static final int HOTBAR_Y = 100;
+    // Inventory panel: covers 6 columns + crafting grid (2 grid cols + arrow + result slot)
+    private static final int INVENTORY_PANEL_WIDTH = 780;
+    private static final int INVENTORY_PANEL_HEIGHT = SLOT_H * HOTBAR_SIZE + 24;
     private static final float DAY_START_TIME = 720.0f;
     private static final float PLAYER_HALF_WIDTH = 0.3f;
     private static final float PLAYER_HEIGHT = 1.8f;
@@ -69,6 +85,13 @@ public class Main {
     private int quadProgram, computeProgram;
     private int quadVAO, quadVBO, renderTexture;
     private int indirectionSSBO, chunkPoolSSBO, bitmaskSSBO, occlusionSSBO, pointLightSSBO;
+
+    // Cached compute shader uniform locations (avoid glGetUniformLocation per frame)
+    private int locBlockTextures, locEntityTextures, locBlockData, locBlockAABBs, locBlockAABBInfo, locBlockAABBUVs;
+    private int locBiomeMap, locGrassColormap, locUITexture, locFoliageColormap, locUISource;
+    private int locHeartUVs;
+    private int locSunDir, locSunColor, locMoonDir, locMoonColor, locSkyZenith, locSkyHorizon, locAmbient;
+    private int locDimensionID;
 
     private com.voxel.entity.EntityManager entityManager;
     private World world;
@@ -83,22 +106,24 @@ public class Main {
     private CraftingManager craftingManager;
     private DimensionManager dimensionManager;
     private DimensionType activeDimension = DimensionType.OVERWORLD;
+    private RedstoneManager redstoneManager;
+
+    // --- Extracted subsystem references ---
+    private GameContext ctx;
+    private ItemDefinitions itemDefinitions;
+    private PlayerInventory playerInventory;
+    private BlockInteraction blockInteraction;
+    private PortalSystem portalSystem;
+    private CommandProcessor commandProcessor;
+    private AtmosphereRenderer atmosphereRenderer;
 
     private int width = 1280, height = 720;
-    private final int CHUNK_SIZE = 16, REGION_SIZE = 128, POOL_SIZE = 16384;
+    private final int CHUNK_SIZE = 16, REGION_SIZE = 128;
 
     private float lastMouseX = width / 2f, lastMouseY = height / 2f;
     private boolean firstMouse = true;
     private float yaw = -90, pitch = 0;
     private float playerYaw = -90;
-
-    private int selectedSlot = 0;
-    private final ItemStack[] inventory = new ItemStack[INVENTORY_SIZE];
-    private ItemStack carriedStack;
-
-    private final Map<String, ItemDefinition> itemRegistry = new HashMap<>();
-    private final Map<String, String> itemAliases = new HashMap<>();
-    private final Map<Integer, String> blockItemByBlockId = new HashMap<>();
 
     private GameMode gameMode = GameMode.SURVIVAL;
     private float worldTime = DAY_START_TIME;
@@ -138,7 +163,6 @@ public class Main {
     private static final int CRAFTING_RESULT_SLOT = 4;
     private final UILayer.UIElement[] craftingSlotBackgrounds = new UILayer.UIElement[CRAFTING_SLOTS];
     private final UILayer.UIElement[] craftingSlotItems = new UILayer.UIElement[CRAFTING_SLOTS];
-    private String[][] craftingGrid = new String[2][2]; // The 2x2 crafting pattern
     private double itemNameDisplayUntil = 0.0;
     private final UILayer.UIElement[] playerHearts = new UILayer.UIElement[10];
     private UILayer.UITextElement commandTextElement;
@@ -161,66 +185,6 @@ public class Main {
     private Vector4f uvHeartFull = new Vector4f(70, 0, 9, 9);
     private Vector4f uvHeartHalf = new Vector4f(61, 0, 9, 9);
     private Vector4f uvHeartEmpty = new Vector4f(52, 0, 9, 9);
-
-    private enum GameMode {
-        SURVIVAL,
-        CREATIVE
-    }
-
-    private enum CameraMode {
-        FIRST_PERSON,
-        THIRD_PERSON
-    }
-
-    private enum ItemKind {
-        BLOCK,
-        TOOL
-    }
-
-    private enum ToolType {
-        HAND,
-        PICKAXE,
-        SHOVEL,
-        AXE
-    }
-
-    private static final class ItemDefinition {
-        final String id;
-        final String displayName;
-        final ItemKind kind;
-        final int blockId;
-        final int iconLayer;
-        final ToolType toolType;
-        final float miningSpeed;
-        final int maxStack;
-        final Vector4f color;
-
-        ItemDefinition(String id, String displayName, ItemKind kind, int blockId, int iconLayer, ToolType toolType, float miningSpeed, int maxStack, Vector4f color) {
-            this.id = id;
-            this.displayName = displayName;
-            this.kind = kind;
-            this.blockId = blockId;
-            this.iconLayer = iconLayer;
-            this.toolType = toolType;
-            this.miningSpeed = miningSpeed;
-            this.maxStack = maxStack;
-            this.color = new Vector4f(color);
-        }
-    }
-
-    private static final class ItemStack {
-        String itemId;
-        int count;
-
-        ItemStack(String itemId, int count) {
-            this.itemId = itemId;
-            this.count = count;
-        }
-
-        ItemStack copy() {
-            return new ItemStack(itemId, count);
-        }
-    }
 
     public void run() {
         init();
@@ -284,6 +248,8 @@ public class Main {
         computeProgram = ShaderUtil.createProgram(
             ShaderUtil.compileShader("src/main/resources/shaders/raytracer.comp", GL_COMPUTE_SHADER)
         );
+        cacheUniformLocations();
+        cacheAtmosphereUniforms();
 
         entityManager = new com.voxel.entity.EntityManager();
         com.voxel.entity.EnemyEntity.setEntityManager(entityManager);
@@ -294,11 +260,40 @@ public class Main {
         // Generate cape texture BEFORE loading textures so it's available in the texture array
         generateCapeTexture();
         setupResources();
-        setupItemRegistry();
-        populateStartingInventory();
+
+        // Create shared game context (world/chunkManager/dimensionManager filled below after init)
+        ctx = new GameContext();
+        ctx.activeDimension = activeDimension;
+        ctx.entityManager = entityManager;
+        ctx.blockDataManager = blockDataManager;
+        ctx.biomeManager = biomeManager;
+        ctx.textureManager = textureManager;
+        ctx.player = player;
+        ctx.gameMode = gameMode;
+        ctx.cameraMode = cameraMode;
+        ctx.width = width;
+        ctx.height = height;
+        ctx.uploadWorldToGpu = this::uploadWorldToGpu;
+        ctx.updateCursorMode = this::updateCursorMode;
+        ctx.statusConsumer = this::setStatus;
+
+        // Create extracted subsystems
+        itemDefinitions = new ItemDefinitions();
+        itemDefinitions.setup(blockDataManager, textureManager);
+        ctx.itemDefinitions = itemDefinitions;
+
+        playerInventory = new PlayerInventory(ctx);
+        ctx.playerInventory = playerInventory;
+        playerInventory.populateStarting();
+
+        blockInteraction = new BlockInteraction(ctx);
+        portalSystem = new PortalSystem(ctx, blockInteraction);
+        commandProcessor = new CommandProcessor(ctx);
+        atmosphereRenderer = new AtmosphereRenderer(computeProgram);
 
         // Initialize crafting system (MUST be before setupUi)
         craftingManager = new CraftingManager();
+        ctx.craftingManager = craftingManager;
 
         uiManager = new UIManager(width, height);
         setupUi();
@@ -311,6 +306,11 @@ public class Main {
         // Use Overworld as default
         world = dimensionManager.getActiveWorld();
         chunkManager = dimensionManager.getActiveChunkManager();
+        ctx.world = world;
+        ctx.chunkManager = chunkManager;
+        ctx.dimensionManager = dimensionManager;
+
+        redstoneManager = new RedstoneManager(world, chunkManager);
 
         playerEntity = new com.voxel.entity.PlayerEntity(10_000, new Vector3f(player.getPosition()), textureManager);
         entityManager.addEntity(playerEntity);
@@ -323,6 +323,32 @@ public class Main {
         uploadWorldToGpu();
         updateCursorMode();
         setStatus("Mode: survival. Press E for inventory, / for commands. R to respawn.");
+    }
+
+    private void cacheUniformLocations() {
+        locBlockTextures = glGetUniformLocation(computeProgram, "u_BlockTextures");
+        locEntityTextures = glGetUniformLocation(computeProgram, "u_EntityTextures");
+        locBlockData = glGetUniformLocation(computeProgram, "u_BlockData");
+        locBlockAABBs = glGetUniformLocation(computeProgram, "u_BlockAABBs");
+        locBlockAABBInfo = glGetUniformLocation(computeProgram, "u_BlockAABBInfo");
+        locBlockAABBUVs = glGetUniformLocation(computeProgram, "u_BlockAABBUVs");
+        locBiomeMap = glGetUniformLocation(computeProgram, "u_BiomeMap");
+        locGrassColormap = glGetUniformLocation(computeProgram, "u_GrassColormap");
+        locUITexture = glGetUniformLocation(computeProgram, "u_UITexture");
+        locFoliageColormap = glGetUniformLocation(computeProgram, "u_FoliageColormap");
+        locUISource = glGetUniformLocation(computeProgram, "u_UISource");
+        locHeartUVs = glGetUniformLocation(computeProgram, "u_HeartUVs");
+    }
+
+    private void cacheAtmosphereUniforms() {
+        locSunDir = glGetUniformLocation(computeProgram, "u_SunDir");
+        locSunColor = glGetUniformLocation(computeProgram, "u_SunColor");
+        locMoonDir = glGetUniformLocation(computeProgram, "u_MoonDir");
+        locMoonColor = glGetUniformLocation(computeProgram, "u_MoonColor");
+        locSkyZenith = glGetUniformLocation(computeProgram, "u_SkyZenith");
+        locSkyHorizon = glGetUniformLocation(computeProgram, "u_SkyHorizon");
+        locAmbient = glGetUniformLocation(computeProgram, "u_Ambient");
+        locDimensionID = glGetUniformLocation(computeProgram, "u_DimensionID");
     }
 
     private void spawnInitialEnemies(Player p) {
@@ -345,7 +371,7 @@ public class Main {
 
         inventoryPanelElement = new UILayer.UIElement(
             new Vector2f(HOTBAR_X - 8, HOTBAR_Y - 12),
-            new Vector2f(420, SLOT_H * HOTBAR_SIZE + 24),
+            new Vector2f(INVENTORY_PANEL_WIDTH, INVENTORY_PANEL_HEIGHT),
             new Vector4f(0, 0, 0, 0.45f)
         );
         inventoryPanelElement.visible = false;
@@ -414,7 +440,7 @@ public class Main {
                 background.uvScale = new Vector2f(uScale, vScale);
             }
             final int slotIndex = index;
-            background.onClick = () -> handleCraftingSlotClick(slotIndex);
+            background.onClick = () -> playerInventory.handleCraftingSlotClick(slotIndex);
             background.visible = false; // Hidden initially, shown with inventory
             craftingSlotBackgrounds[index] = background;
             layer.addElement(background);
@@ -446,7 +472,7 @@ public class Main {
                 background.uvScale = new Vector2f(uScale, vScale);
             }
             final int slotIndex = index;
-            background.onClick = () -> handleInventorySlotClick(slotIndex);
+            background.onClick = () -> playerInventory.handleInventorySlotClick(slotIndex);
             slotBackgrounds[index] = background;
             layer.addElement(background);
 
@@ -490,7 +516,7 @@ public class Main {
         }
 
         hotbarActiveElement = new UILayer.UIElement(
-            new Vector2f(HOTBAR_X, HOTBAR_Y + selectedSlot * SLOT_H),
+            new Vector2f(HOTBAR_X, HOTBAR_Y + playerInventory.getSelectedSlot() * SLOT_H),
             new Vector2f(SLOT_W, SLOT_H),
             new Vector4f(1, 1, 1, 1)
         );
@@ -551,106 +577,9 @@ public class Main {
         layer.addElement(statusTextElement);
     }
 
-    private void setupItemRegistry() {
-        itemRegistry.clear();
-        itemAliases.clear();
-        blockItemByBlockId.clear();
-
-        registerBlockItem("grass", "Grass Block", 1, "grass_side");
-        registerBlockItem("stone", "Stone", 2, "stone");
-        registerBlockItem("glass", "Glass", 3, "glass");
-        registerBlockItem("leaves", "Oak Leaves", 4, "leaves_oak");
-        registerBlockItem("oak_log", "Oak Log", 5, "log_oak");
-        registerBlockItem("dirt", "Dirt", 13, "dirt");
-        registerBlockItem("sand", "Sand", 14, "sand");
-        registerBlockItem("obsidian", "Obsidian", 16, "obsidian");
-        registerBlockItem("glowstone", "Glowstone", 17, "glowstone");
-        registerBlockItem("end_stone", "End Stone", 18, "end_stone");
-
-        registerToolItem("flint_and_steel", "Flint and Steel", "flint_and_steel", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
-        registerToolItem("water_bucket", "Water Bucket", "bucket_water", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
-        registerToolItem("eye_of_ender", "Eye of Ender", "ender_eye", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
-
-        // --- Aether Items ---
-        registerBlockItem("aether_grass", "Aether Grass", 100, "aether_grass_block_top");
-        registerBlockItem("holystone", "Holystone", 101, "holystone");
-        registerBlockItem("aether_dirt", "Aether Dirt", 102, "aether_dirt");
-        registerBlockItem("skyroot_log", "Skyroot Log", 103, "skyroot_log");
-        registerBlockItem("skyroot_leaves", "Skyroot Leaves", 104, "skyroot_leaves");
-        registerBlockItem("aerogel", "Aerogel", 105, "aerogel");
-        registerBlockItem("aether_portal", "Aether Portal", 106, "aether_portal");
-        registerBlockItem("ambrosium_ore", "Ambrosium Ore", 107, "ambrosium_ore");
-        registerBlockItem("gravitite_ore", "Gravitite Ore", 108, "gravitite_ore");
-        registerBlockItem("quicksoil", "Quicksoil", 109, "quicksoil");
-        registerBlockItem("icestone", "Icestone", 110, "icestone");
-        registerBlockItem("zanite_ore", "Zanite Ore", 111, "zanite_ore");
-        registerBlockItem("skyroot_planks", "Skyroot Planks", 112, "skyroot_planks");
-        registerBlockItem("mossy_holystone", "Mossy Holystone", 113, "mossy_holystone");
-        registerBlockItem("holystone_bricks", "Holystone Bricks", 114, "holystone_bricks");
-
-        registerToolItem("wood_pickaxe", "Wood Pickaxe", "wood_pickaxe", ToolType.PICKAXE, 4.5f, new Vector4f(1, 1, 1, 1));
-        registerToolItem("wood_shovel", "Wood Shovel", "wood_shovel", ToolType.SHOVEL, 4.0f, new Vector4f(1, 1, 1, 1));
-        registerToolItem("wood_axe", "Wood Axe", "wood_axe", ToolType.AXE, 4.2f, new Vector4f(1, 1, 1, 1));
-
-        registerAlias("pickaxe", "wood_pickaxe");
-        registerAlias("shovel", "wood_shovel");
-        registerAlias("axe", "wood_axe");
-    }
-
-    private void registerBlockItem(String itemId, String displayName, int blockId, String textureName) {
-        Color albedo = blockDataManager.getAlbedo(blockId);
-        Vector4f color = new Vector4f(albedo.getRed() / 255.0f, albedo.getGreen() / 255.0f, albedo.getBlue() / 255.0f, 1.0f);
-        int iconLayer = textureManager.getTextureIndex(textureName);
-        ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.BLOCK, blockId, iconLayer, ToolType.HAND, 1.0f, 64, color);
-        itemRegistry.put(itemId, definition);
-        blockItemByBlockId.put(blockId, itemId);
-        registerAlias(itemId, itemId);
-        registerAlias(itemId + "_block", itemId);
-        registerAlias(displayName.toLowerCase(Locale.ROOT).replace(' ', '_'), itemId);
-    }
-
-    private void registerToolItem(String itemId, String displayName, String textureName, ToolType toolType, float miningSpeed, Vector4f color) {
-        int iconLayer = textureManager.getTextureIndex(textureName);
-        ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.TOOL, 0, iconLayer, toolType, miningSpeed, 1, color);
-        itemRegistry.put(itemId, definition);
-        registerAlias(itemId, itemId);
-        registerAlias(displayName.toLowerCase(Locale.ROOT).replace(' ', '_'), itemId);
-    }
-
-    private void registerAlias(String alias, String itemId) {
-        itemAliases.put(alias.toLowerCase(Locale.ROOT), itemId);
-    }
-
-    private void populateStartingInventory() {
-        inventory[0] = new ItemStack("wood_pickaxe", 1);
-        inventory[1] = new ItemStack("wood_shovel", 1);
-        inventory[2] = new ItemStack("stone", 32);
-        inventory[3] = new ItemStack("dirt", 32);
-        inventory[4] = new ItemStack("glass", 16);
-        inventory[5] = new ItemStack("wood_axe", 1);
-        inventory[6] = new ItemStack("oak_log", 32);
-        inventory[7] = new ItemStack("grass", 32);
-        inventory[8] = new ItemStack("sand", 32);
-        inventory[9] = new ItemStack("leaves", 24);
-        // Portal items
-        inventory[8] = new ItemStack("flint_and_steel", 1);
-        inventory[9] = new ItemStack("water_bucket", 1);
-        inventory[10] = new ItemStack("eye_of_ender", 1);
-        inventory[11] = new ItemStack("obsidian", 16);
-        inventory[12] = new ItemStack("glowstone", 16);
-        inventory[13] = new ItemStack("end_stone", 16);
-
-        // Aether blocks in inventory
-        inventory[14] = new ItemStack("aether_grass", 16);
-        inventory[15] = new ItemStack("holystone", 32);
-        inventory[16] = new ItemStack("skyroot_log", 16);
-        inventory[17] = new ItemStack("aerogel", 16);
-    }
-
     private void logicLoop() {
         long lastTime = System.nanoTime();
         final long targetNanos = 16_666_666L;
-
         while (running) {
             long now = System.nanoTime();
             long elapsed = now - lastTime;
@@ -674,8 +603,17 @@ public class Main {
         }
     }
 
+    /** Sync game state from GameContext (may have changed via commands/portals) */
+    private void syncGameState() {
+        if (gameMode != ctx.gameMode) { gameMode = ctx.gameMode; }
+        if (combatMode != ctx.combatMode) { combatMode = ctx.combatMode; }
+        if (cameraMode != ctx.cameraMode) { cameraMode = ctx.cameraMode; }
+        if (commandMode != ctx.commandMode) { commandMode = ctx.commandMode; }
+    }
+
     private void tick(float dt) {
         if (!running) return;
+        syncGameState();
 
         if (cameraMode == CameraMode.FIRST_PERSON) {
             playerYaw = yaw;
@@ -698,7 +636,7 @@ public class Main {
         }
 
         worldTime += dt;
-        updateMining(dt);
+        blockInteraction.updateMining(dt);
 
         if (cameraShake > 0) cameraShake -= dt * 5.0f;
 
@@ -715,7 +653,21 @@ public class Main {
         }
 
         entityManager.update(dt);
-        checkPortalTeleport();
+        portalSystem.checkTeleport();
+
+        // Sync fields after potential dimension switch from PortalSystem/CommandProcessor
+        if (chunkManager != ctx.chunkManager) {
+            chunkManager = ctx.chunkManager;
+            world = ctx.world;
+            activeDimension = ctx.activeDimension;
+            redstoneManager = ctx.redstoneManager;
+        }
+
+        Vector3f pPosForRS = player.getPosition();
+        if (redstoneManager != null) {
+            redstoneManager.setPlayerPosition(pPosForRS.x, pPosForRS.y, pPosForRS.z);
+            redstoneManager.tickLamps();
+        }
 
         chunkManager.update(player.getPosition(), yaw);
     }
@@ -854,6 +806,16 @@ public class Main {
                 statusUntil = glfwGetTime() + 1.0;
             }
 
+            // Sync dimension changes from GameContext (render loop needs current world)
+            if (chunkManager != ctx.chunkManager) {
+                chunkManager = ctx.chunkManager;
+                world = ctx.world;
+                activeDimension = ctx.activeDimension;
+                redstoneManager = ctx.redstoneManager;
+            }
+            syncGameState();
+
+            redstoneManager.applyLampChanges();
             uploadDirtyChunks();
 
             // Slide the biome map when the world buffer recenters
@@ -907,21 +869,21 @@ public class Main {
             glProgramUniform3f(computeProgram, 3, ux, uy, uz);
             glProgramUniform1f(computeProgram, 4, worldTime);
             glProgramUniform1i(computeProgram, 5, entityManager.getEntityCount());
-            glProgramUniform1i(computeProgram, 9, activeDimension.id);
+            atmosphereRenderer.upload(worldTime, activeDimension);
+            glProgramUniform1i(computeProgram, locDimensionID, activeDimension.id);
             // Upload world sliding window offset
             glProgramUniform3i(computeProgram, 6, world.getOffsetX(), world.getOffsetY(), world.getOffsetZ());
 
             // Upload UI UVs
-            int locUv = glGetUniformLocation(computeProgram, "u_HeartUVs");
-            glUniform4f(locUv, uvHeartFull.x, uvHeartFull.y, uvHeartFull.z, uvHeartFull.w);
-            glUniform4f(locUv + 1, uvHeartHalf.x, uvHeartHalf.y, uvHeartHalf.z, uvHeartHalf.w);
-            glUniform4f(locUv + 2, uvHeartEmpty.x, uvHeartEmpty.y, uvHeartEmpty.z, uvHeartEmpty.w);
+            glUniform4f(locHeartUVs, uvHeartFull.x, uvHeartFull.y, uvHeartFull.z, uvHeartFull.w);
+            glUniform4f(locHeartUVs + 1, uvHeartHalf.x, uvHeartHalf.y, uvHeartHalf.z, uvHeartHalf.w);
+            glUniform4f(locHeartUVs + 2, uvHeartEmpty.x, uvHeartEmpty.y, uvHeartEmpty.z, uvHeartEmpty.w);
 
             bindTextures();
 
             glActiveTexture(GL_TEXTURE15);
             glBindTexture(GL_TEXTURE_2D, uiTextureId);
-            glUniform1i(glGetUniformLocation(computeProgram, "u_UISource"), 15);
+            glUniform1i(locUISource, 15);
 
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
@@ -980,8 +942,10 @@ public class Main {
 
             if (key == GLFW_KEY_C) {
                 combatMode = !combatMode;
+                ctx.combatMode = combatMode;
                 if (combatMode) {
                     cameraMode = CameraMode.THIRD_PERSON;
+                    ctx.cameraMode = cameraMode;
                 }
                 setStatus("Combat Mode: " + (combatMode ? "ON (Story Mode style)" : "OFF"));
                 return;
@@ -998,7 +962,7 @@ public class Main {
             }
 
             if (key >= GLFW_KEY_1 && key < GLFW_KEY_1 + HOTBAR_SIZE) {
-                selectedSlot = key - GLFW_KEY_1;
+                playerInventory.setSelectedSlot(key - GLFW_KEY_1);
                 showSelectedItemName();
                 return;
             }
@@ -1017,8 +981,9 @@ public class Main {
         if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) {
             String text = commandBuffer.toString().trim();
             commandMode = false;
+            ctx.commandMode = false;
             updateCursorMode();
-            executeCommand(text);
+            commandProcessor.execute(text);
             commandBuffer.setLength(0);
             return;
         }
@@ -1065,7 +1030,7 @@ public class Main {
                 leftMousePressedThisFrame = true;
             } else if (action == GLFW_RELEASE) {
                 leftMouseHeld = false;
-                resetMining();
+                blockInteraction.resetMining();
             }
         }
 
@@ -1082,9 +1047,9 @@ public class Main {
 
         if (button == GLFW_MOUSE_BUTTON_RIGHT) {
             if ((mods & GLFW_MOD_SHIFT) != 0) {
-                attemptActivatePortal();
+                portalSystem.attemptActivate();
             } else {
-                attemptPlaceBlock();
+                blockInteraction.attemptPlaceBlock();
             }
         }
     }
@@ -1092,12 +1057,14 @@ public class Main {
     private void openCommandMode() {
         if (inventoryOpen) setInventoryOpen(false);
         commandMode = true;
+        ctx.commandMode = true;
         commandBuffer.setLength(0);
         updateCursorMode();
     }
 
     private void cancelCommandMode() {
         commandMode = false;
+        ctx.commandMode = false;
         commandBuffer.setLength(0);
         updateCursorMode();
     }
@@ -1108,12 +1075,14 @@ public class Main {
 
     private void toggleCameraMode() {
         cameraMode = cameraMode == CameraMode.FIRST_PERSON ? CameraMode.THIRD_PERSON : CameraMode.FIRST_PERSON;
+        ctx.cameraMode = cameraMode;
         setStatus("Camera: " + (cameraMode == CameraMode.FIRST_PERSON ? "first person" : "third person"));
     }
 
     private void setInventoryOpen(boolean open) {
         inventoryOpen = open;
-        if (!open) carriedStack = null;
+        ctx.inventoryOpen = open;
+        if (!open) playerInventory.setCarriedStack(null);
         updateCursorMode();
     }
 
@@ -1123,7 +1092,13 @@ public class Main {
         if (!freeCursor) firstMouse = true;
     }
 
+    private double lastTitleUpdate = 0.0;
+
     private void updateWindowTitle() {
+        double now = glfwGetTime();
+        if (now - lastTitleUpdate < 0.25) return;
+        lastTitleUpdate = now;
+
         StringBuilder title = new StringBuilder("Voxel Engine | FPS: ").append(lastMeasuredFps);
         title.append(" | ").append(gameMode == GameMode.CREATIVE ? "creative" : "survival");
         Vector3f pos = player.getPosition();
@@ -1148,298 +1123,12 @@ public class Main {
         statusMessage = message;
         statusUntil = glfwGetTime() + 3.0;
         System.out.println(message);
-    }
-
-    private void executeCommand(String raw) {
-        if (raw.isEmpty()) return;
-        String commandText = raw.startsWith("/") ? raw.substring(1) : raw;
-        String[] parts = commandText.trim().split("\\s+");
-        if (parts.length == 0 || parts[0].isEmpty()) return;
-
-        String command = parts[0].toLowerCase(Locale.ROOT);
-        switch (command) {
-            case "gamemode":
-                handleGamemodeCommand(parts);
-                break;
-            case "give":
-                handleGiveCommand(parts);
-                break;
-            case "slotclear":
-                handleSlotClearCommand(parts);
-                break;
-            case "spawn":
-                player.respawn();
-                setStatus("Teleported to spawn.");
-                break;
-            case "setuv":
-                handleSetUvCommand(parts);
-                break;
-            case "dimension":
-            case "dim":
-                handleDimensionCommand(parts);
-                break;
-            default:
-                setStatus("Unknown command: /" + command);
-                break;
-        }
-    }
-
-    private void handleDimensionCommand(String[] parts) {
-        if (parts.length < 2) {
-            setStatus("Usage: /dimension <overworld|nether|end|aether>");
-            return;
-        }
-
-        String dimName = parts[1].toLowerCase(Locale.ROOT);
-        DimensionType target;
-        switch (dimName) {
-            case "nether": target = DimensionType.NETHER; break;
-            case "end": target = DimensionType.END; break;
-            case "aether": target = DimensionType.AETHER; break;
-            default: target = DimensionType.OVERWORLD; break;
-        }
-
-        if (target == activeDimension) {
-            setStatus("Already in " + target.name);
-            return;
-        }
-
-        // Lazily create the dimension if it doesn't exist yet
-        int renderDistance = 6;
-        if (target == DimensionType.OVERWORLD) renderDistance = 8;
-        dimensionManager.ensureDimension(target, renderDistance);
-
-        dimensionManager.switchTo(target);
-        activeDimension = target;
-        world = dimensionManager.getActiveWorld();
-        chunkManager = dimensionManager.getActiveChunkManager();
-
-        // Reset player position to the dimension's spawn
-        int spawnY = target.baseHeight + 3;
-        player.getPosition().set(1024, spawnY, 1024);
-        
-        // Upload new world to GPU
-        uploadWorldToGpu();
-        
-        setStatus("Switched to " + target.name);
-    }
-
-    private void handleSetUvCommand(String[] parts) {
-        if (parts.length < 4) {
-            setStatus("Usage: /setuv <full|half|empty> <x> <y> [w] [h]");
-            return;
-        }
-        try {
-            String type = parts[1].toLowerCase(Locale.ROOT);
-            float x = Float.parseFloat(parts[2]);
-            float y = Float.parseFloat(parts[3]);
-            float w = parts.length > 4 ? Float.parseFloat(parts[4]) : 9;
-            float h = parts.length > 5 ? Float.parseFloat(parts[5]) : 9;
-            
-            Vector4f uv = new Vector4f(x, y, w, h);
-            if (type.equals("full")) uvHeartFull = uv;
-            else if (type.equals("half")) uvHeartHalf = uv;
-            else if (type.equals("empty")) uvHeartEmpty = uv;
-            else {
-                setStatus("Invalid heart type: " + type);
-                return;
-            }
-            setStatus("Updated " + type + " UVs: " + x + "," + y + " (" + w + "x" + h + ")");
-        } catch (Exception e) {
-            setStatus("Error parsing values.");
-        }
-    }
-
-    private void handleGamemodeCommand(String[] parts) {
-        if (parts.length < 2) {
-            setStatus("Usage: /gamemode <survival|creative>");
-            return;
-        }
-
-        String value = parts[1].toLowerCase(Locale.ROOT);
-        if (value.equals("survival") || value.equals("s")) {
-            gameMode = GameMode.SURVIVAL;
-            player.setFlying(false);
-            setStatus("Gamemode set to survival");
-        } else if (value.equals("creative") || value.equals("c")) {
-            gameMode = GameMode.CREATIVE;
-            player.setFlying(true);
-            setStatus("Gamemode set to creative");
-        } else {
-            setStatus("Invalid gamemode: " + parts[1]);
-        }
-    }
-
-    private void handleGiveCommand(String[] parts) {
-        if (parts.length < 2) {
-            setStatus("Usage: /give <item> [amount]");
-            return;
-        }
-
-        String itemId = resolveItemId(parts[1]);
-        if (itemId == null) {
-            setStatus("Unknown item: " + parts[1]);
-            return;
-        }
-
-        ItemDefinition definition = getItemDefinition(itemId);
-        int amount = 1;
-        if (parts.length >= 3) {
-            try {
-                amount = Math.max(1, Integer.parseInt(parts[2]));
-            } catch (NumberFormatException e) {
-                setStatus("Invalid amount: " + parts[2]);
-                return;
-            }
-        }
-
-        boolean added = addItem(itemId, amount);
-        if (added) {
-            setStatus("Given " + amount + " " + definition.displayName);
-        } else {
-            setStatus("Inventory full");
-        }
-    }
-
-    private void handleSlotClearCommand(String[] parts) {
-        int slotIndex = selectedSlot;
-        if (parts.length >= 2) {
-            try {
-                slotIndex = Integer.parseInt(parts[1]) - 1;
-            } catch (NumberFormatException e) {
-                setStatus("Invalid slot: " + parts[1]);
-                return;
-            }
-        }
-
-        if (slotIndex < 0 || slotIndex >= INVENTORY_SIZE) {
-            setStatus("Slot out of range. Use 1-" + INVENTORY_SIZE);
-            return;
-        }
-
-        inventory[slotIndex] = null;
-        if (carriedStack != null && slotIndex == selectedSlot && !inventoryOpen) carriedStack = null;
-        setStatus("Cleared slot " + (slotIndex + 1));
-    }
-
-    private String resolveItemId(String token) {
-        if (token == null) return null;
-        String normalized = token.toLowerCase(Locale.ROOT);
-        if (itemRegistry.containsKey(normalized)) return normalized;
-        if (itemAliases.containsKey(normalized)) return itemAliases.get(normalized);
-
-        Integer blockId = blockDataManager.findBlockId(normalized);
-        if (blockId != null) return blockItemByBlockId.get(blockId);
-        return null;
-    }
-
-    private ItemDefinition getItemDefinition(String itemId) {
-        return itemRegistry.get(itemId);
-    }
-
-    private boolean addItem(String itemId, int count) {
-        ItemDefinition definition = getItemDefinition(itemId);
-        if (definition == null) return false;
-
-        int remaining = count;
-        if (definition.maxStack > 1) {
-            for (int i = 0; i < INVENTORY_SIZE && remaining > 0; i++) {
-                ItemStack stack = inventory[i];
-                if (stack != null && stack.itemId.equals(itemId) && stack.count < definition.maxStack) {
-                    int moved = Math.min(definition.maxStack - stack.count, remaining);
-                    stack.count += moved;
-                    remaining -= moved;
-                }
-            }
-        }
-
-        for (int i = 0; i < INVENTORY_SIZE && remaining > 0; i++) {
-            if (inventory[i] == null) {
-                int moved = Math.min(definition.maxStack, remaining);
-                inventory[i] = new ItemStack(itemId, moved);
-                remaining -= moved;
-            }
-        }
-
-        return remaining == 0;
-    }
-
-    private void handleCraftingSlotClick(int slotIndex) {
-        if (!inventoryOpen) return;
-
-        boolean isResult = slotIndex == CRAFTING_RESULT_SLOT;
-
-        if (isResult) {
-            // Try to take the result
-            CraftingManager.CraftingRecipe match = craftingManager.matchRecipe(craftingGrid);
-            if (match != null) {
-                boolean added = addItem(match.resultItemId, match.resultCount);
-                if (added) {
-                    // Consume the crafting ingredients
-                    craftingManager.consumeItems(craftingGrid);
-                }
-            }
-        } else {
-            // Clicked on a crafting input slot
-            int gridRow = slotIndex / 2;
-            int gridCol = slotIndex % 2;
-            String gridItem = craftingGrid[gridRow][gridCol];
-
-            if (carriedStack == null) {
-                if (gridItem != null) {
-                    // Pick up the item from the crafting grid
-                    carriedStack = new ItemStack(gridItem, 1);
-                    craftingGrid[gridRow][gridCol] = null;
-                }
-            } else {
-                if (gridItem == null) {
-                    // Place the carried item into the crafting grid
-                    craftingGrid[gridRow][gridCol] = carriedStack.itemId;
-                    carriedStack.count--;
-                    if (carriedStack.count <= 0) carriedStack = null;
-                }
-            }
-        }
-    }
-
-    private void handleInventorySlotClick(int slotIndex) {
-        if (!inventoryOpen) return;
-
-        ItemStack slotStack = inventory[slotIndex];
-        if (carriedStack == null) {
-            if (slotStack == null) return;
-            carriedStack = slotStack;
-            inventory[slotIndex] = null;
-            return;
-        }
-
-        if (slotStack == null) {
-            inventory[slotIndex] = carriedStack;
-            carriedStack = null;
-            return;
-        }
-
-        if (slotStack.itemId.equals(carriedStack.itemId)) {
-            ItemDefinition definition = getItemDefinition(slotStack.itemId);
-            if (definition != null && definition.maxStack > 1 && slotStack.count < definition.maxStack) {
-                int moved = Math.min(definition.maxStack - slotStack.count, carriedStack.count);
-                slotStack.count += moved;
-                carriedStack.count -= moved;
-                if (carriedStack.count <= 0) carriedStack = null;
-                return;
-            }
-        }
-
-        inventory[slotIndex] = carriedStack;
-        carriedStack = slotStack;
-    }
-
-    private void updateInventoryUi() {
+    }    private void updateInventoryUi() {
         double time = glfwGetTime();
         crosshairElement.visible = !inventoryOpen && !commandMode;
         inventoryPanelElement.visible = inventoryOpen;
         hotbarActiveElement.visible = true;
-        hotbarActiveElement.pos.y = HOTBAR_Y + selectedSlot * SLOT_H;
+        hotbarActiveElement.pos.y = HOTBAR_Y + playerInventory.getSelectedSlot() * SLOT_H;
 
         // Update crafting grid visibility and content
         int craftingPanelX = HOTBAR_X + 360;
@@ -1454,18 +1143,18 @@ public class Main {
 
             if (isResult) {
                 // Show the crafted result if pattern matches
-                CraftingManager.CraftingRecipe match = craftingManager.matchRecipe(craftingGrid);
+                CraftingManager.CraftingRecipe match = ctx.craftingManager.matchRecipe(playerInventory.getCraftingGrid());
                 if (match != null) {
                     itemId = match.resultItemId;
                 }
             } else {
                 int gridRow = i / 2;
                 int gridCol = i % 2;
-                itemId = craftingGrid[gridRow][gridCol];
+                itemId = playerInventory.getCraftingGrid()[gridRow][gridCol];
             }
 
             if (slotVisible && itemId != null) {
-                ItemDefinition definition = getItemDefinition(itemId);
+                ItemDefinition definition = itemDefinitions.getDefinition(itemId);
                 itemElement.visible = true;
                 itemElement.textureId = textureManager.getTextureArrayId();
                 itemElement.textureType = 2; // Array
@@ -1482,7 +1171,7 @@ public class Main {
             boolean slotVisible = index < HOTBAR_SIZE || inventoryOpen;
             slotBackgrounds[index].visible = slotVisible;
 
-            ItemStack stack = inventory[index];
+            ItemStack stack = playerInventory.getSlot(index);
             UILayer.UIElement itemElement = slotItemElements[index];
             UILayer.UIElement countBar = slotCountBars[index];
             UILayer.UIElement digit1 = slotCountDigit1[index];
@@ -1496,14 +1185,14 @@ public class Main {
                 continue;
             }
 
-            ItemDefinition definition = getItemDefinition(stack.itemId);
+            ItemDefinition definition = itemDefinitions.getDefinition(stack.itemId);
             itemElement.visible = true;
             itemElement.textureId = textureManager.getTextureArrayId();
             itemElement.textureType = 2; // Array
             itemElement.layer = definition.iconLayer;
             itemElement.color.set(1, 1, 1, 1);
             
-            if (definition.kind == ItemKind.TOOL) {
+            if (definition.kind == ItemDefinitions.ItemKind.TOOL) {
                 itemElement.size.set(40, 40);
                 itemElement.pos.set(slotBackgrounds[index].pos.x + 24, slotBackgrounds[index].pos.y + 14);
             } else {
@@ -1556,9 +1245,9 @@ public class Main {
             }
         }
 
-        carriedItemElement.visible = inventoryOpen && carriedStack != null;
+        carriedItemElement.visible = inventoryOpen && playerInventory.getCarriedStack() != null;
         if (carriedItemElement.visible) {
-            ItemDefinition definition = getItemDefinition(carriedStack.itemId);
+            ItemDefinition definition = itemDefinitions.getDefinition(playerInventory.getCarriedStack().itemId);
             carriedItemElement.textureId = textureManager.getTextureArrayId();
             carriedItemElement.textureType = 2; // Array
             carriedItemElement.layer = definition.iconLayer;
@@ -1606,9 +1295,9 @@ public class Main {
     }
 
     private void showSelectedItemName() {
-        ItemStack stack = inventory[selectedSlot];
+        ItemStack stack = playerInventory.getSlot(playerInventory.getSelectedSlot());
         if (stack != null) {
-            ItemDefinition definition = getItemDefinition(stack.itemId);
+            ItemDefinition definition = itemDefinitions.getDefinition(stack.itemId);
             if (definition != null) {
                 itemNameElement.text = definition.displayName;
                 itemNameDisplayUntil = glfwGetTime() + 3.0;
@@ -1618,325 +1307,39 @@ public class Main {
         }
     }
 
-    private void updateMining(float dt) {
-        if (inventoryOpen || commandMode || !leftMouseHeld || player.isDead()) {
-            resetMining();
-            return;
-        }
-
-        int[] hit = raycastBlock(6.0f);
-        if (hit == null) {
-            resetMining();
-            return;
-        }
-
-        int blockId = world.getVoxel(hit[0], hit[1], hit[2]);
-        if (blockId == 0) {
-            resetMining();
-            return;
-        }
-
-        if (gameMode == GameMode.CREATIVE) {
-            if (leftMousePressedThisFrame) {
-                breakBlock(hit[0], hit[1], hit[2], blockId, false);
-            }
-            return;
-        }
-
-        if (hit[0] != breakTargetX || hit[1] != breakTargetY || hit[2] != breakTargetZ) {
-            breakTargetX = hit[0];
-            breakTargetY = hit[1];
-            breakTargetZ = hit[2];
-            breakProgress = 0.0f;
-        }
-
-        breakProgress += dt * getMiningSpeed(blockId);
-        if (breakProgress >= blockDataManager.getHardness(blockId)) {
-            breakBlock(hit[0], hit[1], hit[2], blockId, true);
-            resetMining();
-        }
-    }
-
-    private float getMiningSpeed(int blockId) {
-        String preferredTool = blockDataManager.getPreferredTool(blockId);
-        ItemStack selected = inventory[selectedSlot];
-        ItemDefinition selectedDefinition = selected != null ? getItemDefinition(selected.itemId) : null;
-
-        ToolType activeTool = ToolType.HAND;
-        float toolSpeed = 1.0f;
-        if (selectedDefinition != null && selectedDefinition.kind == ItemKind.TOOL) {
-            activeTool = selectedDefinition.toolType;
-            toolSpeed = selectedDefinition.miningSpeed;
-        }
-
-        if ("pickaxe".equals(preferredTool)) {
-            return activeTool == ToolType.PICKAXE ? toolSpeed : 0.55f;
-        }
-        if ("shovel".equals(preferredTool)) {
-            return activeTool == ToolType.SHOVEL ? toolSpeed : 0.75f;
-        }
-        if ("axe".equals(preferredTool)) {
-            return activeTool == ToolType.AXE ? toolSpeed : 0.85f;
-        }
-        return activeTool == ToolType.HAND ? 1.2f : Math.max(1.0f, toolSpeed * 0.7f);
-    }
-
-    private void breakBlock(int x, int y, int z, int blockId, boolean collectDrop) {
-        if (!chunkManager.setVoxel(x, y, z, 0)) return;
-
-        if (collectDrop) {
-            String dropItem = blockItemByBlockId.get(blockId);
-            if (dropItem != null) addItem(dropItem, 1);
-        }
-    }
-
-    private void attemptPlaceBlock() {
-        if (player.isDead()) return;
-        int[] hit = raycastBlock(6.0f);
-        if (hit == null) return;
-
-        ItemStack selected = inventory[selectedSlot];
-        if (selected == null) {
-            setStatus("Selected slot is empty");
-            return;
-        }
-
-        ItemDefinition definition = getItemDefinition(selected.itemId);
-        if (definition == null || definition.kind != ItemKind.BLOCK) {
-            setStatus("Select a block item to place");
-            return;
-        }
-
-        int px = hit[3];
-        int py = hit[4];
-        int pz = hit[5];
-        if (world.getVoxel(px, py, pz) != 0) return;
-        if (intersectsPlayer(px, py, pz)) return;
-        if (!chunkManager.setVoxel(px, py, pz, definition.blockId)) return;
-
-        if (gameMode == GameMode.SURVIVAL) {
-            selected.count--;
-            if (selected.count <= 0) inventory[selectedSlot] = null;
-        }
-    }
-
-    private void checkPortalTeleport() {
-        if (player.isDead()) return;
-        Vector3f pos = player.getPosition();
-        int px = (int) Math.floor(pos.x);
-        int py = (int) Math.floor(pos.y);
-        int pz = (int) Math.floor(pos.z);
-        int voxelFeet = world.getVoxel(px, py, pz);
-        int voxelBody = world.getVoxel(px, py + 1, pz);
-        int voxel = (voxelFeet == 19 || voxelFeet == 106) ? voxelFeet :
-                    (voxelBody == 19 || voxelBody == 106) ? voxelBody : 0;
-
-        if (voxel == 0) return;
-
-        // Teleport cooldown to prevent immediate re-triggering
-        double now = glfwGetTime();
-        if (now - lastPortalTeleportTime < 1.0) return;
-
-        DimensionType target;
-        if (voxel == 19) {
-            target = activeDimension == DimensionType.NETHER ? DimensionType.OVERWORLD : DimensionType.NETHER;
-        } else if (voxel == 106) {
-            target = activeDimension == DimensionType.AETHER ? DimensionType.OVERWORLD : DimensionType.AETHER;
-        } else {
-            return;
-        }
-
-        // Don't teleport if already in the target dimension
-        if (target == activeDimension) return;
-
-        int renderDistance = 6;
-        if (target == DimensionType.OVERWORLD) renderDistance = 8;
-        dimensionManager.ensureDimension(target, renderDistance);
-        dimensionManager.switchTo(target);
-        activeDimension = target;
-        world = dimensionManager.getActiveWorld();
-        chunkManager = dimensionManager.getActiveChunkManager();
-
-        // Place player at target dimension spawn
-        int spawnY = target.baseHeight + 3;
-        player.getPosition().set(1024, spawnY, 1024);
-        uploadWorldToGpu();
-        lastPortalTeleportTime = now;
-        setStatus("Teleported to " + target.name);
-    }
-
-    private void attemptActivatePortal() {
-        if (player.isDead()) return;
-        int[] hit = raycastBlock(6.0f);
-        if (hit == null) return;
-
-        int hitX = hit[0], hitY = hit[1], hitZ = hit[2];
-        int hitBlock = world.getVoxel(hitX, hitY, hitZ);
-
-        ItemStack selected = inventory[selectedSlot];
-        if (selected == null) {
-            setStatus("Select flint & steel, water bucket, or eye of ender");
-            return;
-        }
-
-        String itemId = selected.itemId;
-        int frameBlockId;
-        int portalBlockId;
-        DimensionType portalDim;
-        String activationMsg;
-
-        if (itemId.equals("flint_and_steel")) {
-            frameBlockId = 16; // Obsidian
-            portalBlockId = 19; // Nether portal
-            portalDim = DimensionType.NETHER;
-            activationMsg = "Nether Portal";
-        } else if (itemId.equals("water_bucket")) {
-            frameBlockId = 17; // Glowstone
-            portalBlockId = 106; // Aether portal
-            portalDim = DimensionType.AETHER;
-            activationMsg = "Aether Portal";
-        } else if (itemId.equals("eye_of_ender")) {
-            frameBlockId = 18; // End stone
-            portalBlockId = 19; // Reuse nether portal block for now (or use a different one)
-            portalDim = DimensionType.END;
-            activationMsg = "End Portal";
-        } else {
-            setStatus("Shift+right-click with flint & steel, water bucket, or eye of ender");
-            return;
-        }
-
-        // Only try to light the portal if the clicked block is the correct frame material
-        if (hitBlock != frameBlockId) return;
-
-        if (tryLightPortal(hitX, hitY, hitZ, frameBlockId, portalBlockId)) {
-            setStatus("Lit " + activationMsg);
-        }
-    }
-
-    private boolean tryLightPortal(int hitX, int hitY, int hitZ, int frameBlockId, int portalBlockId) {
-        // Try NS-facing portal (width along X):
-        if (tryPortalOrientation(hitX, hitY, hitZ, 1, 0, frameBlockId, portalBlockId)) return true;
-        // Try EW-facing portal (width along Z):
-        if (tryPortalOrientation(hitX, hitY, hitZ, 0, 1, frameBlockId, portalBlockId)) return true;
-        return false;
-    }
-
-    private boolean tryPortalOrientation(int hitX, int hitY, int hitZ, int dirX, int dirZ, int frameBlockId, int portalBlockId) {
-        // Portal outer dimensions: 4 wide x 5 tall, inner: 2 wide x 3 tall
-        // The clicked block must be part of the frame. Search for the minimal corner.
-        for (int dw = -3; dw <= 0; dw++) {
-            for (int dh = -4; dh <= 0; dh++) {
-                int sx = (dirX == 1) ? hitX + dw : hitX;
-                int sy = hitY + dh;
-                int sz = (dirZ == 1) ? hitZ + dw : hitZ;
-
-                if (isValidPortalFrame(sx, sy, sz, dirX, dirZ, frameBlockId)) {
-                    // Light the portal: fill 2x3 interior with portal blocks
-                    for (int px = 1; px <= 2; px++) {
-                        for (int py = 1; py <= 3; py++) {
-                            int wx = sx + px * dirX;
-                            int wy = sy + py;
-                            int wz = sz + px * dirZ;
-                            chunkManager.setVoxel(wx, wy, wz, portalBlockId);
-                        }
-                    }
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private boolean isValidPortalFrame(int sx, int sy, int sz, int dirX, int dirZ, int frameBlockId) {
-        int width = 4;
-        int height = 5;
-
-        // Check bottom row
-        for (int i = 0; i < width; i++) {
-            int wx = sx + i * dirX;
-            int wz = sz + i * dirZ;
-            if (world.getVoxel(wx, sy, wz) != frameBlockId) return false;
-        }
-        // Check top row
-        for (int i = 0; i < width; i++) {
-            int wx = sx + i * dirX;
-            int wz = sz + i * dirZ;
-            if (world.getVoxel(wx, sy + height - 1, wz) != frameBlockId) return false;
-        }
-        // Check left column (excluding corners)
-        for (int i = 1; i < height - 1; i++) {
-            int wx = sx;
-            int wz = sz;
-            if (world.getVoxel(wx, sy + i, wz) != frameBlockId) return false;
-        }
-        // Check right column (excluding corners)
-        for (int i = 1; i < height - 1; i++) {
-            int wx = sx + (width - 1) * dirX;
-            int wz = sz + (width - 1) * dirZ;
-            if (world.getVoxel(wx, sy + i, wz) != frameBlockId) return false;
-        }
-        // Check interior is empty
-        for (int px = 1; px < width - 1; px++) {
-            for (int py = 1; py < height - 1; py++) {
-                int wx = sx + px * dirX;
-                int wy = sy + py;
-                int wz = sz + px * dirZ;
-                if (world.getVoxel(wx, wy, wz) != 0) return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean intersectsPlayer(int x, int y, int z) {
-        Vector3f pos = player.getPosition();
-        float playerMinX = pos.x - PLAYER_HALF_WIDTH;
-        float playerMaxX = pos.x + PLAYER_HALF_WIDTH;
-        float playerMinY = pos.y;
-        float playerMaxY = pos.y + PLAYER_HEIGHT;
-        float playerMinZ = pos.z - PLAYER_HALF_WIDTH;
-        float playerMaxZ = pos.z + PLAYER_HALF_WIDTH;
-
-        return playerMaxX > x && playerMinX < x + 1
-            && playerMaxY > y && playerMinY < y + 1
-            && playerMaxZ > z && playerMinZ < z + 1;
-    }
-
-    private void resetMining() {
-        breakTargetX = Integer.MIN_VALUE;
-        breakTargetY = Integer.MIN_VALUE;
-        breakTargetZ = Integer.MIN_VALUE;
-        breakProgress = 0.0f;
-    }
-
     private void bindTextures() {
         glActiveTexture(GL_TEXTURE6);
         glBindTexture(GL_TEXTURE_2D_ARRAY, textureManager.getTextureArrayId());
-        glUniform1i(glGetUniformLocation(computeProgram, "u_BlockTextures"), 6);
+        glUniform1i(locBlockTextures, 6);
+
+        glActiveTexture(GL_TEXTURE16);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, textureManager.getEntityTextureArrayId());
+        glUniform1i(locEntityTextures, 16);
 
         glActiveTexture(GL_TEXTURE7);
         glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getTextureId());
-        glUniform1i(glGetUniformLocation(computeProgram, "u_BlockData"), 7);
+        glUniform1i(locBlockData, 7);
         glActiveTexture(GL_TEXTURE12);
         glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getAABBTextureId());
-        glUniform1i(glGetUniformLocation(computeProgram, "u_BlockAABBs"), 12);
+        glUniform1i(locBlockAABBs, 12);
         glActiveTexture(GL_TEXTURE11);
         glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getInfoTextureId());
-        glUniform1i(glGetUniformLocation(computeProgram, "u_BlockAABBInfo"), 11);
+        glUniform1i(locBlockAABBInfo, 11);
         glActiveTexture(GL_TEXTURE13);
         glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getAABBUVTextureId());
-        glUniform1i(glGetUniformLocation(computeProgram, "u_BlockAABBUVs"), 13);
+        glUniform1i(locBlockAABBUVs, 13);
         glActiveTexture(GL_TEXTURE8);
         glBindTexture(GL_TEXTURE_2D, biomeManager.getBiomeMapId());
-        glUniform1i(glGetUniformLocation(computeProgram, "u_BiomeMap"), 8);
+        glUniform1i(locBiomeMap, 8);
         glActiveTexture(GL_TEXTURE9);
         glBindTexture(GL_TEXTURE_2D, biomeManager.getGrassColormapId());
-        glUniform1i(glGetUniformLocation(computeProgram, "u_GrassColormap"), 9);
+        glUniform1i(locGrassColormap, 9);
         glActiveTexture(GL_TEXTURE10);
         glBindTexture(GL_TEXTURE_2D, uiManager.getUITexture());
-        glUniform1i(glGetUniformLocation(computeProgram, "u_UITexture"), 10);
+        glUniform1i(locUITexture, 10);
         glActiveTexture(GL_TEXTURE14);
         glBindTexture(GL_TEXTURE_2D, biomeManager.getFoliageColormapId());
-        glUniform1i(glGetUniformLocation(computeProgram, "u_FoliageColormap"), 14);
+        glUniform1i(locFoliageColormap, 14);
     }
 
     private void setupResources() {
@@ -1971,6 +1374,19 @@ public class Main {
         blockDataManager.registerBlock(17, "glowstone", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(18, "end_stone", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(19, "nether_portal", textureManager, "src/main/resources/assets/minecraft/models/block");
+        // --- Nether Dimension Blocks ---
+        blockDataManager.registerBlock(20, "netherrack", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(21, "lava_still", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(22, "soul_sand", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(23, "quartz_ore", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(24, "nether_brick", textureManager, "src/main/resources/assets/minecraft/models/block");
+        // --- Redstone Blocks ---
+        blockDataManager.registerBlock(25, "redstone_block", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(26, "redstone_ore", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(27, "redstone_torch", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(28, "redstone_lamp", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(29, "redstone_dust", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(30, "redstone_lamp_on", textureManager, "src/main/resources/assets/minecraft/models/block");
         // --- Aether Dimension Blocks ---
         String aetherModels = "src/main/resources/assets/aether/models/block";
         blockDataManager.registerBlock(100, "aether_grass_block", textureManager, aetherModels);
@@ -2040,15 +1456,23 @@ public class Main {
     }
 
     private void uploadWorldToGpu() {
+        int poolSize = world.getPoolSizeForAlloc();
         int[] table = world.getIndirectionTable();
         IntBuffer buf = MemoryUtil.memAllocInt(table.length);
         buf.put(table).flip();
+        // Delete old SSBOs before creating new ones (prevents GPU memory leak on dimension switch)
+        if (indirectionSSBO != 0) glDeleteBuffers(indirectionSSBO);
+        if (chunkPoolSSBO != 0) glDeleteBuffers(chunkPoolSSBO);
+        if (bitmaskSSBO != 0) glDeleteBuffers(bitmaskSSBO);
+        if (occlusionSSBO != 0) glDeleteBuffers(occlusionSSBO);
+        if (pointLightSSBO != 0) glDeleteBuffers(pointLightSSBO);
+
         indirectionSSBO = glCreateBuffers();
         glNamedBufferStorage(indirectionSSBO, buf, GL_DYNAMIC_STORAGE_BIT);
         MemoryUtil.memFree(buf);
 
         chunkPoolSSBO = glCreateBuffers();
-        glNamedBufferStorage(chunkPoolSSBO, (long) POOL_SIZE * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * Integer.BYTES, GL_DYNAMIC_STORAGE_BIT);
+        glNamedBufferStorage(chunkPoolSSBO, (long) poolSize * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * Integer.BYTES, GL_DYNAMIC_STORAGE_BIT);
 
         int[] bitmaskPool = world.getBitmaskPool();
         IntBuffer bbuf = MemoryUtil.memAllocInt(bitmaskPool.length);
@@ -2070,36 +1494,53 @@ public class Main {
         uploadDirtyChunks();
     }
 
+    // Reusable direct buffers for uploadDirtyChunks (allocated once, reused per frame)
+    private java.nio.IntBuffer reusableVoxelBuf;
+    private java.nio.IntBuffer reusableMaskBuf;
+    private java.nio.ShortBuffer reusableOccBuf;
+    private java.nio.IntBuffer reusableTableBuf;
+
     private void uploadDirtyChunks() {
         java.util.Set<Integer> dirty = chunkManager.getDirtySlots();
         if (dirty.isEmpty() && !chunkManager.isTableDirty()) return;
+
+        int vpc = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+        int poolSize = world.getPoolSizeForAlloc();
+
+        // Lazy-init reusable buffers sized to current world
+        if (reusableVoxelBuf == null || reusableVoxelBuf.capacity() < vpc) {
+            if (reusableVoxelBuf != null) MemoryUtil.memFree(reusableVoxelBuf);
+            if (reusableMaskBuf != null) MemoryUtil.memFree(reusableMaskBuf);
+            if (reusableOccBuf != null) MemoryUtil.memFree(reusableOccBuf);
+            if (reusableTableBuf != null) MemoryUtil.memFree(reusableTableBuf);
+            reusableVoxelBuf = MemoryUtil.memAllocInt(vpc);
+            reusableMaskBuf = MemoryUtil.memAllocInt(128);
+            reusableOccBuf = MemoryUtil.memAllocShort(vpc);
+            reusableTableBuf = MemoryUtil.memAllocInt(REGION_SIZE * REGION_SIZE * REGION_SIZE);
+        }
+
         if (chunkManager.isTableDirty()) {
             int[] table = world.getIndirectionTable();
-            IntBuffer buf = MemoryUtil.memAllocInt(table.length);
-            buf.put(table).flip();
-            glNamedBufferSubData(indirectionSSBO, 0, buf);
-            MemoryUtil.memFree(buf);
+            reusableTableBuf.clear();
+            reusableTableBuf.put(table).flip();
+            glNamedBufferSubData(indirectionSSBO, 0, reusableTableBuf);
         }
 
         int[] pool = world.getChunkPool();
         int[] masks = world.getBitmaskPool();
         short[] occs = world.getOcclusionPool();
-        int vpc = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
         for (int s : dirty) {
-            IntBuffer buf = MemoryUtil.memAllocInt(vpc);
-            buf.put(pool, s * vpc, vpc).flip();
-            glNamedBufferSubData(chunkPoolSSBO, (long) s * vpc * Integer.BYTES, buf);
-            MemoryUtil.memFree(buf);
+            reusableVoxelBuf.clear();
+            reusableVoxelBuf.put(pool, s * vpc, vpc).flip();
+            glNamedBufferSubData(chunkPoolSSBO, (long) s * vpc * Integer.BYTES, reusableVoxelBuf);
 
-            IntBuffer mbuf = MemoryUtil.memAllocInt(128);
-            mbuf.put(masks, s * 128, 128).flip();
-            glNamedBufferSubData(bitmaskSSBO, (long) s * 128 * Integer.BYTES, mbuf);
-            MemoryUtil.memFree(mbuf);
+            reusableMaskBuf.clear();
+            reusableMaskBuf.put(masks, s * 128, 128).flip();
+            glNamedBufferSubData(bitmaskSSBO, (long) s * 128 * Integer.BYTES, reusableMaskBuf);
 
-            java.nio.ShortBuffer obuf = MemoryUtil.memAllocShort(vpc);
-            obuf.put(occs, s * vpc, vpc).flip();
-            glNamedBufferSubData(occlusionSSBO, (long) s * vpc * Short.BYTES, obuf);
-            MemoryUtil.memFree(obuf);
+            reusableOccBuf.clear();
+            reusableOccBuf.put(occs, s * vpc, vpc).flip();
+            glNamedBufferSubData(occlusionSSBO, (long) s * vpc * Short.BYTES, reusableOccBuf);
         }
         chunkManager.clearDirty();
     }

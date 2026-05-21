@@ -39,6 +39,7 @@ layout(location = 5) uniform int u_EntityCount;
 
 // Samplers
 uniform sampler2DArray u_BlockTextures;
+uniform sampler2DArray u_EntityTextures;
 uniform isamplerBuffer u_BlockData;
 uniform samplerBuffer u_BlockAABBs;
 uniform isamplerBuffer u_BlockAABBInfo;
@@ -435,7 +436,7 @@ void main() {
                 }
                 refl = 0.0;
             } else {
-                alb = texture(u_BlockTextures, vec3(eUv, float(eTex))).rgb;
+                alb = texture(u_EntityTextures, vec3(eUv, float(eTex))).rgb;
             }
         } else {
             ivec4 d0 = texelFetch(u_BlockData, int(voxel)*3), d1 = texelFetch(u_BlockData, int(voxel)*3+1), d2 = texelFetch(u_BlockData, int(voxel)*3+2);
@@ -462,9 +463,15 @@ void main() {
             trans = float(d1.z)/255.0; refl = float(d1.w & 0xFF)/255.0;
             
             if (isLiquid) {
-                trans = 0.6; // High transparency for water
-                refl = 0.15; // Slight reflection
-                alb = mix(alb, vec3(0.0, 0.3, 0.8), 0.5); // Tint it blue
+                if (voxel == 21u) { // Lava: opaque with red/orange tint
+                    trans = 0.0;
+                    refl = 0.05;
+                    alb = mix(alb, vec3(1.0, 0.3, 0.05), 0.3);
+                } else { // Water: transparent with blue tint
+                    trans = 0.6;
+                    refl = 0.15;
+                    alb = mix(alb, vec3(0.0, 0.3, 0.8), 0.5);
+                }
             }
 
             if (((d1.w >> 8) & 1) == 1) { vec2 bp = texture(u_BiomeMap, (hp.xz - vec2(u_WorldOffset.xz)) / 2048.0).rg; alb *= texture(u_GrassColormap, vec2(1.0-bp.x, 1.0-bp.y)).rgb; }

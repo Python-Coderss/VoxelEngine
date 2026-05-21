@@ -51,6 +51,18 @@ public class CraftingManager {
             {"sand", "sand"},
             {"sand", "sand"}
         }, "glass", 4);
+
+        // Redstone ore -> Redstone dust (1 ore = 4 dust)
+        addRecipe(new String[][]{
+            {"redstone_ore", null},
+            {null, null}
+        }, "redstone_wire", 4);
+
+        // Redstone block -> Redstone dust (1 block = 9 dust)
+        addRecipe(new String[][]{
+            {"redstone_block", null},
+            {null, null}
+        }, "redstone_wire", 9);
     }
     
     private void addRecipe(String[][] pattern, String resultItemId, int resultCount) {

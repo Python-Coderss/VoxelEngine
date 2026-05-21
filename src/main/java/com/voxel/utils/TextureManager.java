@@ -25,22 +25,30 @@ import static org.lwjgl.opengl.GL42.*;
 
 /**
  * Manages the loading and organization of textures.
- * Uses a unified 64x64 Texture Array to support both high-res skins and blocks.
+ * Uses a 16x16 Texture Array for block/item textures and a separate 64x64 Texture Array for entity textures.
  */
 public class TextureManager {
-    private static final int TEXTURE_SIZE = 64;
+    private static final int TEXTURE_SIZE = 16;         // Block/item textures at native 16x16
+    private static final int ENTITY_TEXTURE_SIZE = 64;  // Entity textures at native 64x64 (skins, etc.)
 
+    // ---- Block/Item texture array (16x16) ----
     private int textureArrayId;
     private final Map<String, Integer> textureToIndex = new HashMap<>();
     private final Map<String, Integer> textureToFrameCount = new HashMap<>();
     private final List<String> texturePaths = new ArrayList<>();
     /**
-     * WARNING: This is the max number of layers allocated in the 3D texture array.
+     * WARNING: This is the max number of layers allocated in the 3D texture array. 
      * If the total number of textures (including animation frames) exceeds this,
      * glTexSubImage3D will fail with an out-of-bounds error when trying to upload.
      * Bump this up (e.g., +256 at a time) if you add more blocks/items.
      */
     private static final int MAX_LAYERS = 1300;
+
+    // ---- Entity texture array (64x64) ----
+    private int entityTextureArrayId;
+    private final Map<String, Integer> entityTextureToIndex = new HashMap<>();
+    private final List<String> entityTexturePaths = new ArrayList<>();
+    private static final int MAX_ENTITY_LAYERS = 256;
 
     public void loadTextures(String... directoryPaths) {
         List<Path> allFiles = new ArrayList<>();
@@ -98,7 +106,7 @@ public class TextureManager {
         glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
 
         for (int i = 0; i < texturePaths.size(); i++) {
-            loadAndUploadTexture(texturePaths.get(i), i);
+            loadAndUploadTexture(texturePaths.get(i), i, TEXTURE_SIZE);
         }
 
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
@@ -111,9 +119,9 @@ public class TextureManager {
 
     /**
      * Loads a texture, detecting animated vertical strips (height > width).
-     * Each frame (TEXTURE_SIZE x TEXTURE_SIZE) is uploaded to consecutive layers.
+     * Each frame (textureSize x textureSize) is uploaded to consecutive layers.
      */
-    private void loadAndUploadTexture(String path, int layer) {
+    private void loadAndUploadTexture(String path, int layer, int textureSize) {
         try {
             BufferedImage img = ImageIO.read(new File(path));
             if (img == null) return;
@@ -122,15 +130,14 @@ public class TextureManager {
             int originalHeight = img.getHeight();
 
             // Detect animated textures: vertical strips where height > width
-            // Each frame is TEXTURE_SIZE x TEXTURE_SIZE
             int frameCount;
-            if (originalHeight > TEXTURE_SIZE && originalWidth == TEXTURE_SIZE && originalHeight % TEXTURE_SIZE == 0) {
-                frameCount = originalHeight / TEXTURE_SIZE;
+            if (originalHeight > textureSize && originalWidth == textureSize && originalHeight % textureSize == 0) {
+                frameCount = originalHeight / textureSize;
             } else {
                 frameCount = 1;
             }
 
-            // Store the frame count for this texture (use the name from textureToIndex)
+            // Store the frame count (only for block textures)
             String fileName = new File(path).getName();
             String name = fileName.substring(0, fileName.lastIndexOf('.'));
             textureToFrameCount.put(name, frameCount);
@@ -138,34 +145,34 @@ public class TextureManager {
             if (frameCount > 1) {
                 // Animated texture: upload each frame to consecutive layers
                 for (int f = 0; f < frameCount; f++) {
-                    BufferedImage frame = img.getSubimage(0, f * TEXTURE_SIZE, TEXTURE_SIZE, TEXTURE_SIZE);
-                    uploadFrameToLayer(frame, layer + f);
+                    BufferedImage frame = img.getSubimage(0, f * textureSize, textureSize, textureSize);
+                    uploadFrameToLayer(frame, layer + f, textureSize);
                 }
             } else {
-                // Non-animated: scale to 64x64 if needed, upload to single layer
-                if (img.getWidth() != TEXTURE_SIZE || img.getHeight() != TEXTURE_SIZE) {
-                    BufferedImage scaled = new BufferedImage(TEXTURE_SIZE, TEXTURE_SIZE, BufferedImage.TYPE_INT_ARGB);
+                // Non-animated: scale to target size if needed
+                if (img.getWidth() != textureSize || img.getHeight() != textureSize) {
+                    BufferedImage scaled = new BufferedImage(textureSize, textureSize, BufferedImage.TYPE_INT_ARGB);
                     Graphics2D g = scaled.createGraphics();
                     g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-                    g.drawImage(img, 0, 0, TEXTURE_SIZE, TEXTURE_SIZE, null);
+                    g.drawImage(img, 0, 0, textureSize, textureSize, null);
                     g.dispose();
                     img = scaled;
                 }
-                uploadFrameToLayer(img, layer);
+                uploadFrameToLayer(img, layer, textureSize);
             }
         } catch (IOException e) {
             System.err.println("Failed to upload texture: " + path);
         }
     }
 
-    private void uploadFrameToLayer(BufferedImage img, int layer) {
-        int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
-        img.getRGB(0, 0, TEXTURE_SIZE, TEXTURE_SIZE, pixels, 0, TEXTURE_SIZE);
+    private void uploadFrameToLayer(BufferedImage img, int layer, int textureSize) {
+        int[] pixels = new int[textureSize * textureSize];
+        img.getRGB(0, 0, textureSize, textureSize, pixels, 0, textureSize);
 
-        ByteBuffer buffer = MemoryUtil.memAlloc(TEXTURE_SIZE * TEXTURE_SIZE * 4);
-        for (int y = 0; y < TEXTURE_SIZE; y++) {
-            for (int x = 0; x < TEXTURE_SIZE; x++) {
-                int pixel = pixels[y * TEXTURE_SIZE + x];
+        ByteBuffer buffer = MemoryUtil.memAlloc(textureSize * textureSize * 4);
+        for (int y = 0; y < textureSize; y++) {
+            for (int x = 0; x < textureSize; x++) {
+                int pixel = pixels[y * textureSize + x];
                 buffer.put((byte) ((pixel >> 16) & 0xFF)); // R
                 buffer.put((byte) ((pixel >> 8) & 0xFF));  // G
                 buffer.put((byte) (pixel & 0xFF));         // B
@@ -173,20 +180,73 @@ public class TextureManager {
             }
         }
         buffer.flip();
-        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, layer, TEXTURE_SIZE, TEXTURE_SIZE, 1, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, layer, textureSize, textureSize, 1, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
         MemoryUtil.memFree(buffer);
     }
 
+    // ========================================================================
+    // Entity Texture Loading (64x64 array)
+    // ========================================================================
+
     public void loadEntityTextures(String directoryPath) {
-        loadTextures(directoryPath);
+        File dir = new File(directoryPath);
+        if (!dir.exists()) {
+            System.err.println("Entity texture directory not found: " + directoryPath);
+            return;
+        }
+
+        try {
+            Path[] files = Files.walk(Paths.get(directoryPath))
+                    .filter(Files::isRegularFile)
+                    .filter(p -> p.toString().endsWith(".png"))
+                    .toArray(Path[]::new);
+
+            for (Path path : files) {
+                String fileName = path.getFileName().toString();
+                String name = fileName.substring(0, fileName.lastIndexOf('.'));
+
+                if (!entityTextureToIndex.containsKey(name)) {
+                    entityTextureToIndex.put(name, entityTexturePaths.size());
+                    entityTexturePaths.add(path.toString());
+                }
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to scan entity textures: " + directoryPath, e);
+        }
+
+        if (entityTexturePaths.isEmpty()) return;
+
+        if (entityTextureArrayId == 0) {
+            entityTextureArrayId = glGenTextures();
+            glBindTexture(GL_TEXTURE_2D_ARRAY, entityTextureArrayId);
+            glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8,
+                    ENTITY_TEXTURE_SIZE, ENTITY_TEXTURE_SIZE, MAX_ENTITY_LAYERS);
+        }
+
+        glBindTexture(GL_TEXTURE_2D_ARRAY, entityTextureArrayId);
+
+        for (int i = 0; i < entityTexturePaths.size(); i++) {
+            loadAndUploadTexture(entityTexturePaths.get(i), i, ENTITY_TEXTURE_SIZE);
+        }
+
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+        glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
     }
+
+    // ========================================================================
+    // Public accessors
+    // ========================================================================
 
     public int getTextureArrayId() {
         return textureArrayId;
     }
 
     public int getEntityTextureArrayId() {
-        return textureArrayId;
+        return entityTextureArrayId;
     }
 
     public int getTextureIndex(String name) {
@@ -214,7 +274,7 @@ public class TextureManager {
     }
 
     public int getEntityTextureIndex(String name) {
-        return getTextureIndex(name);
+        return entityTextureToIndex.getOrDefault(name, -1);
     }
     
     public int getTextureCount() {

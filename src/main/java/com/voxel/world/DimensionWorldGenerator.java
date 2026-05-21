@@ -165,38 +165,61 @@ public class DimensionWorldGenerator extends WorldGenerator {
     }
 
     private int generateNether(int x, int y, int z, int height) {
-        // Cave-like structure with ceiling/floor
-        int floor = height - 12;
-        int ceiling = height + 12;
+        // Nether is a cave world: floor at y=1, ceiling at y=height+18
+        int ceiling = height + 18;
 
-        if (y < floor) return 2; // Stone floor
-        if (y > ceiling) return 2; // Stone ceiling
-
-        // Add some noise-based variation to the cave walls
-        float caveNoise = (continentalNoise.noise(x * 0.1f, z * 0.1f, 0.05f) +
-                          erosionNoise.noise(x * 0.1f, y * 0.1f, 0.05f)) * 0.5f;
-
-        int caveFloor = floor + (int)(caveNoise * 4);
-        int caveCeiling = ceiling + (int)(caveNoise * 4);
-
-        if (y < caveFloor) return 2;
-        if (y > caveCeiling) return 2;
-
-        // Random pillars and stalactites/stalagmites
-        int hash = (x * 31 + z * 73 + y * 137) & 0xFF;
-        if (hash < 25) {
-            if (y < floor + 8 && y > floor + 2) return 2; // Floor pillar
-            if (y > ceiling - 8 && y < ceiling - 2) return 2; // Ceiling stalactite
+        // Lava ocean at the bottom
+        int lavaLevel = height - 8;
+        if (y <= lavaLevel) {
+            if (y < lavaLevel - 3) return 20; // Netherrack floor below lava
+            return 21; // Lava
         }
 
-        // Lava pools at lower levels
-        if (y < floor + 4 && (hash % 12) < 4) {
-            return 15; // Lava (using water block ID)
+        // Ceiling cap
+        if (y >= ceiling) {
+            return 20; // Netherrack ceiling
         }
 
-        // Nether quartz ore pockets
-        if (hash < 8 && y > floor + 3 && y < ceiling - 3) {
-            return 2; // Just stone for now
+        // Cave generation using 2D noise with y-height variation
+        // Use different noise scales at different heights for organic caves
+        float heightRatio = (float)(y - lavaLevel) / (float)(ceiling - lavaLevel);
+        float scale = 0.025f + heightRatio * 0.02f;
+
+        float caveNoise = continentalNoise.noise(x, z, scale)
+                        + erosionNoise.noise(x * 0.5f, z * 0.5f, 0.015f) * 0.3f
+                        + detailNoise.noise(x, z, 0.04f) * 0.15f;
+
+        // Vary the carve threshold by height: wider near lava, tighter near ceiling
+        float carveThreshold = -0.2f + heightRatio * 0.3f;
+        // Add horizontal variation so caves meander
+        float horizontalBias = (float)Math.sin(x * 0.05f + z * 0.07f) * 0.1f;
+        carveThreshold += horizontalBias;
+
+        if (caveNoise < carveThreshold) {
+            // Solid block — determine which kind
+            int hash = (x * 31 + z * 73 + y * 137) & 0xFF;
+
+            // Glowstone clusters on ceiling
+            if (y > ceiling - 4 && (hash % 20) < 3) {
+                return 17; // Glowstone
+            }
+
+            // Nether quartz ore pockets in mid-height
+            if (hash < 6 && heightRatio > 0.3f && heightRatio < 0.8f) {
+                return 23; // Quartz ore
+            }
+
+            // Soul sand patches near lava
+            if (heightRatio < 0.3f && (hash % 15) < 4) {
+                return 22; // Soul sand
+            }
+
+            // Nether brick formations
+            if (hash > 248 && heightRatio > 0.5f) {
+                return 24; // Nether brick
+            }
+
+            return 20; // Netherrack
         }
 
         return 0; // Air (cave interior)

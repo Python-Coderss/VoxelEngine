@@ -26,8 +26,12 @@ public class DimensionManager {
     public void createDimension(DimensionType type, int renderDistance) {
         if (dimensions.containsKey(type)) return;
 
-        System.out.println("Creating dimension: " + type.name);
-        World world = new World();
+        // Calculate pool size: (renderDistance*2+1)² * 16 chunks, doubled for safety margin
+        int chunksNeeded = (renderDistance * 2 + 1) * (renderDistance * 2 + 1) * 16;
+        int poolSize = Math.max(chunksNeeded * 2, 2048);
+
+        System.out.println("Creating dimension: " + type.name + " (pool=" + poolSize + " chunks, ~" + (poolSize * 4096L * 4 / 1024 / 1024) + " MB)");
+        World world = new World(poolSize);
         DimensionWorldGenerator generator = new DimensionWorldGenerator(type);
         LightPropagationEngine lightEngine = new LightPropagationEngine(world, blockDataManager);
         ChunkManager chunkManager = new ChunkManager(world, generator, lightEngine, renderDistance);
@@ -88,10 +92,15 @@ public class DimensionManager {
     }
 
     /**
-     * Checks if a dimension has been created yet.
+     * Unloads a dimension to free memory.
      */
-    public boolean isDimensionReady(DimensionType type) {
-        return dimensions.containsKey(type);
+    public void unloadDimension(DimensionType type) {
+        if (type == activeDimension) return; // Don't unload the active dimension
+        DimensionInstance inst = dimensions.remove(type);
+        if (inst != null) {
+            inst.chunkManager.shutdown();
+            System.out.println("Unloaded dimension: " + type.name);
+        }
     }
 
     /**
