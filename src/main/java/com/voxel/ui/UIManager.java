@@ -136,26 +136,56 @@ public class UIManager {
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 
-    public void drawString(String text, float x, float y, float scale, Vector4f color, int fontTextureId) {
-        if (fontTextureId == 0) return;
+    public void drawString(String text, float x, float y, float scale, Vector4f color, int fontTextureId, int charLineLimit, int lineOffset) {
+        if (fontTextureId == 0 || text == null || text.isEmpty()) return;
+        
+        // Pre-process: wrap at charLineLimit, then slice by lineOffset
+        java.util.List<String> lines = wrapText(text, charLineLimit);
         
         float charSize = 8 * scale;
         float uvStep = 1.0f / 16.0f;
+        float startX = x;
         
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (c == ' ') {
+        for (int li = lineOffset; li < lines.size(); li++) {
+            String line = lines.get(li);
+            x = startX;
+            for (int i = 0; i < line.length(); i++) {
+                char c = line.charAt(i);
+                if (c == ' ') {
+                    x += charSize;
+                    continue;
+                }
+                int charCode = (int) c;
+                float u = (charCode % 16) * uvStep;
+                float v = (charCode / 16) * uvStep;
+                drawQuad(new Vector2f(x, y), new Vector2f(charSize, charSize), 0, color, fontTextureId, new Vector2f(u, v), new Vector2f(uvStep, uvStep));
                 x += charSize;
-                continue;
             }
-            
-            int charCode = (int) c;
-            float u = (charCode % 16) * uvStep;
-            float v = (charCode / 16) * uvStep;
-            
-            drawQuad(new Vector2f(x, y), new Vector2f(charSize, charSize), 0, color, fontTextureId, new Vector2f(u, v), new Vector2f(uvStep, uvStep));
-            x += charSize;
+            y += charSize;
         }
+    }
+    
+    private java.util.List<String> wrapText(String text, int charLineLimit) {
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        if (text == null || text.isEmpty()) {
+            lines.add("");
+            return lines;
+        }
+        // Split on existing newlines, then char-wrap each segment
+        String[] segments = text.split("\n", -1);
+        for (String segment : segments) {
+            if (charLineLimit <= 0) {
+                lines.add(segment);
+            } else {
+                int start = 0;
+                while (start < segment.length()) {
+                    int end = Math.min(start + charLineLimit, segment.length());
+                    lines.add(segment.substring(start, end));
+                    start = end;
+                }
+            }
+        }
+        return lines;
     }
     
     public void end() {

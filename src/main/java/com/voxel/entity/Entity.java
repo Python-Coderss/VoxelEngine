@@ -1,5 +1,6 @@
 package com.voxel.entity;
 
+import com.voxel.world.DimensionType;
 import org.joml.Vector3f;
 import org.joml.Vector2f;
 import org.json.JSONArray;
@@ -19,6 +20,8 @@ public class Entity {
     public Vector3f position;
     public Vector3f rotation; // x=pitch, y=yaw, z=roll
     public List<ModelPart> parts;
+    /** The dimension this entity currently belongs to. */
+    public DimensionType dimension = DimensionType.OVERWORLD;
 
     public Entity(int id, Vector3f position) {
         this.id = id;

@@ -25,9 +25,47 @@ public class RedstoneManager {
     public static final int BLOCK_REDSTONE_LAMP    = 28;  // lamp off
     public static final int BLOCK_REDSTONE_WIRE    = 29;  // redstone dust
     public static final int BLOCK_REDSTONE_LAMP_ON = 30;  // lamp on
+    public static final int BLOCK_OBSIDIAN       = 16;
+    public static final int BLOCK_NETHER_PORTAL   = 19;
 
     private static final int MAX_POWER = 15;
     private static final int TORCH_COOLDOWN_TICKS = 2;  // Prevent rapid oscillation
+
+    // ---- Piston Block IDs ----
+    public static final int BLOCK_PISTON              = 31;
+    public static final int BLOCK_STICKY_PISTON       = 32;
+    public static final int BLOCK_PISTON_HEAD_NORMAL  = 33;
+    public static final int BLOCK_PISTON_HEAD_STICKY  = 34;
+
+    // Direction constants (stored in extra data bits 0-3)
+    private static final int DIR_DOWN  = 0;
+    private static final int DIR_UP    = 1;
+    private static final int DIR_NORTH = 2;
+    private static final int DIR_SOUTH = 3;
+    private static final int DIR_WEST  = 4;
+    private static final int DIR_EAST  = 5;
+
+    // Direction → (dx, dy, dz) offsets
+    private static final int[][] DIR_OFFSETS = {
+        { 0, -1,  0},  // down
+        { 0,  1,  0},  // up
+        { 0,  0, -1},  // north
+        { 0,  0,  1},  // south
+        {-1,  0,  0},  // west
+        { 1,  0,  0},  // east
+    };
+
+    // Blocks that cannot be pushed by pistons
+    private boolean isUnpushable(int block) {
+        return block == BLOCK_PISTON_HEAD_NORMAL || block == BLOCK_PISTON_HEAD_STICKY
+            || block == BLOCK_OBSIDIAN || block == BLOCK_NETHER_PORTAL;
+    }
+
+    // Track piston extension state: packed pos → true if currently extended
+    private final Map<Long, Boolean> pistonExtended = new ConcurrentHashMap<>();
+
+    /** Queue of piston block changes: [x, y, z, newBlockId]. Written by logic thread, consumed by GL thread. */
+    private final ConcurrentLinkedQueue<int[]> pistonChangeQueue = new ConcurrentLinkedQueue<>();
 
     private final World world;
     private final ChunkManager chunkManager;
@@ -114,8 +152,9 @@ public class RedstoneManager {
         int block = world.getVoxel(x, y, z);
         long key = pack(x, y, z);
 
+        boolean isPiston = (block == BLOCK_PISTON || block == BLOCK_STICKY_PISTON);
         boolean wasComponent = components.contains(key);
-        boolean isComponent = isRedstoneComponent(block);
+        boolean isComponent = isRedstoneComponent(block) || isPiston;
 
         String action;
         if (isComponent) {
@@ -124,6 +163,7 @@ public class RedstoneManager {
         } else {
             components.remove(key);
             lampLitState.remove(key);
+            pistonExtended.remove(key);
             action = "REMOVED from components (block=" + block + ")";
         }
         RedstoneLogger.log("onBlockChanged", x, y, z, action + " wasComp=" + wasComponent + " needsRebuild=" + (isComponent || wasComponent));
@@ -283,6 +323,7 @@ public class RedstoneManager {
             RedstoneLogger.log("tickLamps: rebuild+encode done, powerLevels size=" + powerLevels.size());
         }
         evaluateLampStates();
+        evaluatePistons();
     }
 
     // ========================================================================
@@ -338,6 +379,22 @@ public class RedstoneManager {
         }
         if (count > 0) {
             RedstoneLogger.log("applyLampChanges: applied " + count + " lamp swaps");
+        }
+
+        // Also apply pending piston changes
+        int pistonCount = 0;
+        while ((change = pistonChangeQueue.poll()) != null) {
+            int x = change[0], y = change[1], z = change[2], id = change[3];
+            if (id == 0) {
+                chunkManager.setVoxel(x, y, z, 0);
+            } else {
+                chunkManager.setVoxel(x, y, z, id);
+            }
+            pendingNeighborUpdates.add(new int[]{x, y, z});
+            pistonCount++;
+        }
+        if (pistonCount > 0) {
+            RedstoneLogger.log("applyLampChanges: applied " + pistonCount + " piston changes");
         }
     }
 
@@ -558,6 +615,148 @@ public class RedstoneManager {
             RedstoneLogger.log("evaluateLampStates: checked " + lampsChecked + " lamps, " + lampsChanged + " changed");
         }
     }
+
+    // ========================================================================
+    //  Piston state evaluation (called from logic thread)
+    // ========================================================================
+
+    /**
+     * Evaluates all piston blocks and queues extension/retraction changes.
+     * A piston extends when powered by redstone and retracts when unpowered.
+     * Sticky pistons pull the block in front back when retracting.
+     */
+    private void evaluatePistons() {
+        for (long key : components) {
+            int x = unpackX(key), y = unpackY(key), z = unpackZ(key);
+            int block = world.getVoxel(x, y, z);
+            if (block != BLOCK_PISTON && block != BLOCK_STICKY_PISTON) continue;
+
+            // Read direction from extra data (bits 0-3)
+            int raw = world.getRawVoxel(x, y, z);
+            int dir = (raw >> 16) & 0x7;  // direction in bits 16-18
+            if (dir < 0 || dir > 5) dir = 1;  // default to up
+
+            int[] off = DIR_OFFSETS[dir];
+            int hx = x + off[0], hy = y + off[1], hz = z + off[2];
+
+            int headBlock = world.getVoxel(hx, hy, hz);
+            boolean hasHead = (headBlock == BLOCK_PISTON_HEAD_NORMAL || headBlock == BLOCK_PISTON_HEAD_STICKY);
+            boolean isPowered = hasPoweredNeighbor(x, y, z);
+            boolean wasExtended = pistonExtended.getOrDefault(key, false);
+
+            if (isPowered && !hasHead) {
+                // Extend: push blocks and place head
+                extendPiston(x, y, z, dir, block == BLOCK_STICKY_PISTON, key);
+            } else if (!isPowered && hasHead) {
+                // Retract: remove head and pull for sticky
+                retractPiston(x, y, z, dir, block == BLOCK_STICKY_PISTON, key, headBlock, hx, hy, hz);
+            }
+            // Track extended state
+            pistonExtended.put(key, isPowered);
+        }
+    }
+
+    /**
+     * Extends a piston: pushes up to 12 blocks in the push direction,
+     * then places the piston head.
+     */
+    private void extendPiston(int x, int y, int z, int dir, boolean sticky, long key) {
+        int[] off = DIR_OFFSETS[dir];
+        int hx = x + off[0], hy = y + off[1], hz = z + off[2];
+
+        int headBlock = world.getVoxel(hx, hy, hz);
+        // If the head position is already occupied by a pushable block, push the chain
+        if (headBlock > 0 && !headBlockOccupiedBy(hx, hy, hz, dir)) {
+            // Try to push blocks in front
+            if (!pushBlocks(hx, hy, hz, dir)) return;  // can't push, abort
+        }
+
+        // Place the head
+        int headId = sticky ? BLOCK_PISTON_HEAD_STICKY : BLOCK_PISTON_HEAD_NORMAL;
+        pistonChangeQueue.add(new int[]{hx, hy, hz, headId});
+        RedstoneLogger.log("piston/extend", x, y, z, "extending " + (sticky ? "sticky" : "normal") + " head at (" + hx + "," + hy + "," + hz + ")");
+    }
+
+    /**
+     * Retracts a piston: removes the head, and for sticky pistons
+     * pulls back the block in front of the head.
+     */
+    private void retractPiston(int x, int y, int z, int dir, boolean sticky, long key, int headBlock, int hx, int hy, int hz) {
+        // Remove the head
+        pistonChangeQueue.add(new int[]{hx, hy, hz, 0});  // 0 = air
+        RedstoneLogger.log("piston/retract", x, y, z, "retracting head at (" + hx + "," + hy + "," + hz + ")");
+
+        if (sticky) {
+            // Pull back the block in front of the head
+            int[] off = DIR_OFFSETS[dir];
+            int fx = hx + off[0], fy = hy + off[1], fz = hz + off[2];
+            int frontBlock = world.getVoxel(fx, fy, fz);
+            if (frontBlock > 0 && !isUnpushable(frontBlock)) {
+                // Move the block from front position to head position
+                pistonChangeQueue.add(new int[]{fx, fy, fz, 0});  // clear front
+                pistonChangeQueue.add(new int[]{hx, hy, hz, frontBlock});  // move to head pos
+                RedstoneLogger.log("piston/pull", x, y, z, "sticky pulling block " + frontBlock + " from (" + fx + "," + fy + "," + fz + ")");
+            }
+        }
+    }
+
+    /**
+     * Checks if the head position is occupied by a non-pushable block
+     * or is the extended arm of another piston.
+     */
+    private boolean headBlockOccupiedBy(int hx, int hy, int hz, int dir) {
+        int block = world.getVoxel(hx, hy, hz);
+        if (block == 0) return false;
+        return isUnpushable(block);
+    }
+
+    /**
+     * Pushes a chain of blocks starting from (sx,sy,sz) in the given direction.
+     * Pushes up to 12 blocks. Returns true if successful, false if blocked.
+     */
+    private boolean pushBlocks(int sx, int sy, int sz, int dir) {
+        int[] off = DIR_OFFSETS[dir];
+        int MAX_PUSH = 12;
+
+        // Find the furthest reachable block in the push chain
+        int blocksToPush = 0;
+        int cx = sx, cy = sy, cz = sz;
+        for (int i = 0; i < MAX_PUSH; i++) {
+            int block = world.getVoxel(cx, cy, cz);
+            if (block == 0) {
+                // Found air — the chain ends here, we can push
+                blocksToPush = i;
+                break;
+            }
+            if (isUnpushable(block)) {
+                return false;  // blocked, can't push
+            }
+            cx += off[0]; cy += off[1]; cz += off[2];
+            if (i == MAX_PUSH - 1) return false;  // max blocks reached
+        }
+
+        // Shift all blocks in the chain by 1 in the push direction
+        // Work backwards so we don't overwrite
+        for (int i = blocksToPush - 1; i >= 0; i--) {
+            int bx = sx + off[0] * i;
+            int by = sy + off[1] * i;
+            int bz = sz + off[2] * i;
+            int block = world.getVoxel(bx, by, bz);
+
+            int tx = bx + off[0];
+            int ty = by + off[1];
+            int tz = bz + off[2];
+
+            pistonChangeQueue.add(new int[]{bx, by, bz, 0});  // clear old position
+            pistonChangeQueue.add(new int[]{tx, ty, tz, block});  // place at new position
+        }
+
+        return true;
+    }
+
+    // ========================================================================
+    //  Apply queued piston changes (called from GL / main loop thread)
+    // ========================================================================
 
     // ========================================================================
     //  BFS node

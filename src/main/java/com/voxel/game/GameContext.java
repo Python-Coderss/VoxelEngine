@@ -12,7 +12,9 @@ import com.voxel.world.ChunkManager;
 import com.voxel.world.DimensionManager;
 import com.voxel.world.DimensionType;
 import com.voxel.world.RedstoneManager;
+import com.voxel.world.WorldSaveManager;
 import org.joml.Vector2i;
+import org.joml.Vector3f;
 import org.joml.Vector4f;
 
 import java.util.ArrayList;
@@ -85,6 +87,24 @@ public class GameContext {
     public int width = 1280, height = 720;
     public int lastBiomeOffsetX = 0, lastBiomeOffsetZ = 0;
 
+    // --- Crafting ---
+    public CraftingTableManager craftingTableManager = new CraftingTableManager();
+    public boolean craftingTableOpen = false;
+    public int craftingTableBlockX, craftingTableBlockY, craftingTableBlockZ;
+    // Crafting grid item texture layers for 3D rendering (-1 = empty slot)
+    public int[] craftingItemLayers = new int[]{-1,-1,-1,-1,-1,-1,-1,-1,-1};
+
+    // --- Crafting cutscene ---
+    public boolean craftingCutsceneActive = false;
+    public float craftingCutsceneTimer = 0.0f;
+    public static final float CRAFTING_CUTSCENE_DURATION = 0.8f;
+    public Vector3f cutsceneStartPos = new Vector3f();
+    public Vector3f cutsceneTargetPos = new Vector3f();
+    public Vector3f cutsceneCameraStartPos = new Vector3f();
+    public Vector3f cutsceneCameraTargetPos = new Vector3f();
+    public float cutsceneStartYaw = -90, cutsceneStartPitch = 0;
+    public float cutsceneTargetYaw, cutsceneTargetPitch = -60;
+
     // --- Mining ---
     public int breakTargetX = Integer.MIN_VALUE;
     public int breakTargetY = Integer.MIN_VALUE;
@@ -93,6 +113,23 @@ public class GameContext {
     public boolean leftMouseHeld = false;
     public boolean leftMousePressedThisFrame = false;
     public double lastPortalTeleportTime = 0;
+
+    // --- Combat ---
+    public int lockedEntityIndex = -1;
+    public int comboCount = 0;
+    public float comboTimer = 0.0f;
+    public float chargeTime = 0.0f;
+    public boolean isCharging = false;
+    public float lastAttackDamage = 0.0f;
+    public boolean invincible = false;
+    public float iFrameTimer = 0.0f;
+    public int rollDirectionX = 0; // -1, 0, or 1
+    public int rollDirectionZ = 0;
+    // Damage numbers list (world position, damage, lifetime)
+    public final java.util.List<DamageNumber> damageNumbers = new java.util.ArrayList<>();
+
+    // --- World Save ---
+    public WorldSaveManager worldSaveManager;
 
     // --- Runnables passed by Main for dimension switching ---
     public Runnable uploadWorldToGpu;
@@ -109,6 +146,12 @@ public class GameContext {
     public void switchToDimension(DimensionType target) {
         DimensionType previous = activeDimension;
         int renderDistance = target == DimensionType.OVERWORLD ? 8 : 6;
+
+        // Save crafting data for the current dimension before switching
+        if (worldSaveManager != null && previous != null) {
+            worldSaveManager.saveCraftingData(previous, craftingTableManager);
+        }
+
         dimensionManager.ensureDimension(target, renderDistance);
         dimensionManager.switchTo(target);
         activeDimension = target;
@@ -117,9 +160,57 @@ public class GameContext {
         redstoneManager = new RedstoneManager(world, chunkManager);
         com.voxel.world.RedstoneLogger.log("DIMENSION SWITCH: created new RedstoneManager for " + target.name + " (was " + previous.name + ")");
         if (previous != target) dimensionManager.unloadDimension(previous);
+        // Find a safe landing spot: full area scan in expanding squares around spawn
         int spawnY = target.baseHeight + 3;
+        if (target == DimensionType.AETHER || target == DimensionType.END) {
+            boolean foundSurface = false;
+            // Scan increasingly larger squares centered at (1024, 1024)
+            // Max scan radius: 24 blocks (covers 49x49 area)
+            int maxScanRadius = 24;
+            for (int ox = -maxScanRadius; ox <= maxScanRadius && !foundSurface; ox += 3) {
+                for (int oz = -maxScanRadius; oz <= maxScanRadius && !foundSurface; oz += 3) {
+                    int sx = 1024 + ox, sz = 1024 + oz;
+                    for (int sy = target.baseHeight + 3; sy < target.baseHeight + 28; sy++) {
+                        int block = world.getVoxel(sx, sy, sz);
+                        if (block != 0 && block != 106) {
+                            spawnY = sy + 1;
+                            foundSurface = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         player.getPosition().set(1024, spawnY, 1024);
+        // Load crafting data for the new dimension
+        if (worldSaveManager != null) {
+            worldSaveManager.loadCraftingData(target, craftingTableManager);
+        }
+
         if (uploadWorldToGpu != null) uploadWorldToGpu.run();
         setStatus("Switched to " + target.name);
+    }
+
+    /** Floating damage number that appears at an entity's position and fades out. */
+    public static class DamageNumber {
+        public float worldX, worldY, worldZ;
+        public float damage;
+        public float lifetime = 1.5f;
+        public float maxLifetime = 1.5f;
+
+        public DamageNumber(float worldX, float worldY, float worldZ, float damage) {
+            this.worldX = worldX;
+            this.worldY = worldY;
+            this.worldZ = worldZ;
+            this.damage = damage;
+        }
+
+        public void update(float dt) {
+            worldY += dt * 1.2f; // Float upward
+            lifetime -= dt;
+        }
+
+        public boolean isExpired() { return lifetime <= 0; }
+        public float getAlpha() { return Math.max(0, lifetime / maxLifetime); }
     }
 }

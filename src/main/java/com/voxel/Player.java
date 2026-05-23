@@ -126,6 +126,11 @@ public class Player {
         }
     }
 
+    public void takeDamage(float amount, boolean invincible) {
+        if (invincible) return; // I-frames: ignore damage entirely
+        takeDamage(amount);
+    }
+
     private void die() {
         isDead = true;
         velocity.set(0);

@@ -92,6 +92,9 @@ public class ItemDefinitions {
         registerBlock("redstone_lamp", "Redstone Lamp", 28, "redstone_lamp_off");
         registerBlock("redstone_wire", "Redstone Wire", 29, "redstone_dust_dot");
         registerBlock("redstone_lamp_on", "Redstone Lamp (lit)", 30, "redstone_lamp_on");
+        // --- Pistons ---
+        registerBlock("piston", "Piston", 31, "piston_top_normal");
+        registerBlock("sticky_piston", "Sticky Piston", 32, "piston_top_sticky");
         // --- Tools ---
         registerTool("flint_and_steel", "Flint and Steel", "flint_and_steel", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
         registerTool("water_bucket", "Water Bucket", "bucket_water", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
@@ -112,17 +115,23 @@ public class ItemDefinitions {
         registerBlock("skyroot_planks", "Skyroot Planks", 112, "skyroot_planks");
         registerBlock("mossy_holystone", "Mossy Holystone", 113, "mossy_holystone");
         registerBlock("holystone_bricks", "Holystone Bricks", 114, "holystone_bricks");
+        registerBlock("crafting_table", "Crafting Table", 115, "crafting_table_top");
+        registerTool("stick", "Stick", "stick", ToolType.HAND, 1.0f, new Vector4f(0.85f, 0.7f, 0.5f, 1));
         // --- Aether tools ---
         registerTool("wood_pickaxe", "Wood Pickaxe", "wood_pickaxe", ToolType.PICKAXE, 4.5f, new Vector4f(1, 1, 1, 1));
         registerTool("wood_shovel", "Wood Shovel", "wood_shovel", ToolType.SHOVEL, 4.0f, new Vector4f(1, 1, 1, 1));
         registerTool("wood_axe", "Wood Axe", "wood_axe", ToolType.AXE, 4.2f, new Vector4f(1, 1, 1, 1));
+        registerTool("stone_pickaxe", "Stone Pickaxe", "stone_pickaxe", ToolType.PICKAXE, 6.0f, new Vector4f(1, 1, 1, 1));
+        registerTool("iron_pickaxe", "Iron Pickaxe", "iron_pickaxe", ToolType.PICKAXE, 8.5f, new Vector4f(1, 1, 1, 1));
         // --- Aliases ---
         registerAlias("pickaxe", "wood_pickaxe");
         registerAlias("shovel", "wood_shovel");
         registerAlias("axe", "wood_axe");
         registerAlias("redstone_dust", "redstone_wire");
+        registerAlias("sticky", "sticky_piston");
         registerAlias("redstone", "redstone_wire");
         registerAlias("dust", "redstone_wire");
+        registerAlias("piston_block", "piston");
     }
 
     private void registerBlock(String itemId, String displayName, int blockId, String textureName) {

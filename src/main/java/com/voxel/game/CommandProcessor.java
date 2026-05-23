@@ -42,7 +42,9 @@ public class CommandProcessor {
             case "setuv": handleSetUv(parts); break;
             case "dimension":
             case "dim": handleDimension(parts); break;
-            default: ctx.setStatus("Unknown command: /" + command); break;
+            case "help": handleHelp(); break;
+            case "list": handleList(parts); break;
+            default: ctx.setStatus("Unknown command: /" + command + ". Type /help for commands."); break;
         }
     }
 
@@ -116,6 +118,64 @@ public class CommandProcessor {
         }
         boolean added = ctx.playerInventory.addItem(itemId, amount);
         ctx.setStatus(added ? "Given " + amount + " " + def.displayName : "Inventory full");
+    }
+
+    private void handleHelp() {
+        StringBuilder sb = new StringBuilder("Available commands:");
+        sb.append("\n  /help - Show this help");
+        sb.append("\n  /list items - List all items");
+        sb.append("\n  /list blocks - List all placeable blocks");
+        sb.append("\n  /list commands - List all commands");
+        sb.append("\n  /gamemode <survival|creative> - Change game mode");
+        sb.append("\n  /give <item> [amount] - Give yourself an item");
+        sb.append("\n  /slotclear [slot] - Clear inventory slot");
+        sb.append("\n  /spawn - Teleport to spawn");
+        sb.append("\n  /dimension <overworld|nether|end|aether> - Switch dimension");
+        sb.append("\n  /setuv <full|half|empty> <x> <y> [w] [h] - Adjust heart UVs");
+        ctx.setStatus(sb.toString());
+    }
+
+    private void handleList(String[] parts) {
+        if (parts.length < 2) {
+            ctx.setStatus("Usage: /list <items|blocks|commands>");
+            return;
+        }
+        String category = parts[1].toLowerCase(Locale.ROOT);
+        switch (category) {
+            case "items":
+            case "item": {
+                StringBuilder sb = new StringBuilder("Items:");
+                int count = 0;
+                for (java.util.Map.Entry<String, ItemDefinitions.ItemDefinition> entry : ctx.itemDefinitions.getRegistry().entrySet()) {
+                    sb.append("\n  ").append(entry.getKey()).append(" - ").append(entry.getValue().displayName);
+                    count++;
+                    if (count >= 30) { sb.append("\n  ... and more"); break; }
+                }
+                ctx.setStatus(sb.toString());
+                break;
+            }
+            case "blocks":
+            case "block": {
+                StringBuilder sb = new StringBuilder("Placeable blocks:");
+                int count = 0;
+                for (java.util.Map.Entry<String, ItemDefinitions.ItemDefinition> entry : ctx.itemDefinitions.getRegistry().entrySet()) {
+                    if (entry.getValue().kind == ItemDefinitions.ItemKind.BLOCK) {
+                        sb.append("\n  ").append(entry.getKey());
+                        count++;
+                    }
+                }
+                sb.append("\n(").append(count).append(" total)");
+                ctx.setStatus(sb.toString());
+                break;
+            }
+            case "commands":
+            case "command": {
+                handleHelp();
+                break;
+            }
+            default:
+                ctx.setStatus("Unknown list category: " + category + ". Use: items, blocks, or commands");
+        }
     }
 
     private void handleSlotClear(String[] parts) {

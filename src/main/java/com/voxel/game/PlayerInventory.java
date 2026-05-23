@@ -8,14 +8,20 @@ import com.voxel.crafting.CraftingManager;
  */
 public class PlayerInventory {
     public static final int HOTBAR_SIZE = 5;
-    public static final int INVENTORY_SIZE = 30;
+    public static final int INVENTORY_SIZE = 20;
     public static final int CRAFTING_SLOTS = 5;
     public static final int CRAFTING_RESULT_SLOT = 4;
+    public static final int CRAFTING_3X3_SLOTS = 9;   // 3x3 grid, center slot (index 4) is result
 
     private final ItemDefinitions.ItemStack[] inventory = new ItemDefinitions.ItemStack[INVENTORY_SIZE];
     private String[][] craftingGrid = new String[2][2];
+    private String[][] craftingGrid3x3 = new String[3][3];
     private int selectedSlot = 0;
     private ItemDefinitions.ItemStack carriedStack;
+
+    // Crafting table result tracking
+    private boolean crafting3x3HasResult = false;
+    private int crafting3x3ResultCount = 0;
 
     private final GameContext ctx;
 
@@ -32,6 +38,9 @@ public class PlayerInventory {
     public ItemDefinitions.ItemStack getCarriedStack() { return carriedStack; }
     public void setCarriedStack(ItemDefinitions.ItemStack stack) { this.carriedStack = stack; }
     public String[][] getCraftingGrid() { return craftingGrid; }
+    public String[][] getCraftingGrid3x3() { return craftingGrid3x3; }
+    public boolean hasCrafting3x3Result() { return crafting3x3HasResult; }
+    public int getCrafting3x3ResultCount() { return crafting3x3ResultCount; }
 
     public void clearSlot(int i) {
         inventory[i] = null;
@@ -72,31 +81,12 @@ public class PlayerInventory {
     public void populateStarting() {
         inventory[0] = new ItemDefinitions.ItemStack("wood_pickaxe", 1);
         inventory[1] = new ItemDefinitions.ItemStack("wood_shovel", 1);
-        inventory[2] = new ItemDefinitions.ItemStack("stone", 32);
-        inventory[3] = new ItemDefinitions.ItemStack("dirt", 32);
-        inventory[4] = new ItemDefinitions.ItemStack("glass", 16);
-        inventory[5] = new ItemDefinitions.ItemStack("wood_axe", 1);
-        inventory[6] = new ItemDefinitions.ItemStack("oak_log", 32);
-        inventory[7] = new ItemDefinitions.ItemStack("grass", 32);
-        inventory[8] = new ItemDefinitions.ItemStack("flint_and_steel", 1);
-        inventory[9] = new ItemDefinitions.ItemStack("water_bucket", 1);
-        inventory[10] = new ItemDefinitions.ItemStack("eye_of_ender", 1);
-        inventory[11] = new ItemDefinitions.ItemStack("obsidian", 16);
-        inventory[12] = new ItemDefinitions.ItemStack("glowstone", 16);
-        inventory[13] = new ItemDefinitions.ItemStack("end_stone", 16);
-        inventory[14] = new ItemDefinitions.ItemStack("netherrack", 32);
-        inventory[15] = new ItemDefinitions.ItemStack("soul_sand", 16);
-        inventory[16] = new ItemDefinitions.ItemStack("nether_brick", 16);
-        inventory[17] = new ItemDefinitions.ItemStack("redstone_block", 16);
-        inventory[18] = new ItemDefinitions.ItemStack("redstone_ore", 16);
-        inventory[19] = new ItemDefinitions.ItemStack("redstone_torch", 8);
-        inventory[20] = new ItemDefinitions.ItemStack("redstone_lamp", 8);
-        inventory[21] = new ItemDefinitions.ItemStack("redstone_wire", 32);
-        inventory[22] = new ItemDefinitions.ItemStack("quartz_ore", 16);
-        inventory[23] = new ItemDefinitions.ItemStack("aether_grass", 16);
-        inventory[24] = new ItemDefinitions.ItemStack("holystone", 32);
-        inventory[25] = new ItemDefinitions.ItemStack("skyroot_log", 16);
-        inventory[26] = new ItemDefinitions.ItemStack("aerogel", 16);
+        inventory[2] = new ItemDefinitions.ItemStack("wood_axe", 1);
+        inventory[3] = new ItemDefinitions.ItemStack("oak_log", 32);
+        inventory[4] = new ItemDefinitions.ItemStack("skyroot_planks", 32);
+        inventory[5] = new ItemDefinitions.ItemStack("dirt", 32);
+        inventory[6] = new ItemDefinitions.ItemStack("stone", 32);
+        inventory[7] = new ItemDefinitions.ItemStack("crafting_table", 8);
     }
 
     // --- Slot click handling ---
@@ -154,6 +144,103 @@ public class PlayerInventory {
                     if (carriedStack.count <= 0) carriedStack = null;
                 }
             }
+        }
+    }
+
+    public void handleCrafting3x3SlotClick(int slotIndex) {
+        if (!ctx.inventoryOpen) return;
+
+        // Center slot (index 4) acts as result slot when a recipe is matched
+        if (slotIndex == 4 && crafting3x3HasResult) {
+            // Collect the result from the center slot
+            String resultItemId = craftingGrid3x3[1][1];
+            if (resultItemId != null && addItem(resultItemId, crafting3x3ResultCount)) {
+                // Clear entire grid and reset result state
+                for (int r = 0; r < 3; r++) {
+                    for (int c = 0; c < 3; c++) {
+                        craftingGrid3x3[r][c] = null;
+                    }
+                }
+                crafting3x3HasResult = false;
+                crafting3x3ResultCount = 0;
+            }
+            return;
+        }
+
+        int gridRow = slotIndex / 3;
+        int gridCol = slotIndex % 3;
+        String gridItem = craftingGrid3x3[gridRow][gridCol];
+
+        if (carriedStack == null) {
+            // Pick up item from slot (if it's not the result slot, or result is not active)
+            if (gridItem != null) {
+                carriedStack = new ItemDefinitions.ItemStack(gridItem, 1);
+                craftingGrid3x3[gridRow][gridCol] = null;
+                // Clear result state if center slot was modified
+                if (slotIndex == 4) {
+                    crafting3x3HasResult = false;
+                    crafting3x3ResultCount = 0;
+                }
+            }
+        } else {
+            // Place item into slot
+            if (gridItem == null) {
+                craftingGrid3x3[gridRow][gridCol] = carriedStack.itemId;
+                carriedStack.count--;
+                if (carriedStack.count <= 0) carriedStack = null;
+            }
+        }
+
+        // After modifying non-center slots, auto-check for recipe match
+        checkCrafting3x3Recipe();
+    }
+
+    // --- CraftingTableManager sync ---
+
+    /**
+     * Loads the 3x3 grid from the CraftingTableManager for a given block position.
+     */
+    public void loadFromCraftingTable(int x, int y, int z) {
+        String[][] grid = ctx.craftingTableManager.getGrid(x, y, z);
+        for (int r = 0; r < 3; r++) {
+            for (int c = 0; c < 3; c++) {
+                craftingGrid3x3[r][c] = (grid != null) ? grid[r][c] : null;
+            }
+        }
+        crafting3x3HasResult = false;
+        crafting3x3ResultCount = 0;
+        checkCrafting3x3Recipe();
+    }
+
+    /**
+     * Saves the current 3x3 grid back to the CraftingTableManager.
+     * Clears the result slot before saving (result is virtual, not actual items).
+     */
+    public void saveToCraftingTable(int x, int y, int z) {
+        // Clear the virtual result slot before persisting
+        if (crafting3x3HasResult) {
+            craftingGrid3x3[1][1] = null;
+            crafting3x3HasResult = false;
+            crafting3x3ResultCount = 0;
+        }
+        ctx.craftingTableManager.setGrid(x, y, z, craftingGrid3x3);
+    }
+
+    /**
+     * Auto-checks if the current 3x3 grid matches a recipe.
+     * If so, consumes the input items and places the result in the center slot.
+     */
+    private void checkCrafting3x3Recipe() {
+        if (crafting3x3HasResult) return; // Already have a result, don't override
+
+        CraftingManager.CraftingRecipe match = ctx.craftingManager.matchRecipe3x3(craftingGrid3x3);
+        if (match != null) {
+            // Consume all input slots (clear them)
+            ctx.craftingManager.consumeItems3x3(craftingGrid3x3);
+            // Place result in center slot
+            craftingGrid3x3[1][1] = match.resultItemId;
+            crafting3x3HasResult = true;
+            crafting3x3ResultCount = match.resultCount;
         }
     }
 }

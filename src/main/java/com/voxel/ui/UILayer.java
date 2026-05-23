@@ -74,6 +74,8 @@ public class UILayer {
     public static class UITextElement extends UIElement {
         public String text;
         public float scale;
+        public int charLineLimit = 0;   // 0 = no wrapping
+        public int lineOffset = 0;       // lines to skip from top (for scrolling)
         
         public UITextElement(Vector2f pos, String text, float scale, Vector4f color, int fontTextureId) {
             super(pos, new Vector2f(0, 0), color);
@@ -85,7 +87,7 @@ public class UILayer {
         @Override
         public void render(UIManager manager) {
             if (!visible || text == null || text.isEmpty()) return;
-            manager.drawString(text, pos.x, pos.y, scale, color, textureId);
+            manager.drawString(text, pos.x, pos.y, scale, color, textureId, charLineLimit, lineOffset);
         }
     }
 }

@@ -14,9 +14,11 @@ public class DimensionManager {
     private final Map<DimensionType, DimensionInstance> dimensions = new EnumMap<>(DimensionType.class);
     private DimensionType activeDimension = DimensionType.OVERWORLD;
     private final BlockDataManager blockDataManager;
+    private final WorldSaveManager saveManager;
 
-    public DimensionManager(BlockDataManager blockDataManager) {
+    public DimensionManager(BlockDataManager blockDataManager, WorldSaveManager saveManager) {
         this.blockDataManager = blockDataManager;
+        this.saveManager = saveManager;
     }
 
     /**
@@ -34,7 +36,7 @@ public class DimensionManager {
         World world = new World(poolSize);
         DimensionWorldGenerator generator = new DimensionWorldGenerator(type);
         LightPropagationEngine lightEngine = new LightPropagationEngine(world, blockDataManager);
-        ChunkManager chunkManager = new ChunkManager(world, generator, lightEngine, renderDistance);
+        ChunkManager chunkManager = new ChunkManager(world, generator, lightEngine, renderDistance, saveManager, type);
 
         dimensions.put(type, new DimensionInstance(world, chunkManager, generator));
     }

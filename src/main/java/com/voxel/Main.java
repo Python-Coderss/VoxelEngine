@@ -9,9 +9,12 @@ import com.voxel.utils.ShaderUtil;
 import com.voxel.utils.TextureManager;
 import com.voxel.world.DimensionManager;
 import com.voxel.world.DimensionType;
+import com.voxel.entity.Entity;
+import com.voxel.entity.ModelPart;
 import com.voxel.game.AtmosphereRenderer;
 import com.voxel.game.BlockInteraction;
 import com.voxel.game.CommandProcessor;
+import com.voxel.game.CraftingTableConstants;
 import com.voxel.game.GameContext;
 import com.voxel.game.ItemDefinitions;
 import com.voxel.game.ItemDefinitions.ItemDefinition;
@@ -44,8 +47,10 @@ import java.io.IOException;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.GL11.*;
@@ -64,15 +69,15 @@ import static org.lwjgl.system.MemoryUtil.NULL;
  */
 public class Main {
     private static final int HOTBAR_SIZE = 5;
-    private static final int INVENTORY_SIZE = 30;
+    private static final int INVENTORY_SIZE = 20;
     private static final int SLOT_W = 88;
     private static final int SLOT_H = 80;
     private static final int SLOT_TEX_W = 22;
     private static final int SLOT_TEX_H = 20;
     private static final int HOTBAR_X = 10;
     private static final int HOTBAR_Y = 100;
-    // Inventory panel: covers 6 columns + crafting grid (2 grid cols + arrow + result slot)
-    private static final int INVENTORY_PANEL_WIDTH = 780;
+    // Inventory panel: covers 4 columns + crafting grid (2 grid cols + result slot)
+    private static final int INVENTORY_PANEL_WIDTH = 460;
     private static final int INVENTORY_PANEL_HEIGHT = SLOT_H * HOTBAR_SIZE + 24;
     private static final float DAY_START_TIME = 720.0f;
     private static final float PLAYER_HALF_WIDTH = 0.3f;
@@ -89,8 +94,12 @@ public class Main {
 
     // Cached compute shader uniform locations (avoid glGetUniformLocation per frame)
     private int locBlockTextures, locEntityTextures, locBlockData, locBlockAABBs, locBlockAABBInfo, locBlockAABBUVs;
+    private volatile boolean needsWorldUpload = false;
+    private volatile boolean needsCursorUpdate = false;
     private int locBiomeMap, locGrassColormap, locUITexture, locFoliageColormap, locUISource;
     private int locHeartUVs;
+    private int locCraftingItemCount;
+    private int craftingItemSSBO;
     private int locSunDir, locSunColor, locMoonDir, locMoonColor, locSkyZenith, locSkyHorizon, locAmbient;
     private int locDimensionID;
 
@@ -134,6 +143,7 @@ public class Main {
     private final StringBuilder commandBuffer = new StringBuilder();
     private String statusMessage = "";
     private double statusUntil = 0.0;
+    private int statusLineOffset = 0;
     private int lastMeasuredFps = 0;
 
     private boolean leftMouseHeld = false;
@@ -164,6 +174,11 @@ public class Main {
     private static final int CRAFTING_RESULT_SLOT = 4;
     private final UILayer.UIElement[] craftingSlotBackgrounds = new UILayer.UIElement[CRAFTING_SLOTS];
     private final UILayer.UIElement[] craftingSlotItems = new UILayer.UIElement[CRAFTING_SLOTS];
+
+    // MCSM-style 3x3 crafting table grid (10 slots: 9 input + 1 result)
+    private final UILayer.UIElement[] crafting3x3SlotBackgrounds = new UILayer.UIElement[9];
+    private final UILayer.UIElement[] crafting3x3SlotItems = new UILayer.UIElement[9];
+    private UILayer.UIElement craftingTableBg;
     private double itemNameDisplayUntil = 0.0;
     private final UILayer.UIElement[] playerHearts = new UILayer.UIElement[10];
     private final UILayer.UIElement[] heartBases = new UILayer.UIElement[10];
@@ -176,6 +191,10 @@ public class Main {
 
     private int lastBiomeOffsetX = 0;
     private int lastBiomeOffsetZ = 0;
+
+    private volatile float craftingCameraYaw;    // Fixed yaw while using crafting table (volatile: read by GL thread)
+    private volatile float craftingCameraPitch;   // Fixed pitch while using crafting table
+    private boolean craftingCameraInited = false;
 
     private float cameraShake = 0.0f;
     private float hitStop = 0.0f;
@@ -204,6 +223,11 @@ public class Main {
             e.printStackTrace();
         }
 
+        // Save crafting data on shutdown
+        if (ctx.worldSaveManager != null) {
+            ctx.worldSaveManager.saveCraftingData(ctx.activeDimension, ctx.craftingTableManager);
+        }
+
         glDeleteProgram(quadProgram);
         glDeleteProgram(computeProgram);
         glDeleteBuffers(quadVBO);
@@ -214,6 +238,7 @@ public class Main {
         glDeleteBuffers(bitmaskSSBO);
         glDeleteBuffers(occlusionSSBO);
         glDeleteBuffers(pointLightSSBO);
+        glDeleteBuffers(craftingItemSSBO);
         chunkManager.shutdown();
         RedstoneLogger.shutdown();
 
@@ -277,7 +302,8 @@ public class Main {
         ctx.cameraMode = cameraMode;
         ctx.width = width;
         ctx.height = height;
-        ctx.uploadWorldToGpu = this::uploadWorldToGpu;
+        // Defer world GPU upload to render thread (avoid GL calls from LogicThread)
+        ctx.uploadWorldToGpu = () -> { needsWorldUpload = true; };
         ctx.updateCursorMode = this::updateCursorMode;
         ctx.statusConsumer = this::setStatus;
 
@@ -302,8 +328,11 @@ public class Main {
         uiManager = new UIManager(width, height);
         setupUi();
 
+        // Initialize world save manager (dev/world folder)
+        ctx.worldSaveManager = new com.voxel.world.WorldSaveManager("dev/world");
+
         // Initialize dimension system (only create Overworld at startup to save memory)
-        dimensionManager = new DimensionManager(blockDataManager);
+        dimensionManager = new DimensionManager(blockDataManager, ctx.worldSaveManager);
         dimensionManager.createDimension(DimensionType.OVERWORLD, 8);
         // Other dimensions (Nether, End, Aether) are created lazily when first visited
 
@@ -343,6 +372,7 @@ public class Main {
         locFoliageColormap = glGetUniformLocation(computeProgram, "u_FoliageColormap");
         locUISource = glGetUniformLocation(computeProgram, "u_UISource");
         locHeartUVs = glGetUniformLocation(computeProgram, "u_HeartUVs");
+        locCraftingItemCount = glGetUniformLocation(computeProgram, "u_CraftingItemCount");
     }
 
     private void cacheAtmosphereUniforms() {
@@ -415,11 +445,14 @@ public class Main {
     }
 
     private void buildInventoryUi(UILayer layer) {
-        float uScale = (float) SLOT_TEX_W / uiTextureSize.x;
-        float vScale = (float) SLOT_TEX_H / uiTextureSize.y;
+        // Half-pixel UV inset to prevent texture atlas bleeding
+        float halfU = 0.5f / uiTextureSize.x;
+        float halfV = 0.5f / uiTextureSize.y;
+        float uScaleInset = (float) (SLOT_TEX_W - 1) / uiTextureSize.x;
+        float vScaleInset = (float) (SLOT_TEX_H - 1) / uiTextureSize.y;
 
         // Build crafting grid slots (placed to the right of the main inventory)
-        int craftingGridX = HOTBAR_X + 360;
+        int craftingGridX = HOTBAR_X + 440;
         int craftingGridY = HOTBAR_Y + 20;
         for (int index = 0; index < CRAFTING_SLOTS; index++) {
             boolean isResult = index == CRAFTING_RESULT_SLOT;
@@ -441,8 +474,8 @@ public class Main {
             );
             if (uiTextureId != 0) {
                 background.textureId = uiTextureId;
-                background.uvOffset = new Vector2f(0.0f, 0.0f);
-                background.uvScale = new Vector2f(uScale, vScale);
+                background.uvOffset = new Vector2f(halfU, halfV);
+                background.uvScale = new Vector2f(uScaleInset, vScaleInset);
             }
             final int slotIndex = index;
             background.onClick = () -> playerInventory.handleCraftingSlotClick(slotIndex);
@@ -460,6 +493,48 @@ public class Main {
             layer.addElement(itemElement);
         }
 
+        // 3x3 Crafting table grid: centered on screen, no slot textures
+        float ctGridW = 3 * (SLOT_W + 8) - 8;
+        float ctGridH = 3 * SLOT_H;
+        int ctX = (int)((width - ctGridW) / 2);
+        int ctY = (int)((height - ctGridH) / 2);
+
+        // Background panel behind the 3x3 grid
+        craftingTableBg = new UILayer.UIElement(
+            new Vector2f(ctX - 10, ctY - 10),
+            new Vector2f(ctGridW + 20, ctGridH + 20),
+            new Vector4f(0.65f, 0.5f, 0.35f, 0.4f)
+        );
+        craftingTableBg.visible = false;
+        layer.addElement(craftingTableBg);
+
+        for (int i = 0; i < 9; i++) {
+            int r = i / 3;
+            int c = i % 3;
+            float cx = ctX + c * (SLOT_W + 8);
+            float cy = ctY + r * SLOT_H;
+
+            UILayer.UIElement bg = new UILayer.UIElement(
+                new Vector2f(cx, cy),
+                new Vector2f(SLOT_W, SLOT_H),
+                new Vector4f(0.9f, 0.9f, 0.9f, 1)
+            );
+            final int slotIndex = i;
+            bg.onClick = () -> playerInventory.handleCrafting3x3SlotClick(slotIndex);
+            bg.visible = false;
+            crafting3x3SlotBackgrounds[i] = bg;
+            layer.addElement(bg);
+
+            UILayer.UIElement itemEl = new UILayer.UIElement(
+                new Vector2f(cx + 24, cy + 16),
+                new Vector2f(40, 40),
+                new Vector4f(0, 0, 0, 0)
+            );
+            itemEl.visible = false;
+            crafting3x3SlotItems[i] = itemEl;
+            layer.addElement(itemEl);
+        }
+
         for (int index = 0; index < INVENTORY_SIZE; index++) {
             int row = index % HOTBAR_SIZE;
             int column = index / HOTBAR_SIZE;
@@ -473,8 +548,8 @@ public class Main {
             );
             if (uiTextureId != 0) {
                 background.textureId = uiTextureId;
-                background.uvOffset = new Vector2f(column == 0 ? 0.0f : 0.0f, column == 0 ? row * vScale : 0.0f);
-                background.uvScale = new Vector2f(uScale, vScale);
+                background.uvOffset = new Vector2f(halfU, column == 0 ? row * (float) SLOT_TEX_H / uiTextureSize.y + halfV : halfV);
+                background.uvScale = new Vector2f(uScaleInset, vScaleInset);
             }
             final int slotIndex = index;
             background.onClick = () -> playerInventory.handleInventorySlotClick(slotIndex);
@@ -527,8 +602,8 @@ public class Main {
         );
         if (uiTextureId != 0) {
             hotbarActiveElement.textureId = uiTextureId;
-            hotbarActiveElement.uvOffset = new Vector2f(22.0f / uiTextureSize.x, 0.0f);
-            hotbarActiveElement.uvScale = new Vector2f(uScale, vScale);
+            hotbarActiveElement.uvOffset = new Vector2f((22.0f + 0.5f) / uiTextureSize.x, halfV);
+            hotbarActiveElement.uvScale = new Vector2f(uScaleInset, vScaleInset);
         }
         layer.addElement(hotbarActiveElement);
 
@@ -589,6 +664,7 @@ public class Main {
             new Vector4f(1, 1, 0.5f, 1),
             fontTextureId
         );
+        statusTextElement.charLineLimit = 20;
         statusTextElement.visible = false;
         layer.addElement(statusTextElement);
     }
@@ -625,6 +701,9 @@ public class Main {
         if (combatMode != ctx.combatMode) { combatMode = ctx.combatMode; }
         if (cameraMode != ctx.cameraMode) { cameraMode = ctx.cameraMode; }
         if (commandMode != ctx.commandMode) { commandMode = ctx.commandMode; }
+        if (inventoryOpen != ctx.inventoryOpen) {
+            inventoryOpen = ctx.inventoryOpen;
+        }
     }
 
     private void tick(float dt) {
@@ -651,10 +730,94 @@ public class Main {
             playerEntity.syncFromPlayer(player, playerYaw, pitch, cameraMode == CameraMode.THIRD_PERSON, dt);
         }
 
+        // --- Crafting cutscene: walk player towards the table ---
+        if (ctx.craftingCutsceneActive) {
+            ctx.craftingCutsceneTimer += dt;
+            float t = Math.min(1.0f, ctx.craftingCutsceneTimer / GameContext.CRAFTING_CUTSCENE_DURATION);
+            // Use smoothstep for ease-in-out
+            float smoothT = t * t * (3.0f - 2.0f * t);
+
+            // Lerp player position
+            Vector3f pos = player.getPosition();
+            pos.set(
+                ctx.cutsceneStartPos.x + (ctx.cutsceneTargetPos.x - ctx.cutsceneStartPos.x) * smoothT,
+                ctx.cutsceneStartPos.y + (ctx.cutsceneTargetPos.y - ctx.cutsceneStartPos.y) * smoothT,
+                ctx.cutsceneStartPos.z + (ctx.cutsceneTargetPos.z - ctx.cutsceneStartPos.z) * smoothT
+            );
+
+            // Lerp camera yaw/pitch
+            yaw = ctx.cutsceneStartYaw + (ctx.cutsceneTargetYaw - ctx.cutsceneStartYaw) * smoothT;
+            pitch = ctx.cutsceneStartPitch + (ctx.cutsceneTargetPitch - ctx.cutsceneStartPitch) * smoothT;
+            ctx.yaw = yaw;
+            ctx.pitch = pitch;
+            playerYaw = yaw;
+
+            // When cutscene completes: open the crafting UI
+            if (t >= 1.0f) {
+                ctx.craftingCutsceneActive = false;
+                ctx.craftingTableOpen = true;
+                ctx.inventoryOpen = true;
+                inventoryOpen = true;
+                craftingCameraInited = true;
+                craftingCameraYaw = yaw;
+                craftingCameraPitch = CraftingTableConstants.CRAFTING_TABLE_PITCH;
+                needsCursorUpdate = true; // Signal render loop to release cursor on GL thread
+                // Load existing items from CraftingTableManager into the player's grid
+                playerInventory.loadFromCraftingTable(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ);
+                ctx.setStatus("Crafting Table — 3x3 grid");
+            }
+        }
+
         worldTime += dt;
         blockInteraction.updateMining(dt);
 
         if (cameraShake > 0) cameraShake -= dt * 5.0f;
+        if (ctx.cameraShake > 0) ctx.cameraShake -= dt * 5.0f;
+        
+        // Combat timers
+        if (ctx.comboTimer > 0) {
+            ctx.comboTimer -= dt;
+            if (ctx.comboTimer <= 0) ctx.comboCount = 0; // Combo expired
+        }
+        if (ctx.isCharging) ctx.chargeTime += dt;
+        
+        // I-frame timer
+        if (ctx.invincible) {
+            ctx.iFrameTimer -= dt;
+            if (ctx.iFrameTimer <= 0) {
+                ctx.invincible = false;
+            }
+        }
+
+        // Update damage numbers
+        for (int i = ctx.damageNumbers.size() - 1; i >= 0; i--) {
+            ctx.damageNumbers.get(i).update(dt);
+            if (ctx.damageNumbers.get(i).isExpired()) {
+                ctx.damageNumbers.remove(i);
+            }
+        }
+
+        // Lock-on: auto-face the locked enemy
+        if (combatMode && ctx.lockedEntityIndex >= 0) {
+            com.voxel.entity.Entity locked = entityManager.getEntity(ctx.lockedEntityIndex);
+            if (locked != null && locked instanceof com.voxel.entity.EnemyEntity) {
+                com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) locked;
+                if (!enemy.isDead()) {
+                    // Auto-face the locked enemy
+                    Vector3f toTarget = new Vector3f(enemy.position).sub(player.getPosition());
+                    float targetYaw = (float) Math.toDegrees(Math.atan2(toTarget.x, toTarget.z));
+                    // Smoothly rotate player toward target
+                    float diff = ((targetYaw - playerYaw) + 180) % 360 - 180;
+                    playerYaw += diff * Math.min(1.0f, dt * 8.0f);
+                    // Camera yaw follows player yaw (over-the-shoulder)
+                    yaw = playerYaw;
+                } else {
+                    ctx.lockedEntityIndex = -1; // Enemy died, unlock
+                }
+            } else {
+                ctx.lockedEntityIndex = -1;
+            }
+        }
 
         // --- Enemy AI (now handled inside EnemyEntity) ---
         Vector3f pPos = player.getPosition();
@@ -670,6 +833,21 @@ public class Main {
 
         entityManager.update(dt);
         portalSystem.checkTeleport();
+
+        // ---- Crafting table camera (fixed position above table) ----
+        if (ctx.craftingTableOpen) {
+            if (!craftingCameraInited) {
+                craftingCameraYaw = Math.round(yaw / 90.0f) * 90.0f;
+                craftingCameraPitch = CraftingTableConstants.CRAFTING_TABLE_PITCH;
+                craftingCameraInited = true;
+            }
+            yaw = craftingCameraYaw;
+            pitch = craftingCameraPitch;
+        } else {
+            if (craftingCameraInited) {
+                craftingCameraInited = false;
+            }
+        }
 
         // Sync fields after potential dimension switch from PortalSystem/CommandProcessor
         if (chunkManager != ctx.chunkManager) {
@@ -689,38 +867,83 @@ public class Main {
     }
 
     private void handleInput(float dt) {
-        if (inventoryOpen || commandMode || player.isDead()) return;
+        if (inventoryOpen || commandMode || player.isDead() || ctx.craftingCutsceneActive) return;
 
-        // Roll / Dash (Left Alt)
-        if (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS && cameraMode == CameraMode.THIRD_PERSON) {
-            double now = glfwGetTime();
-            if (now - lastRollTime > 0.8) {
-                playerEntity.startRoll();
-                Vector3f forward = getLookDirection();
-                player.move(forward.x * 15, 0, forward.z * 15, 10.0f);
-                lastRollTime = now;
-            }
-        }
-
-        if (leftMousePressedThisFrame && !inventoryOpen) {
-            double now = glfwGetTime();
-            float attackCooldown = combatMode ? 0.6f : 0.25f;
-            if (now - lastAttackTime > attackCooldown) {
-                playerEntity.startAttack();
-                performCombatAttack();
-                lastAttackTime = now;
-            }
-        }
-
-        float speed = player.isFlying() ? 1.5f : 0.4f;
+        // Compute forward/right vectors early (needed for dodge roll and movement)
         double ry = Math.toRadians(yaw);
         float fx = (float) Math.cos(ry), fz = (float) Math.sin(ry);
         float rx = -fz, rz = fx;
         float rl = (float) Math.sqrt(rx * rx + rz * rz);
-        if (rl > 0) {
-            rx /= rl;
-            rz /= rl;
+        if (rl > 0) { rx /= rl; rz /= rl; }
+
+        // Direction-aware dodge roll with i-frames (Left Alt in combat mode)
+        if (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS && combatMode) {
+            double now = glfwGetTime();
+            if (now - lastRollTime > 1.0) {
+                playerEntity.startRoll();
+                // Determine roll direction from WASD input
+                float rollDx = 0, rollDz = 0;
+                if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { rollDx += fx; rollDz += fz; }
+                if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) { rollDx -= fx; rollDz -= fz; }
+                if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) { rollDx -= rx; rollDz -= rz; }
+                if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) { rollDx += rx; rollDz += rz; }
+                float rollLen = (float) Math.sqrt(rollDx * rollDx + rollDz * rollDz);
+                if (rollLen > 0.01f) {
+                    rollDx /= rollLen;
+                    rollDz /= rollLen;
+                } else {
+                    rollDx = fx; rollDz = fz; // Default forward
+                }
+                player.move(rollDx * 20, 0.5f, rollDz * 20, 10.0f);
+                lastRollTime = now;
+                ctx.invincible = true;
+                ctx.iFrameTimer = 0.5f; // 0.5s of invincibility
+                setStatus("Dodge!");
+            }
         }
+
+        // Combat mode: charge attack on hold, fire on release
+        if (combatMode && !inventoryOpen) {
+            if (leftMousePressedThisFrame) {
+                ctx.isCharging = true;
+                ctx.chargeTime = 0.0f;
+                ctx.comboTimer = 0.0f; // Reset combo on new charge start
+            }
+            // If charging and mouse released OR hit max charge time
+            if (ctx.isCharging) {
+                if (!leftMouseHeld || ctx.chargeTime >= 1.5f) {
+                    ctx.isCharging = false;
+                    float chargePercent = Math.min(1.0f, ctx.chargeTime / 1.2f);
+                    // Combo multiplier: 1st hit = 1.0x, 2nd = 1.5x, 3rd = 2.5x
+                    float comboMult;
+                    switch (ctx.comboCount) {
+                        case 1: comboMult = 1.5f; break;
+                        case 2: comboMult = 2.5f; break;
+                        default: comboMult = 1.0f;
+                    }
+                    float damage = (4.0f + chargePercent * 8.0f) * comboMult;
+                    ctx.lastAttackDamage = damage;
+                    playerEntity.startAttack();
+                    performCombatAttack(damage);
+                    ctx.comboCount = (ctx.comboCount + 1) % 3;
+                    ctx.comboTimer = 0.8f; // Reset combo window
+                    lastAttackTime = glfwGetTime();
+                    ctx.cameraShake = 0.8f + chargePercent * 1.2f;
+                }
+            }
+        } else if (!combatMode && !inventoryOpen) {
+            // Normal mode: instant attack on click
+            if (leftMousePressedThisFrame) {
+                double now = glfwGetTime();
+                if (now - lastAttackTime > 0.25f) {
+                    playerEntity.startAttack();
+                    performCombatAttack(4.0f);
+                    lastAttackTime = now;
+                }
+            }
+        }
+
+        float speed = player.isFlying() ? 1.5f : 0.4f;
 
         float dx = 0, dz = 0;
         if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
@@ -774,7 +997,7 @@ public class Main {
         }
     }
 
-    private void performCombatAttack() {
+    private void performCombatAttack(float damage) {
         Vector3f pPos = player.getPosition();
         Vector3f pDir = getLookDirection();
 
@@ -787,13 +1010,29 @@ public class Main {
                 Vector3f toEnemy = new Vector3f(enemy.position).sub(pPos);
                 float dist = toEnemy.length();
 
-                if (dist < 4.5f) {
+                // Wider hit cone in combat mode (0.35 vs 0.45) for better feel
+                float minDot = combatMode ? 0.35f : 0.45f;
+                float maxDist = combatMode ? 5.0f : 4.5f;
+
+                if (dist < maxDist) {
                     toEnemy.normalize();
                     float dot = toEnemy.dot(pDir);
-                    if (dot > 0.45f) {
-                        Vector3f knockback = new Vector3f(toEnemy).mul(1.1f);
-                        enemy.takeDamage(4.0f, knockback);   // 5 hits for 20 HP
-                        cameraShake = 1.3f;
+                    if (dot > minDot) {
+                        Vector3f knockback = new Vector3f(toEnemy).mul(0.8f + damage * 0.05f);
+                        enemy.takeDamage(damage, knockback);
+                        cameraShake = 0.8f + damage * 0.08f;
+                        // Spawn damage number at enemy position
+                        ctx.damageNumbers.add(new GameContext.DamageNumber(
+                            enemy.position.x, enemy.position.y + 2.0f, enemy.position.z,
+                            damage
+                        ));
+                        // Enemy telegraph: flash on hit
+                        enemy.hitFlashTime = 0.3f;
+                        
+                        // Combo hit text
+                        String[] comboText = {"Hit!", "Double!", "TRIPLE!"};
+                        int comboIdx = Math.max(0, Math.min(ctx.comboCount, 2));
+                        ctx.setStatus(comboText[comboIdx] + " (" + String.format("%.0f", damage) + " dmg)");
                     }
                 }
             }
@@ -829,9 +1068,25 @@ public class Main {
                 activeDimension = ctx.activeDimension;
                 redstoneManager = ctx.redstoneManager;
             }
+            boolean prevInventoryOpen = inventoryOpen;
             syncGameState();
+            // Update cursor mode when inventoryOpen changes (e.g. from crafting table right-click)
+            if (inventoryOpen != prevInventoryOpen) {
+                updateCursorMode();
+            }
+            // Cursor update requested by logic thread (e.g. crafting cutscene completion)
+            if (needsCursorUpdate) {
+                updateCursorMode();
+                needsCursorUpdate = false;
+            }
 
             redstoneManager.applyLampChanges();
+            // Deferred world GPU upload (must happen on GL thread)
+            if (needsWorldUpload) {
+                uploadWorldToGpu();
+                needsWorldUpload = false;
+            }
+
             uploadDirtyChunks();
 
             // Slide the biome map when the world buffer recenters
@@ -907,6 +1162,9 @@ public class Main {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, occlusionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, pointLightSSBO);
             entityManager.bind(6, 7);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, craftingItemSSBO);
+
+            uploadCraftingItems();
 
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
             glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
@@ -963,12 +1221,61 @@ public class Main {
                 if (combatMode) {
                     cameraMode = CameraMode.THIRD_PERSON;
                     ctx.cameraMode = cameraMode;
+                    ctx.lockedEntityIndex = -1; // Reset lock when toggling
                 }
-                setStatus("Combat Mode: " + (combatMode ? "ON (Story Mode style)" : "OFF"));
+                setStatus("Combat Mode: " + (combatMode ? "ON (Story Mode)" : "OFF"));
+                return;
+            }
+
+            // Lock-on targeting (Tab key in combat mode)
+            if (key == GLFW_KEY_TAB && combatMode) {
+                if (ctx.lockedEntityIndex >= 0) {
+                    ctx.lockedEntityIndex = -1; // Unlock
+                    setStatus("Lock-off");
+                } else {
+                    // Find nearest enemy within 25 blocks
+                    Vector3f pPos = player.getPosition();
+                    float nearestDist = 25.0f;
+                    int nearestIdx = -1;
+                    for (int i = 0; i < entityManager.getEntityCount(); i++) {
+                        com.voxel.entity.Entity e = entityManager.getEntity(i);
+                        if (e instanceof com.voxel.entity.EnemyEntity) {
+                            com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) e;
+                            if (enemy.isDead()) continue;
+                            float dist = pPos.distance(enemy.position);
+                            if (dist < nearestDist) {
+                                nearestDist = dist;
+                                nearestIdx = i;
+                            }
+                        }
+                    }
+                    ctx.lockedEntityIndex = nearestIdx;
+                    if (nearestIdx >= 0) {
+                        setStatus("Locked on!");
+                    } else {
+                        setStatus("No enemies to lock");
+                    }
+                }
+                return;
+            }
+
+            // Scroll status text with +/- (multi-line help, lists, etc.)
+            if ((key == GLFW_KEY_MINUS || key == GLFW_KEY_KP_SUBTRACT) && !statusMessage.isEmpty()) {
+                statusLineOffset = Math.max(0, statusLineOffset - 1);
+                return;
+            }
+            if ((key == GLFW_KEY_EQUAL || key == GLFW_KEY_KP_ADD) && !statusMessage.isEmpty()) {
+                statusLineOffset++;
                 return;
             }
 
             if (key == GLFW_KEY_ESCAPE) {
+                if (ctx.craftingCutsceneActive) {
+                    // Abort crafting cutscene
+                    ctx.craftingCutsceneActive = false;
+                    ctx.setStatus("Cancelled");
+                    return;
+                }
                 if (inventoryOpen) {
                     setInventoryOpen(false);
                     showSelectedItemName();
@@ -1023,6 +1330,7 @@ public class Main {
         }
 
         if (inventoryOpen || commandMode) {
+            // Track mouse position for inventory UI interactions (slot clicks, item drag)
             lastMouseX = (float) xpos;
             lastMouseY = (float) ypos;
             return;
@@ -1059,6 +1367,19 @@ public class Main {
         }
 
         if (action != GLFW_PRESS) return;
+
+        // Crafting table drag-and-drop via 3D raycast
+        if (ctx.craftingTableOpen && inventoryOpen) {
+            System.out.println("Crafting: mouse click at screen (" + lastMouseX + "," + lastMouseY + ")");
+            int cell = raycastCraftingCell();
+            if (cell >= 0) {
+                System.out.println("Crafting: slot click " + cell);
+                playerInventory.handleCrafting3x3SlotClick(cell);
+                return;
+            }
+            System.out.println("Crafting: cell miss, falling through to UI");
+            // Fall through to UI click handling for inventory slots
+        }
 
         if (inventoryOpen) {
             for (int i = uiLayers.size() - 1; i >= 0; i--) {
@@ -1111,7 +1432,16 @@ public class Main {
             ctx.leftMousePressedThisFrame = false; // prevent stale press from world
         }
         if (!open) {
+            // Save crafting grid back to CraftingTableManager before closing
+            if (ctx.craftingTableOpen) {
+                playerInventory.saveToCraftingTable(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ);
+                // Persist to disk
+                if (ctx.worldSaveManager != null) {
+                    ctx.worldSaveManager.saveCraftingData(ctx.activeDimension, ctx.craftingTableManager);
+                }
+            }
             playerInventory.setCarriedStack(null);
+            ctx.craftingTableOpen = false; // Reset crafting table mode
             ctx.leftMousePressedThisFrame = false; // prevent stale press from inventory
         }
         updateCursorMode();
@@ -1153,6 +1483,7 @@ public class Main {
     private void setStatus(String message) {
         statusMessage = message;
         statusUntil = glfwGetTime() + 3.0;
+        statusLineOffset = 0;
         System.out.println(message);
     }    private void updateInventoryUi() {
         double time = glfwGetTime();
@@ -1164,37 +1495,61 @@ public class Main {
         // Update crafting grid visibility and content
         int craftingPanelX = HOTBAR_X + 360;
         int craftingPanelY = HOTBAR_Y + 20;
-        for (int i = 0; i < CRAFTING_SLOTS; i++) {
-            boolean isResult = i == CRAFTING_RESULT_SLOT;
-            boolean slotVisible = inventoryOpen;
-            craftingSlotBackgrounds[i].visible = slotVisible;
 
-            UILayer.UIElement itemElement = craftingSlotItems[i];
-            String itemId = null;
+        // Toggle between 2x2 (inventory) and 3x3 (crafting table) crafting
+        boolean use3x3 = ctx.craftingTableOpen;
 
-            if (isResult) {
-                // Show the crafted result if pattern matches
-                CraftingManager.CraftingRecipe match = ctx.craftingManager.matchRecipe(playerInventory.getCraftingGrid());
-                if (match != null) {
-                    itemId = match.resultItemId;
-                }
-            } else {
-                int gridRow = i / 2;
-                int gridCol = i % 2;
-                itemId = playerInventory.getCraftingGrid()[gridRow][gridCol];
+        if (use3x3) {
+            // Hide 2x2 crafting slots
+            for (int i = 0; i < CRAFTING_SLOTS; i++) {
+                craftingSlotBackgrounds[i].visible = false;
+                craftingSlotItems[i].visible = false;
+            }
+            // No slot backgrounds or 2D item icons — the 3D camera perspective shows the crafting table
+            craftingTableBg.visible = false;
+            for (int i = 0; i < 9; i++) {
+                crafting3x3SlotBackgrounds[i].visible = false;
+                crafting3x3SlotItems[i].visible = false;
+            }
+        } else {
+            // Show 2x2 crafting slots
+            craftingTableBg.visible = false;
+            for (int i = 0; i < 9; i++) {
+                crafting3x3SlotBackgrounds[i].visible = false;
+                crafting3x3SlotItems[i].visible = false;
             }
 
-            if (slotVisible && itemId != null) {
-                ItemDefinition definition = itemDefinitions.getDefinition(itemId);
-                itemElement.visible = true;
-                itemElement.textureId = textureManager.getTextureArrayId();
-                itemElement.textureType = 2; // Array
-                itemElement.layer = definition.iconLayer;
-                itemElement.color.set(1, 1, 1, 1);
-                itemElement.pos.set(craftingSlotBackgrounds[i].pos.x + 24, craftingSlotBackgrounds[i].pos.y + 16);
-                itemElement.size.set(40, 40);
-            } else {
-                itemElement.visible = false;
+            for (int i = 0; i < CRAFTING_SLOTS; i++) {
+                boolean isResult = i == CRAFTING_RESULT_SLOT;
+                boolean slotVisible = inventoryOpen;
+                craftingSlotBackgrounds[i].visible = slotVisible;
+
+                UILayer.UIElement itemElement = craftingSlotItems[i];
+                String itemId = null;
+
+                if (isResult) {
+                    CraftingManager.CraftingRecipe match = ctx.craftingManager.matchRecipe(playerInventory.getCraftingGrid());
+                    if (match != null) {
+                        itemId = match.resultItemId;
+                    }
+                } else {
+                    int gridRow = i / 2;
+                    int gridCol = i % 2;
+                    itemId = playerInventory.getCraftingGrid()[gridRow][gridCol];
+                }
+
+                if (slotVisible && itemId != null) {
+                    ItemDefinition definition = itemDefinitions.getDefinition(itemId);
+                    itemElement.visible = true;
+                    itemElement.textureId = textureManager.getTextureArrayId();
+                    itemElement.textureType = 2; // Array
+                    itemElement.layer = definition.iconLayer;
+                    itemElement.color.set(1, 1, 1, 1);
+                    itemElement.pos.set(craftingSlotBackgrounds[i].pos.x + 24, craftingSlotBackgrounds[i].pos.y + 16);
+                    itemElement.size.set(40, 40);
+                } else {
+                    itemElement.visible = false;
+                }
             }
         }
 
@@ -1303,6 +1658,7 @@ public class Main {
         statusTextElement.visible = !statusMessage.isEmpty() && time < statusUntil;
         if (statusTextElement.visible) {
             statusTextElement.text = statusMessage;
+            statusTextElement.lineOffset = statusLineOffset;
             float alpha = (float) Math.min(1.0, (statusUntil - time) / 0.5);
             statusTextElement.color.w = alpha;
         }
@@ -1349,6 +1705,81 @@ public class Main {
         } else {
             itemNameDisplayUntil = 0.0;
         }
+    }
+
+    // Crafting table texture layout (16x16): 2x2 pixel cells, 1px borders, 4px margins
+    private static final float CT_MARGIN = 4.0f / 16.0f;     // 0.25
+    private static final float CT_CELL = 2.0f / 16.0f;       // 0.125
+    private static final float CT_GAP = 1.0f / 16.0f;        // 0.0625
+    private static final float CT_STEP = CT_CELL + CT_GAP;   // 0.1875
+    private static final float CT_HALF_CELL = CT_CELL / 2.0f; // 0.0625
+    private static final float CRAFTING_ITEM_SCALE = 0.125f; // 1/8 scale — fills one 2x2 pixel cell
+
+    private void uploadCraftingItems() {
+        String[][] grid = null;
+        float bx, bz, by;
+
+        if (ctx.craftingTableOpen) {
+            // Use player's current crafting grid while UI is open
+            grid = playerInventory.getCraftingGrid3x3();
+            bx = ctx.craftingTableBlockX;
+            bz = ctx.craftingTableBlockZ;
+            by = ctx.craftingTableBlockY + 1.0f + CRAFTING_ITEM_SCALE * 0.5f;
+        } else {
+            // Show items from CraftingTableManager when not crafting
+            if (ctx.craftingTableManager.hasGrid(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ)) {
+                grid = ctx.craftingTableManager.getGrid(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ);
+                bx = ctx.craftingTableBlockX;
+                bz = ctx.craftingTableBlockZ;
+                by = ctx.craftingTableBlockY + 1.0f + CRAFTING_ITEM_SCALE * 0.5f;
+            } else {
+                glProgramUniform1i(computeProgram, locCraftingItemCount, 0);
+                return;
+            }
+        }
+
+        float[] itemData = new float[9 * 8]; // 9 items * 8 floats per CraftingItem (2x vec4)
+        int count = 0;
+
+        for (int r = 0; r < 3; r++) {
+            for (int c = 0; c < 3; c++) {
+                String itemId = grid[r][c];
+                if (itemId != null) {
+                    ItemDefinitions.ItemDefinition def = itemDefinitions.getDefinition(itemId);
+                    // Only render blocks that have a blockId (skip tools like pickaxes)
+                    if (def != null && def.blockId > 0) {
+                        // Position at the center of the 2x2 pixel cell on the texture
+                        // At yaw=0 (crafting camera), screen right = +Z, screen up = +X
+                        // So columns map to Z (left-right) and rows map to X reversed (top-bottom)
+                        // Item rests on the table surface: center Y = surface + half the item height
+                        float pz = bz + CT_MARGIN + c * CT_STEP + CT_HALF_CELL;
+                        float px = bx + (1.0f - CT_MARGIN) - r * CT_STEP - CT_HALF_CELL;
+                        int idx = count * 8;
+                        // position.xyz, w = blockId (stored as float bits for the shader)
+                        itemData[idx] = px;
+                        itemData[idx + 1] = by;
+                        itemData[idx + 2] = pz;
+                        itemData[idx + 3] = Float.intBitsToFloat(def.blockId);
+                        // blockInfo.x = scale, yzw padding
+                        itemData[idx + 4] = CRAFTING_ITEM_SCALE;
+                        itemData[idx + 5] = 0;
+                        itemData[idx + 6] = 0;
+                        itemData[idx + 7] = 0;
+                        count++;
+                    }
+                }
+            }
+        }
+
+        if (count > 0) {
+            java.nio.FloatBuffer buf = MemoryUtil.memAllocFloat(count * 8);
+            buf.put(itemData, 0, count * 8);
+            buf.flip();
+            glNamedBufferSubData(craftingItemSSBO, 0, buf);
+            MemoryUtil.memFree(buf);
+        }
+
+        glProgramUniform1i(computeProgram, locCraftingItemCount, count);
     }
 
     private void bindTextures() {
@@ -1431,6 +1862,11 @@ public class Main {
         blockDataManager.registerBlock(28, "redstone_lamp", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(29, "redstone_dust", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(30, "redstone_lamp_on", textureManager, "src/main/resources/assets/minecraft/models/block");
+        // --- Piston Blocks ---
+        blockDataManager.registerBlock(31, "piston_normal", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(32, "sticky_piston", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(33, "piston_head_normal", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(34, "piston_head_sticky", textureManager, "src/main/resources/assets/minecraft/models/block");
         // --- Aether Dimension Blocks ---
         String aetherModels = "src/main/resources/assets/aether/models/block";
         blockDataManager.registerBlock(100, "aether_grass_block", textureManager, aetherModels);
@@ -1448,6 +1884,7 @@ public class Main {
         blockDataManager.registerBlock(112, "skyroot_planks", textureManager, aetherModels);
         blockDataManager.registerBlock(113, "mossy_holystone", textureManager, aetherModels);
         blockDataManager.registerBlock(114, "holystone_bricks", textureManager, aetherModels);
+        blockDataManager.registerBlock(115, "crafting_table", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.uploadToGPU();
     }
 
@@ -1535,6 +1972,10 @@ public class Main {
         pointLightSSBO = glCreateBuffers();
         glNamedBufferStorage(pointLightSSBO, 4096, GL_DYNAMIC_STORAGE_BIT);
 
+        // Crafting item SSBO (max 9 items * 32 bytes each = 288 bytes)
+        craftingItemSSBO = glCreateBuffers();
+        glNamedBufferStorage(craftingItemSSBO, 288, GL_DYNAMIC_STORAGE_BIT);
+
         uploadDirtyChunks();
     }
 
@@ -1607,6 +2048,23 @@ public class Main {
 
     private Vector3f getActiveCameraPosition() {
         Vector3f eye = getPlayerEyePosition();
+
+        // Cutscene: smoothly lerp camera from start pos to crafting camera target pos
+        if (ctx.craftingCutsceneActive) {
+            float t = Math.min(1.0f, ctx.craftingCutsceneTimer / GameContext.CRAFTING_CUTSCENE_DURATION);
+            float smoothT = t * t * (3.0f - 2.0f * t);
+            return new Vector3f(
+                ctx.cutsceneCameraStartPos.x + (ctx.cutsceneCameraTargetPos.x - ctx.cutsceneCameraStartPos.x) * smoothT,
+                ctx.cutsceneCameraStartPos.y + (ctx.cutsceneCameraTargetPos.y - ctx.cutsceneCameraStartPos.y) * smoothT,
+                ctx.cutsceneCameraStartPos.z + (ctx.cutsceneCameraTargetPos.z - ctx.cutsceneCameraStartPos.z) * smoothT
+            );
+        }
+
+        // Crafting camera: 45° isometric-like angle, position computed during cutscene setup
+        if (ctx.craftingTableOpen) {
+            return new Vector3f(ctx.cutsceneCameraTargetPos);
+        }
+
         if (cameraMode == CameraMode.FIRST_PERSON) {
             return eye;
         }
@@ -1649,6 +2107,87 @@ public class Main {
             (int) Math.floor(sample.z)
         );
         return voxel > 0 && blockDataManager.isFullBlock(voxel);
+    }
+
+    /**
+     * Raycasts through the mouse cursor to determine which 3x3 crafting cell the cursor is pointing at.
+     * Uses the KNOWN crafting camera orientation (volatile fields) instead of yaw/pitch
+     * which may be stale on the GL thread.
+     * Computes a perspective ray through the mouse cursor so edge cells can be clicked.
+     * Cell detection matches the texture layout: 2x2 pixel cells, 1px borders, 4px margins.
+     * @return slot index (0-8), or -1 if no cell hit
+     */
+    private int raycastCraftingCell() {
+        if (!ctx.craftingTableOpen) return -1;
+
+        Vector3f pos = getActiveCameraPosition();
+        float topY = ctx.craftingTableBlockY + 1.0f;
+        float bx = ctx.craftingTableBlockX;
+        float bz = ctx.craftingTableBlockZ;
+
+        // Use the known crafting camera orientation (thread-safe volatile fields)
+        double ry = Math.toRadians(craftingCameraYaw);
+        double rp = Math.toRadians(craftingCameraPitch); // -45° (looking downward at 45° angle)
+        float fx = (float) (Math.cos(ry) * Math.cos(rp));
+        float fy = (float) Math.sin(rp);
+        float fz = (float) (Math.sin(ry) * Math.cos(rp));
+
+        // Compute right and up camera basis vectors (same as loop())
+        float rx = -fz, rz = fx;
+        float rl = (float) Math.sqrt(rx * rx + rz * rz);
+        if (rl > 0) { rx /= rl; rz /= rl; }
+        float ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;
+
+        // Mouse cursor NDC (-1..1)
+        float ndcX = 2.0f * lastMouseX / width - 1.0f;
+        float ndcY = 1.0f - 2.0f * lastMouseY / height;
+
+        // Perspective projection (same FOV as the compute shader)
+        float tanHalfFov = (float) Math.tan(Math.toRadians(45.0)); // FOV 90°
+        float aspect = (float) width / height;
+
+        // Ray direction through the mouse cursor
+        float dx = fx + (ndcX * tanHalfFov * aspect * rx) + (ndcY * tanHalfFov * ux);
+        float dy = fy + (ndcY * tanHalfFov * uy);
+        float dz = fz + (ndcX * tanHalfFov * aspect * rz) + (ndcY * tanHalfFov * uz);
+
+        // Normalize
+        float dLen = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dLen < 0.0001f) return -1;
+        dx /= dLen; dy /= dLen; dz /= dLen;
+
+        // Ray-plane intersection with the table top face
+        if (dy >= 0) return -1;
+        float t = (topY - pos.y) / dy;
+        if (t <= 0) return -1;
+
+        float hitX = pos.x + dx * t;
+        float hitZ = pos.z + dz * t;
+
+        // Local UV on the top face (0..1)
+        float u = hitX - bx;
+        float v = hitZ - bz;
+
+        // Outside table face
+        if (u < 0 || u > 1.0f || v < 0 || v > 1.0f) return -1;
+
+        // Check against texture layout: 4px margins, 2px cells, 1px borders
+        // From UV (0..1): margin = 4/16, cell start for cell i = margin + i * (cell + gap), cell width = 2/16
+        // hitX (→) maps to row (top=high X, bottom=low X), hitZ (→) maps to column (left=low Z, right=high Z)
+        float ru = u - CT_MARGIN;
+        float rv = v - CT_MARGIN;
+        if (ru < 0 || rv < 0) return -1; // In left/top margin
+        // X → row (reversed: high X = row 0 = top)
+        int col = (int)(rv / CT_STEP);
+        int row = 2 - (int)(ru / CT_STEP);
+        if (col > 2 || row < 0 || row > 2) return -1; // Past last cell (in right/bottom margin)
+
+        // Check if within the cell area or in the 1px gap
+        float withinU = ru - (2 - row) * CT_STEP;
+        float withinV = rv - col * CT_STEP;
+        if (withinU >= CT_CELL || withinV >= CT_CELL) return -1; // In border/gap
+
+        return row * 3 + col;
     }
 
     private int[] raycastBlock(float maxDist) {
