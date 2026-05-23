@@ -20,7 +20,7 @@ public class EntityManager {
     private static final int MAX_ENTITIES = 1024;
     private static final int MAX_PARTS = 8192;
     
-    // Entity data size: position(3) + health(1) + rotation(3) + maxHealth(1) + partCount(1) + partOffset(1) + padding(2) = 12 floats (48 bytes)
+    // Entity data size: position(3) + health(1) + rotation(3) + maxHealth(1) + partCount(1) + partOffset(1) + hitFlash(1) + padding(1) = 12 floats (48 bytes)
     private static final int ENTITY_STRIDE = 12;
     // Part data size: offset(3) + uvU(1) + absOffset(3) + uvV(1) + size(3) + texIdx(1) + rotation(3) + mapping(1) = 16 floats (64 bytes)
     private static final int PART_STRIDE = 16;
@@ -79,7 +79,13 @@ public class EntityManager {
             // counts and offsets
             entityBuffer.putInt(partCount);
             entityBuffer.putInt(partOffset);
-            entityBuffer.putFloat(0).putFloat(0); // Padding
+            // hitFlashTime for telegraphing (combat glow)
+            float hitFlash = 0.0f;
+            if (entity instanceof EnemyEntity) {
+                hitFlash = ((EnemyEntity) entity).hitFlashTime;
+            }
+            entityBuffer.putFloat(hitFlash);
+            entityBuffer.putFloat(0); // Remaining padding
             allParts.addAll(entity.parts);
         }
         entityBuffer.flip();

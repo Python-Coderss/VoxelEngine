@@ -286,39 +286,152 @@ public class DimensionWorldGenerator extends WorldGenerator {
     }
 
     private int generateAether(int x, int y, int z, int height) {
-        // Dense floating islands with grass tops, similar pattern to End but more generous
-        int cx = x % 32; if (cx < 0) cx += 32;
-        int cz = z % 32; if (cz < 0) cz += 32;
-        cx -= 16; cz -= 16;
-        float periodicDist = (float) Math.sqrt(cx * cx + cz * cz);
+        // Floating islands on a 40-block grid with overlapping layers for denser terrain
+        // Use two grid scales for more variety: a dense 40-block grid and a sparse 80-block grid
+        boolean isIsland = false;
+        int islandSurface = 0;
+        int islandType = 0; // 0=regular, 1=large
 
-        float islandNoise = continentalNoise.noise(x, z, 0.008f) * 6.0f;
-        int islandCenterY = height + Math.round(islandNoise);
+        // --- Check three overlapping island grids ---
+        for (int grid = 0; grid < 3; grid++) {
+            int gridSize = (grid == 1) ? 80 : 40;
+            int offset = (grid == 2) ? 16 : 0;
+            int cx = (x + offset) % gridSize; if (cx < 0) cx += gridSize; cx -= gridSize / 2;
+            int cz = (z + offset) % gridSize; if (cz < 0) cz += gridSize; cz -= gridSize / 2;
+            float dist = (float) Math.sqrt(cx * cx + cz * cz);
 
-        float radius = 5.0f + Math.abs(erosionNoise.noise(x, z, 0.02f)) * 6.0f;
+            float islandNoise = continentalNoise.noise(x, z, 0.004f + grid * 0.001f) * 18.0f
+                              + erosionNoise.noise(x, z, 0.008f + grid * 0.002f) * 6.0f;
+            int centerY = height + Math.round(islandNoise);
 
-        if (periodicDist < radius) {
-            int islandSurface = islandCenterY + Math.round((radius - periodicDist) * 0.2f);
-            if (y == islandSurface) return 100; // Aether Grass
-            if (y < islandSurface && y > islandSurface - 4) {
-                return (y == islandSurface - 1) ? 102 : 101; // Aether Dirt then Holystone
+            // Radius varies: small to medium (6-14 for 40-grid), large (12-24 for 80-grid)
+            float radius = 6.0f + Math.abs(erosionNoise.noise(x, z, 0.012f + grid * 0.005f)) * (grid == 1 ? 18 : 8);
+
+            if (dist < radius) {
+                // Dome shape: parabolic profile for smooth rolling hills
+                float domeFactor = 1.0f - (dist / radius);
+                float domeHeight = domeFactor * domeFactor * (grid == 1 ? 6.0f : 4.0f);
+                int surf = centerY + Math.round(domeHeight);
+
+                // Surface ripple for organic feel
+                float bumpNoise = detailNoise.noise(x, z, 0.05f) * 1.2f;
+                surf += Math.round(bumpNoise);
+
+                // Take the highest surface from any grid
+                if (!isIsland || surf > islandSurface) {
+                    islandSurface = surf;
+                    islandType = grid;
+                }
+                isIsland = true;
             }
         }
 
-        // Cloud wisps above islands (using Aerogel for a bright white cloud look)
-        if (y > height + 10 && y < height + 16) {
-            float cloudNoise = detailNoise.noise(x, y, 0.04f);
-            if (cloudNoise > 0.4f) return 105; // Aerogel clouds
+        if (isIsland && y <= islandSurface) {
+            if (y == islandSurface) return 100; // Aether Grass
+            int depth = islandSurface - y;
+            if (depth == 1) return 102; // Aether Dirt (topsoil)
+            if (depth <= 5) return 101; // Holystone (main body)
+            // Deeper: mix of holystone and ores
+            int hash = (x * 31 + z * 73 + y * 137) & 0xFF;
+            if (hash < 8 && depth > 5) return 107; // Ambrosium ore near surface
+            if (hash < 3 && depth > 10) return 111; // Zanite ore deeper
+            if (hash < 2 && depth > 15) return 108; // Gravitite ore deep
+            // Quicksoil pockets on lower island edges
+            if (hash > 248 && depth > 8) return 109; // Quicksoil
+            return 101; // Holystone
         }
+
+        // Floating rocks: tiny single-block or 3-block clusters near islands
+        if (!isIsland && y >= height - 5 && y < height + 10) {
+            float rockNoise = continentalNoise.noise(x, z, 0.06f) + detailNoise.noise(x, y * 0.1f, 0.08f) * 0.5f;
+            if (rockNoise > 0.7f) return 101; // Floating holystone rocks
+        }
+
+        // Cloud wisps: billowy white clouds at multiple heights
+        float cloudSeed1 = detailNoise.noise(x, z, 0.02f) * 0.7f + detailNoise.noise(x, y * 0.3f, 0.025f) * 0.3f;
+        float cloudSeed2 = erosionNoise.noise(x, z, 0.015f);
+        // Lower clouds (just above islands)
+        if (y > height + 6 && y < height + 14 && cloudSeed1 > 0.4f) return 105;
+        // Upper clouds (higher up, more scattered)
+        if (y > height + 16 && y < height + 24 && cloudSeed2 > 0.55f) return 105;
 
         return 0;
     }
 
     /**
-     * Decorates a chunk with trees and other features.
+     * Places a 4-wide x 5-tall portal structure with frame and interior blocks.
+     * The portal faces north-south (dx=1, dz=0 orientation).
+     */
+    private void placePortal(World world, int sx, int sy, int sz, int frameId, int portalId) {
+        // Bottom frame
+        for (int i = 0; i < 4; i++)
+            world.setVoxel(sx + i, sy, sz, frameId);
+        // Top frame
+        for (int i = 0; i < 4; i++)
+            world.setVoxel(sx + i, sy + 4, sz, frameId);
+        // Left side
+        for (int i = 1; i < 4; i++)
+            world.setVoxel(sx, sy + i, sz, frameId);
+        // Right side
+        for (int i = 1; i < 4; i++)
+            world.setVoxel(sx + 3, sy + i, sz, frameId);
+        // Interior portal blocks (2x3)
+        for (int px = 1; px <= 2; px++)
+            for (int py = 1; py <= 3; py++)
+                world.setVoxel(sx + px, sy + py, sz, portalId);
+    }
+
+    /**
+     * Decorates a chunk with trees, portal structures, and other features.
      * Called after the base terrain has been generated.
      */
     public void decorate(int cx, int cy, int cz, int slot, World world) {
+        // --- Auto-generate portal structures at spawn in every dimension ---
+        // Spawn is at (1024, 1024), chunk (64, 64) covers x=1024-1039, z=1024-1039
+        if (cx == 64 && cz == 64) {
+            // Place portals at block coordinates entirely within this chunk
+            if (dimension == DimensionType.OVERWORLD && cy == 4) {
+                // Overworld spawn y=64: Nether portal (obsidian frame) leads to Nether
+                placePortal(world, 1028, 64, 1030, 16, 19);
+                // Aether portal (glowstone frame) leads to Aether
+                placePortal(world, 1028, 64, 1036, 17, 106);
+            } else if (dimension == DimensionType.NETHER && cy == 2) {
+                // Nether spawn y=32: portal back to Overworld
+                placePortal(world, 1028, 32, 1030, 16, 19);
+                // Aether portal from Nether to Aether
+                placePortal(world, 1028, 32, 1036, 17, 106);
+            } else if (dimension == DimensionType.AETHER && cy == 6) {
+                // Aether spawn y=96: portal back to Overworld
+                placePortal(world, 1028, 96, 1030, 17, 106);
+                // Nether portal from Aether to Nether
+                placePortal(world, 1028, 96, 1036, 16, 19);
+            }
+        }
+
+        // Aether decoration: trees and vegetation on islands
+        if (dimension == DimensionType.AETHER) {
+            int worldX = cx << 4;
+            int worldZ = cz << 4;
+            for (int lx = 2; lx < 14; lx++) {
+                for (int lz = 2; lz < 14; lz++) {
+                    int wx = worldX + lx;
+                    int wz = worldZ + lz;
+                    // Tree noise - about 1.5% chance per block
+                    float treeValue = treeNoise.noise(wx, wz, 0.08f);
+                    if (treeValue < 0.985f) continue;
+                    // Find surface height by scanning from baseHeight upward
+                    for (int yScan = cy << 4; yScan < (cy << 4) + 16; yScan++) {
+                        int block = world.getVoxel(wx, yScan, wz);
+                        if (block == 100) { // Aether Grass
+                            placeSkyrootTree(world, wx, yScan + 1, wz);
+                            break;
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
         if (dimension != DimensionType.OVERWORLD) return;
 
         int worldX = cx << 4;
@@ -352,6 +465,44 @@ public class DimensionWorldGenerator extends WorldGenerator {
                 if (cy == (height >> 4)) {
                     placeOakTree(world, wx, height + 1, wz);
                 }
+            }
+        }
+    }
+
+    /**
+     * Places a skyroot tree in the Aether dimension with blue-green leaves.
+     * Taller and more elegant than oak trees with weeping foliage.
+     */
+    private void placeSkyrootTree(World world, int x, int y, int z) {
+        int trunkHeight = 5 + (int)(Math.abs(continentalNoise.noise(x, z, 0.5f)) * 3.0f);
+        // Place trunk (block type 103 = skyroot_log)
+        for (int i = 0; i < trunkHeight; i++) {
+            world.setVoxel(x, y + i, z, 103);
+        }
+        // Place leaves (block type 104 = skyroot_leaves)
+        int leafBaseY = y + trunkHeight - 3;
+        int leafTopY = y + trunkHeight;
+        for (int ly = leafBaseY; ly <= leafTopY; ly++) {
+            int radius = (ly == leafTopY) ? 1 : (ly == leafBaseY ? 3 : 2);
+            for (int lx = -radius; lx <= radius; lx++) {
+                for (int lz = -radius; lz <= radius; lz++) {
+                    if (Math.abs(lx) == radius && Math.abs(lz) == radius) {
+                        if (treeNoise.noise(x + lx, z + lz, 0.3f) > 0.5f) continue;
+                    }
+                    if (lx == 0 && lz == 0 && ly > y && ly < y + trunkHeight - 1) continue;
+                    int existing = world.getVoxel(x + lx, ly, z + lz);
+                    if (existing == 0 || existing == 100 || existing == 101 || existing == 102) {
+                        world.setVoxel(x + lx, ly, z + lz, 104);
+                    }
+                }
+            }
+        }
+        // Weeping vines: hanging leaves below canopy
+        if (continentalNoise.noise(x, z, 0.2f) > 0.0f) {
+            int vineLen = 1 + (int)(Math.abs(continentalNoise.noise(x, z, 0.3f)) * 3.0f);
+            for (int v = 0; v < vineLen; v++) {
+                world.setVoxel(x + 1, leafBaseY - v, z, 104);
+                world.setVoxel(x - 1, leafBaseY - v, z, 104);
             }
         }
     }

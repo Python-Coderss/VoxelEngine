@@ -51,7 +51,8 @@ public class TextureManager {
     private static final int MAX_ENTITY_LAYERS = 256;
 
     public void loadTextures(String... directoryPaths) {
-        List<Path> allFiles = new ArrayList<>();
+        // Collect unique texture names -> full paths
+        java.util.LinkedHashMap<String, String> nameToPath = new java.util.LinkedHashMap<>();
 
         for (String directoryPath : directoryPaths) {
             File dir = new File(directoryPath);
@@ -61,52 +62,65 @@ public class TextureManager {
             }
 
             try {
-            	
-            	Path[] files2 = Files.walk(Paths.get(directoryPath))
+                Path[] files2 = Files.walk(Paths.get(directoryPath))
                     .filter(Files::isRegularFile)
                     .filter(p -> p.toString().endsWith(".png"))
                     .toArray(Path[]::new);
 
-            	allFiles.addAll(Arrays.asList(files2));
-
+                for (Path path : files2) {
+                    String fileName = path.getFileName().toString();
+                    String name = fileName.substring(0, fileName.lastIndexOf('.'));
+                    // putIfAbsent: first occurrence wins (prefer earlier directories)
+                    if (!nameToPath.containsKey(name)) {
+                        nameToPath.put(name, path.toString());
+                    }
+                }
             } catch (IOException e) {
                 throw new RuntimeException("Failed to scan textures: " + directoryPath, e);
             }
         }
 
-        for (Path path : allFiles) {
-            String fileName = path.getFileName().toString();
-            String name = fileName.substring(0, fileName.lastIndexOf('.'));
+        if (nameToPath.isEmpty()) return;
 
-            if (!textureToIndex.containsKey(name)) {
-                textureToIndex.put(name, texturePaths.size());
-                texturePaths.add(path.toString());
-            }
+        // First pass: detect frame counts for each texture
+        java.util.Map<String, Integer> frameCounts = new java.util.HashMap<>();
+        for (java.util.Map.Entry<String, String> entry : nameToPath.entrySet()) {
+            int fc = detectFrameCount(entry.getValue());
+            frameCounts.put(entry.getKey(), fc);
         }
 
-        if (texturePaths.isEmpty()) return;        /*
-         * WARNING: MAX_LAYERS must be >= total unique textures + animation frame layers.
-         * Animated textures (vertical strips like portal.png, water_still.png) consume
-         * multiple consecutive layers, so the actual layer usage exceeds texturePaths.size().
-         * The check below uses a conservative estimate (texturePaths.size() + 100 buffer
-         * for animation frames). Increase MAX_LAYERS if this warning triggers.
-         */
-        if (texturePaths.size() + 100 > MAX_LAYERS) {
-            System.err.println("WARNING: " + texturePaths.size() + " + ~100 animation frames may exceed MAX_LAYERS (" + MAX_LAYERS + ")! Increase MAX_LAYERS in TextureManager.java");
+        // Second pass: assign layer offsets = cumulative sum of frame counts
+        // textureToIndex now stores the LAYER OFFSET, not the list index
+        int totalLayers = 0;
+        for (java.util.Map.Entry<String, String> entry : nameToPath.entrySet()) {
+            String name = entry.getKey();
+            textureToIndex.put(name, totalLayers);
+            texturePaths.add(entry.getValue());
+            int fc = frameCounts.get(name);
+            textureToFrameCount.put(name, fc);
+            totalLayers += fc;
+        }
+
+        if (totalLayers + 100 > MAX_LAYERS) {
+            System.err.println("WARNING: " + totalLayers + " layers (incl. animation frames) may exceed MAX_LAYERS (" + MAX_LAYERS + ")! Increase MAX_LAYERS in TextureManager.java");
         }
 
         if (textureArrayId == 0) {
             textureArrayId = glGenTextures();
             glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
-
             glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8,
                     TEXTURE_SIZE, TEXTURE_SIZE, MAX_LAYERS);
         }
 
         glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
 
-        for (int i = 0; i < texturePaths.size(); i++) {
-            loadAndUploadTexture(texturePaths.get(i), i, TEXTURE_SIZE);
+        // Upload each texture to its layer offset (which accounts for animation frame spacing)
+        for (java.util.Map.Entry<String, String> entry : nameToPath.entrySet()) {
+            String name = entry.getKey();
+            String path = entry.getValue();
+            int layerOffset = textureToIndex.get(name);
+            // loadAndUploadTexture will detect frame count again and upload all frames consecutively
+            loadAndUploadTexture(path, layerOffset, TEXTURE_SIZE);
         }
 
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
@@ -115,6 +129,24 @@ public class TextureManager {
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
         glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    }
+
+    /**
+     * Quick pre-scan to detect animated vertical strip frame count without uploading.
+     */
+    private int detectFrameCount(String path) {
+        try {
+            java.awt.image.BufferedImage img = ImageIO.read(new File(path));
+            if (img == null) return 1;
+            int w = img.getWidth();
+            int h = img.getHeight();
+            if (h > TEXTURE_SIZE && w == TEXTURE_SIZE && h % TEXTURE_SIZE == 0) {
+                return h / TEXTURE_SIZE;
+            }
+        } catch (IOException e) {
+            // ignore
+        }
+        return 1;
     }
 
     /**
@@ -137,10 +169,7 @@ public class TextureManager {
                 frameCount = 1;
             }
 
-            // Store the frame count (only for block textures)
-            String fileName = new File(path).getName();
-            String name = fileName.substring(0, fileName.lastIndexOf('.'));
-            textureToFrameCount.put(name, frameCount);
+            // Frame count is already stored during pre-scan; no need to store again
 
             if (frameCount > 1) {
                 // Animated texture: upload each frame to consecutive layers
@@ -275,6 +304,45 @@ public class TextureManager {
 
     public int getEntityTextureIndex(String name) {
         return entityTextureToIndex.getOrDefault(name, -1);
+    }
+
+    /**
+     * Loads specific files into the entity texture array (scaling to 64x64).
+     * Called for item textures that should appear on 3D crafting entities.
+     * @return the entity texture index for the loaded texture, or -1 on failure
+     */
+    public int loadItemAsEntityTexture(String filePath, String name) {
+        if (entityTextureToIndex.containsKey(name)) {
+            return entityTextureToIndex.get(name);
+        }
+
+        File f = new File(filePath);
+        if (!f.exists()) {
+            System.err.println("Item texture not found for entity: " + filePath);
+            return -1;
+        }
+
+        int idx = entityTexturePaths.size();
+        entityTextureToIndex.put(name, idx);
+        entityTexturePaths.add(filePath);
+
+        // Allocate texture array on first use
+        if (entityTextureArrayId == 0) {
+            entityTextureArrayId = glGenTextures();
+            glBindTexture(GL_TEXTURE_2D_ARRAY, entityTextureArrayId);
+            glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8,
+                    ENTITY_TEXTURE_SIZE, ENTITY_TEXTURE_SIZE, MAX_ENTITY_LAYERS);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        }
+
+        glBindTexture(GL_TEXTURE_2D_ARRAY, entityTextureArrayId);
+        loadAndUploadTexture(filePath, idx, ENTITY_TEXTURE_SIZE);
+        glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+
+        return idx;
     }
     
     public int getTextureCount() {

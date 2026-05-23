@@ -19,7 +19,9 @@ public class EnemyEntity extends Entity {
     private float health = 20.0f;
     private float maxHealth = 20.0f;
     private boolean isDead = false;
-    private float hitFlashTime = 0.0f;
+    public float hitFlashTime = 0.0f;
+    private float windUpTime = 0.0f;
+    private boolean isWindingUp = false;
 
     private static EntityManager entityManager;
     public static void setEntityManager(EntityManager em) { entityManager = em; }
@@ -201,9 +203,31 @@ public class EnemyEntity extends Entity {
         }
 
         if (attackCooldown <= 0 && dist < 3.1f) {
-            performAttack(playerPos);
-            attackCooldown = 1.25f;
-            frustration += 1.0f;
+            if (!isWindingUp) {
+                // Start wind-up: telegraph the attack
+                isWindingUp = true;
+                windUpTime = 0.0f;
+                hitFlashTime = 0.01f;
+            } else {
+                windUpTime += dt;
+                // Telegraph glow: white → yellow → red over 0.75s
+                float telegraphProgress = Math.min(1.0f, windUpTime / 0.75f);
+                hitFlashTime = 0.5f + telegraphProgress * 0.5f; // Flash intensity
+                
+                if (windUpTime >= 0.75f) {
+                    // Attack!
+                    performAttack(playerPos);
+                    attackCooldown = 1.4f;
+                    frustration += 1.0f;
+                    isWindingUp = false;
+                    windUpTime = 0.0f;
+                    hitFlashTime = 0.0f;
+                }
+            }
+        } else {
+            isWindingUp = false;
+            windUpTime = 0.0f;
+            if (hitFlashTime <= 0) hitFlashTime = 0;
         }
 
         if (dist < 1.5f) {

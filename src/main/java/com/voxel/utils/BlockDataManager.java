@@ -179,7 +179,8 @@ public class BlockDataManager {
                 name.contains("button") || name.contains("lever") || name.contains("torch") ||
                 name.contains("rail") || name.contains("sign") || name.contains("banner") ||
                 name.contains("flower") || name.contains("sapling") || name.contains("mushroom") ||
-                name.contains("water") || name.contains("lava")) {
+                name.contains("water") || name.contains("lava") ||
+                name.contains("portal")) {
             data.isFullBlock = false;
         }
         if (name.contains("water") || name.contains("lava")) {
@@ -378,7 +379,7 @@ public class BlockDataManager {
                 buffer.put(data.albedo.getRed());
                 buffer.put(data.albedo.getGreen());
                 buffer.put(data.albedo.getBlue());
-                int packedAnim = (data.isAnimated ? 1 : 0) | ((data.frameCount & 0xF) << 1);
+                int packedAnim = (data.isAnimated ? 1 : 0) | ((data.frameCount & 0x3F) << 1);
                 buffer.put(packedAnim); // Unused -> now stores animation info
             } else {
                 // Fill with -1 for unused IDs.

@@ -7,6 +7,9 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import com.voxel.world.WorldSaveManager;
+import com.voxel.world.DimensionType;
+
 /**
  * Manages ASYNC loading and unloading of chunks.
  * Supports directional priority: chunks in the player's look direction
@@ -16,6 +19,8 @@ public class ChunkManager {
     private final World world;
     private final WorldGenerator generator;
     private final LightPropagationEngine lightEngine;
+    private final WorldSaveManager saveManager;
+    private final DimensionType dimension;
     private final int renderDistance;
     private final int chunkHeight = 16;
 
@@ -37,10 +42,12 @@ public class ChunkManager {
     // We want the player at chunk ~64 in the buffer, so the offset is playerCX - 64.
     private static final int BUFFER_HALF_CHUNKS = World.REGION_SIZE / 2;
 
-    public ChunkManager(World world, WorldGenerator generator, LightPropagationEngine lightEngine, int renderDistance) {
+    public ChunkManager(World world, WorldGenerator generator, LightPropagationEngine lightEngine, int renderDistance, WorldSaveManager saveManager, DimensionType dimension) {
         this.world = world;
         this.generator = generator;
         this.lightEngine = lightEngine;
+        this.saveManager = saveManager;
+        this.dimension = dimension;
         this.renderDistance = renderDistance;
 
         for (int i = 0; i < world.getPoolSizeForAlloc(); i++) {
@@ -172,16 +179,33 @@ public class ChunkManager {
             return;
         }
 
+        // Allocate chunk slots FIRST — required by both disk-load (world.setVoxel needs them)
+        // and procedural generation paths.
         Integer[] slots = new Integer[chunkHeight];
         for (int cy = 0; cy < chunkHeight; cy++) {
             int slot = freeSlots.poll();
             slots[cy] = slot;
-            // Set the chunk slot BEFORE generation so world.setVoxel()
-            // (called during decoration) can find the correct pool slot.
             world.setChunkSlot(cx, cy, cz, slot);
-            generateStorageChunk(cx, cy, cz, slot);
-            lightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
-            dirtySlots.add(slot);
+        }
+
+        // Try loading from disk first (needs slots to be set so world.setVoxel can find the pool)
+        if (saveManager != null && saveManager.loadChunk(dimension, cx, cz, world)) {
+            // Loaded from disk — bake occlusion and mark as dirty
+            for (int cy = 0; cy < chunkHeight; cy++) {
+                lightEngine.bakeChunkOcclusion(slots[cy], cx, cy, cz);
+                dirtySlots.add(slots[cy]);
+            }
+            loadedChunks.put(chunkKey(cx, cz), slots);
+            pendingLoads.remove(chunkKey(cx, cz));
+            tableDirty.set(true);
+            return;
+        }
+
+        // Fall back to procedural generation
+        for (int cy = 0; cy < chunkHeight; cy++) {
+            generateStorageChunk(cx, cy, cz, slots[cy]);
+            lightEngine.bakeChunkOcclusion(slots[cy], cx, cy, cz);
+            dirtySlots.add(slots[cy]);
         }
         loadedChunks.put(chunkKey(cx, cz), slots);
         pendingLoads.remove(chunkKey(cx, cz));
@@ -213,6 +237,10 @@ public class ChunkManager {
     private void unloadChunk(long key, Integer[] slots) {
         int cx = unpackX(key);
         int cz = unpackZ(key);
+        // Save chunk to disk before unloading
+        if (saveManager != null) {
+            saveManager.saveChunk(dimension, cx, cz, world);
+        }
         for (int cy = 0; cy < chunkHeight; cy++) {
             world.clearChunkSlot(cx, cy, cz);
             freeSlots.add(slots[cy]);
