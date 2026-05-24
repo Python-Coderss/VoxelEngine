@@ -23,10 +23,10 @@ public class EnemyEntity extends Entity {
     private float windUpTime = 0.0f;
     private boolean isWindingUp = false;
 
-    private static EntityManager entityManager;
+    public static EntityManager entityManager;
     public static void setEntityManager(EntityManager em) { entityManager = em; }
 
-    private World world;
+    public World world;
 
     private enum State { OBSERVING, PREDICTING, HUNTING, ATTACKING }
     private State state = State.OBSERVING;
@@ -45,7 +45,7 @@ public class EnemyEntity extends Entity {
     private Vector3f prevPosition = new Vector3f();
     private float lastBob = 0.0f;
 
-    private Player player;
+    public Player player;
 
     // ==================== DEBUG ====================
     private static final boolean DEBUG_AI = false;
@@ -245,7 +245,7 @@ public class EnemyEntity extends Entity {
 
     // ====================== MOVEMENT ======================
 
-    private void moveToward(Vector3f target, float dt, float speed) {
+    protected void moveToward(Vector3f target, float dt, float speed) {
         Vector3f dir = new Vector3f(target).sub(position);
         // Allow some vertical direction, but collision will keep us grounded
         float len = dir.length();
@@ -471,7 +471,7 @@ public class EnemyEntity extends Entity {
         }
     }
 
-    private void die() {
+    public void die() {
         isDead = true;
         rotation.x = 78.0f;
         if (DEBUG_AI) System.out.println("The omnipotent being is released from its fleshly cage...");

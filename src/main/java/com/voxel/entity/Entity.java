@@ -23,6 +23,10 @@ public class Entity {
     /** The dimension this entity currently belongs to. */
     public DimensionType dimension = DimensionType.OVERWORLD;
 
+    // Tint color (RGB multiplier, 1,1,1 = no tint) and amount (0-1)
+    public Vector3f tintColor = new Vector3f(1.0f, 1.0f, 1.0f);
+    public float tintAmount = 0.0f;
+
     public Entity(int id, Vector3f position) {
         this.id = id;
         this.position = new Vector3f(position);

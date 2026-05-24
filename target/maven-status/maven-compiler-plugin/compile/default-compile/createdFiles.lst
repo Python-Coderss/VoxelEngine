@@ -2,6 +2,12 @@ com\voxel\game\CraftingTableManager.class
 com\voxel\world\DimensionWorldGenerator$1.class
 com\voxel\game\CraftingTableConstants.class
 com\voxel\entity\EnemyEntity$2.class
+com\voxel\game\ChestManager.class
+com\voxel\game\FurnaceManager$SmeltingRecipe.class
+com\voxel\game\FurnaceManager$FurnaceState.class
 com\voxel\game\GameContext$DamageNumber.class
+com\voxel\game\FurnaceManager.class
 com\voxel\world\WorldSaveManager.class
 com\voxel\world\RedstoneLogger.class
+com\voxel\game\FurnaceManager$FuelType.class
+com\voxel\game\GameContext$ActiveUI.class

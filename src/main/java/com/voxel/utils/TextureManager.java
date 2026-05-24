@@ -42,13 +42,13 @@ public class TextureManager {
      * glTexSubImage3D will fail with an out-of-bounds error when trying to upload.
      * Bump this up (e.g., +256 at a time) if you add more blocks/items.
      */
-    private static final int MAX_LAYERS = 1300;
+    private static final int MAX_LAYERS = 2048;
 
     // ---- Entity texture array (64x64) ----
     private int entityTextureArrayId;
     private final Map<String, Integer> entityTextureToIndex = new HashMap<>();
     private final List<String> entityTexturePaths = new ArrayList<>();
-    private static final int MAX_ENTITY_LAYERS = 256;
+    private static final int MAX_ENTITY_LAYERS = 512;
 
     public void loadTextures(String... directoryPaths) {
         // Collect unique texture names -> full paths

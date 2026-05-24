@@ -20,8 +20,8 @@ public class EntityManager {
     private static final int MAX_ENTITIES = 1024;
     private static final int MAX_PARTS = 8192;
     
-    // Entity data size: position(3) + health(1) + rotation(3) + maxHealth(1) + partCount(1) + partOffset(1) + hitFlash(1) + padding(1) = 12 floats (48 bytes)
-    private static final int ENTITY_STRIDE = 12;
+    // Entity data size: position(3) + health(1) + rotation(3) + maxHealth(1) + partCount(1) + partOffset(1) + hitFlash(1) + tintColorRGB(3) + tintAmount(1) = 16 floats (64 bytes)
+    private static final int ENTITY_STRIDE = 16;
     // Part data size: offset(3) + uvU(1) + absOffset(3) + uvV(1) + size(3) + texIdx(1) + rotation(3) + mapping(1) = 16 floats (64 bytes)
     private static final int PART_STRIDE = 16;
 
@@ -85,7 +85,11 @@ public class EntityManager {
                 hitFlash = ((EnemyEntity) entity).hitFlashTime;
             }
             entityBuffer.putFloat(hitFlash);
-            entityBuffer.putFloat(0); // Remaining padding
+            // Tint color + amount
+            entityBuffer.putFloat(entity.tintColor.x);
+            entityBuffer.putFloat(entity.tintColor.y);
+            entityBuffer.putFloat(entity.tintColor.z);
+            entityBuffer.putFloat(entity.tintAmount);
             allParts.addAll(entity.parts);
         }
         entityBuffer.flip();

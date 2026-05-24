@@ -19,6 +19,8 @@ import com.voxel.game.GameContext;
 import com.voxel.game.ItemDefinitions;
 import com.voxel.game.ItemDefinitions.ItemDefinition;
 import com.voxel.game.ItemDefinitions.ItemStack;
+import com.voxel.game.FurnaceManager;
+import com.voxel.game.ChestManager;
 import com.voxel.game.PlayerInventory;
 import com.voxel.game.PortalSystem;
 import com.voxel.world.RedstoneLogger;
@@ -179,6 +181,22 @@ public class Main {
     private final UILayer.UIElement[] crafting3x3SlotBackgrounds = new UILayer.UIElement[9];
     private final UILayer.UIElement[] crafting3x3SlotItems = new UILayer.UIElement[9];
     private UILayer.UIElement craftingTableBg;
+
+    // --- Furnace UI elements ---
+    private UILayer.UIElement furnacePanelBg;
+    private UILayer.UIElement furnaceInputBg, furnaceFuelBg, furnaceOutputBg;
+    private UILayer.UIElement furnaceInputItem, furnaceFuelItem, furnaceOutputItem;
+    private UILayer.UIElement furnaceProgressBar, furnaceFuelBar;
+    private UILayer.UITextElement furnaceFuelText;
+
+    // --- Chest UI elements ---
+    private UILayer.UIElement chestPanelBg;
+    private final UILayer.UIElement[] chestSlotBackgrounds = new UILayer.UIElement[20];
+    private final UILayer.UIElement[] chestSlotItems = new UILayer.UIElement[20];
+    private final UILayer.UIElement[] chestCountBars = new UILayer.UIElement[20];
+    private final UILayer.UIElement[] chestCountDigit1 = new UILayer.UIElement[20];
+    private final UILayer.UIElement[] chestCountDigit2 = new UILayer.UIElement[20];
+
     private double itemNameDisplayUntil = 0.0;
     private final UILayer.UIElement[] playerHearts = new UILayer.UIElement[10];
     private final UILayer.UIElement[] heartBases = new UILayer.UIElement[10];
@@ -223,9 +241,11 @@ public class Main {
             e.printStackTrace();
         }
 
-        // Save crafting data on shutdown
+        // Save data on shutdown
         if (ctx.worldSaveManager != null) {
             ctx.worldSaveManager.saveCraftingData(ctx.activeDimension, ctx.craftingTableManager);
+            ctx.worldSaveManager.saveFurnaceData(ctx.activeDimension, ctx.furnaceManager);
+            ctx.worldSaveManager.saveChestData(ctx.activeDimension, ctx.chestManager);
         }
 
         glDeleteProgram(quadProgram);
@@ -387,10 +407,28 @@ public class Main {
     }
 
     private void spawnInitialEnemies(Player p) {
-        for (int i = 0; i < 5; i++) {
-            com.voxel.entity.ZombieEntity zombie = new com.voxel.entity.ZombieEntity(100 + i, new Vector3f(1030 + i * 10, 64, 1030), textureManager, p);
+        for (int i = 0; i < 3; i++) {
+            com.voxel.entity.ZombieEntity zombie = new com.voxel.entity.ZombieEntity(100 + i, new Vector3f(1030 + i * 12, 64, 1030), textureManager, p);
             zombie.setWorld(world);
             entityManager.addEntity(zombie);
+        }
+        // Skeleton — ranged enemies slightly farther out
+        for (int i = 0; i < 2; i++) {
+            com.voxel.entity.SkeletonEntity skeleton = new com.voxel.entity.SkeletonEntity(110 + i, new Vector3f(1040 + i * 15, 64, 1010), textureManager, p);
+            skeleton.setWorld(world);
+            entityManager.addEntity(skeleton);
+        }
+        // Spider — fast climbers
+        for (int i = 0; i < 2; i++) {
+            com.voxel.entity.SpiderEntity spider = new com.voxel.entity.SpiderEntity(120 + i, new Vector3f(1010 + i * 10, 64, 1050), textureManager, p);
+            spider.setWorld(world);
+            entityManager.addEntity(spider);
+        }
+        // Creeper — explosive menace
+        for (int i = 0; i < 2; i++) {
+            com.voxel.entity.CreeperEntity creeper = new com.voxel.entity.CreeperEntity(130 + i, new Vector3f(1050 + i * 10, 65, 1040), textureManager, p);
+            creeper.setWorld(world);
+            entityManager.addEntity(creeper);
         }
     }
 
@@ -647,6 +685,172 @@ public class Main {
             layer.addElement(playerHearts[i]);
         }
 
+        // --- Furnace UI: 3 slots (input, fuel, output) + progress bar ---
+        int furnaceX = HOTBAR_X + 20;
+        int furnaceY = HOTBAR_Y - 160;
+        int furnaceSlotW = SLOT_W;
+        int furnaceSlotH = SLOT_H;
+        int furnacePanelW = 4 * furnaceSlotW + 80;
+        int furnacePanelH = 2 * furnaceSlotH + 60;
+
+        furnacePanelBg = new UILayer.UIElement(
+            new Vector2f(furnaceX - 10, furnaceY - 10),
+            new Vector2f(furnacePanelW, furnacePanelH),
+            new Vector4f(0.3f, 0.3f, 0.3f, 0.6f)
+        );
+        furnacePanelBg.visible = false;
+        layer.addElement(furnacePanelBg);
+
+        // Input slot (left)
+        furnaceInputBg = new UILayer.UIElement(
+            new Vector2f(furnaceX, furnaceY + furnaceSlotH / 2),
+            new Vector2f(furnaceSlotW, furnaceSlotH),
+            new Vector4f(0.9f, 0.9f, 0.9f, 1)
+        );
+        furnaceInputBg.visible = false;
+        furnaceInputBg.onClick = () -> handleFurnaceSlotClick(0);
+        layer.addElement(furnaceInputBg);
+
+        furnaceInputItem = new UILayer.UIElement(
+            new Vector2f(furnaceX + 24, furnaceY + furnaceSlotH / 2 + 16),
+            new Vector2f(40, 40),
+            new Vector4f(0, 0, 0, 0)
+        );
+        furnaceInputItem.visible = false;
+        layer.addElement(furnaceInputItem);
+
+        // Fuel slot (below input)
+        furnaceFuelBg = new UILayer.UIElement(
+            new Vector2f(furnaceX, furnaceY + furnaceSlotH + furnaceSlotH / 2 + 12),
+            new Vector2f(furnaceSlotW, furnaceSlotH),
+            new Vector4f(0.85f, 0.85f, 0.7f, 1)
+        );
+        furnaceFuelBg.visible = false;
+        furnaceFuelBg.onClick = () -> handleFurnaceSlotClick(1);
+        layer.addElement(furnaceFuelBg);
+
+        furnaceFuelItem = new UILayer.UIElement(
+            new Vector2f(furnaceX + 24, furnaceY + furnaceSlotH + furnaceSlotH / 2 + 28),
+            new Vector2f(40, 40),
+            new Vector4f(0, 0, 0, 0)
+        );
+        furnaceFuelItem.visible = false;
+        layer.addElement(furnaceFuelItem);
+
+        // Fuel bar (to the right of fuel slot)
+        furnaceFuelBar = new UILayer.UIElement(
+            new Vector2f(furnaceX + furnaceSlotW + 12, furnaceY + furnaceSlotH + furnaceSlotH / 2 + 24),
+            new Vector2f(0, 20),
+            new Vector4f(1.0f, 0.5f, 0.0f, 0.8f)
+        );
+        furnaceFuelBar.visible = false;
+        layer.addElement(furnaceFuelBar);
+
+        furnaceFuelText = new UILayer.UITextElement(
+            new Vector2f(furnaceX + furnaceSlotW + 12, furnaceY + furnaceSlotH + furnaceSlotH / 2 + 26),
+            "", 1.5f, new Vector4f(1, 1, 1, 1), fontTextureId
+        );
+        furnaceFuelText.visible = false;
+        layer.addElement(furnaceFuelText);
+
+        // Output slot (right of input)
+        int outputX = furnaceX + 2 * furnaceSlotW + 30;
+        furnaceOutputBg = new UILayer.UIElement(
+            new Vector2f(outputX, furnaceY + furnaceSlotH / 2),
+            new Vector2f(furnaceSlotW, furnaceSlotH),
+            new Vector4f(0.9f, 0.8f, 0.7f, 1)
+        );
+        furnaceOutputBg.visible = false;
+        furnaceOutputBg.onClick = () -> handleFurnaceSlotClick(2);
+        layer.addElement(furnaceOutputBg);
+
+        furnaceOutputItem = new UILayer.UIElement(
+            new Vector2f(outputX + 24, furnaceY + furnaceSlotH / 2 + 16),
+            new Vector2f(40, 40),
+            new Vector4f(0, 0, 0, 0)
+        );
+        furnaceOutputItem.visible = false;
+        layer.addElement(furnaceOutputItem);
+
+        // Progress arrow between input and output
+        furnaceProgressBar = new UILayer.UIElement(
+            new Vector2f(furnaceX + furnaceSlotW + 12, furnaceY + furnaceSlotH / 2 + furnaceSlotH / 2 - 8),
+            new Vector2f(0, 16),
+            new Vector4f(0.8f, 0.8f, 0.2f, 0.9f)
+        );
+        furnaceProgressBar.visible = false;
+        layer.addElement(furnaceProgressBar);
+
+        // --- Chest UI: 2 rows of 10 slots, placed above the inventory panel ---
+        float chestGridW = 10 * (SLOT_W + 8) - 8;
+        float chestGridH = 2 * SLOT_H;
+        int chestX = HOTBAR_X;
+        int chestY = HOTBAR_Y - (int)chestGridH - 20;
+
+        chestPanelBg = new UILayer.UIElement(
+            new Vector2f(chestX - 8, chestY - 12),
+            new Vector2f(chestGridW + 16, chestGridH + 24),
+            new Vector4f(0.2f, 0.15f, 0.1f, 0.6f)
+        );
+        chestPanelBg.visible = false;
+        layer.addElement(chestPanelBg);
+
+        for (int i = 0; i < 20; i++) {
+            int row = i / 10;
+            int col = i % 10;
+            float cx = chestX + col * (SLOT_W + 8);
+            float cy = chestY + row * SLOT_H;
+
+            UILayer.UIElement bg = new UILayer.UIElement(
+                new Vector2f(cx, cy),
+                new Vector2f(SLOT_W, SLOT_H),
+                new Vector4f(0.85f, 0.7f, 0.55f, 1)
+            );
+            final int slotIdx = i;
+            bg.onClick = () -> handleChestSlotClick(slotIdx);
+            bg.visible = false;
+            chestSlotBackgrounds[i] = bg;
+            layer.addElement(bg);
+
+            UILayer.UIElement itemEl = new UILayer.UIElement(
+                new Vector2f(cx + 24, cy + 16),
+                new Vector2f(40, 40),
+                new Vector4f(0, 0, 0, 0)
+            );
+            itemEl.visible = false;
+            chestSlotItems[i] = itemEl;
+            layer.addElement(itemEl);
+
+            UILayer.UIElement countBar = new UILayer.UIElement(
+                new Vector2f(cx + 12, cy + SLOT_H - 12),
+                new Vector2f(0, 6),
+                new Vector4f(1, 1, 1, 0.9f)
+            );
+            countBar.visible = false;
+            chestCountBars[i] = countBar;
+            layer.addElement(countBar);
+
+            UILayer.UIElement digit1 = new UILayer.UIElement(
+                new Vector2f(cx + SLOT_W - 32, cy + SLOT_H - 24),
+                new Vector2f(16, 16),
+                new Vector4f(1, 1, 1, 1)
+            );
+            digit1.visible = false;
+            digit1.textureId = fontTextureId;
+            chestCountDigit1[i] = digit1;
+            layer.addElement(digit1);
+
+            UILayer.UIElement digit2 = new UILayer.UIElement(
+                new Vector2f(cx + SLOT_W - 18, cy + SLOT_H - 24),
+                new Vector2f(16, 16),
+                new Vector4f(1, 1, 1, 1)
+            );
+            digit2.visible = false;
+            digit2.textureId = fontTextureId;
+            chestCountDigit2[i] = digit2;
+            layer.addElement(digit2);
+        }
+
         commandTextElement = new UILayer.UITextElement(
             new Vector2f(20, height - 40),
             "",
@@ -762,6 +966,7 @@ public class Main {
                 craftingCameraYaw = yaw;
                 craftingCameraPitch = CraftingTableConstants.CRAFTING_TABLE_PITCH;
                 needsCursorUpdate = true; // Signal render loop to release cursor on GL thread
+                ctx.activeUI = GameContext.ActiveUI.CRAFTING_TABLE;
                 // Load existing items from CraftingTableManager into the player's grid
                 playerInventory.loadFromCraftingTable(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ);
                 ctx.setStatus("Crafting Table — 3x3 grid");
@@ -829,6 +1034,11 @@ public class Main {
                     enemy.updateAI(pPos, dt);
                 }
             }
+        }
+
+        // Tick furnaces (smelting logic)
+        if (ctx.furnaceManager != null && ctx.chunkManager != null) {
+            ctx.furnaceManager.tickAll(ctx.chunkManager, dt);
         }
 
         entityManager.update(dt);
@@ -1435,13 +1645,23 @@ public class Main {
             // Save crafting grid back to CraftingTableManager before closing
             if (ctx.craftingTableOpen) {
                 playerInventory.saveToCraftingTable(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ);
-                // Persist to disk
                 if (ctx.worldSaveManager != null) {
                     ctx.worldSaveManager.saveCraftingData(ctx.activeDimension, ctx.craftingTableManager);
                 }
             }
+            // Save furnace data on close
+            if (ctx.furnaceOpen && ctx.worldSaveManager != null) {
+                ctx.worldSaveManager.saveFurnaceData(ctx.activeDimension, ctx.furnaceManager);
+            }
+            // Save chest data on close
+            if (ctx.chestOpen && ctx.worldSaveManager != null) {
+                ctx.worldSaveManager.saveChestData(ctx.activeDimension, ctx.chestManager);
+            }
             playerInventory.setCarriedStack(null);
-            ctx.craftingTableOpen = false; // Reset crafting table mode
+            ctx.craftingTableOpen = false;
+            ctx.furnaceOpen = false;
+            ctx.chestOpen = false;
+            ctx.activeUI = GameContext.ActiveUI.NONE;
             ctx.leftMousePressedThisFrame = false; // prevent stale press from inventory
         }
         updateCursorMode();
@@ -1493,30 +1713,287 @@ public class Main {
         hotbarActiveElement.pos.y = HOTBAR_Y + playerInventory.getSelectedSlot() * SLOT_H;
 
         // Update crafting grid visibility and content
-        int craftingPanelX = HOTBAR_X + 360;
-        int craftingPanelY = HOTBAR_Y + 20;
+        // Toggle between 2x2 (inventory), 3x3 (crafting table), furnace, and chest UIs
+        boolean use3x3 = ctx.craftingTableOpen && ctx.activeUI == GameContext.ActiveUI.CRAFTING_TABLE;
+        boolean useFurnace = ctx.furnaceOpen && ctx.activeUI == GameContext.ActiveUI.FURNACE;
+        boolean useChest = ctx.chestOpen && ctx.activeUI == GameContext.ActiveUI.CHEST;
 
-        // Toggle between 2x2 (inventory) and 3x3 (crafting table) crafting
-        boolean use3x3 = ctx.craftingTableOpen;
-
-        if (use3x3) {
-            // Hide 2x2 crafting slots
+        // --- Furnace UI ---
+        if (useFurnace) {
+            // Hide crafting UIs
             for (int i = 0; i < CRAFTING_SLOTS; i++) {
                 craftingSlotBackgrounds[i].visible = false;
                 craftingSlotItems[i].visible = false;
             }
-            // No slot backgrounds or 2D item icons — the 3D camera perspective shows the crafting table
             craftingTableBg.visible = false;
             for (int i = 0; i < 9; i++) {
                 crafting3x3SlotBackgrounds[i].visible = false;
                 crafting3x3SlotItems[i].visible = false;
             }
+            chestPanelBg.visible = false;
+            for (int i = 0; i < 20; i++) {
+                chestSlotBackgrounds[i].visible = false;
+                chestSlotItems[i].visible = false;
+                chestCountBars[i].visible = false;
+                chestCountDigit1[i].visible = false;
+                chestCountDigit2[i].visible = false;
+            }
+
+            FurnaceManager.FurnaceState state = ctx.furnaceManager.getState(ctx.furnaceBlockX, ctx.furnaceBlockY, ctx.furnaceBlockZ);
+
+            furnacePanelBg.visible = inventoryOpen;
+            furnaceInputBg.visible = inventoryOpen;
+            furnaceFuelBg.visible = inventoryOpen;
+            furnaceOutputBg.visible = inventoryOpen;
+            furnaceProgressBar.visible = inventoryOpen;
+            furnaceFuelBar.visible = inventoryOpen;
+            furnaceFuelText.visible = inventoryOpen;
+
+            // Input slot
+            if (inventoryOpen && state.input != null) {
+                ItemDefinition def = itemDefinitions.getDefinition(state.input.itemId);
+                if (def != null) {
+                    furnaceInputItem.visible = true;
+                    furnaceInputItem.textureId = textureManager.getTextureArrayId();
+                    furnaceInputItem.textureType = 2;
+                    furnaceInputItem.layer = def.iconLayer;
+                    furnaceInputItem.color.set(1, 1, 1, 1);
+                } else {
+                    furnaceInputItem.visible = false;
+                }
+            } else {
+                furnaceInputItem.visible = false;
+            }
+
+            // Fuel slot
+            if (inventoryOpen && state.fuel != null) {
+                ItemDefinition def = itemDefinitions.getDefinition(state.fuel.itemId);
+                if (def != null) {
+                    furnaceFuelItem.visible = true;
+                    furnaceFuelItem.textureId = textureManager.getTextureArrayId();
+                    furnaceFuelItem.textureType = 2;
+                    furnaceFuelItem.layer = def.iconLayer;
+                    furnaceFuelItem.color.set(1, 1, 1, 1);
+                } else {
+                    furnaceFuelItem.visible = false;
+                }
+            } else {
+                furnaceFuelItem.visible = false;
+            }
+
+            // Output slot
+            if (inventoryOpen && state.output != null) {
+                ItemDefinition def = itemDefinitions.getDefinition(state.output.itemId);
+                if (def != null) {
+                    furnaceOutputItem.visible = true;
+                    furnaceOutputItem.textureId = textureManager.getTextureArrayId();
+                    furnaceOutputItem.textureType = 2;
+                    furnaceOutputItem.layer = def.iconLayer;
+                    furnaceOutputItem.color.set(1, 1, 1, 1);
+                } else {
+                    furnaceOutputItem.visible = false;
+                }
+            } else {
+                furnaceOutputItem.visible = false;
+            }
+
+            // Progress bar
+            if (inventoryOpen && state.fuelBurnTime > 0 && state.input != null) {
+                float progress = Math.min(1.0f, state.smeltProgress);
+                furnaceProgressBar.size.set(20, (int)(50 * progress));
+                furnaceProgressBar.color.set(0.8f + 0.2f * progress, 0.4f + 0.4f * progress, 0.2f, 0.9f);
+            } else {
+                furnaceProgressBar.size.set(0, 0);
+            }
+
+            // Fuel bar
+            if (inventoryOpen && state.isLit()) {
+                float fuelPct = state.fuelBurnTime / state.maxFuelBurnTime;
+                furnaceFuelBar.size.set(60 * fuelPct, 20);
+                furnaceFuelBar.color.set(1.0f, 0.5f, 0.0f, 0.8f);
+                furnaceFuelText.text = String.format("%.1fs", state.fuelBurnTime);
+            } else {
+                furnaceFuelBar.size.set(0, 0);
+                furnaceFuelText.text = "No fuel";
+            }
         } else {
-            // Show 2x2 crafting slots
+            furnacePanelBg.visible = false;
+            furnaceInputBg.visible = false;
+            furnaceFuelBg.visible = false;
+            furnaceOutputBg.visible = false;
+            furnaceInputItem.visible = false;
+            furnaceFuelItem.visible = false;
+            furnaceOutputItem.visible = false;
+            furnaceProgressBar.visible = false;
+            furnaceFuelBar.visible = false;
+            furnaceFuelText.visible = false;
+        }
+
+        // --- Chest UI ---
+        if (useChest) {
+            // Hide crafting/furnace UIs
+            for (int i = 0; i < CRAFTING_SLOTS; i++) {
+                craftingSlotBackgrounds[i].visible = false;
+                craftingSlotItems[i].visible = false;
+            }
             craftingTableBg.visible = false;
             for (int i = 0; i < 9; i++) {
                 crafting3x3SlotBackgrounds[i].visible = false;
                 crafting3x3SlotItems[i].visible = false;
+            }
+            furnacePanelBg.visible = false;
+            furnaceInputBg.visible = false;
+            furnaceFuelBg.visible = false;
+            furnaceOutputBg.visible = false;
+            furnaceInputItem.visible = false;
+            furnaceFuelItem.visible = false;
+            furnaceOutputItem.visible = false;
+            furnaceProgressBar.visible = false;
+            furnaceFuelBar.visible = false;
+            furnaceFuelText.visible = false;
+
+            chestPanelBg.visible = inventoryOpen;
+
+            ItemStack[] chestInv = ctx.chestManager.getInventory(ctx.chestBlockX, ctx.chestBlockY, ctx.chestBlockZ);
+            for (int i = 0; i < 20; i++) {
+                boolean slotVisible = inventoryOpen;
+                chestSlotBackgrounds[i].visible = slotVisible;
+
+                ItemStack stack = (chestInv != null && i < chestInv.length) ? chestInv[i] : null;
+                UILayer.UIElement itemEl = chestSlotItems[i];
+                UILayer.UIElement countBar = chestCountBars[i];
+                UILayer.UIElement digit1 = chestCountDigit1[i];
+                UILayer.UIElement digit2 = chestCountDigit2[i];
+
+                if (!slotVisible || stack == null) {
+                    itemEl.visible = false;
+                    countBar.visible = false;
+                    digit1.visible = false;
+                    digit2.visible = false;
+                    continue;
+                }
+
+                ItemDefinition def = itemDefinitions.getDefinition(stack.itemId);
+                itemEl.visible = true;
+                itemEl.textureId = textureManager.getTextureArrayId();
+                itemEl.textureType = 2;
+                itemEl.layer = def.iconLayer;
+                itemEl.color.set(1, 1, 1, 1);
+                itemEl.size.set(40, 40);
+                itemEl.pos.set(chestSlotBackgrounds[i].pos.x + 24, chestSlotBackgrounds[i].pos.y + 16);
+
+                if (inventoryOpen && chestSlotBackgrounds[i].isPointInside(lastMouseX, lastMouseY)) {
+                    if (def != null) {
+                        itemNameElement.text = def.displayName;
+                        itemNameElement.visible = true;
+                        itemNameElement.color.w = 1.0f;
+                        itemNameDisplayUntil = time + 0.1;
+                    }
+                }
+
+                if (def != null && def.maxStack > 1 && stack.count > 1) {
+                    countBar.visible = true;
+                    countBar.color.set(def.color.x, def.color.y, def.color.z, 0.85f);
+                    countBar.pos.set(chestSlotBackgrounds[i].pos.x + 12, chestSlotBackgrounds[i].pos.y + SLOT_H - 12);
+                    countBar.size.set((SLOT_W - 24) * Math.min(stack.count, def.maxStack) / (float) def.maxStack, 6);
+
+                    if (fontTextureId != 0) {
+                        if (stack.count >= 10) {
+                            digit1.visible = true;
+                            int d1 = stack.count / 10;
+                            int charCode = 48 + d1;
+                            digit1.uvOffset.set((charCode % 16) / 16.0f, (charCode / 16) / 16.0f);
+                            digit1.uvScale.set(1 / 16.0f, 1 / 16.0f);
+                            digit2.visible = true;
+                            int d2 = stack.count % 10;
+                            charCode = 48 + d2;
+                            digit2.uvOffset.set((charCode % 16) / 16.0f, (charCode / 16) / 16.0f);
+                            digit2.uvScale.set(1 / 16.0f, 1 / 16.0f);
+                        } else {
+                            digit1.visible = false;
+                            digit2.visible = true;
+                            int d2 = stack.count;
+                            int charCode = 48 + d2;
+                            digit2.uvOffset.set((charCode % 16) / 16.0f, (charCode / 16) / 16.0f);
+                            digit2.uvScale.set(1 / 16.0f, 1 / 16.0f);
+                        }
+                    } else {
+                        digit1.visible = false;
+                        digit2.visible = false;
+                    }
+                } else {
+                    countBar.visible = false;
+                    digit1.visible = false;
+                    digit2.visible = false;
+                }
+            }
+        } else {
+            chestPanelBg.visible = false;
+            for (int i = 0; i < 20; i++) {
+                chestSlotBackgrounds[i].visible = false;
+                chestSlotItems[i].visible = false;
+                chestCountBars[i].visible = false;
+                chestCountDigit1[i].visible = false;
+                chestCountDigit2[i].visible = false;
+            }
+        }
+
+        // --- 3x3 Crafting table UI ---
+        if (use3x3) {
+            // Hide other UIs
+            for (int i = 0; i < CRAFTING_SLOTS; i++) {
+                craftingSlotBackgrounds[i].visible = false;
+                craftingSlotItems[i].visible = false;
+            }
+            craftingTableBg.visible = false;
+            for (int i = 0; i < 9; i++) {
+                crafting3x3SlotBackgrounds[i].visible = false;
+                crafting3x3SlotItems[i].visible = false;
+            }
+            // Hide furnace/chest during crafting table
+            furnacePanelBg.visible = false;
+            furnaceInputBg.visible = false;
+            furnaceFuelBg.visible = false;
+            furnaceOutputBg.visible = false;
+            furnaceInputItem.visible = false;
+            furnaceFuelItem.visible = false;
+            furnaceOutputItem.visible = false;
+            furnaceProgressBar.visible = false;
+            furnaceFuelBar.visible = false;
+            furnaceFuelText.visible = false;
+            chestPanelBg.visible = false;
+            for (int i = 0; i < 20; i++) {
+                chestSlotBackgrounds[i].visible = false;
+                chestSlotItems[i].visible = false;
+                chestCountBars[i].visible = false;
+                chestCountDigit1[i].visible = false;
+                chestCountDigit2[i].visible = false;
+            }
+        } else if (!useFurnace && !useChest) {
+            // Show 2x2 crafting slots (default inventory mode)
+            craftingTableBg.visible = false;
+            for (int i = 0; i < 9; i++) {
+                crafting3x3SlotBackgrounds[i].visible = false;
+                crafting3x3SlotItems[i].visible = false;
+            }
+            // Hide furnace/chest in default mode
+            furnacePanelBg.visible = false;
+            furnaceInputBg.visible = false;
+            furnaceFuelBg.visible = false;
+            furnaceOutputBg.visible = false;
+            furnaceInputItem.visible = false;
+            furnaceFuelItem.visible = false;
+            furnaceOutputItem.visible = false;
+            furnaceProgressBar.visible = false;
+            furnaceFuelBar.visible = false;
+            furnaceFuelText.visible = false;
+            chestPanelBg.visible = false;
+            for (int i = 0; i < 20; i++) {
+                chestSlotBackgrounds[i].visible = false;
+                chestSlotItems[i].visible = false;
+                chestCountBars[i].visible = false;
+                chestCountDigit1[i].visible = false;
+                chestCountDigit2[i].visible = false;
             }
 
             for (int i = 0; i < CRAFTING_SLOTS; i++) {
@@ -1691,6 +2168,88 @@ public class Main {
                 heart.uvOffset.set((uv.x + 0.5f) / texW, (uv.y + 0.5f) / texH);
                 heart.uvScale.set((uv.z - 1.0f) / texW, (uv.w - 1.0f) / texH);
             }
+        }
+    }
+
+    // --- Furnace slot click handler ---
+    private void handleFurnaceSlotClick(int slot) {
+        // slot 0 = input, 1 = fuel, 2 = output
+        FurnaceManager.FurnaceState state = ctx.furnaceManager.getState(ctx.furnaceBlockX, ctx.furnaceBlockY, ctx.furnaceBlockZ);
+        ItemStack carried = playerInventory.getCarriedStack();
+
+        if (slot == 2) {
+            // Output slot: take items out to inventory or carried
+            if (state.output != null) {
+                if (carried == null) {
+                    if (playerInventory.addItem(state.output.itemId, state.output.count)) {
+                        state.output = null;
+                    }
+                } else if (carried.itemId.equals(state.output.itemId) && carried.count + state.output.count <= 64) {
+                    carried.count += state.output.count;
+                    state.output = null;
+                }
+            }
+            return;
+        }
+
+        // Input (0) or fuel (1) slot
+        ItemStack slotStack = (slot == 0) ? state.input : state.fuel;
+
+        if (carried == null && slotStack != null) {
+            // Pick up the item from the slot
+            playerInventory.setCarriedStack(slotStack.copy());
+            if (slot == 0) state.input = null;
+            else state.fuel = null;
+        } else if (carried != null && slotStack == null) {
+            // Place carried item into the slot
+            ItemStack placed = carried.copy();
+            placed.count = 1;
+            if (slot == 0) state.input = placed;
+            else state.fuel = placed;
+            carried.count--;
+            if (carried.count <= 0) playerInventory.setCarriedStack(null);
+        } else if (carried != null && slotStack != null && carried.itemId.equals(slotStack.itemId) && slotStack.count < 64) {
+            // Stack items
+            int transfer = Math.min(carried.count, 64 - slotStack.count);
+            slotStack.count += transfer;
+            carried.count -= transfer;
+            if (carried.count <= 0) playerInventory.setCarriedStack(null);
+        }
+
+        // Save furnace state after modification
+        if (ctx.worldSaveManager != null) {
+            ctx.worldSaveManager.saveFurnaceData(ctx.activeDimension, ctx.furnaceManager);
+        }
+    }
+
+    // --- Chest slot click handler ---
+    private void handleChestSlotClick(int slot) {
+        ItemStack[] chestInv = ctx.chestManager.getInventory(ctx.chestBlockX, ctx.chestBlockY, ctx.chestBlockZ);
+        if (chestInv == null) return;
+
+        ItemStack slotStack = chestInv[slot];
+        ItemStack carried = playerInventory.getCarriedStack();
+
+        if (carried == null && slotStack != null) {
+            // Pick up from chest
+            playerInventory.setCarriedStack(slotStack.copy());
+            chestInv[slot] = null;
+        } else if (carried != null && slotStack == null) {
+            // Place into chest
+            ItemStack placed = carried.copy();
+            chestInv[slot] = placed;
+            playerInventory.setCarriedStack(null);
+        } else if (carried != null && slotStack != null && carried.itemId.equals(slotStack.itemId) && slotStack.count < 64) {
+            // Stack
+            int transfer = Math.min(carried.count, 64 - slotStack.count);
+            slotStack.count += transfer;
+            carried.count -= transfer;
+            if (carried.count <= 0) playerInventory.setCarriedStack(null);
+        }
+
+        ctx.chestManager.setInventory(ctx.chestBlockX, ctx.chestBlockY, ctx.chestBlockZ, chestInv);
+        if (ctx.worldSaveManager != null) {
+            ctx.worldSaveManager.saveChestData(ctx.activeDimension, ctx.chestManager);
         }
     }
 
@@ -1885,6 +2444,15 @@ public class Main {
         blockDataManager.registerBlock(113, "mossy_holystone", textureManager, aetherModels);
         blockDataManager.registerBlock(114, "holystone_bricks", textureManager, aetherModels);
         blockDataManager.registerBlock(115, "crafting_table", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(116, "furnace_off", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(117, "furnace_on", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(118, "chest", textureManager, "src/main/resources/assets/minecraft/models/block");
+        // --- Vegetation & Decorative Blocks ---
+        blockDataManager.registerBlock(119, "birch_log", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(120, "spruce_log", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(121, "dandelion", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(122, "rose", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(123, "tallgrass", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.uploadToGPU();
     }
 

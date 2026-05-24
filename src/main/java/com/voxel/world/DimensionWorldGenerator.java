@@ -449,10 +449,6 @@ public class DimensionWorldGenerator extends WorldGenerator {
                 int dz = wz - SPAWN_Z;
                 if (dx * dx + dz * dz < 100) continue;
 
-                // Tree noise - about 2% chance per grass block
-                float treeValue = treeNoise.noise(wx, wz, 0.1f);
-                if (treeValue < 0.96f) continue;
-
                 int height = getFinalHeight(wx, wz);
                 if (height < WATER_LEVEL + 1) continue; // Only on land
 
@@ -460,10 +456,38 @@ public class DimensionWorldGenerator extends WorldGenerator {
                 int surfaceBlock = world.getVoxel(wx, height, wz);
                 if (surfaceBlock != 1) continue;
 
-                // Make sure there's enough vertical space
-                // (Trees can span multiple chunk sections)
-                if (cy == (height >> 4)) {
-                    placeOakTree(world, wx, height + 1, wz);
+                // Only process if this chunk section contains the surface
+                if (cy != (height >> 4)) continue;
+
+                // Tree noise - about 2% chance per grass block
+                float treeValue = treeNoise.noise(wx, wz, 0.1f);
+                if (treeValue >= 0.96f) {
+                    // Choose tree type: oak (0-33%), birch (33-66%), spruce (66-100%)
+                    float treeType = treeNoise.noise(wx + 1000, wz + 2000, 0.15f);
+                    if (treeType < 0.0f) {
+                        placeBirchTree(world, wx, height + 1, wz);
+                    } else if (treeType < 0.5f) {
+                        placeOakTree(world, wx, height + 1, wz);
+                    } else {
+                        placeSpruceTree(world, wx, height + 1, wz);
+                    }
+                }
+
+                // Flowers: about 7% chance on grass, clustered via noise
+                float flowerValue = treeNoise.noise(wx + 500, wz + 500, 0.15f);
+                if (flowerValue > 0.85f) {
+                    int aboveBlock = world.getVoxel(wx, height + 1, wz);
+                    if (aboveBlock == 0) {
+                        // Choose flower type: dandelion (60%) or rose (40%)
+                        float flowerType = treeNoise.noise(wx + 700, wz + 900, 0.2f);
+                        if (flowerType < 0.2f) {
+                            world.setVoxel(wx, height + 1, wz, 121); // dandelion
+                        } else if (flowerType < 0.6f) {
+                            world.setVoxel(wx, height + 1, wz, 122); // rose
+                        } else {
+                            world.setVoxel(wx, height + 1, wz, 123); // tallgrass
+                        }
+                    }
                 }
             }
         }
@@ -533,6 +557,90 @@ public class DimensionWorldGenerator extends WorldGenerator {
                     }
                     // Don't replace trunk blocks
                     if (lx == 0 && lz == 0 && ly > y && ly < y + trunkHeight - 1) continue;
+                    int existing = world.getVoxel(x + lx, ly, z + lz);
+                    if (existing == 0 || existing == 13 || existing == 1) {
+                        world.setVoxel(x + lx, ly, z + lz, 4);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Places a tall, slender birch tree with a white trunk.
+     * Birch grows taller than oak (5-7 blocks) with fewer side branches.
+     */
+    private void placeBirchTree(World world, int x, int y, int z) {
+        int trunkHeight = 5 + (int)(Math.abs(continentalNoise.noise(x + 50, z + 100, 0.5f)) * 2.0f);
+
+        // Place trunk (block type 119 = birch_log)
+        for (int i = 0; i < trunkHeight; i++) {
+            world.setVoxel(x, y + i, z, 119);
+        }
+
+        // Place leaves (block type 4 = oak_leaves — using same leaf texture)
+        // Birch has a taller, narrower canopy than oak
+        int leafBaseY = y + trunkHeight - 3;
+        int leafTopY = y + trunkHeight;
+
+        for (int ly = leafBaseY; ly <= leafTopY; ly++) {
+            int radius = (ly == leafTopY) ? 1 : 2;
+            // Birch canopy is narrower: skip many corner blocks
+            for (int lx = -radius; lx <= radius; lx++) {
+                for (int lz = -radius; lz <= radius; lz++) {
+                    int distSq = lx * lx + lz * lz;
+                    if (distSq > radius * radius) continue;
+                    // Only fill leaf blocks adjacent to trunk or other leaves
+                    if (distSq > 1 && (Math.abs(lx) == Math.abs(lz))) {
+                        if (treeNoise.noise(x + lx, z + lz, 0.4f) > 0.6f) continue;
+                    }
+                    if (lx == 0 && lz == 0 && ly > y && ly < y + trunkHeight - 1) continue;
+                    int existing = world.getVoxel(x + lx, ly, z + lz);
+                    if (existing == 0 || existing == 13 || existing == 1) {
+                        world.setVoxel(x + lx, ly, z + lz, 4);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Places a tall, cone-shaped spruce tree with dark bark.
+     * Spruce tapers from bottom to top with layered foliage.
+     */
+    private void placeSpruceTree(World world, int x, int y, int z) {
+        int trunkHeight = 6 + (int)(Math.abs(continentalNoise.noise(x + 200, z + 300, 0.4f)) * 3.0f);
+
+        // Place trunk (block type 120 = spruce_log)
+        for (int i = 0; i < trunkHeight; i++) {
+            world.setVoxel(x, y + i, z, 120);
+        }
+
+        // Place leaves in layers — narrow at top, wider at bottom (cone shape)
+        // Each layer is a ring of leaves at a specific height
+        int[][] layers = {
+            {trunkHeight - 1, 1},  // Top: radius 1 (just the tip)
+            {trunkHeight - 2, 1},  // Below top: radius 1
+            {trunkHeight - 3, 2},  // Mid-upper: radius 2
+            {trunkHeight - 4, 2},  // Mid-lower: radius 2
+            {trunkHeight - 5, 3},  // Lower: radius 3
+            {trunkHeight - 6, 3},  // Bottom: radius 3
+        };
+
+        for (int[] layer : layers) {
+            int ly = y + layer[0];
+            int radius = layer[1];
+
+            if (ly < y) continue; // Don't place leaves below ground
+
+            for (int lx = -radius; lx <= radius; lx++) {
+                for (int lz = -radius; lz <= radius; lz++) {
+                    int distSq = lx * lx + lz * lz;
+                    if (distSq > radius * radius) continue;
+                    // Skip interior near trunk for lower layers for a more natural look
+                    if (radius >= 2 && distSq <= 1 && ly < y + trunkHeight - 2) continue;
+                    // Randomly skip some edge blocks
+                    if (distSq == radius * radius && treeNoise.noise(x + lx, z + lz, 0.5f) > 0.6f) continue;
                     int existing = world.getVoxel(x + lx, ly, z + lz);
                     if (existing == 0 || existing == 13 || existing == 1) {
                         world.setVoxel(x + lx, ly, z + lz, 4);

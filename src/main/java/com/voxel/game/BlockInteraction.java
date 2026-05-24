@@ -2,8 +2,10 @@ package com.voxel.game;
 
 import org.joml.Vector3f;
 
+import com.voxel.game.GameContext.ActiveUI;
 import com.voxel.game.GameContext.CameraMode;
 import com.voxel.game.GameContext.GameMode;
+import com.voxel.game.ItemDefinitions.ItemStack;
 
 /**
  * Handles mining, block breaking, block placement, and raycasting.
@@ -16,6 +18,34 @@ public class BlockInteraction {
 
     public BlockInteraction(GameContext ctx) {
         this.ctx = ctx;
+    }
+
+    /** Block ID constants */
+    private static final int BLOCK_CRAFTING_TABLE = 115;
+    private static final int BLOCK_FURNACE = 116;
+    private static final int BLOCK_FURNACE_ON = 117;
+    private static final int BLOCK_CHEST = 118;
+
+    /** Opens the furnace UI for the given block position. */
+    private void openFurnace(int x, int y, int z) {
+        ctx.furnaceBlockX = x;
+        ctx.furnaceBlockY = y;
+        ctx.furnaceBlockZ = z;
+        ctx.furnaceOpen = true;
+        ctx.inventoryOpen = true;
+        ctx.activeUI = GameContext.ActiveUI.FURNACE;
+        ctx.setStatus("Furnace");
+    }
+
+    /** Opens the chest UI for the given block position. */
+    private void openChest(int x, int y, int z) {
+        ctx.chestBlockX = x;
+        ctx.chestBlockY = y;
+        ctx.chestBlockZ = z;
+        ctx.chestOpen = true;
+        ctx.inventoryOpen = true;
+        ctx.activeUI = GameContext.ActiveUI.CHEST;
+        ctx.setStatus("Chest");
     }
 
     public void updateMining(float dt) {
@@ -82,6 +112,28 @@ public class BlockInteraction {
             }
         }
 
+        // If breaking a furnace, return items in its slots to the player
+        if (blockId == 116 || blockId == 117) {
+            FurnaceManager.FurnaceState state = ctx.furnaceManager.removeFurnace(x, y, z);
+            if (state != null) {
+                if (state.input != null) ctx.playerInventory.addItem(state.input.itemId, state.input.count);
+                if (state.fuel != null) ctx.playerInventory.addItem(state.fuel.itemId, state.fuel.count);
+                if (state.output != null) ctx.playerInventory.addItem(state.output.itemId, state.output.count);
+            }
+        }
+
+        // If breaking a chest, return items to the player
+        if (blockId == 118) {
+            ItemStack[] inv = ctx.chestManager.removeChest(x, y, z);
+            if (inv != null) {
+                for (int i = 0; i < ChestManager.CHEST_SLOTS; i++) {
+                    if (inv[i] != null) {
+                        ctx.playerInventory.addItem(inv[i].itemId, inv[i].count);
+                    }
+                }
+            }
+        }
+
         if (collectDrop) {
             String dropItem;
             int dropCount = 1;
@@ -102,6 +154,19 @@ public class BlockInteraction {
 
         // Right-click on a crafting table block — start cutscene walk to table
         int hitBlock = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
+
+        // Right-click on furnace
+        if ((hitBlock == BLOCK_FURNACE || hitBlock == BLOCK_FURNACE_ON) && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.furnaceOpen) {
+            openFurnace(hit[0], hit[1], hit[2]);
+            return;
+        }
+
+        // Right-click on chest
+        if (hitBlock == BLOCK_CHEST && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.chestOpen) {
+            openChest(hit[0], hit[1], hit[2]);
+            return;
+        }
+
         if (hitBlock == 115 && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.craftingTableOpen) {
             // If the table has items and player isn't holding a block, extract items directly
             String[][] existingGrid = ctx.craftingTableManager.getGrid(hit[0], hit[1], hit[2]);
