@@ -136,6 +136,16 @@ public class WorldSaveManager {
         return getChunkFile(dim, cx, cz).exists();
     }
 
+    /** Returns the furnace data file for a dimension. */
+    private File getFurnaceFile(DimensionType dim) {
+        return new File(getDimensionDir(dim), "furnace.dat");
+    }
+
+    /** Returns the chest data file for a dimension. */
+    private File getChestFile(DimensionType dim) {
+        return new File(getDimensionDir(dim), "chest.dat");
+    }
+
     /** Saves the CraftingTableManager data for a dimension. */
     public void saveCraftingData(DimensionType dim, CraftingTableManager manager) {
         try {
@@ -154,6 +164,48 @@ public class WorldSaveManager {
             manager.loadFromFile(file);
         } catch (IOException e) {
             System.err.println("Failed to load crafting data for " + dim.name + ": " + e.getMessage());
+        }
+    }
+
+    // --- Furnace data ---
+
+    public void saveFurnaceData(DimensionType dim, com.voxel.game.FurnaceManager manager) {
+        try {
+            File file = getFurnaceFile(dim);
+            file.getParentFile().mkdirs();
+            manager.saveToFile(file);
+        } catch (IOException e) {
+            System.err.println("Failed to save furnace data for " + dim.name + ": " + e.getMessage());
+        }
+    }
+
+    public void loadFurnaceData(DimensionType dim, com.voxel.game.FurnaceManager manager) {
+        try {
+            File file = getFurnaceFile(dim);
+            manager.loadFromFile(file);
+        } catch (IOException e) {
+            System.err.println("Failed to load furnace data for " + dim.name + ": " + e.getMessage());
+        }
+    }
+
+    // --- Chest data ---
+
+    public void saveChestData(DimensionType dim, com.voxel.game.ChestManager manager) {
+        try {
+            File file = getChestFile(dim);
+            file.getParentFile().mkdirs();
+            manager.saveToFile(file);
+        } catch (IOException e) {
+            System.err.println("Failed to save chest data for " + dim.name + ": " + e.getMessage());
+        }
+    }
+
+    public void loadChestData(DimensionType dim, com.voxel.game.ChestManager manager) {
+        try {
+            File file = getChestFile(dim);
+            manager.loadFromFile(file);
+        } catch (IOException e) {
+            System.err.println("Failed to load chest data for " + dim.name + ": " + e.getMessage());
         }
     }
 }

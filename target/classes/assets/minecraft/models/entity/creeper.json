@@ -1,0 +1,40 @@
+{
+  "parts": [
+    {
+      "name": "head",
+      "from": [-4.0, 24.0, -4.0],
+      "size": [8.0, 8.0, 8.0],
+      "absolute_offset": [0.0, 24.0, 0.0],
+      "texture": "creeper/creeper",
+      "uv": [0, 0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body",
+      "from": [-6.0, 12.0, -4.0],
+      "size": [12.0, 12.0, 8.0],
+      "absolute_offset": [0.0, 12.0, 0.0],
+      "texture": "creeper/creeper",
+      "uv": [16, 16],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "left_leg",
+      "from": [-6.0, 0.0, -2.0],
+      "size": [4.0, 12.0, 4.0],
+      "absolute_offset": [-2.0, 10.0, 0.0],
+      "texture": "creeper/creeper",
+      "uv": [0, 16],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "right_leg",
+      "from": [2.0, 0.0, -2.0],
+      "size": [4.0, 12.0, 4.0],
+      "absolute_offset": [2.0, 10.0, 0.0],
+      "texture": "creeper/creeper",
+      "uv": [0, 16],
+      "texture_mapping": "cuboid_atlas"
+    }
+  ]
+}

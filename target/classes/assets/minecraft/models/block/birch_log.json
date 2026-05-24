@@ -1,7 +1,7 @@
 {
-    "parent": "block/cube_column",
     "textures": {
-        "end": "blocks/log_birch_top",
-        "side": "blocks/log_birch"
+        "end": "minecraft:blocks/log_birch_top",
+        "side": "minecraft:blocks/log_birch",
+        "all": "minecraft:blocks/log_birch"
     }
 }

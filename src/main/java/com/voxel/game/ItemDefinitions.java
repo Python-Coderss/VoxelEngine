@@ -116,6 +116,9 @@ public class ItemDefinitions {
         registerBlock("mossy_holystone", "Mossy Holystone", 113, "mossy_holystone");
         registerBlock("holystone_bricks", "Holystone Bricks", 114, "holystone_bricks");
         registerBlock("crafting_table", "Crafting Table", 115, "crafting_table_top");
+        registerBlock("furnace_off", "Furnace", 116, "furnace_front");
+        registerBlock("furnace_on", "Furnace", 117, "furnace_front_on");
+        registerBlock("chest", "Chest", 118, "chest_front");
         registerTool("stick", "Stick", "stick", ToolType.HAND, 1.0f, new Vector4f(0.85f, 0.7f, 0.5f, 1));
         // --- Aether tools ---
         registerTool("wood_pickaxe", "Wood Pickaxe", "wood_pickaxe", ToolType.PICKAXE, 4.5f, new Vector4f(1, 1, 1, 1));

@@ -91,6 +91,16 @@ public class GameContext {
     public CraftingTableManager craftingTableManager = new CraftingTableManager();
     public boolean craftingTableOpen = false;
     public int craftingTableBlockX, craftingTableBlockY, craftingTableBlockZ;
+
+    // --- Furnace ---
+    public FurnaceManager furnaceManager = new FurnaceManager();
+    public boolean furnaceOpen = false;
+    public int furnaceBlockX, furnaceBlockY, furnaceBlockZ;
+
+    // --- Chest ---
+    public ChestManager chestManager = new ChestManager();
+    public boolean chestOpen = false;
+    public int chestBlockX, chestBlockY, chestBlockZ;
     // Crafting grid item texture layers for 3D rendering (-1 = empty slot)
     public int[] craftingItemLayers = new int[]{-1,-1,-1,-1,-1,-1,-1,-1,-1};
 
@@ -131,6 +141,10 @@ public class GameContext {
     // --- World Save ---
     public WorldSaveManager worldSaveManager;
 
+    // --- Active UI state (which overlay is shown) ---
+    public enum ActiveUI { NONE, INVENTORY, CHEST, FURNACE, CRAFTING_TABLE }
+    public ActiveUI activeUI = ActiveUI.NONE;
+
     // --- Runnables passed by Main for dimension switching ---
     public Runnable uploadWorldToGpu;
     public Runnable updateCursorMode;
@@ -147,9 +161,11 @@ public class GameContext {
         DimensionType previous = activeDimension;
         int renderDistance = target == DimensionType.OVERWORLD ? 8 : 6;
 
-        // Save crafting data for the current dimension before switching
+        // Save crafting/furnace/chest data for the current dimension before switching
         if (worldSaveManager != null && previous != null) {
             worldSaveManager.saveCraftingData(previous, craftingTableManager);
+            worldSaveManager.saveFurnaceData(previous, furnaceManager);
+            worldSaveManager.saveChestData(previous, chestManager);
         }
 
         dimensionManager.ensureDimension(target, renderDistance);
@@ -182,9 +198,11 @@ public class GameContext {
             }
         }
         player.getPosition().set(1024, spawnY, 1024);
-        // Load crafting data for the new dimension
+        // Load crafting/furnace/chest data for the new dimension
         if (worldSaveManager != null) {
             worldSaveManager.loadCraftingData(target, craftingTableManager);
+            worldSaveManager.loadFurnaceData(target, furnaceManager);
+            worldSaveManager.loadChestData(target, chestManager);
         }
 
         if (uploadWorldToGpu != null) uploadWorldToGpu.run();

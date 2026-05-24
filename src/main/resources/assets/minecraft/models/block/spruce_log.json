@@ -1,7 +1,7 @@
 {
-    "parent": "block/cube_column",
     "textures": {
-        "end": "blocks/log_spruce_top",
-        "side": "blocks/log_spruce"
+        "end": "minecraft:blocks/log_spruce_top",
+        "side": "minecraft:blocks/log_spruce",
+        "all": "minecraft:blocks/log_spruce"
     }
 }
