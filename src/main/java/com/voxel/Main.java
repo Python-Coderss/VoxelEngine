@@ -412,24 +412,6 @@ public class Main {
             zombie.setWorld(world);
             entityManager.addEntity(zombie);
         }
-        // Skeleton — ranged enemies slightly farther out
-        for (int i = 0; i < 2; i++) {
-            com.voxel.entity.SkeletonEntity skeleton = new com.voxel.entity.SkeletonEntity(110 + i, new Vector3f(1040 + i * 15, 64, 1010), textureManager, p);
-            skeleton.setWorld(world);
-            entityManager.addEntity(skeleton);
-        }
-        // Spider — fast climbers
-        for (int i = 0; i < 2; i++) {
-            com.voxel.entity.SpiderEntity spider = new com.voxel.entity.SpiderEntity(120 + i, new Vector3f(1010 + i * 10, 64, 1050), textureManager, p);
-            spider.setWorld(world);
-            entityManager.addEntity(spider);
-        }
-        // Creeper — explosive menace
-        for (int i = 0; i < 2; i++) {
-            com.voxel.entity.CreeperEntity creeper = new com.voxel.entity.CreeperEntity(130 + i, new Vector3f(1050 + i * 10, 65, 1040), textureManager, p);
-            creeper.setWorld(world);
-            entityManager.addEntity(creeper);
-        }
     }
 
     private void setupUi() {

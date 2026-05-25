@@ -90,6 +90,7 @@ public class EntityManager {
             entityBuffer.putFloat(entity.tintColor.y);
             entityBuffer.putFloat(entity.tintColor.z);
             entityBuffer.putFloat(entity.tintAmount);
+            entityBuffer.putFloat(0.0f); // Padding for 64-byte alignment
             allParts.addAll(entity.parts);
         }
         entityBuffer.flip();
