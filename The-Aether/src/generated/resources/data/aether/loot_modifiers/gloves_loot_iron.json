@@ -1,0 +1,17 @@
+{
+  "type": "aether:gloves_loot",
+  "armor_material": "minecraft:iron",
+  "conditions": [
+    {
+      "condition": "minecraft:inverted",
+      "term": {
+        "condition": "neoforge:loot_table_id",
+        "loot_table_id": "aether:chests/ruined_portal"
+      }
+    }
+  ],
+  "gloves": {
+    "count": 1,
+    "id": "aether:iron_gloves"
+  }
+}

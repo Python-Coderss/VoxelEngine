@@ -1,0 +1,20 @@
+{
+  "aether.pro_tips.line.aether.risk_taking": "No tomar riesgos enormes lejos de casa.",
+  "block.aether.aerogel": "Aerogel",
+  "block.aether.altar": "Altar",
+  "block.aether.holystone_pressure_plate": "Placa de presión de piedra santa",
+  "block.aether.skyroot_pressure_plate": "Placa de presión de Skyroot",
+  "entity.aether.aerbunny": "Conejo aéreo",
+  "entity.aether.aerwhale": "Ballena aérea",
+  "entity.aether.moa": "Moa",
+  "entity.aether.phyg": "Phyg",
+  "gui.aether.menu.button.quick_load": "Q",
+  "gui.aether.menu.button.world_preview": "W",
+  "item.aether.regeneration_stone": "Piedra de Regeneracion",
+  "item.aether.yellow_cape": "Capa Amarilla",
+  "lore.item.aether.neptune_boots": "Esta armadura, que se encuentra en Mazmorras de plata, permite nadar más rápido en el agua. El conjunto completo es un sustituto mucho mejor para el encantamiento Agilidad acuática.",
+  "lore.item.aether.neptune_chestplate": "Esta armadura, que se encuentra en Mazmorras de plata, permite nadar más rápido en el agua. Combinada con una Burbuja de hierro, esta armadura es muy útil para derrotar templos submarinos.",
+  "lore.item.aether.neptune_gloves": "Estos guantes, que se encuentran en Mazmorras de plata, son necesarios para completar el conjunto de armadura de Neptuno, que permite caminar bajo el agua.",
+  "lore.item.aether.neptune_helmet": "Esta armadura, que se encuentra en Mazmorras de plata, permite nadar más rápido en el agua. Combinada con una Burbuja de hierro, esta armadura es muy útil para derrotar templos submarinos.",
+  "lore.item.aether.neptune_leggings": "Esta armadura, que se encuentra en Mazmorras de plata, permite nadar más rápido en el agua. Combinada con una Burbuja de hierro, esta armadura es súper útil para derrotar templos submarinos."
+}

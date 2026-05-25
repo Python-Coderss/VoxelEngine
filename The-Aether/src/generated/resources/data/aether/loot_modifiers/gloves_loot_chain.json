@@ -1,0 +1,17 @@
+{
+  "type": "aether:gloves_loot",
+  "armor_material": "minecraft:chainmail",
+  "conditions": [
+    {
+      "condition": "minecraft:inverted",
+      "term": {
+        "condition": "neoforge:loot_table_id",
+        "loot_table_id": "aether:chests/dungeon/gold/gold_dungeon_reward"
+      }
+    }
+  ],
+  "gloves": {
+    "count": 1,
+    "id": "aether:chainmail_gloves"
+  }
+}
