@@ -1,0 +1,154 @@
+00-Steven
+- Implementation of mcfunction support for in-world block conversion recipes.
+
+3vorp
+- Contribution of the algae overlay texture for the Skyroot Boat programmer art texture.
+
+AerodDev:
+- Implementation of the CTM textures.
+- Fixes to the Aether Dirt Path texture.
+- Fixes to the silver Life Shard hearts texture.
+
+Alexandra-Myers
+- Fixes to Combatify incompatibility.
+
+baguchan:
+- Implementation of allowing saddled entities to fall out of the Aether.
+- Improvements to entity AI to avoid entities falling out of the Aether.
+- Contributions to the Swet death animation.
+- Contributions to Skyroot Bed renderer.
+- Fixes to the Sheepuff renderer.
+- Fixes to the Dart layer renderers.
+- Fixes to Whirlwinds getting stuck vertically.
+
+Camotoy
+- Help with porting to 1.20.1.
+
+carl-vbn:
+- Fixes to a rare Moa crash.
+
+CartoonishVillain:
+- Fixes to the Sentry.
+- Fixes to the Aechor Plant.
+
+cassiancc
+- Fixes to a double drops NPE.
+
+CDAGaming:
+- Fixes to the Aether main menu.
+
+Cicopath
+- Further integration with Just Enough Effect Descriptions.
+
+darksonic300
+- Implementation of the is_cold damage type tag.
+- Changing aetherSurfaceRules() method to be public.
+- Changing Inebriation to not affect flying Creative and Spectator players.
+
+embeddedt
+- Fixes to make entity dimension falling checks more performant.
+- Fixes to make plant coloring more performant.
+- Fixes to Aerogel Walls culling neighboring block faces.
+
+FlashFyreMods
+- Implementation of more beta-accurate terrain generation for the Aether dimension.
+
+GizmoTheMoonPig
+- Help with porting to 1.20.4.
+- Implementation of Jade compatibility.
+- Implementation of Lootr compatibility.
+- Implementation of Randomium compatibility.
+- Implementation of Tips compatibility.
+- Fixes to Netherite Gloves being uncraftable with 1.20 datapack.
+- Fixes to the Life Shard silver heart overlay rendering.
+- Fixes to aether1 and aether2 music naming.
+- Fixes to Moa Skins GUI issues.
+- Fixes to glove rendering using a hardcoded leather color.
+
+indrada
+- Fixes to menu theme switching failing in edge cases.
+- Fixes to Aerwhales and Zephyrs spawning in enclosed spaces.
+
+InsomniaKitten
+- Providing the accessory inventory texture.
+
+Jonathing
+- Refactors to use Supplier instead of RegistryObject for parameters taking a MoaType.
+- Refactors to use wildcards for Suppliers for public API.
+- Refactors to use constructors instead of Google's helper methods for data structures.
+- Refactors to buildscript.
+- Refactors to remove unnecessary logging.
+- Fixes to the Sun Altar GUI slider moving out of the interface.
+- Fixes to a null error with block entities.
+- Fixes to jarJar-built file not reobfuscating.
+- Fixes to Jade compatibility with boss bars.
+- Cleanup of mixin and event code relating to Valkyrie Tools' reach.
+
+KaiAF
+- Fixes to Optifine incompatibility.
+
+KaiserOfNone
+- Fix client player syncing sending too many packets over the network.
+
+Kelvin285
+- Implementation of the world preview feature for the Aether's main menu.
+
+kodadacod
+- Implementation of the Skyroot Chest Boat programmer art.
+
+MehVahdJukaar
+- Updated the support for extinguishing Copper Lanterns.
+
+Mike-U5
+- Fixes to some Curios default slot icons being incorrect.
+
+mrjasonn
+- Improvements to mcfunctions for development testing.
+
+muzikbike
+- Contribution of the reference JSON for an improved Aercloud block model.
+
+AriaElidove
+- Contribution of the beta Lootr Mimic texture.
+
+rhysdh540
+- Contribution of Machete plugin code for JAR file optimization within the Gradle buildscript.
+
+saintselect
+- Integration for JEI.
+- Converting entity audio files from stereo to mono.
+- Fixes to the Gravitite Sword ability performing when it shouldn't.
+
+sunsette
+- Compression of aether5, chinchilla, and high.
+
+StonedCoal:
+- Implementation of the Aether's main menu.
+- Fixes to the Aerbunny.
+
+Toranktto
+- Fixes to missing recipe categories breaking servers on 1.19.2.
+
+Trico-Everfire
+- Fixes to Aechor Plants being able to be leashed.
+- Fixes to unintentional jumping on Blue Aerclouds.
+
+TunefulTurnip
+- Implementation of improved modifiability to Moa jump behavior and rendering.
+- Fixes to a crash from the Gold Dungeon in modded biomes.
+- Fixes to the Slider ignoring players not in line of sight.
+
+Ultrasquid9
+- Cleanup of Curios data converter.
+
+VoidLeech
+- Fixes to Skyroot Milk Bucket not working properly with milk fluid.
+
+YvanCywan
+- Made Skyroot Buckets work as fuel.
+
+Zepalesque
+- Fixes to the Slider.
+- Changes to EggLayEvent to use ItemStack.
+- Implementation of a custom Aether Grass bonemeal feature.
+- Implementation of an advancement sound override registry.

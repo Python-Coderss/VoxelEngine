@@ -1,0 +1,12 @@
+{
+  "type": "tipsmod:simple",
+  "text": {
+    "translate": "aether.pro_tips.line.aether.dart_shooter_crafting"
+  },
+  "title": {
+    "bold": true,
+    "color": "yellow",
+    "translate": "tipsmod.title.default",
+    "underlined": true
+  }
+}
