@@ -35,12 +35,19 @@ public class Player {
     public void update(float dt, World world, BlockDataManager blockDataManager) {
         if (isDead) return;
 
-        // Check if in liquid, cold aercloud, or blue aercloud
+        // Check for special block properties using data-driven flags
         isSwimming = checkInLiquid(world, blockDataManager);
+        
         int feetBlock = checkBlockAtFeet(world);
-        boolean inColdAercloud = feetBlock == 105 || checkBlockAtWaist(world) == 105;
-        boolean inBlueAercloud = feetBlock == 124 || checkBlockAtWaist(world) == 124;
-        boolean onQuicksoil = checkOnQuicksoil(world);
+        int waistBlock = checkBlockAtWaist(world);
+        
+        // Use block names for specialized Aether mechanics
+        String feetName = blockDataManager.getName(feetBlock);
+        String waistName = blockDataManager.getName(waistBlock);
+        
+        boolean inColdAercloud = feetName.contains("cold_aercloud") || waistName.contains("cold_aercloud");
+        boolean inBlueAercloud = feetName.contains("blue_aercloud") || waistName.contains("blue_aercloud");
+        boolean onQuicksoil = feetName.contains("quicksoil") || checkBlockBelow(world, blockDataManager).contains("quicksoil");
 
         if (!flying) {
             if (inBlueAercloud && !parachuteDeployed && velocity.y <= 0) {
@@ -98,12 +105,7 @@ public class Player {
         int y = (int) Math.floor(position.y + 0.5f); // Check at waist height
         int z = (int) Math.floor(position.z);
         int voxel = world.getVoxel(x, y, z);
-        if (voxel <= 0) return false;
-        
-        // This is a bit hacky since BlockDataManager doesn't expose a clean isLiquid(id) yet
-        // but we know name contains "water" or "lava"
-        String name = blockDataManager.getName(voxel);
-        return name.contains("water") || name.contains("lava");
+        return voxel > 0 && blockDataManager.isLiquid(voxel);
     }
 
     private void moveAndCollide(float dt, World world, BlockDataManager blockDataManager) {
@@ -291,6 +293,15 @@ public class Player {
         // Also check the block the player is standing in
         int feetBlock = world.getVoxel(x, (int) Math.floor(position.y), z);
         return feetBlock == 109;
+    }
+
+    /** Returns the block name below the player's feet. */
+    private String checkBlockBelow(World world, BlockDataManager blockDataManager) {
+        int x = (int) Math.floor(position.x);
+        int y = (int) Math.floor(position.y - 0.1f);
+        int z = (int) Math.floor(position.z);
+        int voxel = world.getVoxel(x, y, z);
+        return blockDataManager.getName(voxel);
     }
 
     // Getters and Setters

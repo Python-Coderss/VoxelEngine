@@ -6,8 +6,10 @@ package com.voxel.world;
  * getBlockType(), and decorate() with dimension-specific logic.
  */
 public class WorldGenerator {
+    protected final com.voxel.utils.BlockDataManager blockDataManager;
 
-    public WorldGenerator(long seed) {
+    public WorldGenerator(long seed, com.voxel.utils.BlockDataManager blockDataManager) {
+        this.blockDataManager = blockDataManager;
     }
 
     public int getHeight(int x, int z) {

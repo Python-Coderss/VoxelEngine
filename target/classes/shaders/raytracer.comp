@@ -717,14 +717,16 @@ void main() {
 
             // Initialize trans/refl from block data
             bool isLiquid = ((d1.w >> 10) & 1) == 1;
+            bool isPortal = ((d1.w >> 11) & 1) == 1;
+            bool isRedstoneWire = ((d1.w >> 12) & 1) == 1;
             trans = float(d1.z)/255.0; refl = float(d1.w & 0xFF)/255.0;
 
             // Alpha-based transparency: treat pixels with alpha < 0.1 as fully transparent
             // This must come AFTER trans initialization so it can override it
             if (texSample.a < 0.1) { trans = 1.0; alb = vec3(1.0); }
 
-            // Portal blocks: thin semi-transparent with animated swirl
-            if (voxel == 19u || voxel == 106u) {
+            // Portal blocks: semi-transparent with animated swirl
+            if (isPortal) {
                 // Make portal fully transparent so ray passes through
                 trans = 1.0;
                 // Animated swirl: shift UV over time for a flowing effect
@@ -732,15 +734,16 @@ void main() {
                 vec2 swirlUv = uv + vec2(sin(swirlTime + hp.y * 2.0 + hp.x), cos(swirlTime * 0.7 + hp.z * 2.0)) * 0.08;
                 vec4 swirlSample = texture(u_BlockTextures, vec3(swirlUv, float(tex)));
                 vec3 portalColor = swirlSample.rgb;
-                vec3 tint = (voxel == 19u) ? vec3(0.5, 0.1, 0.7) : vec3(0.6, 0.85, 1.0);
+                // Use block albedo for portal tint
+                vec3 tint = vec3(d2.rgb) / 255.0;
                 // Add edge glow near portal block borders
                 float edgeDist = 1.0 - min(abs(fract(hp.x) - 0.5), abs(fract(hp.z) - 0.5)) * 2.0;
                 float glow = pow(edgeDist, 3.0) * 0.5;
                 alb = mix(portalColor, tint, 0.5) + tint * glow * 0.3;
                 refl = 0.0;
             } else
-            // Redstone dust: tint by power level and draw connection arms
-            if (voxel == 29u && texSample.a >= 0.1) {
+            // Redstone wire: tint by power level and draw connection arms
+            if (isRedstoneWire && texSample.a >= 0.1) {
                 float pf = float(wirePower) / 15.0;
                 vec3 wireColor = vec3(0.6, 0.1, 0.1) + vec3(0.4, 0.1, 0.0) * pf;
                 alb *= wireColor;
@@ -799,14 +802,16 @@ void main() {
             }
 
             if (isLiquid) {
-                if (voxel == 21u) { // Lava: opaque with red/orange tint
+                // Determine liquid color and properties based on name-based albedo
+                vec3 liquidTint = vec3(d2.rgb) / 255.0;
+                if (liquidTint.r > liquidTint.b * 1.5) { // Likely Lava
                     trans = 0.0;
                     refl = 0.05;
-                    alb = mix(alb, vec3(1.0, 0.3, 0.05), 0.3);
-                } else { // Water: transparent with blue tint
+                    alb = mix(alb, liquidTint, 0.3);
+                } else { // Likely Water
                     trans = 0.6;
                     refl = 0.15;
-                    alb = mix(alb, vec3(0.0, 0.3, 0.8), 0.5);
+                    alb = mix(alb, liquidTint, 0.5);
                 }
             }
 
