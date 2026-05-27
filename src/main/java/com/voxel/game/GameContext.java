@@ -183,10 +183,14 @@ public class GameContext {
             // Scan increasingly larger squares centered at (1024, 1024)
             // Max scan radius: 24 blocks (covers 49x49 area)
             int maxScanRadius = 24;
+            // For Aether, terrain is bounded [0, 128]; scan within that range
+            // For End, baseHeight may be 0 or 60; use a wide scan range
+            int scanYMin = (target == DimensionType.AETHER) ? 40 : Math.max(0, target.baseHeight - 20);
+            int scanYMax = (target == DimensionType.AETHER) ? 128 : target.baseHeight + 10;
             for (int ox = -maxScanRadius; ox <= maxScanRadius && !foundSurface; ox += 3) {
                 for (int oz = -maxScanRadius; oz <= maxScanRadius && !foundSurface; oz += 3) {
                     int sx = 1024 + ox, sz = 1024 + oz;
-                    for (int sy = target.baseHeight + 3; sy < target.baseHeight + 28; sy++) {
+                    for (int sy = scanYMin; sy < scanYMax; sy++) {
                         int block = world.getVoxel(sx, sy, sz);
                         if (block != 0 && block != 106) {
                             spawnY = sy + 1;
@@ -196,8 +200,14 @@ public class GameContext {
                     }
                 }
             }
+            if (!foundSurface) spawnY = target.baseHeight; // Fallback if nothing found
         }
         player.getPosition().set(1024, spawnY, 1024);
+        player.setDimension(target);
+        // Sync playerEntity dimension for entity visibility filtering
+        if (playerEntity != null) {
+            playerEntity.dimension = target;
+        }
         // Load crafting/furnace/chest data for the new dimension
         if (worldSaveManager != null) {
             worldSaveManager.loadCraftingData(target, craftingTableManager);

@@ -14,6 +14,9 @@ public class Player {
     private boolean onGround = false;
     private boolean flying = false;
     private boolean isSwimming = false;
+    private boolean parachuteDeployed = false;
+    private String parachuteItemId = null;
+    private int parachuteSlotIndex = -1;
 
     private float health = 20.0f;
     private float maxHealth = 20.0f;
@@ -22,6 +25,7 @@ public class Player {
     private Vector3f spawnPoint = new Vector3f();
 
     private float yaw = -90, pitch = 0;
+    private com.voxel.world.DimensionType dimension = com.voxel.world.DimensionType.OVERWORLD;
 
     public Player(float x, float y, float z) {
         position.set(x, y, z);
@@ -31,11 +35,29 @@ public class Player {
     public void update(float dt, World world, BlockDataManager blockDataManager) {
         if (isDead) return;
 
-        // Check if in liquid
+        // Check if in liquid, cold aercloud, or blue aercloud
         isSwimming = checkInLiquid(world, blockDataManager);
+        int feetBlock = checkBlockAtFeet(world);
+        boolean inColdAercloud = feetBlock == 105 || checkBlockAtWaist(world) == 105;
+        boolean inBlueAercloud = feetBlock == 124 || checkBlockAtWaist(world) == 124;
+        boolean onQuicksoil = checkOnQuicksoil(world);
 
         if (!flying) {
-            if (isSwimming) {
+            if (inBlueAercloud && !parachuteDeployed && velocity.y <= 0) {
+                // Blue aercloud: launch player upward when landing/falling onto it
+                velocity.y = 12.0f;
+                fallDistance = 0;
+            } else if (parachuteDeployed) {
+                // Slow fall with parachute
+                velocity.y -= 2.5f * dt;
+                if (velocity.y < -3.0f) velocity.y = -3.0f; // Terminal velocity with parachute
+                fallDistance = 0; // No fall damage with parachute
+            } else if (inColdAercloud) {
+                // Cold aercloud: slow descent like a cushion
+                velocity.y -= 2.0f * dt;
+                if (velocity.y < -1.0f) velocity.y = -1.0f; // Very gentle terminal velocity
+                fallDistance = 0; // No fall damage on cold aercloud
+            } else if (isSwimming) {
                 velocity.y -= 2.0f * dt; // Slow sinking
                 if (velocity.y < -1.5f) velocity.y = -1.5f; // Terminal velocity in water
                 fallDistance = 0; // Negate fall damage in water
@@ -53,6 +75,8 @@ public class Player {
         float frictionFactor;
         if (isSwimming) {
             frictionFactor = (float) Math.pow(0.15f, dt); // Thick drag in water
+        } else if (onGround && onQuicksoil) {
+            frictionFactor = (float) Math.pow(0.4f, dt); // Slippery quicksoil
         } else {
             frictionFactor = (float) Math.pow(onGround ? 0.05f : 0.1f, dt);
         }
@@ -103,7 +127,11 @@ public class Player {
         if (checkCollision(world, blockDataManager)) {
             if (prevYVel < 0) {
                 onGround = true;
-                handleFallDamage();
+                if (parachuteDeployed) {
+                    fallDistance = 0; // Parachute negates fall damage
+                } else {
+                    handleFallDamage();
+                }
             }
             position.y -= velocity.y * dt;
             velocity.y = 0;
@@ -142,6 +170,9 @@ public class Player {
         health = maxHealth;
         isDead = false;
         fallDistance = 0;
+        parachuteDeployed = false;
+        parachuteItemId = null;
+        parachuteSlotIndex = -1;
     }
 
     public void setSpawnPoint(Vector3f point) {
@@ -234,6 +265,34 @@ public class Player {
         return false;
     }
 
+    /** Returns the block ID at the player's feet (standing position). */
+    private int checkBlockAtFeet(World world) {
+        int x = (int) Math.floor(position.x);
+        int y = (int) Math.floor(position.y);
+        int z = (int) Math.floor(position.z);
+        return world.getVoxel(x, y, z);
+    }
+
+    /** Returns the block ID at the player's waist (mid-body). */
+    private int checkBlockAtWaist(World world) {
+        int x = (int) Math.floor(position.x);
+        int y = (int) Math.floor(position.y + 0.9f);
+        int z = (int) Math.floor(position.z);
+        return world.getVoxel(x, y, z);
+    }
+
+    /** Checks if the player is standing on or inside a quicksoil block. */
+    private boolean checkOnQuicksoil(World world) {
+        int x = (int) Math.floor(position.x);
+        int y = (int) Math.floor(position.y - 0.1f); // Just below feet
+        int z = (int) Math.floor(position.z);
+        int blockBelow = world.getVoxel(x, y, z);
+        if (blockBelow == 109) return true; // Quicksoil below
+        // Also check the block the player is standing in
+        int feetBlock = world.getVoxel(x, (int) Math.floor(position.y), z);
+        return feetBlock == 109;
+    }
+
     // Getters and Setters
     public Vector3f getPosition() { return position; }
     public Vector3f getVelocity() { return velocity; }
@@ -244,4 +303,21 @@ public class Player {
     public boolean isFlying() { return flying; }
     public void setFlying(boolean flying) { this.flying = flying; }
     public boolean isOnGround() { return onGround; }
+    public boolean isParachuteDeployed() { return parachuteDeployed; }
+    public void deployParachute(String itemId, int slotIndex) {
+        this.parachuteDeployed = true;
+        this.parachuteItemId = itemId;
+        this.parachuteSlotIndex = slotIndex;
+        this.velocity.y = Math.max(this.velocity.y, -3.0f); // Cap fall speed immediately
+    }
+    public String getParachuteItemId() { return parachuteItemId; }
+    public int getParachuteSlotIndex() { return parachuteSlotIndex; }
+    public void resetParachute() {
+        this.parachuteDeployed = false;
+        this.parachuteItemId = null;
+        this.parachuteSlotIndex = -1;
+    }
+
+    public com.voxel.world.DimensionType getDimension() { return dimension; }
+    public void setDimension(com.voxel.world.DimensionType dimension) { this.dimension = dimension; }
 }
