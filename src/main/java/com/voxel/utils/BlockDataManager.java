@@ -63,6 +63,12 @@ public class BlockDataManager {
         // Whether this block is a liquid (water, lava).
         public boolean isLiquid;
 
+        // Whether this block is a portal (animated swirl).
+        public boolean isPortal;
+
+        // Whether this block is redstone wire (connection arms, power tint).
+        public boolean isRedstoneWire;
+
         // Animated texture properties
         public boolean isAnimated;
         public int frameCount = 1;
@@ -207,6 +213,12 @@ public class BlockDataManager {
         if (name.contains("water") || name.contains("lava")) {
             data.isLiquid = true;
         }
+        if (name.contains("portal")) {
+            data.isPortal = true;
+        }
+        if (name.contains("redstone_dust") || name.equals("redstone_wire")) {
+            data.isRedstoneWire = true;
+        }
         applyMiningDefaults(name, data);
 
         // Validate that we found a texture for every face.
@@ -219,12 +231,7 @@ public class BlockDataManager {
         blockRegistry.put(id, data);
         registerNameAlias(name, id);
         if (name.endsWith("_normal")) registerNameAlias(name.substring(0, name.length() - "_normal".length()), id);
-        if (name.contains("grass")) registerNameAlias("grass", id);
-        if (name.contains("stone")) registerNameAlias("stone", id);
-        if (name.contains("glass")) registerNameAlias("glass", id);
-        if (name.contains("leaves")) registerNameAlias("leaves", id);
-        if (name.contains("dirt")) registerNameAlias("dirt", id);
-        if (name.contains("sand")) registerNameAlias("sand", id);
+        
     }
 
     private void registerNameAlias(String alias, int id) {
@@ -393,7 +400,8 @@ public class BlockDataManager {
                 buffer.put(data.tex[5]);
                 buffer.put(data.transparency);
                 int packed = (data.reflectivity & 0xFF) | ((data.isTintable & 1) << 8)
-                        | ((data.isFullBlock ? 1 : 0) << 9) | ((data.isLiquid ? 1 : 0) << 10);
+                        | ((data.isFullBlock ? 1 : 0) << 9) | ((data.isLiquid ? 1 : 0) << 10)
+                        | ((data.isPortal ? 1 : 0) << 11) | ((data.isRedstoneWire ? 1 : 0) << 12);
                 buffer.put(packed);
 
                 // ivec4 2: (albedoR, albedoG, albedoB, packedAnim)
@@ -534,6 +542,21 @@ public class BlockDataManager {
     public boolean isFullBlock(int blockId) {
         BlockData data = blockRegistry.get(blockId);
         return data != null && data.isFullBlock;
+    }
+
+    public boolean isLiquid(int blockId) {
+        BlockData data = blockRegistry.get(blockId);
+        return data != null && data.isLiquid;
+    }
+
+    public boolean isPortal(int blockId) {
+        BlockData data = blockRegistry.get(blockId);
+        return data != null && data.isPortal;
+    }
+
+    public boolean isRedstoneWire(int blockId) {
+        BlockData data = blockRegistry.get(blockId);
+        return data != null && data.isRedstoneWire;
     }
 
     public float getHardness(int blockId) {

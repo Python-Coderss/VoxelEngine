@@ -36,9 +36,9 @@ public class DimensionManager {
         World world = new World(poolSize);
         WorldGenerator generator;
         if (type == DimensionType.AETHER) {
-            generator = new AetherGenerator(0);
+            generator = new AetherGenerator(0, blockDataManager);
         } else {
-            generator = new DimensionWorldGenerator(type);
+            generator = new DimensionWorldGenerator(type, blockDataManager);
         }
         LightPropagationEngine lightEngine = new LightPropagationEngine(world, blockDataManager);
         ChunkManager chunkManager = new ChunkManager(world, generator, lightEngine, renderDistance, saveManager, type);

@@ -15,12 +15,46 @@ public class AetherGenerator extends WorldGenerator {
     private final PerlinNoise detailNoise;
     private final PerlinNoise treeNoise;
 
-    public AetherGenerator(long seed) {
-        super(seed);
+    private final int grassId;
+    private final int holystoneId;
+    private final int dirtId;
+    private final int skyrootLogId;
+    private final int skyrootLeavesId;
+    private final int aerogelId;
+    private final int portalId;
+    private final int ambrosiumId;
+    private final int zaniteId;
+    private final int gravititeId;
+    private final int quicksoilId;
+    private final int icestoneId;
+    private final int mossyHolystoneId;
+    private final int blueCloudId;
+    private final int coldCloudId;
+    private final int goldenCloudId;
+
+    public AetherGenerator(long seed, com.voxel.utils.BlockDataManager blockDataManager) {
+        super(seed, blockDataManager);
         this.continentalNoise = new PerlinNoise(seed + 42);
         this.erosionNoise = new PerlinNoise(seed + 123);
         this.detailNoise = new PerlinNoise(seed + 456);
         this.treeNoise = new PerlinNoise(seed + 131415);
+
+        this.grassId = blockDataManager.findBlockId("aether_grass_block");
+        this.holystoneId = blockDataManager.findBlockId("holystone");
+        this.dirtId = blockDataManager.findBlockId("aether_dirt");
+        this.skyrootLogId = blockDataManager.findBlockId("skyroot_log");
+        this.skyrootLeavesId = blockDataManager.findBlockId("skyroot_leaves");
+        this.aerogelId = blockDataManager.findBlockId("aerogel");
+        this.portalId = blockDataManager.findBlockId("aether_portal_ns");
+        this.ambrosiumId = blockDataManager.findBlockId("ambrosium_ore");
+        this.zaniteId = blockDataManager.findBlockId("zanite_ore");
+        this.gravititeId = blockDataManager.findBlockId("gravitite_ore");
+        this.quicksoilId = blockDataManager.findBlockId("quicksoil");
+        this.icestoneId = blockDataManager.findBlockId("icestone");
+        this.mossyHolystoneId = blockDataManager.findBlockId("mossy_holystone");
+        this.blueCloudId = blockDataManager.findBlockId("blue_aercloud");
+        this.coldCloudId = blockDataManager.findBlockId("cold_aercloud");
+        this.goldenCloudId = blockDataManager.findBlockId("golden_aercloud");
     }
 
     @Override
@@ -41,10 +75,10 @@ public class AetherGenerator extends WorldGenerator {
                         + continentalNoise.noise(x, z, 0.02f) * 0.6f
                         + erosionNoise.noise(x, y * 0.12f, 0.025f) * 0.4f;
                 // Denser cloud layers at specific height bands
-                if (y >= 40 && y < 60 && cloudNoise > 0.52f) return 125;
-                if (y >= 60 && y < 80 && cloudNoise > 0.45f) return 125;
-                if (y >= 80 && y < 100 && cloudNoise > 0.40f) return 125;
-                if (y >= 100 && y <= 120 && cloudNoise > 0.50f) return 125;
+                if (y >= 40 && y < 60 && cloudNoise > 0.52f) return coldCloudId;
+                if (y >= 60 && y < 80 && cloudNoise > 0.45f) return coldCloudId;
+                if (y >= 80 && y < 100 && cloudNoise > 0.40f) return coldCloudId;
+                if (y >= 100 && y <= 120 && cloudNoise > 0.50f) return coldCloudId;
             }
             return 0;
         }
@@ -55,28 +89,28 @@ public class AetherGenerator extends WorldGenerator {
         // Surface layer: block above is air
         if (above <= 0) {
             // Occasional icestone crust patches
-            if (detailNoise.noise(x, z, 0.07f) > 0.62f) return 110;
+            if (detailNoise.noise(x, z, 0.07f) > 0.62f) return icestoneId;
             // Mossy holystone patches
             float mossNoise = detailNoise.noise(x, z, 0.03f) + erosionNoise.noise(x, z, 0.025f);
-            if (mossNoise > 0.55f) return 113;
-            return 100; // Aether Grass
+            if (mossNoise > 0.55f) return mossyHolystoneId;
+            return grassId;
         }
 
         // Dirt layer: ~5 blocks below surface
         float above5 = computeAetherDensity(x, y + 5, z);
-        if (above5 <= 0) return 102; // Aether Dirt
+        if (above5 <= 0) return dirtId;
 
         // Stone body with ores
         int hash = (x * 31 + z * 73 + y * 137) & 0xFF;
 
         // Ambrosium ore: y=16-32
-        if (y >= 16 && y <= 32 && hash < 8) return 107;
+        if (y >= 16 && y <= 32 && hash < 8) return ambrosiumId;
         // Zanite ore: y=32-48
-        if (y > 32 && y <= 48 && hash < 5) return 111;
+        if (y > 32 && y <= 48 && hash < 5) return zaniteId;
         // Gravitite ore: y>48
-        if (y > 48 && hash < 3) return 108;
+        if (y > 48 && hash < 3) return gravititeId;
 
-        return 101; // Holystone
+        return holystoneId;
     }
 
     /**
@@ -126,8 +160,8 @@ public class AetherGenerator extends WorldGenerator {
 
         // --- Spawn Portals ---
         if (cx == 64 && cz == 64 && cy == 6) {
-            placePortal(world, 1028, 96, 1030, 17, 106); // Back to Overworld
-            placePortal(world, 1028, 96, 1036, 16, 19);  // To Nether
+            placePortal(world, 1028, 96, 1030, 17, portalId); // Back to Overworld (Glowstone frame)
+            placePortal(world, 1028, 96, 1036, 16, 19);       // To Nether (Obsidian frame)
         }
 
         // --- Quicksoil Shelves ---
@@ -141,8 +175,8 @@ public class AetherGenerator extends WorldGenerator {
                     int blockHere = world.getVoxel(wx, yScan, wz);
                     int blockAbove = world.getVoxel(wx, yScan + 1, wz);
                     int blockAbove2 = world.getVoxel(wx, yScan + 2, wz);
-                    boolean validAbove = blockAbove == 100 || blockAbove == 101 || blockAbove == 102
-                            || blockAbove == 110 || blockAbove == 113;
+                    boolean validAbove = blockAbove == grassId || blockAbove == holystoneId || blockAbove == dirtId
+                            || blockAbove == icestoneId || blockAbove == mossyHolystoneId;
                     if (blockHere == 0 && validAbove && blockAbove2 == 0) {
                         int radius = 2 + ((wx * 31 + wz * 73 + yScan * 137) & 3);
                         placeQuicksoilDisk(world, wx, yScan, wz, radius);
@@ -158,19 +192,19 @@ public class AetherGenerator extends WorldGenerator {
 
         // Cold aerclouds (White)
         if (cy >= 2 && cy <= 6 && aercloudRng.nextInt(10) == 0) {
-            generateAercloud(world, worldX, worldZ, cy, aercloudRng, 125, 12);
+            generateAercloud(world, worldX, worldZ, cy, aercloudRng, coldCloudId, 12);
         }
 
         // Blue aerclouds (Bouncy) - Increased chance
         aercloudRng = new Random(chunkSeed ^ 0x5A5A5A5AL);
         if (cy >= 2 && cy <= 6 && aercloudRng.nextInt(16) == 0) {
-            generateAercloud(world, worldX, worldZ, cy, aercloudRng, 124, 6);
+            generateAercloud(world, worldX, worldZ, cy, aercloudRng, blueCloudId, 6);
         }
 
         // Golden aerclouds (Fast) - Added
         aercloudRng = new Random(chunkSeed ^ 0x99999999L);
         if (cy >= 5 && cy <= 7 && aercloudRng.nextInt(20) == 0) {
-            generateAercloud(world, worldX, worldZ, cy, aercloudRng, 126, 4);
+            generateAercloud(world, worldX, worldZ, cy, aercloudRng, goldenCloudId, 4);
         }
 
         // --- Lakes (AetherLakeFeature) ---
@@ -191,9 +225,9 @@ public class AetherGenerator extends WorldGenerator {
                 if (treeValue < 0.985f) continue;
                 for (int yScan = cy << 4; yScan < (cy << 4) + 16; yScan++) {
                     int block = world.getVoxel(wx, yScan, wz);
-                    if (block == 100 || block == 113) {
+                    if (block == grassId || block == mossyHolystoneId) {
                         float goldenChance = continentalNoise.noise(wx, wz, 0.035f);
-                        boolean preferGolden = block == 113 && goldenChance > 0.15f;
+                        boolean preferGolden = block == mossyHolystoneId && goldenChance > 0.15f;
                         if (goldenChance > 0.4f || preferGolden) {
                             placeGoldenOakTree(world, wx, yScan + 1, wz);
                         } else {
@@ -283,7 +317,7 @@ public class AetherGenerator extends WorldGenerator {
                         if (flag1) {
                             world.setVoxel(wx, wy, wz, 0); // Air
                         } else {
-                            world.setVoxel(wx, wy, wz, 15); // Water
+                            world.setVoxel(wx, wy, wz, 15); // Water (Overworld water ID is 15)
                         }
                     }
                 }
@@ -296,7 +330,7 @@ public class AetherGenerator extends WorldGenerator {
             for (int dz = -radius; dz <= radius; dz++) {
                 if (dx * dx + dz * dz <= radius * radius) {
                     if (world.getVoxel(wx + dx, wy, wz + dz) == 0) {
-                        world.setVoxel(wx + dx, wy, wz + dz, 109);
+                        world.setVoxel(wx + dx, wy, wz + dz, quicksoilId);
                     }
                 }
             }
@@ -315,7 +349,7 @@ public class AetherGenerator extends WorldGenerator {
 
     private void placeGoldenOakTree(World world, int x, int y, int z) {
         int trunkHeight = 4 + (int)(Math.abs(continentalNoise.noise(x, z, 0.45f)) * 2.0f);
-        for (int i = 0; i < trunkHeight; i++) world.setVoxel(x, y + i, z, 103);
+        for (int i = 0; i < trunkHeight; i++) world.setVoxel(x, y + i, z, skyrootLogId);
         int leafBaseY = y + trunkHeight - 2;
         int leafTopY = y + trunkHeight + 1;
         for (int ly = leafBaseY; ly <= leafTopY; ly++) {
@@ -326,8 +360,8 @@ public class AetherGenerator extends WorldGenerator {
                     if (lx * lx + lz * lz > radius * radius) continue;
                     if (lx == 0 && lz == 0 && ly > y && ly < y + trunkHeight - 1) continue;
                     int existing = world.getVoxel(x + lx, ly, z + lz);
-                    if (existing == 0 || existing == 100 || existing == 101 || existing == 102) {
-                        world.setVoxel(x + lx, ly, z + lz, 104);
+                    if (existing == 0 || existing == grassId || existing == holystoneId || existing == dirtId) {
+                        world.setVoxel(x + lx, ly, z + lz, skyrootLeavesId);
                     }
                 }
             }
@@ -336,7 +370,7 @@ public class AetherGenerator extends WorldGenerator {
 
     private void placeSkyrootTree(World world, int x, int y, int z) {
         int trunkHeight = 5 + (int)(Math.abs(continentalNoise.noise(x, z, 0.5f)) * 3.0f);
-        for (int i = 0; i < trunkHeight; i++) world.setVoxel(x, y + i, z, 103);
+        for (int i = 0; i < trunkHeight; i++) world.setVoxel(x, y + i, z, skyrootLogId);
         int leafBaseY = y + trunkHeight - 3;
         int leafTopY = y + trunkHeight;
         for (int ly = leafBaseY; ly <= leafTopY; ly++) {
@@ -345,8 +379,8 @@ public class AetherGenerator extends WorldGenerator {
                 for (int lz = -radius; lz <= radius; lz++) {
                     if (lx == 0 && lz == 0 && ly > y && ly < y + trunkHeight - 1) continue;
                     int existing = world.getVoxel(x + lx, ly, z + lz);
-                    if (existing == 0 || existing == 100 || existing == 101 || existing == 102) {
-                        world.setVoxel(x + lx, ly, z + lz, 104);
+                    if (existing == 0 || existing == grassId || existing == holystoneId || existing == dirtId) {
+                        world.setVoxel(x + lx, ly, z + lz, skyrootLeavesId);
                     }
                 }
             }
