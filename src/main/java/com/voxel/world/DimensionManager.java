@@ -34,7 +34,12 @@ public class DimensionManager {
 
         System.out.println("Creating dimension: " + type.name + " (pool=" + poolSize + " chunks, ~" + (poolSize * 4096L * 4 / 1024 / 1024) + " MB)");
         World world = new World(poolSize);
-        DimensionWorldGenerator generator = new DimensionWorldGenerator(type);
+        WorldGenerator generator;
+        if (type == DimensionType.AETHER) {
+            generator = new AetherGenerator(0);
+        } else {
+            generator = new DimensionWorldGenerator(type);
+        }
         LightPropagationEngine lightEngine = new LightPropagationEngine(world, blockDataManager);
         ChunkManager chunkManager = new ChunkManager(world, generator, lightEngine, renderDistance, saveManager, type);
 
@@ -88,7 +93,7 @@ public class DimensionManager {
         return inst != null ? inst.chunkManager : null;
     }
 
-    public DimensionWorldGenerator getActiveGenerator() {
+    public WorldGenerator getActiveGenerator() {
         DimensionInstance inst = dimensions.get(activeDimension);
         return inst != null ? inst.generator : null;
     }
@@ -124,9 +129,9 @@ public class DimensionManager {
     private static class DimensionInstance {
         final World world;
         final ChunkManager chunkManager;
-        final DimensionWorldGenerator generator;
+        final WorldGenerator generator;
 
-        DimensionInstance(World world, ChunkManager chunkManager, DimensionWorldGenerator generator) {
+        DimensionInstance(World world, ChunkManager chunkManager, WorldGenerator generator) {
             this.world = world;
             this.chunkManager = chunkManager;
             this.generator = generator;

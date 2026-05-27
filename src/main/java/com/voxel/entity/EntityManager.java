@@ -1,5 +1,6 @@
 package com.voxel.entity;
 
+import com.voxel.world.DimensionType;
 import org.lwjgl.system.MemoryUtil;
 import java.nio.FloatBuffer;
 import java.util.ArrayList;
@@ -48,11 +49,29 @@ public class EntityManager {
         }
     }
 
+    /**
+     * Uploads all entities to GPU (legacy, for backward compatibility).
+     */
     public void uploadToGPU() {
-        java.nio.ByteBuffer entityBuffer = MemoryUtil.memAlloc(entities.size() * ENTITY_STRIDE * 4);
+        uploadToGPU(null);
+    }
+
+    /**
+     * Uploads entities to GPU, optionally filtering by dimension.
+     * If activeDimension is null, all entities are uploaded.
+     * Otherwise, only entities matching the active dimension are uploaded.
+     */
+    public void uploadToGPU(DimensionType activeDimension) {
+        int visibleCount = 0;
+        for (Entity e : entities) {
+            if (activeDimension == null || e.dimension == activeDimension) visibleCount++;
+        }
+
+        java.nio.ByteBuffer entityBuffer = MemoryUtil.memAlloc(visibleCount * ENTITY_STRIDE * 4);
         List<ModelPart> allParts = new ArrayList<>();
 
         for (Entity entity : entities) {
+            if (activeDimension != null && entity.dimension != activeDimension) continue;
             int partOffset = allParts.size();
             int partCount = entity.parts.size();
 
@@ -127,6 +146,19 @@ public class EntityManager {
     
     public int getEntityCount() {
         return entities.size();
+    }
+
+    /**
+     * Returns the count of entities in the given dimension.
+     * If dimension is null, returns the total count.
+     */
+    public int getEntityCount(DimensionType dimension) {
+        if (dimension == null) return entities.size();
+        int count = 0;
+        for (Entity e : entities) {
+            if (e.dimension == dimension) count++;
+        }
+        return count;
     }
 
     public Entity getEntity(int index) {

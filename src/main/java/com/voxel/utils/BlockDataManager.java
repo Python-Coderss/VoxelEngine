@@ -54,6 +54,9 @@ public class BlockDataManager {
         // Reflection intensity (0 = matte, 255 = perfect mirror).
         public int reflectivity;
 
+        // Diffuse intensity (0-255, default 255).
+        public int diffuse = 255;
+
         // Whether the block color should be modified by the biome (e.g., grass).
         public int isTintable;
 
@@ -89,6 +92,19 @@ public class BlockDataManager {
     }
 
     /**
+     * Registers a new block with explicit rendering properties.
+     */
+    public void registerBlock(int id, String name, TextureManager textureManager, String modelsDir, int transparency, int reflectivity, int diffuse) {
+        registerBlock(id, name, textureManager, modelsDir);
+        BlockData data = blockRegistry.get(id);
+        if (data != null) {
+            data.transparency = transparency;
+            data.reflectivity = reflectivity;
+            data.diffuse = diffuse;
+        }
+    }
+
+    /**
      * Registers a new block by parsing its JSON model and mapping textures.
      * 
      * @param id             The integer ID to assign to this block (must be > 0).
@@ -111,17 +127,18 @@ public class BlockDataManager {
         String end = textureMap.get("end");
         String top = textureMap.get("top");
         String bottom = textureMap.get("bottom");
+        String particle = textureMap.get("particle");
 
-        String representativeTexture = textureMap.getOrDefault("up", top != null ? top : (end != null ? end : all));
+        String representativeTexture = textureMap.getOrDefault("up", top != null ? top : (end != null ? end : (all != null ? all : particle)));
 
         // Map common Minecraft JSON keys to the 6 face indices.
-        assignFace(data, 0, textureMap.getOrDefault("down", bottom != null ? bottom : (end != null ? end : all)),
+        assignFace(data, 0, textureMap.getOrDefault("down", bottom != null ? bottom : (end != null ? end : (all != null ? all : particle))),
                 textureManager);
         assignFace(data, 1, representativeTexture, textureManager);
-        assignFace(data, 2, textureMap.getOrDefault("north", side != null ? side : all), textureManager);
-        assignFace(data, 3, textureMap.getOrDefault("south", side != null ? side : all), textureManager);
-        assignFace(data, 4, textureMap.getOrDefault("west", side != null ? side : all), textureManager);
-        assignFace(data, 5, textureMap.getOrDefault("east", side != null ? side : all), textureManager);
+        assignFace(data, 2, textureMap.getOrDefault("north", side != null ? side : (all != null ? all : particle)), textureManager);
+        assignFace(data, 3, textureMap.getOrDefault("south", side != null ? side : (all != null ? all : particle)), textureManager);
+        assignFace(data, 4, textureMap.getOrDefault("west", side != null ? side : (all != null ? all : particle)), textureManager);
+        assignFace(data, 5, textureMap.getOrDefault("east", side != null ? side : (all != null ? all : particle)), textureManager);
 
         // Calculate albedo using TextureUtils — search known texture directories
         if (representativeTexture != null) {
@@ -155,6 +172,10 @@ public class BlockDataManager {
         } else if (name.contains("water")) {
             data.transparency = 150;
             data.reflectivity = 100;
+        } else if (name.contains("aercloud")) {
+            data.transparency = 0;
+            data.reflectivity = 0;
+            data.diffuse = 255;
         }
 
         // Detect animated textures from the texture manager
@@ -180,7 +201,7 @@ public class BlockDataManager {
                 name.contains("rail") || name.contains("sign") || name.contains("banner") ||
                 name.contains("flower") || name.contains("sapling") || name.contains("mushroom") ||
                 name.contains("water") || name.contains("lava") ||
-                name.contains("portal")) {
+                name.contains("portal") || name.contains("aercloud") || name.contains("aerogel")) {
             data.isFullBlock = false;
         }
         if (name.contains("water") || name.contains("lava")) {
@@ -379,8 +400,8 @@ public class BlockDataManager {
                 buffer.put(data.albedo.getRed());
                 buffer.put(data.albedo.getGreen());
                 buffer.put(data.albedo.getBlue());
-                int packedAnim = (data.isAnimated ? 1 : 0) | ((data.frameCount & 0x3F) << 1);
-                buffer.put(packedAnim); // Unused -> now stores animation info
+                int packedAnim = (data.isAnimated ? 1 : 0) | ((data.frameCount & 0x3F) << 1) | ((data.diffuse & 0xFF) << 8);
+                buffer.put(packedAnim); // bit0: anim, bit1-6: frames, bit8-15: diffuse
             } else {
                 // Fill with -1 for unused IDs.
                 for (int j = 0; j < 12; j++)

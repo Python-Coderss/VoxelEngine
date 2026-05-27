@@ -367,6 +367,7 @@ public class Main {
         ctx.redstoneManager = redstoneManager;
 
         playerEntity = new com.voxel.entity.PlayerEntity(10_000, new Vector3f(player.getPosition()), textureManager);
+        playerEntity.dimension = activeDimension;
         entityManager.addEntity(playerEntity);
 
 
@@ -409,6 +410,7 @@ public class Main {
     private void spawnInitialEnemies(Player p) {
         for (int i = 0; i < 3; i++) {
             com.voxel.entity.ZombieEntity zombie = new com.voxel.entity.ZombieEntity(100 + i, new Vector3f(1030 + i * 12, 64, 1030), textureManager, p);
+            zombie.dimension = activeDimension;
             zombie.setWorld(world);
             entityManager.addEntity(zombie);
         }
@@ -906,7 +908,54 @@ public class Main {
 
         if (chunksReady) {
             handleInput(dt);
+
+            // Parachute deploy: auto-activate when falling fast in the Aether
+            if (activeDimension == DimensionType.AETHER && !player.isOnGround() && !player.isParachuteDeployed()
+                    && player.getVelocity().y < -8.0f && player.getPosition().y > 0) {
+                // Find a parachute in the player's inventory
+                for (int i = 0; i < playerInventory.getInventorySize(); i++) {
+                    ItemStack stack = playerInventory.getSlot(i);
+                    if (stack != null && (stack.itemId.equals("cold_parachute") || stack.itemId.equals("golden_parachute"))) {
+                        // Initialize durability on first deploy (golden = 20 uses)
+                        if (stack.durability == 0 && stack.itemId.equals("golden_parachute")) {
+                            stack.durability = 20;
+                        }
+                        player.deployParachute(stack.itemId, i);
+                        setStatus("Parachute deployed!");
+                        break;
+                    }
+                }
+            }
+
             player.update(dt, world, blockDataManager);
+
+            // Parachute landing: consume durability when player touches ground
+            if (player.isOnGround() && player.getParachuteItemId() != null) {
+                String itemId = player.getParachuteItemId();
+                int slotIdx = player.getParachuteSlotIndex();
+                player.resetParachute();
+                // Target the exact slot that was deployed
+                if (slotIdx >= 0 && slotIdx < playerInventory.getInventorySize()) {
+                    ItemStack stack = playerInventory.getSlot(slotIdx);
+                    if (stack != null && stack.itemId.equals(itemId)) {
+                        if (itemId.equals("golden_parachute")) {
+                            stack.durability--;
+                            if (stack.durability <= 0) {
+                                stack.count--;
+                                if (stack.count <= 0) playerInventory.clearSlot(slotIdx);
+                                setStatus("Golden parachute worn out!");
+                            } else {
+                                setStatus("Parachute landed (" + stack.durability + " uses left)");
+                            }
+                        } else {
+                            // Cold parachute: single use
+                            stack.count--;
+                            if (stack.count <= 0) playerInventory.clearSlot(slotIdx);
+                            setStatus("Parachute used up!");
+                        }
+                    }
+                }
+            }
         }
 
         player.setYaw(playerYaw);
@@ -1010,6 +1059,7 @@ public class Main {
         Vector3f pPos = player.getPosition();
         for (int i = 0; i < entityManager.getEntityCount(); i++) {
             com.voxel.entity.Entity e = entityManager.getEntity(i);
+            if (e.dimension != activeDimension) continue;
             if (e instanceof com.voxel.entity.EnemyEntity) {
                 com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) e;
                 if (!enemy.isDead()) {
@@ -1025,6 +1075,12 @@ public class Main {
 
         entityManager.update(dt);
         portalSystem.checkTeleport();
+
+        // Fall from Aether: if player drops below y=0, fall back to Overworld
+        if (activeDimension == DimensionType.AETHER && player.getPosition().y < 0) {
+            ctx.setStatus("Fell out of the Aether!");
+            ctx.switchToDimension(DimensionType.OVERWORLD);
+        }
 
         // ---- Crafting table camera (fixed position above table) ----
         if (ctx.craftingTableOpen) {
@@ -1195,6 +1251,7 @@ public class Main {
 
         for (int i = 0; i < entityManager.getEntityCount(); i++) {
             com.voxel.entity.Entity e = entityManager.getEntity(i);
+            if (e.dimension != activeDimension) continue;
             if (e instanceof com.voxel.entity.EnemyEntity) {
                 com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) e;
                 if (enemy.isDead()) continue;
@@ -1259,6 +1316,7 @@ public class Main {
                 world = ctx.world;
                 activeDimension = ctx.activeDimension;
                 redstoneManager = ctx.redstoneManager;
+                player.setDimension(activeDimension);
             }
             boolean prevInventoryOpen = inventoryOpen;
             syncGameState();
@@ -1298,7 +1356,7 @@ public class Main {
             for (UILayer layer : uiLayers) layer.render(uiManager);
             uiManager.end();
 
-            entityManager.uploadToGPU();
+            entityManager.uploadToGPU(activeDimension);
 
             FloatBuffer plBuf = MemoryUtil.memAllocFloat(4);
             plBuf.put(0, Float.intBitsToFloat(0));
@@ -1331,7 +1389,7 @@ public class Main {
             glProgramUniform3f(computeProgram, 2, rx, 0, rz);
             glProgramUniform3f(computeProgram, 3, ux, uy, uz);
             glProgramUniform1f(computeProgram, 4, worldTime);
-            glProgramUniform1i(computeProgram, 5, entityManager.getEntityCount());
+            glProgramUniform1i(computeProgram, 5, entityManager.getEntityCount(activeDimension));
             atmosphereRenderer.upload(worldTime, activeDimension);
             glProgramUniform1i(computeProgram, locDimensionID, activeDimension.id);
             // Upload world sliding window offset
@@ -1431,6 +1489,7 @@ public class Main {
                     int nearestIdx = -1;
                     for (int i = 0; i < entityManager.getEntityCount(); i++) {
                         com.voxel.entity.Entity e = entityManager.getEntity(i);
+                        if (e.dimension != activeDimension) continue;
                         if (e instanceof com.voxel.entity.EnemyEntity) {
                             com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) e;
                             if (enemy.isDead()) continue;
@@ -2435,6 +2494,9 @@ public class Main {
         blockDataManager.registerBlock(121, "dandelion", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(122, "rose", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(123, "tallgrass", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(124, "blue_aercloud", textureManager, aetherModels, 160, 30, 220);
+        blockDataManager.registerBlock(125, "cold_aercloud", textureManager, aetherModels, 200, 10, 200);
+        blockDataManager.registerBlock(126, "golden_aercloud", textureManager, aetherModels, 180, 50, 255);
         blockDataManager.uploadToGPU();
     }
 

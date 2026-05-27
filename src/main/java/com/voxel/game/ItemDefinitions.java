@@ -41,6 +41,7 @@ public class ItemDefinitions {
     public static final class ItemStack {
         public String itemId;
         public int count;
+        public int durability = 0; // For parachutes and other durable items
 
         public ItemStack(String itemId, int count) {
             this.itemId = itemId;
@@ -48,7 +49,9 @@ public class ItemDefinitions {
         }
 
         public ItemStack copy() {
-            return new ItemStack(itemId, count);
+            ItemStack copy = new ItemStack(itemId, count);
+            copy.durability = this.durability;
+            return copy;
         }
     }
 
@@ -115,11 +118,15 @@ public class ItemDefinitions {
         registerBlock("skyroot_planks", "Skyroot Planks", 112, "skyroot_planks");
         registerBlock("mossy_holystone", "Mossy Holystone", 113, "mossy_holystone");
         registerBlock("holystone_bricks", "Holystone Bricks", 114, "holystone_bricks");
+        registerBlock("blue_aercloud", "Blue Aercloud", 124, "blue_aercloud");
         registerBlock("crafting_table", "Crafting Table", 115, "crafting_table_top");
         registerBlock("furnace_off", "Furnace", 116, "furnace_front");
         registerBlock("furnace_on", "Furnace", 117, "furnace_front_on");
         registerBlock("chest", "Chest", 118, "chest_front");
         registerTool("stick", "Stick", "stick", ToolType.HAND, 1.0f, new Vector4f(0.85f, 0.7f, 0.5f, 1));
+        // --- Parachutes ---
+        registerTool("cold_parachute", "Cold Parachute", "cold_parachute", ToolType.HAND, 1.0f, new Vector4f(0.7f, 0.85f, 1, 1));
+        registerTool("golden_parachute", "Golden Parachute", "golden_parachute", ToolType.HAND, 1.0f, new Vector4f(1, 0.9f, 0.5f, 1));
         // --- Aether tools ---
         registerTool("wood_pickaxe", "Wood Pickaxe", "wood_pickaxe", ToolType.PICKAXE, 4.5f, new Vector4f(1, 1, 1, 1));
         registerTool("wood_shovel", "Wood Shovel", "wood_shovel", ToolType.SHOVEL, 4.0f, new Vector4f(1, 1, 1, 1));
