@@ -2491,9 +2491,9 @@ public class Main {
         blockDataManager.registerBlock(121, "dandelion", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(122, "rose", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(123, "tallgrass", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.registerBlock(124, "blue_aercloud", textureManager, aetherModels, 0, 0, 220);
-        blockDataManager.registerBlock(125, "cold_aercloud", textureManager, aetherModels, 0, 0, 220);
-        blockDataManager.registerBlock(126, "golden_aercloud", textureManager, aetherModels, 0, 0, 220);
+        blockDataManager.registerBlock(124, "blue_aercloud", textureManager, aetherModels);
+        blockDataManager.registerBlock(125, "cold_aercloud", textureManager, aetherModels);
+        blockDataManager.registerBlock(126, "golden_aercloud", textureManager, aetherModels);
         blockDataManager.uploadToGPU();
     }
 

@@ -627,9 +627,9 @@ void main() {
                 trans = 1.0; alb = vec3(1.0); refl = 0.0;
             } else {
                 alb = texel.rgb * (vec3(d2.rgb)/255.0);
-                trans = 0.0; refl = 0.1;
+                trans = 1.0 - texel.a; refl = 0.1;
                 vec3 beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
-                vec3 bc = alb * beam;
+                vec3 bc = alb * beam * (1.0 - trans);
                 float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, GetSky(rd, at), fog);
                 final += throu * bc;
             }
@@ -659,7 +659,14 @@ void main() {
                 }
                 refl = 0.0;
             } else {
-                alb = texture(u_EntityTextures, vec3(eUv, float(eTex))).rgb;
+                vec4 entTex = texture(u_EntityTextures, vec3(eUv, float(eTex)));
+                // Apply alpha-based transparency (0 = transparent, 255 = opaque)
+                if (entTex.a < 0.1) {
+                    trans = 1.0; alb = vec3(1.0); 
+                } else {
+                    alb = entTex.rgb;
+                    trans = 1.0 - entTex.a;
+                }
                 // Apply entity tint (color multiplier, controlled by tintAmount)
                 if (entIdx >= 0 && entities[entIdx].tintAmount > 0.001) {
                     vec3 tint = vec3(entities[entIdx].tintR, entities[entIdx].tintG, entities[entIdx].tintB);
@@ -721,9 +728,16 @@ void main() {
             bool isRedstoneWire = ((d1.w >> 12) & 1) == 1;
             trans = float(d1.z)/255.0; refl = float(d1.w & 0xFF)/255.0;
 
-            // Alpha-based transparency: treat pixels with alpha < 0.1 as fully transparent
-            // This must come AFTER trans initialization so it can override it
-            if (texSample.a < 0.1) { trans = 1.0; alb = vec3(1.0); }
+            // Alpha-based transparency: use alpha texture value as transparency (0 = transparent, 255 = opaque)
+            // Alpha directly controls transparency: alpha=1.0 means fully opaque (trans=0), alpha=0 means fully transparent (trans=1)
+            // Pixels with alpha < 0.1 are treated as fully transparent (allows sharp edges)
+            if (texSample.a < 0.1) { 
+                trans = 1.0; 
+                alb = vec3(1.0); 
+            } else {
+                // Map alpha [0.1, 1.0] to trans [1.0, 0.0] - gradient transparency for semi-transparent pixels
+                trans = 1.0 - texSample.a;
+            }
 
             // Portal blocks: semi-transparent with animated swirl
             if (isPortal) {
