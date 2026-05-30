@@ -71,17 +71,6 @@ public class AetherGenerator extends WorldGenerator {
         float density = computeAetherDensity(x, y, z);
 
         if (density <= 0) {
-            // Cloud generation in air gaps between terrain bands (y=40-120)
-            if (y >= 40 && y <= 120) {
-                float cloudNoise = detailNoise.noise(x, z, 0.03f)
-                        + continentalNoise.noise(x, z, 0.02f) * 0.6f
-                        + erosionNoise.noise(x, y * 0.12f, 0.025f) * 0.4f;
-                // Denser cloud layers at specific height bands
-                if (y >= 40 && y < 60 && cloudNoise > 0.52f) return coldCloudId;
-                if (y >= 60 && y < 80 && cloudNoise > 0.45f) return coldCloudId;
-                if (y >= 80 && y < 100 && cloudNoise > 0.40f) return coldCloudId;
-                if (y >= 100 && y <= 120 && cloudNoise > 0.50f) return coldCloudId;
-            }
             return 0;
         }
 
@@ -189,21 +178,27 @@ public class AetherGenerator extends WorldGenerator {
         }
 
         // --- Aerclouds ---
-        long chunkSeed = ((long) cx * 73856093L) ^ ((long) cz * 19349663L);
+        long chunkSeed = ((long) cx * 73856093L) ^ ((long) cz * 19349663L) ^ ((long) cy * 123456789L);
         Random aercloudRng = new Random(chunkSeed);
 
-        // Cold aerclouds (White)
-        if (cy >= 2 && cy <= 6 && aercloudRng.nextInt(10) == 0) {
-            generateAercloud(world, worldX, worldZ, cy, aercloudRng, coldCloudId, 12);
+        // Large aerclouds - Rare signature feature
+        if (cy >= 4 && cy <= 6 && aercloudRng.nextInt(40) == 0) {
+            generateLargeAercloud(world, worldX, worldZ, cy, aercloudRng, coldCloudId);
         }
 
-        // Blue aerclouds (Bouncy) - Increased chance
+        // Cold aerclouds (White)
+        aercloudRng = new Random(chunkSeed ^ 0x12345678L);
+        if (cy >= 2 && cy <= 6 && aercloudRng.nextInt(10) == 0) {
+            generateAercloud(world, worldX, worldZ, cy, aercloudRng, coldCloudId, 16);
+        }
+
+        // Blue aerclouds (Bouncy)
         aercloudRng = new Random(chunkSeed ^ 0x5A5A5A5AL);
         if (cy >= 2 && cy <= 6 && aercloudRng.nextInt(16) == 0) {
-            generateAercloud(world, worldX, worldZ, cy, aercloudRng, blueCloudId, 6);
+            generateAercloud(world, worldX, worldZ, cy, aercloudRng, blueCloudId, 8);
         }
 
-        // Golden aerclouds (Fast) - Added
+        // Golden aerclouds (Fast)
         aercloudRng = new Random(chunkSeed ^ 0x99999999L);
         if (cy >= 5 && cy <= 7 && aercloudRng.nextInt(20) == 0) {
             generateAercloud(world, worldX, worldZ, cy, aercloudRng, goldenCloudId, 4);
@@ -243,30 +238,66 @@ public class AetherGenerator extends WorldGenerator {
     }
 
     private void generateAercloud(World world, int worldX, int worldZ, int cy, Random rng, int blockId, int bounds) {
-        // Reduced cloudCount and blob size for smaller clouds
-        int cloudCount = 4 + rng.nextInt(bounds / 2 + 1);
         boolean direction = rng.nextBoolean();
         int bx = worldX + rng.nextInt(16);
         int bz = worldZ + rng.nextInt(16);
         int by = (cy << 4) + rng.nextInt(16);
-        for (int a = 0; a < cloudCount; a++) {
+
+        for (int a = 0; a < bounds; a++) {
             int xo = rng.nextInt(2);
-            int yo = rng.nextBoolean() ? rng.nextInt(2) - 1 : 0; // Reduced vertical spread
+            int yo = (rng.nextBoolean() ? rng.nextInt(3) - 1 : 0);
             int zo = rng.nextInt(2);
+            
             if (direction) bz -= zo; else bz += zo;
             bx += xo;
             by += yo;
-            // Smaller blobs
-            int rx = rng.nextInt(2) + 2;
-            int ry = rng.nextInt(1) + 1;
-            int rz = rng.nextInt(2) + 2;
+
+            int rx = rng.nextInt(2) + 3;
+            int ry = rng.nextInt(1) + 2;
+            int rz = rng.nextInt(2) + 3;
+
             for (int px = bx; px < bx + rx; px++) {
                 for (int py = by; py < by + ry; py++) {
                     for (int pz = bz; pz < bz + rz; pz++) {
                         if (py < 0 || py > 128) continue;
                         if (world.getVoxel(px, py, pz) == 0) {
                             int manhattan = Math.abs(px - bx) + Math.abs(py - by) + Math.abs(pz - bz);
-                            if (manhattan < 3 + rng.nextInt(2)) {
+                            if (manhattan < 4 + rng.nextInt(2)) {
+                                world.setVoxel(px, py, pz, blockId);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void generateLargeAercloud(World world, int worldX, int worldZ, int cy, Random rng, int blockId) {
+        boolean direction = rng.nextBoolean();
+        int bx = worldX + rng.nextInt(16);
+        int bz = worldZ + rng.nextInt(16);
+        int by = (cy << 4) + rng.nextInt(16);
+        
+        int xTendency = rng.nextInt(3) - 1;
+        int zTendency = rng.nextInt(3) - 1;
+        int size = 1;
+
+        for (int a = 0; a < 64; a++) {
+            bx += rng.nextInt(3) - 1 + xTendency;
+            by += rng.nextInt(10) == 0 ? rng.nextInt(3) - 1 : 0;
+            bz += direction ? rng.nextInt(3) - 1 + zTendency : -(rng.nextInt(3) - 1 + zTendency);
+
+            int rx = rng.nextInt(4) + 3 * size;
+            int ry = rng.nextInt(1) + 2;
+            int rz = rng.nextInt(4) + 3 * size;
+
+            for (int px = bx; px < bx + rx; px++) {
+                for (int py = by; py < by + ry; py++) {
+                    for (int pz = bz; pz < bz + rz; pz++) {
+                        if (py < 0 || py > 128) continue;
+                        if (world.getVoxel(px, py, pz) == 0) {
+                            int manhattan = Math.abs(px - bx) + Math.abs(py - by) + Math.abs(pz - bz);
+                            if (manhattan < 4 * size + rng.nextInt(2)) {
                                 world.setVoxel(px, py, pz, blockId);
                             }
                         }

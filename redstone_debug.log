@@ -1,1178 +1,131 @@
-17:14:54.868 [main] === Redstone logger started ===
-17:14:54.868 [main] RedstoneManager created, world=com.voxel.World@6fd83fc1 chunkManager=com.voxel.world.ChunkManager@4f2b503c
-17:14:54.868 [main] DIMENSION SWITCH: created new RedstoneManager for aether (was overworld)
-17:14:54.887 [LogicThread] setPlayerPosition (1024,128,1024) player moved
-17:15:08.934 [LogicThread] setPlayerPosition (1024,128,1023) player moved
-17:15:09.056 [REPEATED x1]
-17:15:09.056 [LogicThread] setPlayerPosition (1025,128,1023) player moved
-17:15:09.108 [LogicThread] setPlayerPosition (1025,129,1022) player moved
-17:15:09.177 [LogicThread] setPlayerPosition (1026,130,1022) player moved
-17:15:09.245 [LogicThread] setPlayerPosition (1027,130,1021) player moved
-17:15:09.312 [LogicThread] setPlayerPosition (1027,131,1021) player moved
-17:15:09.373 [LogicThread] setPlayerPosition (1028,131,1021) player moved
-17:15:09.427 [LogicThread] setPlayerPosition (1028,132,1021) player moved
-17:15:09.478 [LogicThread] setPlayerPosition (1029,132,1020) player moved
-17:15:09.710 [REPEATED x3]
-17:15:09.711 [LogicThread] setPlayerPosition (1030,133,1020) player moved
-17:15:09.846 [REPEATED x1]
-17:15:09.846 [LogicThread] setPlayerPosition (1030,132,1019) player moved
-17:15:09.987 [REPEATED x1]
-17:15:09.987 [LogicThread] setPlayerPosition (1030,131,1019) player moved
-17:15:10.052 [LogicThread] setPlayerPosition (1031,130,1019) player moved
-17:15:10.117 [LogicThread] setPlayerPosition (1031,129,1019) player moved
-17:15:10.274 [REPEATED x1]
-17:15:10.274 [LogicThread] setPlayerPosition (1031,128,1019) player moved
-17:15:10.434 [REPEATED x1]
-17:15:10.434 [LogicThread] setPlayerPosition (1031,127,1019) player moved
-17:15:10.602 [REPEATED x1]
-17:15:10.602 [LogicThread] setPlayerPosition (1031,126,1019) player moved
-17:15:10.810 [REPEATED x1]
-17:15:10.810 [LogicThread] setPlayerPosition (1031,125,1019) player moved
-17:15:10.966 [REPEATED x1]
-17:15:10.966 [LogicThread] setPlayerPosition (1031,124,1019) player moved
-17:15:11.398 [REPEATED x4]
-17:15:11.399 [LogicThread] setPlayerPosition (1031,123,1019) player moved
-17:15:11.607 [REPEATED x1]
-17:15:11.607 [LogicThread] setPlayerPosition (1031,122,1019) player moved
-17:15:11.708 [LogicThread] setPlayerPosition (1031,121,1019) player moved
-17:15:11.813 [LogicThread] setPlayerPosition (1031,120,1019) player moved
-17:15:12.005 [REPEATED x1]
-17:15:12.005 [LogicThread] setPlayerPosition (1031,119,1019) player moved
-17:15:14.744 [REPEATED x5]
-17:15:14.744 [LogicThread] setPlayerPosition (1031,118,1019) player moved
-17:15:14.812 [LogicThread] setPlayerPosition (1031,118,1018) player moved
-17:15:14.946 [REPEATED x1]
-17:15:14.946 [LogicThread] setPlayerPosition (1031,119,1018) player moved
-17:15:15.322 [REPEATED x2]
-17:15:15.322 [LogicThread] setPlayerPosition (1030,119,1018) player moved
-17:15:15.437 [REPEATED x1]
-17:15:15.437 [LogicThread] setPlayerPosition (1029,120,1018) player moved
-17:15:15.584 [REPEATED x2]
-17:15:15.584 [LogicThread] setPlayerPosition (1028,121,1018) player moved
-17:15:15.756 [REPEATED x2]
-17:15:15.756 [LogicThread] setPlayerPosition (1027,121,1019) player moved
-17:15:15.859 [REPEATED x1]
-17:15:15.859 [LogicThread] setPlayerPosition (1027,122,1019) player moved
-17:15:16.021 [REPEATED x2]
-17:15:16.021 [LogicThread] setPlayerPosition (1026,122,1019) player moved
-17:15:16.073 [LogicThread] setPlayerPosition (1026,121,1019) player moved
-17:15:16.196 [REPEATED x1]
-17:15:16.196 [LogicThread] setPlayerPosition (1026,120,1019) player moved
-17:15:16.274 [LogicThread] setPlayerPosition (1026,119,1019) player moved
-17:15:16.391 [REPEATED x1]
-17:15:16.391 [LogicThread] setPlayerPosition (1026,118,1019) player moved
-17:15:16.535 [REPEATED x2]
-17:15:16.535 [LogicThread] setPlayerPosition (1026,117,1019) player moved
-17:15:16.900 [REPEATED x5]
-17:15:16.900 [LogicThread] setPlayerPosition (1026,116,1019) player moved
-17:15:17.099 [REPEATED x3]
-17:15:17.099 [LogicThread] setPlayerPosition (1027,117,1019) player moved
-17:15:17.167 [REPEATED x1]
-17:15:17.167 [LogicThread] setPlayerPosition (1028,117,1019) player moved
-17:15:17.193 [LogicThread] setPlayerPosition (1029,117,1019) player moved
-17:15:17.218 [LogicThread] setPlayerPosition (1029,118,1019) player moved
-17:15:17.253 [LogicThread] setPlayerPosition (1030,118,1019) player moved
-17:15:17.326 [REPEATED x1]
-17:15:17.326 [LogicThread] setPlayerPosition (1031,118,1019) player moved
-17:15:17.359 [LogicThread] setPlayerPosition (1031,119,1019) player moved
-17:15:17.392 [LogicThread] setPlayerPosition (1032,119,1019) player moved
-17:15:17.490 [REPEATED x2]
-17:15:17.490 [LogicThread] setPlayerPosition (1033,119,1019) player moved
-17:15:17.590 [REPEATED x2]
-17:15:17.590 [LogicThread] setPlayerPosition (1033,120,1019) player moved
-17:15:17.630 [LogicThread] setPlayerPosition (1034,120,1019) player moved
-17:15:17.764 [REPEATED x4]
-17:15:17.764 [LogicThread] setPlayerPosition (1035,120,1019) player moved
-17:15:17.968 [REPEATED x5]
-17:15:17.969 [LogicThread] setPlayerPosition (1035,121,1019) player moved
-17:15:18.068 [REPEATED x2]
-17:15:18.069 [LogicThread] setPlayerPosition (1034,121,1019) player moved
-17:15:18.101 [LogicThread] setPlayerPosition (1034,122,1019) player moved
-17:15:18.133 [LogicThread] setPlayerPosition (1033,122,1019) player moved
-17:15:18.198 [REPEATED x1]
-17:15:18.198 [LogicThread] setPlayerPosition (1032,123,1019) player moved
-17:15:18.234 [LogicThread] setPlayerPosition (1031,123,1019) player moved
-17:15:18.260 [LogicThread] setPlayerPosition (1030,123,1019) player moved
-17:15:18.293 [LogicThread] setPlayerPosition (1030,124,1019) player moved
-17:15:18.326 [LogicThread] setPlayerPosition (1029,124,1019) player moved
-17:15:18.344 [LogicThread] setPlayerPosition (1029,123,1019) player moved
-17:15:18.394 [REPEATED x1]
-17:15:18.394 [LogicThread] setPlayerPosition (1028,123,1019) player moved
-17:15:18.434 [REPEATED x1]
-17:15:18.434 [LogicThread] setPlayerPosition (1027,122,1019) player moved
-17:15:18.463 [LogicThread] setPlayerPosition (1027,121,1019) player moved
-17:15:18.531 [REPEATED x1]
-17:15:18.531 [LogicThread] setPlayerPosition (1026,120,1019) player moved
-17:15:18.550 [LogicThread] setPlayerPosition (1026,119,1019) player moved
-17:15:18.570 [LogicThread] setPlayerPosition (1026,118,1019) player moved
-17:15:18.599 [LogicThread] setPlayerPosition (1026,117,1019) player moved
-17:15:18.617 [LogicThread] setPlayerPosition (1025,117,1019) player moved
-17:15:18.634 [LogicThread] setPlayerPosition (1025,116,1019) player moved
-17:15:18.651 [LogicThread] setPlayerPosition (1025,115,1019) player moved
-17:15:18.669 [LogicThread] setPlayerPosition (1025,114,1019) player moved
-17:15:18.702 [LogicThread] setPlayerPosition (1025,113,1019) player moved
-17:15:18.737 [LogicThread] setPlayerPosition (1025,111,1019) player moved
-17:15:18.771 [LogicThread] setPlayerPosition (1024,110,1019) player moved
-17:15:18.807 [LogicThread] setPlayerPosition (1024,109,1019) player moved
-17:15:18.845 [LogicThread] setPlayerPosition (1024,108,1019) player moved
-17:15:18.880 [LogicThread] setPlayerPosition (1024,107,1019) player moved
-17:15:18.913 [LogicThread] setPlayerPosition (1024,106,1019) player moved
-17:15:18.947 [LogicThread] setPlayerPosition (1023,105,1019) player moved
-17:15:18.981 [LogicThread] setPlayerPosition (1023,104,1019) player moved
-17:15:19.045 [REPEATED x1]
-17:15:19.046 [LogicThread] setPlayerPosition (1023,103,1019) player moved
-17:15:19.080 [LogicThread] setPlayerPosition (1023,102,1019) player moved
-17:15:19.146 [REPEATED x1]
-17:15:19.146 [LogicThread] setPlayerPosition (1023,101,1019) player moved
-17:15:19.214 [REPEATED x1]
-17:15:19.214 [LogicThread] setPlayerPosition (1023,100,1019) player moved
-17:15:19.281 [REPEATED x1]
-17:15:19.281 [LogicThread] setPlayerPosition (1022,100,1019) player moved
-17:15:19.312 [LogicThread] setPlayerPosition (1022,99,1019) player moved
-17:15:19.414 [REPEATED x2]
-17:15:19.414 [LogicThread] setPlayerPosition (1022,98,1019) player moved
-17:15:19.518 [REPEATED x4]
-17:15:19.518 [LogicThread] setPlayerPosition (1022,97,1019) player moved
-17:15:19.725 [REPEATED x5]
-17:15:19.725 [LogicThread] setPlayerPosition (1022,96,1019) player moved
-17:15:22.278 [REPEATED x5]
-17:15:22.278 [LogicThread] setPlayerPosition (1022,96,1019) player moved
-17:15:22.310 [REPEATED x1]
-17:15:22.311 [LogicThread] setPlayerPosition (1022,96,1018) player moved
-17:15:22.345 [REPEATED x1]
-17:15:22.345 [LogicThread] setPlayerPosition (1023,96,1018) player moved
-17:15:22.379 [REPEATED x1]
-17:15:22.379 [LogicThread] setPlayerPosition (1023,96,1017) player moved
-17:15:22.396 [LogicThread] setPlayerPosition (1024,96,1017) player moved
-17:15:22.413 [LogicThread] setPlayerPosition (1024,96,1016) player moved
-17:15:22.466 [REPEATED x1]
-17:15:22.466 [LogicThread] setPlayerPosition (1025,96,1015) player moved
-17:15:22.477 [LogicThread] setPlayerPosition (1026,96,1015) player moved
-17:15:22.497 [LogicThread] setPlayerPosition (1026,96,1014) player moved
-17:15:22.658 [REPEATED x1]
-17:15:22.661 [LogicThread] setPlayerPosition (1028,96,1012) player moved
-17:15:22.678 [LogicThread] setPlayerPosition (1029,96,1011) player moved
-17:15:22.734 [REPEATED x2]
-17:15:22.734 [LogicThread] setPlayerPosition (1030,96,1010) player moved
-17:15:22.838 [REPEATED x2]
-17:15:22.838 [LogicThread] setPlayerPosition (1031,96,1009) player moved
-17:15:22.935 [REPEATED x2]
-17:15:22.935 [LogicThread] setPlayerPosition (1031,96,1008) player moved
-17:15:22.966 [LogicThread] setPlayerPosition (1032,96,1008) player moved
-17:15:23.100 [REPEATED x3]
-17:15:23.100 [LogicThread] setPlayerPosition (1032,96,1007) player moved
-17:15:23.134 [LogicThread] setPlayerPosition (1033,96,1007) player moved
-17:15:23.289 [REPEATED x4]
-17:15:23.290 [LogicThread] setPlayerPosition (1033,96,1006) player moved
-17:15:23.394 [REPEATED x1]
-17:15:23.394 [LogicThread] setPlayerPosition (1034,96,1006) player moved
-17:15:24.341 [LogicThread] setPlayerPosition (1034,96,1005) player moved
-17:15:24.439 [REPEATED x2]
-17:15:24.439 [LogicThread] setPlayerPosition (1033,96,1005) player moved
-17:15:24.504 [REPEATED x1]
-17:15:24.504 [LogicThread] setPlayerPosition (1032,96,1005) player moved
-17:15:24.568 [REPEATED x1]
-17:15:24.568 [LogicThread] setPlayerPosition (1031,96,1005) player moved
-17:15:24.601 [LogicThread] setPlayerPosition (1030,96,1005) player moved
-17:15:24.637 [LogicThread] setPlayerPosition (1029,96,1004) player moved
-17:15:24.705 [REPEATED x1]
-17:15:24.705 [LogicThread] setPlayerPosition (1028,96,1004) player moved
-17:15:24.772 [REPEATED x1]
-17:15:24.772 [LogicThread] setPlayerPosition (1027,96,1004) player moved
-17:15:24.824 [REPEATED x2]
-17:15:24.824 [LogicThread] setPlayerPosition (1026,96,1004) player moved
-17:15:24.926 [REPEATED x5]
-17:15:24.926 [LogicThread] setPlayerPosition (1025,96,1004) player moved
-17:15:25.027 [REPEATED x5]
-17:15:25.027 [LogicThread] setPlayerPosition (1024,96,1004) player moved
-17:15:25.211 [REPEATED x7]
-17:15:25.211 [LogicThread] setPlayerPosition (1023,96,1004) player moved
-17:15:25.411 [REPEATED x5]
-17:15:25.411 [LogicThread] setPlayerPosition (1022,96,1004) player moved
-17:15:26.017 [REPEATED x3]
-17:15:26.017 [LogicThread] setPlayerPosition (1022,96,1003) player moved
-17:15:26.045 [LogicThread] setPlayerPosition (1023,96,1003) player moved
-17:15:26.078 [REPEATED x1]
-17:15:26.078 [LogicThread] setPlayerPosition (1024,96,1003) player moved
-17:15:26.116 [REPEATED x1]
-17:15:26.116 [LogicThread] setPlayerPosition (1025,96,1003) player moved
-17:15:26.169 [REPEATED x2]
-17:15:26.169 [LogicThread] setPlayerPosition (1026,96,1003) player moved
-17:15:26.205 [REPEATED x1]
-17:15:26.205 [LogicThread] setPlayerPosition (1027,96,1003) player moved
-17:15:26.256 [REPEATED x2]
-17:15:26.256 [LogicThread] setPlayerPosition (1028,96,1003) player moved
-17:15:26.274 [LogicThread] setPlayerPosition (1028,96,1002) player moved
-17:15:26.329 [REPEATED x2]
-17:15:26.329 [LogicThread] setPlayerPosition (1029,96,1002) player moved
-17:15:26.404 [REPEATED x2]
-17:15:26.404 [LogicThread] setPlayerPosition (1030,96,1002) player moved
-17:15:26.473 [REPEATED x1]
-17:15:26.473 [LogicThread] setPlayerPosition (1031,96,1002) player moved
-17:15:26.607 [REPEATED x3]
-17:15:26.607 [LogicThread] setPlayerPosition (1032,96,1002) player moved
-17:15:26.740 [REPEATED x3]
-17:15:26.740 [LogicThread] setPlayerPosition (1033,96,1002) player moved
-17:15:26.895 [REPEATED x3]
-17:15:26.895 [LogicThread] setPlayerPosition (1033,96,1001) player moved
-17:15:26.962 [REPEATED x1]
-17:15:26.962 [LogicThread] setPlayerPosition (1034,96,1001) player moved
-17:15:27.856 [REPEATED x2]
-17:15:27.856 [LogicThread] setPlayerPosition (1035,96,1001) player moved
-17:15:27.873 [LogicThread] setPlayerPosition (1035,96,1002) player moved
-17:15:27.923 [REPEATED x2]
-17:15:27.923 [LogicThread] setPlayerPosition (1034,96,1002) player moved
-17:15:27.940 [LogicThread] setPlayerPosition (1034,96,1003) player moved
-17:15:27.972 [REPEATED x1]
-17:15:27.972 [LogicThread] setPlayerPosition (1034,96,1004) player moved
-17:15:28.006 [REPEATED x1]
-17:15:28.006 [LogicThread] setPlayerPosition (1033,96,1005) player moved
-17:15:28.040 [REPEATED x1]
-17:15:28.040 [LogicThread] setPlayerPosition (1033,96,1006) player moved
-17:15:28.057 [LogicThread] setPlayerPosition (1032,96,1007) player moved
-17:15:28.091 [REPEATED x1]
-17:15:28.091 [LogicThread] setPlayerPosition (1032,96,1008) player moved
-17:15:28.125 [LogicThread] setPlayerPosition (1031,96,1009) player moved
-17:15:28.149 [LogicThread] setPlayerPosition (1030,96,1010) player moved
-17:15:28.183 [LogicThread] setPlayerPosition (1030,96,1011) player moved
-17:15:28.202 [LogicThread] setPlayerPosition (1029,96,1012) player moved
-17:15:28.243 [REPEATED x1]
-17:15:28.243 [LogicThread] setPlayerPosition (1029,96,1013) player moved
-17:15:28.264 [LogicThread] setPlayerPosition (1028,96,1014) player moved
-17:15:28.312 [REPEATED x1]
-17:15:28.312 [LogicThread] setPlayerPosition (1027,96,1015) player moved
-17:15:28.354 [REPEATED x1]
-17:15:28.354 [LogicThread] setPlayerPosition (1027,96,1016) player moved
-17:15:28.418 [REPEATED x1]
-17:15:28.418 [LogicThread] setPlayerPosition (1026,96,1017) player moved
-17:15:28.450 [LogicThread] setPlayerPosition (1026,96,1018) player moved
-17:15:28.500 [REPEATED x1]
-17:15:28.500 [LogicThread] setPlayerPosition (1025,96,1018) player moved
-17:15:28.524 [LogicThread] setPlayerPosition (1025,96,1019) player moved
-17:15:28.589 [REPEATED x2]
-17:15:28.589 [LogicThread] setPlayerPosition (1025,96,1020) player moved
-17:15:28.617 [LogicThread] setPlayerPosition (1024,96,1020) player moved
-17:15:28.689 [REPEATED x2]
-17:15:28.689 [LogicThread] setPlayerPosition (1024,96,1021) player moved
-17:15:28.788 [REPEATED x2]
-17:15:28.788 [LogicThread] setPlayerPosition (1023,96,1021) player moved
-17:15:28.820 [LogicThread] setPlayerPosition (1023,96,1022) player moved
-17:15:28.969 [REPEATED x5]
-17:15:28.969 [LogicThread] setPlayerPosition (1023,96,1023) player moved
-17:15:29.063 [REPEATED x2]
-17:15:29.063 [LogicThread] setPlayerPosition (1022,96,1023) player moved
-17:15:29.204 [REPEATED x2]
-17:15:29.204 [LogicThread] setPlayerPosition (1022,96,1024) player moved
-17:15:29.948 [LogicThread] setPlayerPosition (1021,96,1025) player moved
-17:15:30.045 [REPEATED x2]
-17:15:30.045 [LogicThread] setPlayerPosition (1020,96,1025) player moved
-17:15:30.109 [REPEATED x1]
-17:15:30.109 [LogicThread] setPlayerPosition (1019,96,1025) player moved
-17:15:30.143 [LogicThread] setPlayerPosition (1018,96,1025) player moved
-17:15:30.179 [LogicThread] setPlayerPosition (1017,96,1025) player moved
-17:15:30.231 [REPEATED x1]
-17:15:30.231 [LogicThread] setPlayerPosition (1016,96,1025) player moved
-17:15:30.248 [LogicThread] setPlayerPosition (1016,96,1024) player moved
-17:15:30.280 [LogicThread] setPlayerPosition (1016,97,1024) player moved
-17:15:30.311 [LogicThread] setPlayerPosition (1015,97,1024) player moved
-17:15:30.376 [REPEATED x1]
-17:15:30.376 [LogicThread] setPlayerPosition (1014,97,1024) player moved
-17:15:30.450 [REPEATED x2]
-17:15:30.450 [LogicThread] setPlayerPosition (1013,97,1024) player moved
-17:15:30.484 [LogicThread] setPlayerPosition (1012,97,1024) player moved
-17:15:30.548 [REPEATED x1]
-17:15:30.548 [LogicThread] setPlayerPosition (1011,97,1024) player moved
-17:15:30.580 [LogicThread] setPlayerPosition (1010,98,1024) player moved
-17:15:30.614 [LogicThread] setPlayerPosition (1009,98,1024) player moved
-17:15:30.647 [LogicThread] setPlayerPosition (1008,98,1024) player moved
-17:15:30.679 [LogicThread] setPlayerPosition (1007,98,1024) player moved
-17:15:30.713 [LogicThread] setPlayerPosition (1006,98,1024) player moved
-17:15:30.746 [LogicThread] setPlayerPosition (1005,98,1024) player moved
-17:15:30.811 [REPEATED x1]
-17:15:30.811 [LogicThread] setPlayerPosition (1004,99,1024) player moved
-17:15:30.845 [LogicThread] setPlayerPosition (1003,99,1024) player moved
-17:15:30.913 [REPEATED x1]
-17:15:30.913 [LogicThread] setPlayerPosition (1002,99,1024) player moved
-17:15:30.980 [REPEATED x1]
-17:15:30.980 [LogicThread] setPlayerPosition (1001,99,1024) player moved
-17:15:31.045 [REPEATED x1]
-17:15:31.046 [LogicThread] setPlayerPosition (1000,99,1024) player moved
-17:15:31.150 [REPEATED x2]
-17:15:31.150 [LogicThread] setPlayerPosition (999,99,1024) player moved
-17:15:31.184 [LogicThread] setPlayerPosition (998,100,1024) player moved
-17:15:31.250 [REPEATED x1]
-17:15:31.250 [LogicThread] setPlayerPosition (997,100,1024) player moved
-17:15:31.287 [LogicThread] setPlayerPosition (996,100,1024) player moved
-17:15:31.322 [LogicThread] setPlayerPosition (995,100,1024) player moved
-17:15:31.347 [LogicThread] setPlayerPosition (994,100,1024) player moved
-17:15:31.380 [LogicThread] setPlayerPosition (993,100,1024) player moved
-17:15:31.413 [LogicThread] setPlayerPosition (992,101,1024) player moved
-17:15:31.448 [LogicThread] setPlayerPosition (991,101,1024) player moved
-17:15:31.485 [LogicThread] setPlayerPosition (991,101,1025) player moved
-17:15:31.519 [LogicThread] setPlayerPosition (990,101,1025) player moved
-17:15:31.553 [LogicThread] setPlayerPosition (989,101,1025) player moved
-17:15:31.587 [LogicThread] setPlayerPosition (988,101,1025) player moved
-17:15:31.652 [REPEATED x1]
-17:15:31.652 [LogicThread] setPlayerPosition (987,101,1025) player moved
-17:15:31.716 [REPEATED x1]
-17:15:31.716 [LogicThread] setPlayerPosition (986,102,1025) player moved
-17:15:31.782 [REPEATED x1]
-17:15:31.782 [LogicThread] setPlayerPosition (985,102,1025) player moved
-17:15:31.880 [REPEATED x2]
-17:15:31.880 [LogicThread] setPlayerPosition (984,102,1025) player moved
-17:15:32.009 [REPEATED x3]
-17:15:32.009 [LogicThread] setPlayerPosition (983,102,1025) player moved
-17:15:32.139 [REPEATED x3]
-17:15:32.139 [LogicThread] setPlayerPosition (982,102,1025) player moved
-17:15:32.703 [REPEATED x7]
-17:15:32.703 [LogicThread] setPlayerPosition (981,102,1026) player moved
-17:15:32.736 [LogicThread] setPlayerPosition (980,102,1026) player moved
-17:15:32.770 [LogicThread] setPlayerPosition (980,103,1026) player moved
-17:15:32.803 [LogicThread] setPlayerPosition (979,103,1026) player moved
-17:15:32.853 [REPEATED x1]
-17:15:32.853 [LogicThread] setPlayerPosition (978,103,1026) player moved
-17:15:32.921 [REPEATED x1]
-17:15:32.921 [LogicThread] setPlayerPosition (977,103,1026) player moved
-17:15:32.956 [LogicThread] setPlayerPosition (976,103,1027) player moved
-17:15:32.989 [LogicThread] setPlayerPosition (975,103,1027) player moved
-17:15:33.057 [REPEATED x1]
-17:15:33.057 [LogicThread] setPlayerPosition (974,103,1027) player moved
-17:15:33.090 [LogicThread] setPlayerPosition (974,104,1027) player moved
-17:15:33.112 [LogicThread] setPlayerPosition (973,104,1027) player moved
-17:15:33.191 [REPEATED x3]
-17:15:33.191 [LogicThread] setPlayerPosition (972,104,1027) player moved
-17:15:33.258 [REPEATED x2]
-17:15:33.258 [LogicThread] setPlayerPosition (972,104,1028) player moved
-17:15:33.283 [LogicThread] setPlayerPosition (971,104,1028) player moved
-17:15:33.407 [REPEATED x4]
-17:15:33.407 [LogicThread] setPlayerPosition (970,104,1028) player moved
-17:15:33.570 [REPEATED x4]
-17:15:33.570 [LogicThread] setPlayerPosition (969,104,1028) player moved
-17:15:34.588 [REPEATED x5]
-17:15:34.588 [LogicThread] setPlayerPosition (967,105,1028) player moved
-17:15:34.689 [REPEATED x2]
-17:15:34.689 [LogicThread] setPlayerPosition (967,105,1027) player moved
-17:15:34.723 [LogicThread] setPlayerPosition (966,106,1027) player moved
-17:15:34.758 [LogicThread] setPlayerPosition (966,106,1026) player moved
-17:15:34.790 [LogicThread] setPlayerPosition (965,107,1026) player moved
-17:15:34.824 [LogicThread] setPlayerPosition (965,107,1025) player moved
-17:15:34.857 [LogicThread] setPlayerPosition (964,108,1024) player moved
-17:15:34.894 [LogicThread] setPlayerPosition (964,108,1023) player moved
-17:15:34.928 [LogicThread] setPlayerPosition (963,109,1023) player moved
-17:15:34.962 [LogicThread] setPlayerPosition (962,109,1022) player moved
-17:15:34.996 [LogicThread] setPlayerPosition (962,110,1021) player moved
-17:15:35.029 [LogicThread] setPlayerPosition (961,111,1020) player moved
-17:15:35.061 [LogicThread] setPlayerPosition (960,111,1019) player moved
-17:15:35.095 [LogicThread] setPlayerPosition (960,112,1018) player moved
-17:15:35.131 [LogicThread] setPlayerPosition (959,112,1017) player moved
-17:15:35.167 [LogicThread] setPlayerPosition (959,113,1017) player moved
-17:15:35.201 [LogicThread] setPlayerPosition (958,113,1016) player moved
-17:15:35.234 [LogicThread] setPlayerPosition (958,114,1016) player moved
-17:15:35.267 [LogicThread] setPlayerPosition (958,114,1015) player moved
-17:15:35.300 [LogicThread] setPlayerPosition (957,114,1015) player moved
-17:15:35.340 [LogicThread] setPlayerPosition (957,115,1014) player moved
-17:15:35.406 [REPEATED x1]
-17:15:35.406 [LogicThread] setPlayerPosition (956,115,1013) player moved
-17:15:35.476 [REPEATED x1]
-17:15:35.476 [LogicThread] setPlayerPosition (956,116,1013) player moved
-17:15:35.508 [LogicThread] setPlayerPosition (956,116,1012) player moved
-17:15:35.546 [LogicThread] setPlayerPosition (955,116,1012) player moved
-17:15:35.646 [REPEATED x2]
-17:15:35.646 [LogicThread] setPlayerPosition (955,115,1011) player moved
-17:15:35.718 [REPEATED x1]
-17:15:35.718 [LogicThread] setPlayerPosition (955,114,1011) player moved
-17:15:35.751 [LogicThread] setPlayerPosition (955,113,1011) player moved
-17:15:35.788 [LogicThread] setPlayerPosition (954,113,1011) player moved
-17:15:35.813 [LogicThread] setPlayerPosition (954,112,1011) player moved
-17:15:35.854 [LogicThread] setPlayerPosition (954,111,1010) player moved
-17:15:35.887 [LogicThread] setPlayerPosition (954,110,1010) player moved
-17:15:35.923 [LogicThread] setPlayerPosition (954,109,1010) player moved
-17:15:35.956 [LogicThread] setPlayerPosition (954,108,1010) player moved
-17:15:35.988 [LogicThread] setPlayerPosition (954,107,1010) player moved
-17:15:36.020 [LogicThread] setPlayerPosition (954,106,1010) player moved
-17:15:36.057 [LogicThread] setPlayerPosition (954,105,1010) player moved
-17:15:36.090 [LogicThread] setPlayerPosition (954,104,1010) player moved
-17:15:36.122 [LogicThread] setPlayerPosition (954,103,1010) player moved
-17:15:36.171 [REPEATED x1]
-17:15:36.171 [LogicThread] setPlayerPosition (954,102,1009) player moved
-17:15:36.230 [REPEATED x1]
-17:15:36.230 [LogicThread] setPlayerPosition (953,101,1009) player moved
-17:15:36.331 [REPEATED x2]
-17:15:36.331 [LogicThread] setPlayerPosition (952,101,1008) player moved
-17:15:36.357 [LogicThread] setPlayerPosition (952,100,1008) player moved
-17:15:36.397 [LogicThread] setPlayerPosition (951,100,1008) player moved
-17:15:36.430 [LogicThread] setPlayerPosition (951,101,1007) player moved
-17:15:36.463 [LogicThread] setPlayerPosition (950,101,1007) player moved
-17:15:36.495 [LogicThread] setPlayerPosition (949,101,1006) player moved
-17:15:36.528 [LogicThread] setPlayerPosition (948,101,1005) player moved
-17:15:36.557 [LogicThread] setPlayerPosition (948,102,1005) player moved
-17:15:36.576 [LogicThread] setPlayerPosition (947,102,1004) player moved
-17:15:36.596 [LogicThread] setPlayerPosition (946,102,1004) player moved
-17:15:36.630 [LogicThread] setPlayerPosition (945,103,1003) player moved
-17:15:36.662 [LogicThread] setPlayerPosition (944,103,1002) player moved
-17:15:36.696 [LogicThread] setPlayerPosition (943,104,1001) player moved
-17:15:36.731 [LogicThread] setPlayerPosition (942,104,1000) player moved
-17:15:36.764 [LogicThread] setPlayerPosition (941,105,999) player moved
-17:15:36.798 [LogicThread] setPlayerPosition (940,106,999) player moved
-17:15:36.832 [LogicThread] setPlayerPosition (938,107,998) player moved
-17:15:36.865 [LogicThread] setPlayerPosition (937,107,997) player moved
-17:15:36.899 [LogicThread] setPlayerPosition (936,108,996) player moved
-17:15:36.931 [LogicThread] setPlayerPosition (935,109,995) player moved
-17:15:36.964 [LogicThread] setPlayerPosition (933,110,994) player moved
-17:15:36.996 [LogicThread] setPlayerPosition (932,111,993) player moved
-17:15:37.031 [LogicThread] setPlayerPosition (931,111,991) player moved
-17:15:37.063 [LogicThread] setPlayerPosition (930,112,990) player moved
-17:15:37.097 [LogicThread] setPlayerPosition (929,113,989) player moved
-17:15:37.131 [LogicThread] setPlayerPosition (927,114,988) player moved
-17:15:37.164 [LogicThread] setPlayerPosition (926,115,987) player moved
-17:15:37.197 [LogicThread] setPlayerPosition (926,115,986) player moved
-17:15:37.230 [LogicThread] setPlayerPosition (925,116,985) player moved
-17:15:37.264 [LogicThread] setPlayerPosition (924,117,984) player moved
-17:15:37.298 [LogicThread] setPlayerPosition (923,117,984) player moved
-17:15:37.331 [LogicThread] setPlayerPosition (922,118,983) player moved
-17:15:37.364 [LogicThread] setPlayerPosition (922,118,982) player moved
-17:15:37.397 [LogicThread] setPlayerPosition (921,119,982) player moved
-17:15:37.430 [LogicThread] setPlayerPosition (921,119,981) player moved
-17:15:37.464 [LogicThread] setPlayerPosition (920,119,981) player moved
-17:15:37.496 [LogicThread] setPlayerPosition (920,120,980) player moved
-17:15:37.528 [LogicThread] setPlayerPosition (919,120,980) player moved
-17:15:37.560 [LogicThread] setPlayerPosition (919,120,979) player moved
-17:15:37.593 [LogicThread] setPlayerPosition (919,121,979) player moved
-17:15:37.625 [LogicThread] setPlayerPosition (918,121,979) player moved
-17:15:37.657 [LogicThread] setPlayerPosition (918,121,978) player moved
-17:15:37.723 [REPEATED x1]
-17:15:37.723 [LogicThread] setPlayerPosition (917,121,978) player moved
-17:15:37.756 [LogicThread] setPlayerPosition (917,122,977) player moved
-17:15:37.857 [REPEATED x2]
-17:15:37.857 [LogicThread] setPlayerPosition (916,122,977) player moved
-17:15:37.924 [REPEATED x1]
-17:15:37.925 [LogicThread] setPlayerPosition (916,122,976) player moved
-17:15:37.959 [LogicThread] setPlayerPosition (916,123,976) player moved
-17:15:38.130 [REPEATED x2]
-17:15:38.130 [LogicThread] setPlayerPosition (915,123,976) player moved
-17:15:39.215 [LogicThread] setPlayerPosition (914,124,974) player moved
-17:15:39.248 [LogicThread] setPlayerPosition (914,123,974) player moved
-17:15:39.315 [REPEATED x1]
-17:15:39.315 [LogicThread] setPlayerPosition (914,122,974) player moved
-17:15:39.382 [REPEATED x1]
-17:15:39.382 [LogicThread] setPlayerPosition (914,121,974) player moved
-17:15:39.413 [LogicThread] setPlayerPosition (914,120,974) player moved
-17:15:39.447 [LogicThread] setPlayerPosition (914,119,974) player moved
-17:15:39.480 [LogicThread] setPlayerPosition (914,118,974) player moved
-17:15:39.514 [LogicThread] setPlayerPosition (914,117,974) player moved
-17:15:39.580 [REPEATED x1]
-17:15:39.580 [LogicThread] setPlayerPosition (914,116,974) player moved
-17:15:39.612 [LogicThread] setPlayerPosition (914,115,974) player moved
-17:15:39.676 [REPEATED x1]
-17:15:39.676 [LogicThread] setPlayerPosition (914,114,974) player moved
-17:15:39.746 [REPEATED x1]
-17:15:39.746 [LogicThread] setPlayerPosition (914,113,974) player moved
-17:15:39.817 [REPEATED x1]
-17:15:39.817 [LogicThread] setPlayerPosition (914,112,974) player moved
-17:15:39.889 [REPEATED x1]
-17:15:39.889 [LogicThread] setPlayerPosition (914,111,974) player moved
-17:15:40.022 [REPEATED x3]
-17:15:40.022 [LogicThread] setPlayerPosition (914,110,974) player moved
-17:15:40.181 [REPEATED x4]
-17:15:40.181 [LogicThread] setPlayerPosition (914,110,975) player moved
-17:15:40.246 [REPEATED x1]
-17:15:40.246 [LogicThread] setPlayerPosition (913,110,975) player moved
-17:15:40.280 [LogicThread] setPlayerPosition (913,110,976) player moved
-17:15:40.349 [REPEATED x2]
-17:15:40.349 [LogicThread] setPlayerPosition (913,110,977) player moved
-17:15:40.412 [REPEATED x1]
-17:15:40.413 [LogicThread] setPlayerPosition (912,111,978) player moved
-17:15:40.482 [REPEATED x1]
-17:15:40.483 [LogicThread] setPlayerPosition (912,111,979) player moved
-17:15:40.611 [REPEATED x3]
-17:15:40.611 [LogicThread] setPlayerPosition (912,111,980) player moved
-17:15:40.681 [REPEATED x1]
-17:15:40.681 [LogicThread] setPlayerPosition (911,112,980) player moved
-17:15:40.749 [REPEATED x1]
-17:15:40.749 [LogicThread] setPlayerPosition (911,112,981) player moved
-17:15:40.782 [LogicThread] setPlayerPosition (911,111,981) player moved
-17:15:40.882 [REPEATED x2]
-17:15:40.882 [LogicThread] setPlayerPosition (911,110,981) player moved
-17:15:40.948 [REPEATED x1]
-17:15:40.948 [LogicThread] setPlayerPosition (911,109,981) player moved
-17:15:40.983 [LogicThread] setPlayerPosition (911,109,982) player moved
-17:15:41.082 [REPEATED x2]
-17:15:41.082 [LogicThread] setPlayerPosition (911,108,982) player moved
-17:15:41.216 [REPEATED x3]
-17:15:41.216 [LogicThread] setPlayerPosition (911,107,982) player moved
-17:15:41.446 [REPEATED x4]
-17:15:41.446 [LogicThread] setPlayerPosition (911,106,982) player moved
-17:15:43.637 [LogicThread] setPlayerPosition (910,105,983) player moved
-17:15:43.670 [LogicThread] setPlayerPosition (911,105,983) player moved
-17:15:43.705 [LogicThread] setPlayerPosition (911,105,984) player moved
-17:15:43.773 [REPEATED x1]
-17:15:43.773 [LogicThread] setPlayerPosition (911,105,985) player moved
-17:15:43.839 [REPEATED x1]
-17:15:43.839 [LogicThread] setPlayerPosition (912,105,986) player moved
-17:15:43.876 [LogicThread] setPlayerPosition (912,105,987) player moved
-17:15:43.916 [REPEATED x1]
-17:15:43.916 [LogicThread] setPlayerPosition (912,105,988) player moved
-17:15:43.943 [LogicThread] setPlayerPosition (913,105,989) player moved
-17:15:43.975 [LogicThread] setPlayerPosition (913,105,990) player moved
-17:15:43.994 [LogicThread] setPlayerPosition (914,105,991) player moved
-17:15:44.044 [REPEATED x1]
-17:15:44.044 [LogicThread] setPlayerPosition (914,105,993) player moved
-17:15:44.062 [LogicThread] setPlayerPosition (915,105,993) player moved
-17:15:44.081 [LogicThread] setPlayerPosition (915,105,994) player moved
-17:15:44.108 [LogicThread] setPlayerPosition (915,105,995) player moved
-17:15:44.126 [LogicThread] setPlayerPosition (916,105,996) player moved
-17:15:44.146 [LogicThread] setPlayerPosition (916,105,997) player moved
-17:15:44.177 [LogicThread] setPlayerPosition (917,105,999) player moved
-17:15:44.194 [LogicThread] setPlayerPosition (917,105,1000) player moved
-17:15:44.237 [REPEATED x1]
-17:15:44.237 [LogicThread] setPlayerPosition (918,105,1001) player moved
-17:15:44.279 [LogicThread] setPlayerPosition (918,105,1003) player moved
-17:15:44.311 [LogicThread] setPlayerPosition (919,105,1004) player moved
-17:15:44.342 [LogicThread] setPlayerPosition (919,105,1005) player moved
-17:15:44.375 [LogicThread] setPlayerPosition (920,105,1006) player moved
-17:15:44.408 [LogicThread] setPlayerPosition (920,105,1007) player moved
-17:15:44.440 [LogicThread] setPlayerPosition (920,105,1008) player moved
-17:15:44.473 [LogicThread] setPlayerPosition (921,105,1008) player moved
-17:15:44.490 [LogicThread] setPlayerPosition (921,105,1009) player moved
-17:15:44.538 [REPEATED x1]
-17:15:44.538 [LogicThread] setPlayerPosition (921,105,1010) player moved
-17:15:44.606 [REPEATED x2]
-17:15:44.606 [LogicThread] setPlayerPosition (922,105,1011) player moved
-17:15:44.645 [REPEATED x1]
-17:15:44.645 [LogicThread] setPlayerPosition (922,105,1012) player moved
-17:15:44.693 [REPEATED x1]
-17:15:44.693 [LogicThread] setPlayerPosition (923,105,1013) player moved
-17:15:44.718 [LogicThread] setPlayerPosition (923,106,1014) player moved
-17:15:44.757 [REPEATED x1]
-17:15:44.758 [LogicThread] setPlayerPosition (924,106,1015) player moved
-17:15:44.774 [LogicThread] setPlayerPosition (924,106,1016) player moved
-17:15:44.821 [REPEATED x1]
-17:15:44.821 [LogicThread] setPlayerPosition (925,106,1017) player moved
-17:15:44.840 [LogicThread] setPlayerPosition (925,106,1018) player moved
-17:15:44.862 [LogicThread] setPlayerPosition (926,107,1019) player moved
-17:15:44.879 [LogicThread] setPlayerPosition (926,107,1020) player moved
-17:15:44.896 [LogicThread] setPlayerPosition (927,107,1021) player moved
-17:15:44.929 [LogicThread] setPlayerPosition (928,107,1022) player moved
-17:15:44.963 [LogicThread] setPlayerPosition (928,107,1023) player moved
-17:15:44.997 [LogicThread] setPlayerPosition (929,108,1024) player moved
-17:15:45.024 [LogicThread] setPlayerPosition (929,108,1025) player moved
-17:15:45.041 [LogicThread] setPlayerPosition (930,108,1025) player moved
-17:15:45.062 [LogicThread] setPlayerPosition (930,108,1026) player moved
-17:15:45.095 [LogicThread] setPlayerPosition (930,108,1027) player moved
-17:15:45.126 [LogicThread] setPlayerPosition (931,108,1028) player moved
-17:15:45.159 [LogicThread] setPlayerPosition (931,109,1028) player moved
-17:15:45.194 [LogicThread] setPlayerPosition (932,109,1029) player moved
-17:15:45.227 [LogicThread] setPlayerPosition (932,109,1030) player moved
-17:15:45.295 [REPEATED x1]
-17:15:45.295 [LogicThread] setPlayerPosition (933,109,1031) player moved
-17:15:45.361 [REPEATED x1]
-17:15:45.361 [LogicThread] setPlayerPosition (933,109,1032) player moved
-17:15:45.426 [REPEATED x1]
-17:15:45.426 [LogicThread] setPlayerPosition (934,110,1032) player moved
-17:15:45.445 [LogicThread] setPlayerPosition (934,110,1033) player moved
-17:15:45.543 [REPEATED x4]
-17:15:45.544 [LogicThread] setPlayerPosition (934,110,1034) player moved
-17:15:45.610 [REPEATED x2]
-17:15:45.610 [LogicThread] setPlayerPosition (935,110,1034) player moved
-17:15:45.659 [REPEATED x1]
-17:15:45.660 [LogicThread] setPlayerPosition (935,110,1035) player moved
-17:15:45.861 [REPEATED x6]
-17:15:45.861 [LogicThread] setPlayerPosition (935,110,1036) player moved
-17:15:45.927 [REPEATED x1]
-17:15:45.927 [LogicThread] setPlayerPosition (936,110,1036) player moved
-17:15:46.793 [REPEATED x2]
-17:15:46.793 [LogicThread] setPlayerPosition (936,111,1037) player moved
-17:15:46.860 [REPEATED x2]
-17:15:46.860 [LogicThread] setPlayerPosition (935,111,1038) player moved
-17:15:46.896 [REPEATED x1]
-17:15:46.896 [LogicThread] setPlayerPosition (935,112,1038) player moved
-17:15:46.944 [REPEATED x1]
-17:15:46.944 [LogicThread] setPlayerPosition (934,112,1038) player moved
-17:15:47.022 [REPEATED x2]
-17:15:47.022 [LogicThread] setPlayerPosition (934,113,1038) player moved
-17:15:47.050 [LogicThread] setPlayerPosition (933,113,1038) player moved
-17:15:47.086 [LogicThread] setPlayerPosition (933,113,1039) player moved
-17:15:47.157 [REPEATED x1]
-17:15:47.157 [LogicThread] setPlayerPosition (932,113,1039) player moved
-17:15:47.224 [REPEATED x1]
-17:15:47.224 [LogicThread] setPlayerPosition (932,114,1039) player moved
-17:15:47.328 [REPEATED x2]
-17:15:47.328 [LogicThread] setPlayerPosition (931,114,1039) player moved
-17:15:47.459 [REPEATED x3]
-17:15:47.459 [LogicThread] setPlayerPosition (931,114,1040) player moved
-17:15:47.495 [LogicThread] setPlayerPosition (931,113,1040) player moved
-17:15:47.528 [REPEATED x1]
-17:15:47.528 [LogicThread] setPlayerPosition (931,112,1040) player moved
-17:15:47.584 [REPEATED x1]
-17:15:47.584 [LogicThread] setPlayerPosition (931,111,1040) player moved
-17:15:47.622 [LogicThread] setPlayerPosition (930,110,1040) player moved
-17:15:47.660 [LogicThread] setPlayerPosition (930,109,1040) player moved
-17:15:47.692 [LogicThread] setPlayerPosition (930,108,1040) player moved
-17:15:47.758 [REPEATED x1]
-17:15:47.758 [LogicThread] setPlayerPosition (930,107,1040) player moved
-17:15:47.791 [LogicThread] setPlayerPosition (930,106,1040) player moved
-17:15:47.856 [REPEATED x1]
-17:15:47.856 [LogicThread] setPlayerPosition (930,105,1040) player moved
-17:15:47.924 [REPEATED x1]
-17:15:47.924 [LogicThread] setPlayerPosition (930,104,1040) player moved
-17:15:47.990 [REPEATED x1]
-17:15:47.990 [LogicThread] setPlayerPosition (930,103,1040) player moved
-17:15:48.091 [REPEATED x2]
-17:15:48.091 [LogicThread] setPlayerPosition (930,102,1040) player moved
-17:15:48.225 [REPEATED x4]
-17:15:48.225 [LogicThread] setPlayerPosition (930,101,1040) player moved
-17:15:48.394 [REPEATED x3]
-17:15:48.394 [LogicThread] setPlayerPosition (930,100,1040) player moved
-17:15:51.011 [REPEATED x3]
-17:15:51.011 [LogicThread] setPlayerPosition (929,98,1040) player moved
-17:15:51.082 [REPEATED x2]
-17:15:51.082 [LogicThread] setPlayerPosition (929,97,1040) player moved
-17:15:51.177 [REPEATED x2]
-17:15:51.177 [LogicThread] setPlayerPosition (929,96,1040) player moved
-17:15:51.246 [REPEATED x2]
-17:15:51.246 [LogicThread] setPlayerPosition (929,95,1040) player moved
-17:15:51.353 [REPEATED x4]
-17:15:51.353 [LogicThread] setPlayerPosition (929,94,1040) player moved
-17:15:51.485 [REPEATED x5]
-17:15:51.485 [LogicThread] setPlayerPosition (929,93,1040) player moved
-17:15:51.703 [REPEATED x5]
-17:15:51.703 [LogicThread] setPlayerPosition (929,92,1040) player moved
-17:15:52.654 [REPEATED x1]
-17:15:52.654 [LogicThread] setPlayerPosition (929,91,1040) player moved
-17:15:52.759 [REPEATED x2]
-17:15:52.759 [LogicThread] setPlayerPosition (928,92,1040) player moved
-17:15:52.792 [LogicThread] setPlayerPosition (927,92,1040) player moved
-17:15:52.861 [REPEATED x1]
-17:15:52.861 [LogicThread] setPlayerPosition (926,93,1040) player moved
-17:15:52.893 [LogicThread] setPlayerPosition (925,93,1040) player moved
-17:15:52.927 [LogicThread] setPlayerPosition (924,94,1040) player moved
-17:15:52.958 [LogicThread] setPlayerPosition (923,94,1040) player moved
-17:15:52.993 [LogicThread] setPlayerPosition (922,95,1039) player moved
-17:15:53.027 [LogicThread] setPlayerPosition (921,95,1039) player moved
-17:15:53.061 [LogicThread] setPlayerPosition (920,96,1039) player moved
-17:15:53.093 [LogicThread] setPlayerPosition (919,96,1039) player moved
-17:15:53.126 [LogicThread] setPlayerPosition (917,97,1039) player moved
-17:15:53.160 [LogicThread] setPlayerPosition (916,98,1038) player moved
-17:15:53.192 [LogicThread] setPlayerPosition (915,98,1038) player moved
-17:15:53.228 [LogicThread] setPlayerPosition (913,99,1038) player moved
-17:15:53.262 [LogicThread] setPlayerPosition (912,100,1038) player moved
-17:15:53.282 [LogicThread] setPlayerPosition (911,100,1038) player moved
-17:15:53.298 [LogicThread] setPlayerPosition (910,101,1037) player moved
-17:15:53.326 [LogicThread] setPlayerPosition (909,101,1037) player moved
-17:15:53.348 [LogicThread] setPlayerPosition (908,102,1037) player moved
-17:15:53.365 [LogicThread] setPlayerPosition (907,102,1037) player moved
-17:15:53.382 [LogicThread] setPlayerPosition (906,103,1037) player moved
-17:15:53.400 [LogicThread] setPlayerPosition (905,103,1036) player moved
-17:15:53.419 [LogicThread] setPlayerPosition (904,104,1036) player moved
-17:15:53.438 [LogicThread] setPlayerPosition (903,104,1036) player moved
-17:15:53.463 [LogicThread] setPlayerPosition (901,105,1036) player moved
-17:15:53.485 [LogicThread] setPlayerPosition (900,106,1035) player moved
-17:15:53.503 [LogicThread] setPlayerPosition (899,106,1035) player moved
-17:15:53.531 [LogicThread] setPlayerPosition (897,107,1035) player moved
-17:15:53.551 [LogicThread] setPlayerPosition (896,108,1034) player moved
-17:15:53.568 [LogicThread] setPlayerPosition (894,108,1034) player moved
-17:15:53.598 [LogicThread] setPlayerPosition (892,109,1034) player moved
-17:15:53.615 [LogicThread] setPlayerPosition (891,110,1034) player moved
-17:15:53.634 [LogicThread] setPlayerPosition (890,110,1033) player moved
-17:15:53.664 [LogicThread] setPlayerPosition (888,111,1033) player moved
-17:15:53.698 [LogicThread] setPlayerPosition (886,112,1032) player moved
-17:15:53.718 [LogicThread] setPlayerPosition (884,113,1032) player moved
-17:15:53.736 [LogicThread] setPlayerPosition (883,114,1032) player moved
-17:15:53.764 [LogicThread] setPlayerPosition (881,114,1032) player moved
-17:15:53.786 [LogicThread] setPlayerPosition (880,115,1031) player moved
-17:15:53.819 [LogicThread] setPlayerPosition (879,116,1031) player moved
-17:15:53.852 [LogicThread] setPlayerPosition (877,117,1031) player moved
-17:15:53.886 [LogicThread] setPlayerPosition (875,117,1030) player moved
-17:15:53.918 [LogicThread] setPlayerPosition (874,118,1030) player moved
-17:15:53.937 [LogicThread] setPlayerPosition (873,118,1030) player moved
-17:15:53.961 [LogicThread] setPlayerPosition (873,119,1030) player moved
-17:15:53.985 [LogicThread] setPlayerPosition (872,119,1029) player moved
-17:15:54.018 [LogicThread] setPlayerPosition (871,120,1029) player moved
-17:15:54.053 [LogicThread] setPlayerPosition (870,120,1029) player moved
-17:15:54.086 [LogicThread] setPlayerPosition (869,121,1029) player moved
-17:15:54.119 [LogicThread] setPlayerPosition (868,121,1029) player moved
-17:15:54.150 [LogicThread] setPlayerPosition (867,121,1029) player moved
-17:15:54.185 [LogicThread] setPlayerPosition (866,122,1028) player moved
-17:15:54.253 [REPEATED x1]
-17:15:54.253 [LogicThread] setPlayerPosition (865,122,1028) player moved
-17:15:54.287 [LogicThread] setPlayerPosition (864,123,1028) player moved
-17:15:54.353 [REPEATED x1]
-17:15:54.353 [LogicThread] setPlayerPosition (863,123,1028) player moved
-17:15:54.417 [REPEATED x1]
-17:15:54.417 [LogicThread] setPlayerPosition (862,124,1028) player moved
-17:15:54.450 [LogicThread] setPlayerPosition (862,124,1027) player moved
-17:15:54.484 [LogicThread] setPlayerPosition (861,124,1027) player moved
-17:15:54.517 [LogicThread] setPlayerPosition (860,125,1027) player moved
-17:15:54.551 [LogicThread] setPlayerPosition (859,125,1027) player moved
-17:15:54.584 [LogicThread] setPlayerPosition (858,126,1027) player moved
-17:15:54.607 [LogicThread] setPlayerPosition (857,126,1027) player moved
-17:15:54.625 [LogicThread] setPlayerPosition (857,126,1026) player moved
-17:15:54.657 [LogicThread] setPlayerPosition (856,127,1026) player moved
-17:15:54.691 [LogicThread] setPlayerPosition (854,127,1026) player moved
-17:15:54.719 [LogicThread] setPlayerPosition (853,128,1026) player moved
-17:15:54.752 [LogicThread] setPlayerPosition (852,128,1025) player moved
-17:15:54.780 [LogicThread] setPlayerPosition (851,129,1025) player moved
-17:15:54.803 [LogicThread] setPlayerPosition (850,130,1025) player moved
-17:15:54.827 [LogicThread] setPlayerPosition (849,130,1025) player moved
-17:15:54.846 [LogicThread] setPlayerPosition (848,131,1024) player moved
-17:15:54.863 [LogicThread] setPlayerPosition (847,131,1024) player moved
-17:15:54.895 [LogicThread] setPlayerPosition (845,132,1024) player moved
-17:15:54.928 [LogicThread] setPlayerPosition (844,132,1024) player moved
-17:15:54.962 [LogicThread] setPlayerPosition (843,133,1023) player moved
-17:15:54.998 [LogicThread] setPlayerPosition (841,134,1023) player moved
-17:15:55.032 [LogicThread] setPlayerPosition (840,134,1023) player moved
-17:15:55.066 [LogicThread] setPlayerPosition (839,135,1022) player moved
-17:15:55.100 [LogicThread] setPlayerPosition (838,135,1022) player moved
-17:15:55.134 [LogicThread] setPlayerPosition (837,136,1022) player moved
-17:15:55.166 [LogicThread] setPlayerPosition (836,136,1022) player moved
-17:15:55.198 [LogicThread] setPlayerPosition (835,136,1022) player moved
-17:15:55.232 [LogicThread] setPlayerPosition (835,137,1022) player moved
-17:15:55.268 [LogicThread] setPlayerPosition (834,137,1021) player moved
-17:15:55.303 [LogicThread] setPlayerPosition (833,137,1021) player moved
-17:15:55.338 [LogicThread] setPlayerPosition (833,138,1021) player moved
-17:15:55.365 [LogicThread] setPlayerPosition (832,138,1021) player moved
-17:15:55.439 [REPEATED x2]
-17:15:55.439 [LogicThread] setPlayerPosition (831,139,1021) player moved
-17:15:55.477 [REPEATED x1]
-17:15:55.477 [LogicThread] setPlayerPosition (830,139,1020) player moved
-17:15:55.504 [LogicThread] setPlayerPosition (829,140,1020) player moved
-17:15:55.543 [REPEATED x1]
-17:15:55.543 [LogicThread] setPlayerPosition (828,141,1019) player moved
-17:15:55.565 [LogicThread] setPlayerPosition (827,141,1019) player moved
-17:15:55.590 [LogicThread] setPlayerPosition (826,142,1019) player moved
-17:15:55.610 [LogicThread] setPlayerPosition (826,142,1018) player moved
-17:15:55.641 [LogicThread] setPlayerPosition (825,143,1018) player moved
-17:15:55.658 [LogicThread] setPlayerPosition (824,144,1017) player moved
-17:15:55.677 [LogicThread] setPlayerPosition (823,144,1017) player moved
-17:15:55.708 [LogicThread] setPlayerPosition (822,145,1016) player moved
-17:15:55.726 [LogicThread] setPlayerPosition (822,146,1016) player moved
-17:15:55.749 [LogicThread] setPlayerPosition (821,146,1016) player moved
-17:15:55.778 [LogicThread] setPlayerPosition (821,147,1015) player moved
-17:15:55.796 [LogicThread] setPlayerPosition (820,147,1015) player moved
-17:15:55.833 [LogicThread] setPlayerPosition (819,148,1015) player moved
-17:15:55.876 [LogicThread] setPlayerPosition (818,149,1014) player moved
-17:15:55.953 [REPEATED x1]
-17:15:55.953 [LogicThread] setPlayerPosition (817,150,1013) player moved
-17:15:56.000 [REPEATED x1]
-17:15:56.000 [LogicThread] setPlayerPosition (816,150,1013) player moved
-17:15:56.018 [LogicThread] setPlayerPosition (816,151,1013) player moved
-17:15:56.055 [LogicThread] setPlayerPosition (815,151,1013) player moved
-17:15:56.827 [LogicThread] setPlayerPosition (815,151,1012) player moved
-17:15:56.862 [LogicThread] setPlayerPosition (815,152,1012) player moved
-17:15:56.887 [LogicThread] setPlayerPosition (814,152,1012) player moved
-17:15:56.975 [REPEATED x3]
-17:15:56.975 [LogicThread] setPlayerPosition (814,153,1012) player moved
-17:15:56.992 [LogicThread] setPlayerPosition (813,153,1011) player moved
-17:15:57.136 [REPEATED x4]
-17:15:57.136 [LogicThread] setPlayerPosition (812,153,1011) player moved
-17:15:57.153 [LogicThread] setPlayerPosition (812,154,1011) player moved
-17:15:57.202 [REPEATED x1]
-17:15:57.202 [LogicThread] setPlayerPosition (812,153,1011) player moved
-17:15:57.307 [REPEATED x3]
-17:15:57.307 [LogicThread] setPlayerPosition (812,152,1010) player moved
-17:15:57.338 [LogicThread] setPlayerPosition (811,151,1010) player moved
-17:15:57.375 [REPEATED x1]
-17:15:57.375 [LogicThread] setPlayerPosition (811,150,1010) player moved
-17:15:57.418 [REPEATED x1]
-17:15:57.420 [LogicThread] setPlayerPosition (811,149,1010) player moved
-17:15:57.444 [LogicThread] setPlayerPosition (811,148,1010) player moved
-17:15:57.464 [LogicThread] setPlayerPosition (811,147,1010) player moved
-17:15:57.488 [LogicThread] setPlayerPosition (811,146,1010) player moved
-17:15:57.529 [REPEATED x1]
-17:15:57.529 [LogicThread] setPlayerPosition (811,145,1010) player moved
-17:15:57.548 [LogicThread] setPlayerPosition (811,144,1010) player moved
-17:15:57.586 [REPEATED x1]
-17:15:57.586 [LogicThread] setPlayerPosition (811,143,1010) player moved
-17:15:57.633 [REPEATED x1]
-17:15:57.634 [LogicThread] setPlayerPosition (811,142,1010) player moved
-17:15:57.676 [REPEATED x1]
-17:15:57.676 [LogicThread] setPlayerPosition (811,141,1010) player moved
-17:15:57.705 [LogicThread] setPlayerPosition (810,140,1010) player moved
-17:15:57.773 [REPEATED x1]
-17:15:57.773 [LogicThread] setPlayerPosition (810,139,1010) player moved
-17:15:57.805 [LogicThread] setPlayerPosition (810,138,1010) player moved
-17:15:57.823 [LogicThread] setPlayerPosition (810,137,1010) player moved
-17:15:57.855 [LogicThread] setPlayerPosition (810,136,1010) player moved
-17:15:57.889 [REPEATED x1]
-17:15:57.889 [LogicThread] setPlayerPosition (810,135,1010) player moved
-17:15:57.918 [LogicThread] setPlayerPosition (810,134,1010) player moved
-17:15:57.937 [LogicThread] setPlayerPosition (810,133,1010) player moved
-17:15:57.973 [REPEATED x1]
-17:15:57.973 [LogicThread] setPlayerPosition (810,132,1010) player moved
-17:15:58.001 [LogicThread] setPlayerPosition (810,131,1010) player moved
-17:15:58.042 [REPEATED x1]
-17:15:58.042 [LogicThread] setPlayerPosition (810,130,1010) player moved
-17:15:58.060 [LogicThread] setPlayerPosition (810,129,1010) player moved
-17:15:58.110 [REPEATED x1]
-17:15:58.110 [LogicThread] setPlayerPosition (810,128,1010) player moved
-17:15:58.143 [LogicThread] setPlayerPosition (811,128,1009) player moved
-17:15:58.212 [REPEATED x2]
-17:15:58.212 [LogicThread] setPlayerPosition (812,128,1009) player moved
-17:15:58.261 [REPEATED x1]
-17:15:58.261 [LogicThread] setPlayerPosition (813,128,1008) player moved
-17:15:58.288 [LogicThread] setPlayerPosition (814,128,1008) player moved
-17:15:58.328 [REPEATED x1]
-17:15:58.328 [LogicThread] setPlayerPosition (815,129,1008) player moved
-17:15:58.355 [LogicThread] setPlayerPosition (816,129,1007) player moved
-17:15:58.397 [REPEATED x1]
-17:15:58.397 [LogicThread] setPlayerPosition (817,130,1007) player moved
-17:15:58.422 [LogicThread] setPlayerPosition (818,130,1007) player moved
-17:15:58.440 [LogicThread] setPlayerPosition (818,130,1006) player moved
-17:15:58.457 [LogicThread] setPlayerPosition (819,130,1006) player moved
-17:15:58.494 [REPEATED x1]
-17:15:58.494 [LogicThread] setPlayerPosition (820,131,1006) player moved
-17:15:58.559 [REPEATED x1]
-17:15:58.559 [LogicThread] setPlayerPosition (821,131,1005) player moved
-17:15:58.591 [LogicThread] setPlayerPosition (822,132,1005) player moved
-17:15:58.664 [REPEATED x2]
-17:15:58.664 [LogicThread] setPlayerPosition (823,132,1005) player moved
-17:15:58.690 [LogicThread] setPlayerPosition (823,132,1004) player moved
-17:15:58.724 [LogicThread] setPlayerPosition (824,132,1004) player moved
-17:15:58.756 [LogicThread] setPlayerPosition (824,133,1004) player moved
-17:15:58.834 [REPEATED x1]
-17:15:58.834 [LogicThread] setPlayerPosition (825,133,1004) player moved
-17:15:58.898 [REPEATED x1]
-17:15:58.898 [LogicThread] setPlayerPosition (825,133,1003) player moved
-17:15:58.931 [LogicThread] setPlayerPosition (826,133,1003) player moved
-17:15:59.032 [REPEATED x2]
-17:15:59.032 [LogicThread] setPlayerPosition (826,132,1003) player moved
-17:15:59.069 [LogicThread] setPlayerPosition (827,132,1003) player moved
-17:15:59.103 [LogicThread] setPlayerPosition (827,131,1003) player moved
-17:15:59.203 [REPEATED x2]
-17:15:59.203 [LogicThread] setPlayerPosition (827,130,1003) player moved
-17:15:59.268 [REPEATED x1]
-17:15:59.268 [LogicThread] setPlayerPosition (828,130,1003) player moved
-17:15:59.303 [LogicThread] setPlayerPosition (828,129,1002) player moved
-17:15:59.435 [REPEATED x3]
-17:15:59.436 [LogicThread] setPlayerPosition (828,128,1002) player moved
-17:15:59.616 [REPEATED x4]
-17:15:59.617 [LogicThread] setPlayerPosition (828,127,1002) player moved
-17:15:59.682 [REPEATED x1]
-17:15:59.682 [LogicThread] setPlayerPosition (829,127,1002) player moved
-17:16:00.153 [REPEATED x2]
-17:16:00.153 [LogicThread] setPlayerPosition (829,126,1002) player moved
-17:16:00.222 [REPEATED x1]
-17:16:00.222 [LogicThread] setPlayerPosition (829,126,1001) player moved
-17:16:00.255 [LogicThread] setPlayerPosition (829,127,1001) player moved
-17:16:00.288 [LogicThread] setPlayerPosition (829,127,1000) player moved
-17:16:00.321 [LogicThread] setPlayerPosition (829,127,999) player moved
-17:16:00.394 [REPEATED x1]
-17:16:00.394 [LogicThread] setPlayerPosition (828,128,998) player moved
-17:16:00.436 [REPEATED x1]
-17:16:00.436 [LogicThread] setPlayerPosition (828,128,997) player moved
-17:16:00.498 [REPEATED x2]
-17:16:00.498 [LogicThread] setPlayerPosition (828,128,996) player moved
-17:16:00.562 [REPEATED x2]
-17:16:00.562 [LogicThread] setPlayerPosition (828,129,996) player moved
-17:16:00.585 [LogicThread] setPlayerPosition (828,129,995) player moved
-17:16:00.697 [REPEATED x4]
-17:16:00.697 [LogicThread] setPlayerPosition (828,129,994) player moved
-17:16:00.801 [REPEATED x4]
-17:16:00.801 [LogicThread] setPlayerPosition (828,129,993) player moved
-17:16:00.820 [LogicThread] setPlayerPosition (828,130,993) player moved
-17:16:00.850 [LogicThread] setPlayerPosition (828,130,992) player moved
-17:16:00.887 [LogicThread] setPlayerPosition (828,130,991) player moved
-17:16:00.923 [LogicThread] setPlayerPosition (828,131,990) player moved
-17:16:00.956 [LogicThread] setPlayerPosition (827,131,990) player moved
-17:16:00.990 [LogicThread] setPlayerPosition (827,131,989) player moved
-17:16:01.030 [LogicThread] setPlayerPosition (827,132,988) player moved
-17:16:01.064 [LogicThread] setPlayerPosition (827,132,987) player moved
-17:16:01.131 [REPEATED x1]
-17:16:01.131 [LogicThread] setPlayerPosition (827,132,986) player moved
-17:16:01.165 [LogicThread] setPlayerPosition (827,133,986) player moved
-17:16:01.197 [LogicThread] setPlayerPosition (827,133,985) player moved
-17:16:01.263 [REPEATED x1]
-17:16:01.263 [LogicThread] setPlayerPosition (827,133,984) player moved
-17:16:01.296 [LogicThread] setPlayerPosition (827,134,983) player moved
-17:16:01.330 [LogicThread] setPlayerPosition (826,134,983) player moved
-17:16:01.364 [LogicThread] setPlayerPosition (826,135,982) player moved
-17:16:01.396 [LogicThread] setPlayerPosition (826,135,981) player moved
-17:16:01.430 [LogicThread] setPlayerPosition (826,135,980) player moved
-17:16:01.461 [LogicThread] setPlayerPosition (826,136,978) player moved
-17:16:01.494 [LogicThread] setPlayerPosition (826,136,977) player moved
-17:16:01.526 [LogicThread] setPlayerPosition (826,137,976) player moved
-17:16:01.558 [LogicThread] setPlayerPosition (825,137,975) player moved
-17:16:01.576 [LogicThread] setPlayerPosition (825,138,974) player moved
-17:16:01.596 [LogicThread] setPlayerPosition (825,138,973) player moved
-17:16:01.622 [LogicThread] setPlayerPosition (825,139,972) player moved
-17:16:01.641 [LogicThread] setPlayerPosition (825,139,971) player moved
-17:16:01.662 [LogicThread] setPlayerPosition (825,139,970) player moved
-17:16:01.688 [LogicThread] setPlayerPosition (825,140,969) player moved
-17:16:01.708 [LogicThread] setPlayerPosition (825,140,968) player moved
-17:16:01.731 [LogicThread] setPlayerPosition (824,141,967) player moved
-17:16:01.754 [LogicThread] setPlayerPosition (824,141,966) player moved
-17:16:01.774 [LogicThread] setPlayerPosition (824,142,965) player moved
-17:16:01.798 [LogicThread] setPlayerPosition (824,142,964) player moved
-17:16:01.824 [LogicThread] setPlayerPosition (824,143,963) player moved
-17:16:01.843 [LogicThread] setPlayerPosition (824,143,962) player moved
-17:16:01.867 [LogicThread] setPlayerPosition (824,143,961) player moved
-17:16:01.893 [LogicThread] setPlayerPosition (824,144,960) player moved
-17:16:01.928 [LogicThread] setPlayerPosition (823,144,959) player moved
-17:16:01.967 [LogicThread] setPlayerPosition (823,144,958) player moved
-17:16:02.001 [LogicThread] setPlayerPosition (823,144,957) player moved
-17:16:02.033 [LogicThread] setPlayerPosition (823,144,956) player moved
-17:16:02.066 [LogicThread] setPlayerPosition (823,144,955) player moved
-17:16:02.135 [REPEATED x1]
-17:16:02.135 [LogicThread] setPlayerPosition (823,143,954) player moved
-17:16:02.170 [LogicThread] setPlayerPosition (823,142,953) player moved
-17:16:02.238 [REPEATED x1]
-17:16:02.238 [LogicThread] setPlayerPosition (823,141,952) player moved
-17:16:02.304 [REPEATED x1]
-17:16:02.304 [LogicThread] setPlayerPosition (822,140,951) player moved
-17:16:02.339 [LogicThread] setPlayerPosition (822,139,951) player moved
-17:16:02.372 [LogicThread] setPlayerPosition (822,139,950) player moved
-17:16:02.424 [REPEATED x1]
-17:16:02.424 [LogicThread] setPlayerPosition (822,138,950) player moved
-17:16:02.506 [REPEATED x2]
-17:16:02.506 [LogicThread] setPlayerPosition (822,137,949) player moved
-17:16:02.607 [REPEATED x2]
-17:16:02.607 [LogicThread] setPlayerPosition (822,137,948) player moved
-17:16:02.639 [LogicThread] setPlayerPosition (822,136,948) player moved
-17:16:02.771 [REPEATED x3]
-17:16:02.771 [LogicThread] setPlayerPosition (822,135,948) player moved
-17:16:02.806 [LogicThread] setPlayerPosition (822,135,947) player moved
-17:16:04.123 [REPEATED x6]
-17:16:04.123 [LogicThread] setPlayerPosition (822,133,946) player moved
-17:16:04.190 [REPEATED x2]
-17:16:04.190 [LogicThread] setPlayerPosition (822,132,946) player moved
-17:16:04.235 [REPEATED x1]
-17:16:04.235 [LogicThread] setPlayerPosition (822,131,946) player moved
-17:16:04.280 [REPEATED x1]
-17:16:04.280 [LogicThread] setPlayerPosition (822,130,946) player moved
-17:16:04.306 [LogicThread] setPlayerPosition (822,129,946) player moved
-17:16:04.349 [REPEATED x1]
-17:16:04.349 [LogicThread] setPlayerPosition (822,128,946) player moved
-17:16:04.370 [LogicThread] setPlayerPosition (822,127,946) player moved
-17:16:04.392 [LogicThread] setPlayerPosition (822,126,946) player moved
-17:16:04.414 [LogicThread] setPlayerPosition (822,125,946) player moved
-17:16:04.441 [LogicThread] setPlayerPosition (822,124,946) player moved
-17:16:04.460 [LogicThread] setPlayerPosition (822,123,946) player moved
-17:16:04.478 [LogicThread] setPlayerPosition (822,122,946) player moved
-17:16:04.507 [LogicThread] setPlayerPosition (822,121,946) player moved
-17:16:04.531 [LogicThread] setPlayerPosition (822,119,946) player moved
-17:16:04.548 [LogicThread] setPlayerPosition (822,118,946) player moved
-17:16:04.573 [LogicThread] setPlayerPosition (822,117,946) player moved
-17:16:04.597 [LogicThread] setPlayerPosition (822,116,946) player moved
-17:16:04.630 [LogicThread] setPlayerPosition (822,114,946) player moved
-17:16:04.664 [LogicThread] setPlayerPosition (822,112,946) player moved
-17:16:04.698 [LogicThread] setPlayerPosition (822,110,946) player moved
-17:16:04.732 [LogicThread] setPlayerPosition (822,108,946) player moved
-17:16:04.763 [LogicThread] setPlayerPosition (822,106,946) player moved
-17:16:04.795 [LogicThread] setPlayerPosition (822,104,946) player moved
-17:16:04.830 [LogicThread] setPlayerPosition (822,103,946) player moved
-17:16:04.848 [LogicThread] setPlayerPosition (822,102,946) player moved
-17:16:04.865 [LogicThread] setPlayerPosition (822,101,946) player moved
-17:16:04.901 [LogicThread] setPlayerPosition (822,100,946) player moved
-17:16:04.932 [LogicThread] setPlayerPosition (822,98,946) player moved
-17:16:04.969 [LogicThread] setPlayerPosition (822,97,946) player moved
-17:16:05.457 [REPEATED x2]
-17:16:05.457 [LogicThread] setPlayerPosition (821,97,946) player moved
-17:16:05.473 [LogicThread] setPlayerPosition (821,98,946) player moved
-17:16:05.491 [LogicThread] setPlayerPosition (821,98,947) player moved
-17:16:05.531 [REPEATED x1]
-17:16:05.531 [LogicThread] setPlayerPosition (820,98,947) player moved
-17:16:05.548 [LogicThread] setPlayerPosition (820,98,948) player moved
-17:16:05.567 [LogicThread] setPlayerPosition (820,99,948) player moved
-17:16:05.594 [LogicThread] setPlayerPosition (819,99,949) player moved
-17:16:05.615 [LogicThread] setPlayerPosition (818,100,950) player moved
-17:16:05.669 [REPEATED x1]
-17:16:05.669 [LogicThread] setPlayerPosition (817,100,951) player moved
-17:16:05.687 [LogicThread] setPlayerPosition (817,101,951) player moved
-17:16:05.723 [REPEATED x1]
-17:16:05.723 [LogicThread] setPlayerPosition (816,101,952) player moved
-17:16:05.763 [REPEATED x1]
-17:16:05.763 [LogicThread] setPlayerPosition (816,102,953) player moved
-17:16:05.800 [LogicThread] setPlayerPosition (815,102,953) player moved
-17:16:05.836 [REPEATED x1]
-17:16:05.836 [LogicThread] setPlayerPosition (815,102,954) player moved
-17:16:05.869 [LogicThread] setPlayerPosition (814,103,954) player moved
-17:16:05.903 [LogicThread] setPlayerPosition (814,103,955) player moved
-17:16:05.969 [REPEATED x1]
-17:16:05.969 [LogicThread] setPlayerPosition (813,103,955) player moved
-17:16:06.003 [LogicThread] setPlayerPosition (813,104,956) player moved
-17:16:06.091 [REPEATED x2]
-17:16:06.091 [LogicThread] setPlayerPosition (812,103,956) player moved
-17:16:06.127 [LogicThread] setPlayerPosition (812,103,957) player moved
-17:16:06.192 [REPEATED x1]
-17:16:06.192 [LogicThread] setPlayerPosition (812,102,957) player moved
-17:16:06.228 [LogicThread] setPlayerPosition (812,101,957) player moved
-17:16:06.264 [LogicThread] setPlayerPosition (811,101,958) player moved
-17:16:06.299 [LogicThread] setPlayerPosition (811,100,958) player moved
-17:16:06.332 [LogicThread] setPlayerPosition (811,99,958) player moved
-17:16:06.364 [LogicThread] setPlayerPosition (811,98,958) player moved
-17:16:06.396 [LogicThread] setPlayerPosition (811,97,958) player moved
-17:16:06.429 [LogicThread] setPlayerPosition (811,96,958) player moved
-17:16:06.460 [LogicThread] setPlayerPosition (811,95,958) player moved
-17:16:06.493 [LogicThread] setPlayerPosition (811,94,959) player moved
-17:16:06.521 [LogicThread] setPlayerPosition (810,93,959) player moved
-17:16:06.559 [LogicThread] setPlayerPosition (810,92,959) player moved
-17:16:06.592 [LogicThread] setPlayerPosition (810,91,959) player moved
-17:16:06.665 [REPEATED x1]
-17:16:06.665 [LogicThread] setPlayerPosition (810,90,959) player moved
-17:16:06.698 [LogicThread] setPlayerPosition (810,89,959) player moved
-17:16:06.764 [REPEATED x1]
-17:16:06.764 [LogicThread] setPlayerPosition (810,88,959) player moved
-17:16:06.797 [LogicThread] setPlayerPosition (810,87,959) player moved
-17:16:06.831 [LogicThread] setPlayerPosition (810,86,959) player moved
-17:16:06.864 [LogicThread] setPlayerPosition (810,85,959) player moved
-17:16:06.898 [LogicThread] setPlayerPosition (810,84,959) player moved
-17:16:06.931 [LogicThread] setPlayerPosition (810,83,959) player moved
-17:16:06.964 [LogicThread] setPlayerPosition (810,82,959) player moved
-17:16:06.996 [LogicThread] setPlayerPosition (810,81,959) player moved
-17:16:07.028 [LogicThread] setPlayerPosition (810,79,960) player moved
-17:16:07.062 [LogicThread] setPlayerPosition (810,78,960) player moved
-17:16:07.094 [LogicThread] setPlayerPosition (810,77,960) player moved
-17:16:07.128 [LogicThread] setPlayerPosition (810,76,960) player moved
-17:16:07.166 [LogicThread] setPlayerPosition (810,75,960) player moved
-17:16:07.217 [REPEATED x1]
-17:16:07.217 [LogicThread] setPlayerPosition (810,74,960) player moved
-17:16:07.265 [REPEATED x1]
-17:16:07.265 [LogicThread] setPlayerPosition (810,73,960) player moved
-17:16:07.329 [REPEATED x2]
-17:16:07.329 [LogicThread] setPlayerPosition (810,73,961) player moved
-17:16:07.369 [REPEATED x1]
-17:16:07.369 [LogicThread] setPlayerPosition (810,72,961) player moved
-17:16:07.393 [LogicThread] setPlayerPosition (811,72,962) player moved
-17:16:07.433 [REPEATED x1]
-17:16:07.433 [LogicThread] setPlayerPosition (811,72,963) player moved
-17:16:07.460 [LogicThread] setPlayerPosition (812,73,964) player moved
-17:16:07.500 [REPEATED x1]
-17:16:07.500 [LogicThread] setPlayerPosition (812,73,965) player moved
-17:16:07.523 [LogicThread] setPlayerPosition (813,73,966) player moved
-17:16:07.547 [LogicThread] setPlayerPosition (813,74,967) player moved
-17:16:07.568 [LogicThread] setPlayerPosition (814,74,968) player moved
-17:16:07.590 [LogicThread] setPlayerPosition (814,74,969) player moved
-17:16:07.634 [REPEATED x1]
-17:16:07.634 [LogicThread] setPlayerPosition (815,74,970) player moved
-17:16:07.656 [LogicThread] setPlayerPosition (815,75,971) player moved
-17:16:07.696 [REPEATED x1]
-17:16:07.696 [LogicThread] setPlayerPosition (816,75,972) player moved
-17:16:07.724 [LogicThread] setPlayerPosition (816,75,973) player moved
-17:16:07.761 [REPEATED x1]
-17:16:07.761 [LogicThread] setPlayerPosition (816,76,973) player moved
-17:16:07.789 [LogicThread] setPlayerPosition (817,76,974) player moved
-17:16:07.827 [REPEATED x1]
-17:16:07.827 [LogicThread] setPlayerPosition (817,76,975) player moved
-17:16:07.887 [REPEATED x1]
-17:16:07.887 [LogicThread] setPlayerPosition (818,76,976) player moved
-17:16:07.919 [LogicThread] setPlayerPosition (818,77,977) player moved
-17:16:07.985 [REPEATED x1]
-17:16:07.985 [LogicThread] setPlayerPosition (818,76,977) player moved
-17:16:08.017 [LogicThread] setPlayerPosition (819,76,978) player moved
-17:16:08.088 [REPEATED x1]
-17:16:08.088 [LogicThread] setPlayerPosition (819,75,979) player moved
-17:16:08.152 [REPEATED x1]
-17:16:08.152 [LogicThread] setPlayerPosition (819,74,979) player moved
-17:16:08.184 [LogicThread] setPlayerPosition (819,73,979) player moved
-17:16:08.248 [REPEATED x1]
-17:16:08.248 [LogicThread] setPlayerPosition (819,72,979) player moved
-17:16:08.280 [LogicThread] setPlayerPosition (819,71,979) player moved
-17:16:08.312 [LogicThread] setPlayerPosition (819,70,979) player moved
-17:16:08.344 [LogicThread] setPlayerPosition (819,69,979) player moved
-17:16:08.379 [LogicThread] setPlayerPosition (819,67,979) player moved
-17:16:08.412 [LogicThread] setPlayerPosition (819,66,979) player moved
-17:16:08.474 [REPEATED x1]
-17:16:08.474 [LogicThread] setPlayerPosition (819,65,979) player moved
-17:16:08.495 [LogicThread] setPlayerPosition (819,64,979) player moved
-17:16:08.542 [REPEATED x1]
-17:16:08.542 [LogicThread] setPlayerPosition (819,63,979) player moved
-17:16:08.609 [REPEATED x1]
-17:16:08.609 [LogicThread] setPlayerPosition (819,62,979) player moved
-17:16:08.696 [REPEATED x2]
-17:16:08.696 [LogicThread] setPlayerPosition (818,62,978) player moved
-17:16:08.773 [REPEATED x1]
-17:16:08.773 [LogicThread] setPlayerPosition (817,62,978) player moved
-17:16:08.805 [LogicThread] setPlayerPosition (816,62,977) player moved
-17:16:08.871 [REPEATED x1]
-17:16:08.871 [LogicThread] setPlayerPosition (816,62,976) player moved
-17:16:08.930 [REPEATED x1]
-17:16:08.930 [LogicThread] setPlayerPosition (816,63,976) player moved
-17:16:08.968 [LogicThread] setPlayerPosition (816,63,975) player moved
-17:16:09.098 [REPEATED x3]
-17:16:09.098 [LogicThread] setPlayerPosition (816,63,974) player moved
-17:16:09.168 [REPEATED x1]
-17:16:09.168 [LogicThread] setPlayerPosition (816,64,974) player moved
-17:16:09.264 [REPEATED x2]
-17:16:09.264 [LogicThread] setPlayerPosition (816,64,973) player moved
-17:16:09.545 [REPEATED x5]
-17:16:09.545 [LogicThread] setPlayerPosition (816,64,972) player moved
-17:16:09.590 [REPEATED x1]
-17:16:09.590 [LogicThread] setPlayerPosition (816,63,972) player moved
-17:16:09.640 [REPEATED x1]
-17:16:09.640 [LogicThread] setPlayerPosition (816,62,972) player moved
-17:16:09.687 [REPEATED x1]
-17:16:09.687 [LogicThread] setPlayerPosition (816,61,972) player moved
-17:16:09.738 [REPEATED x1]
-17:16:09.738 [LogicThread] setPlayerPosition (816,60,972) player moved
-17:16:09.806 [REPEATED x1]
-17:16:09.806 [LogicThread] setPlayerPosition (816,59,972) player moved
-17:16:09.840 [LogicThread] setPlayerPosition (816,58,972) player moved
-17:16:09.922 [REPEATED x2]
-17:16:09.922 [LogicThread] setPlayerPosition (816,57,972) player moved
-17:16:09.991 [REPEATED x2]
-17:16:09.991 [LogicThread] setPlayerPosition (816,56,972) player moved
-17:16:10.100 [REPEATED x4]
-17:16:10.100 [LogicThread] setPlayerPosition (816,55,972) player moved
-17:16:10.210 [REPEATED x4]
-17:16:10.211 [LogicThread] setPlayerPosition (816,54,972) player moved
-17:16:10.687 [REPEATED x7]
-17:16:10.687 [LogicThread] setPlayerPosition (816,53,972) player moved
-17:16:10.709 [LogicThread] setPlayerPosition (816,52,972) player moved
-17:16:10.731 [LogicThread] setPlayerPosition (817,52,972) player moved
-17:16:10.796 [REPEATED x2]
-17:16:10.796 [LogicThread] setPlayerPosition (818,52,973) player moved
-17:16:10.845 [REPEATED x1]
-17:16:10.845 [LogicThread] setPlayerPosition (819,52,973) player moved
-17:16:10.887 [REPEATED x1]
-17:16:10.887 [LogicThread] setPlayerPosition (819,52,974) player moved
-17:16:10.931 [REPEATED x1]
-17:16:10.931 [LogicThread] setPlayerPosition (820,52,974) player moved
-17:16:10.997 [REPEATED x2]
-17:16:10.997 [LogicThread] setPlayerPosition (821,52,974) player moved
-17:16:11.021 [LogicThread] setPlayerPosition (821,52,975) player moved
-17:16:11.093 [REPEATED x2]
-17:16:11.093 [LogicThread] setPlayerPosition (822,52,975) player moved
-17:16:11.193 [REPEATED x4]
-17:16:11.193 [LogicThread] setPlayerPosition (822,52,976) player moved
-17:16:11.234 [REPEATED x1]
-17:16:11.234 [LogicThread] setPlayerPosition (823,52,976) player moved
-17:16:11.393 [REPEATED x6]
-17:16:11.393 [LogicThread] setPlayerPosition (824,52,976) player moved
-17:16:11.496 [REPEATED x1]
-17:16:11.496 [LogicThread] setPlayerPosition (824,52,977) player moved
-17:16:11.633 [REPEATED x2]
-17:16:11.633 [LogicThread] setPlayerPosition (824,52,976) player moved
-17:16:11.740 [REPEATED x2]
-17:16:11.740 [LogicThread] setPlayerPosition (824,52,975) player moved
-17:16:11.839 [REPEATED x2]
-17:16:11.839 [LogicThread] setPlayerPosition (823,52,974) player moved
-17:16:11.973 [REPEATED x3]
-17:16:11.973 [LogicThread] setPlayerPosition (823,52,973) player moved
-17:16:12.176 [REPEATED x4]
-17:16:12.176 [LogicThread] setPlayerPosition (823,52,972) player moved
-17:16:13.763 [REPEATED x4]
-17:16:13.763 [LogicThread] setPlayerPosition (822,52,971) player moved
-17:16:13.795 [LogicThread] setPlayerPosition (822,52,970) player moved
-17:16:13.861 [REPEATED x1]
-17:16:13.861 [LogicThread] setPlayerPosition (822,53,970) player moved
-17:16:13.897 [LogicThread] setPlayerPosition (822,53,969) player moved
-17:16:13.931 [LogicThread] setPlayerPosition (822,53,968) player moved
-17:16:13.963 [LogicThread] setPlayerPosition (821,53,968) player moved
-17:16:13.998 [LogicThread] setPlayerPosition (821,54,967) player moved
-17:16:14.027 [LogicThread] setPlayerPosition (821,54,966) player moved
-17:16:14.100 [REPEATED x1]
-17:16:14.100 [LogicThread] setPlayerPosition (821,54,965) player moved
-17:16:14.132 [LogicThread] setPlayerPosition (821,55,964) player moved
-17:16:14.230 [REPEATED x2]
-17:16:14.230 [LogicThread] setPlayerPosition (820,55,963) player moved
-17:16:14.296 [REPEATED x1]
-17:16:14.296 [LogicThread] setPlayerPosition (820,55,962) player moved
-17:16:14.362 [REPEATED x1]
-17:16:14.362 [LogicThread] setPlayerPosition (820,56,962) player moved
-17:16:14.398 [LogicThread] setPlayerPosition (820,56,961) player moved
-17:16:14.561 [REPEATED x4]
-17:16:14.561 [LogicThread] setPlayerPosition (820,56,960) player moved
-17:16:14.756 [REPEATED x5]
-17:16:14.756 [LogicThread] setPlayerPosition (820,56,959) player moved
-17:16:14.790 [LogicThread] setPlayerPosition (820,57,959) player moved
-17:16:14.942 [main] === Redstone logger shutting down ===
+21:24:39.707 [main] === Redstone logger started ===
+21:24:39.707 [main] RedstoneManager created, world=com.voxel.World@6fd83fc1 chunkManager=com.voxel.world.ChunkManager@4f2b503c
+21:24:39.707 [main] DIMENSION SWITCH: created new RedstoneManager for aether (was overworld)
+21:24:39.735 [LogicThread] setPlayerPosition (1024,128,1024) player moved
+21:24:51.832 [LogicThread] setPlayerPosition (1023,128,1023) player moved
+21:24:51.898 [REPEATED x1]
+21:24:51.898 [LogicThread] setPlayerPosition (1022,128,1023) player moved
+21:24:51.916 [LogicThread] setPlayerPosition (1022,129,1023) player moved
+21:24:51.941 [LogicThread] setPlayerPosition (1022,129,1022) player moved
+21:24:51.963 [LogicThread] setPlayerPosition (1021,129,1022) player moved
+21:24:51.980 [LogicThread] setPlayerPosition (1021,130,1022) player moved
+21:24:52.007 [LogicThread] setPlayerPosition (1020,130,1021) player moved
+21:24:52.027 [LogicThread] setPlayerPosition (1020,131,1021) player moved
+21:24:52.055 [LogicThread] setPlayerPosition (1019,131,1020) player moved
+21:24:52.089 [LogicThread] setPlayerPosition (1018,132,1019) player moved
+21:24:52.123 [LogicThread] setPlayerPosition (1017,133,1019) player moved
+21:24:52.156 [LogicThread] setPlayerPosition (1016,134,1018) player moved
+21:24:52.190 [LogicThread] setPlayerPosition (1015,135,1017) player moved
+21:24:52.224 [LogicThread] setPlayerPosition (1014,136,1016) player moved
+21:24:52.256 [LogicThread] setPlayerPosition (1013,136,1015) player moved
+21:24:52.291 [LogicThread] setPlayerPosition (1012,137,1015) player moved
+21:24:52.324 [LogicThread] setPlayerPosition (1011,138,1014) player moved
+21:24:52.357 [LogicThread] setPlayerPosition (1010,138,1014) player moved
+21:24:52.390 [LogicThread] setPlayerPosition (1010,139,1013) player moved
+21:24:52.423 [LogicThread] setPlayerPosition (1009,140,1013) player moved
+21:24:52.455 [LogicThread] setPlayerPosition (1008,140,1012) player moved
+21:24:52.524 [REPEATED x1]
+21:24:52.524 [LogicThread] setPlayerPosition (1007,140,1011) player moved
+21:24:52.589 [REPEATED x1]
+21:24:52.590 [LogicThread] setPlayerPosition (1006,140,1011) player moved
+21:24:52.622 [LogicThread] setPlayerPosition (1006,139,1010) player moved
+21:24:52.687 [REPEATED x1]
+21:24:52.687 [LogicThread] setPlayerPosition (1005,139,1010) player moved
+21:24:52.720 [LogicThread] setPlayerPosition (1005,138,1010) player moved
+21:24:52.753 [LogicThread] setPlayerPosition (1005,138,1009) player moved
+21:24:52.785 [LogicThread] setPlayerPosition (1004,137,1009) player moved
+21:24:52.921 [REPEATED x3]
+21:24:52.921 [LogicThread] setPlayerPosition (1004,136,1008) player moved
+21:24:52.955 [LogicThread] setPlayerPosition (1003,136,1008) player moved
+21:24:53.060 [REPEATED x2]
+21:24:53.060 [LogicThread] setPlayerPosition (1003,135,1008) player moved
+21:24:53.163 [REPEATED x2]
+21:24:53.164 [LogicThread] setPlayerPosition (1002,135,1008) player moved
+21:24:53.200 [LogicThread] setPlayerPosition (1002,135,1007) player moved
+21:24:53.235 [LogicThread] setPlayerPosition (1002,134,1007) player moved
+21:24:53.303 [REPEATED x1]
+21:24:53.303 [LogicThread] setPlayerPosition (1002,133,1007) player moved
+21:24:53.338 [LogicThread] setPlayerPosition (1002,132,1007) player moved
+21:24:53.387 [REPEATED x1]
+21:24:53.387 [LogicThread] setPlayerPosition (1002,131,1007) player moved
+21:24:53.425 [REPEATED x1]
+21:24:53.425 [LogicThread] setPlayerPosition (1002,130,1007) player moved
+21:24:53.498 [REPEATED x2]
+21:24:53.498 [LogicThread] setPlayerPosition (1002,129,1007) player moved
+21:24:53.536 [REPEATED x1]
+21:24:53.536 [LogicThread] setPlayerPosition (1002,128,1007) player moved
+21:24:53.634 [REPEATED x2]
+21:24:53.634 [LogicThread] setPlayerPosition (1001,127,1007) player moved
+21:24:53.699 [REPEATED x1]
+21:24:53.699 [LogicThread] setPlayerPosition (1001,126,1007) player moved
+21:24:53.797 [REPEATED x2]
+21:24:53.797 [LogicThread] setPlayerPosition (1001,125,1007) player moved
+21:24:53.928 [REPEATED x3]
+21:24:53.928 [LogicThread] setPlayerPosition (1001,125,1006) player moved
+21:24:54.027 [REPEATED x2]
+21:24:54.027 [LogicThread] setPlayerPosition (1001,125,1005) player moved
+21:24:54.093 [REPEATED x1]
+21:24:54.093 [LogicThread] setPlayerPosition (1001,125,1004) player moved
+21:24:54.159 [REPEATED x1]
+21:24:54.160 [LogicThread] setPlayerPosition (1001,125,1003) player moved
+21:24:54.224 [REPEATED x1]
+21:24:54.224 [LogicThread] setPlayerPosition (1001,126,1002) player moved
+21:24:54.324 [REPEATED x2]
+21:24:54.325 [LogicThread] setPlayerPosition (1001,126,1001) player moved
+21:24:54.424 [REPEATED x2]
+21:24:54.424 [LogicThread] setPlayerPosition (1001,126,1000) player moved
+21:24:54.586 [REPEATED x4]
+21:24:54.588 [LogicThread] setPlayerPosition (1001,126,999) player moved
+21:24:54.622 [LogicThread] setPlayerPosition (1001,127,999) player moved
+21:24:54.659 [LogicThread] setPlayerPosition (1002,127,999) player moved
+21:24:54.693 [LogicThread] setPlayerPosition (1002,127,998) player moved
+21:24:54.783 [REPEATED x2]
+21:24:54.784 [LogicThread] setPlayerPosition (1002,128,997) player moved
+21:24:54.880 [REPEATED x2]
+21:24:54.880 [LogicThread] setPlayerPosition (1002,128,996) player moved
+21:24:55.045 [REPEATED x4]
+21:24:55.045 [LogicThread] setPlayerPosition (1002,127,995) player moved
+21:24:55.110 [REPEATED x1]
+21:24:55.111 [LogicThread] setPlayerPosition (1002,126,995) player moved
+21:24:55.143 [LogicThread] setPlayerPosition (1002,125,995) player moved
+21:24:55.193 [REPEATED x1]
+21:24:55.193 [LogicThread] setPlayerPosition (1002,124,995) player moved
+21:24:55.240 [REPEATED x1]
+21:24:55.240 [LogicThread] setPlayerPosition (1002,123,995) player moved
+21:24:55.295 [REPEATED x1]
+21:24:55.295 [LogicThread] setPlayerPosition (1002,122,995) player moved
+21:24:55.319 [LogicThread] setPlayerPosition (1002,122,994) player moved
+21:24:55.355 [REPEATED x1]
+21:24:55.355 [LogicThread] setPlayerPosition (1002,121,994) player moved
+21:24:55.423 [REPEATED x2]
+21:24:55.423 [LogicThread] setPlayerPosition (1002,120,994) player moved
+21:24:55.512 [REPEATED x2]
+21:24:55.512 [LogicThread] setPlayerPosition (1002,119,994) player moved
+21:24:55.616 [REPEATED x2]
+21:24:55.616 [LogicThread] setPlayerPosition (1002,118,994) player moved
+21:24:55.717 [REPEATED x2]
+21:24:55.717 [LogicThread] setPlayerPosition (1002,117,994) player moved
+21:24:55.917 [REPEATED x5]
+21:24:55.917 [LogicThread] setPlayerPosition (1002,116,994) player moved
+21:24:56.217 [REPEATED x4]
+21:24:56.217 [LogicThread] setPlayerPosition (1002,115,993) player moved
+21:24:56.313 [REPEATED x3]
+21:24:56.313 [LogicThread] setPlayerPosition (1002,114,993) player moved
+21:24:56.333 [LogicThread] setPlayerPosition (1002,113,993) player moved
+21:24:56.381 [REPEATED x1]
+21:24:56.381 [LogicThread] setPlayerPosition (1002,112,993) player moved
+21:24:56.450 [REPEATED x2]
+21:24:56.450 [LogicThread] setPlayerPosition (1002,111,993) player moved
+21:24:56.515 [REPEATED x1]
+21:24:56.515 [LogicThread] setPlayerPosition (1002,110,993) player moved
+21:24:56.550 [LogicThread] setPlayerPosition (1002,109,993) player moved
+21:24:56.646 [REPEATED x2]
+21:24:56.646 [LogicThread] setPlayerPosition (1002,108,993) player moved
+21:24:56.747 [REPEATED x2]
+21:24:56.747 [LogicThread] setPlayerPosition (1002,107,993) player moved
+21:24:56.851 [REPEATED x3]
+21:24:56.851 [LogicThread] setPlayerPosition (1002,106,993) player moved
+21:24:57.013 [REPEATED x5]
+21:24:57.013 [LogicThread] setPlayerPosition (1002,105,993) player moved
+21:24:57.217 [REPEATED x4]
+21:24:57.217 [main] === Redstone logger shutting down ===
