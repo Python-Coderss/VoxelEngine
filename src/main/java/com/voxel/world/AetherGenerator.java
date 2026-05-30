@@ -31,6 +31,7 @@ public class AetherGenerator extends WorldGenerator {
     private final int blueCloudId;
     private final int coldCloudId;
     private final int goldenCloudId;
+    private final int aetherFluidId;
 
     public AetherGenerator(long seed, com.voxel.utils.BlockDataManager blockDataManager) {
         super(seed, blockDataManager);
@@ -55,6 +56,7 @@ public class AetherGenerator extends WorldGenerator {
         this.blueCloudId = blockDataManager.findBlockId("blue_aercloud");
         this.coldCloudId = blockDataManager.findBlockId("cold_aercloud");
         this.goldenCloudId = blockDataManager.findBlockId("golden_aercloud");
+        this.aetherFluidId = blockDataManager.findBlockId("water");
     }
 
     @Override
@@ -274,13 +276,16 @@ public class AetherGenerator extends WorldGenerator {
         }
     }
 
+    /**
+     * Ported from AetherLakeFeature - generates a lake using stacked ellipsoids.
+     */
     private void generateLake(World world, int x, int y, int z, Random random) {
         if (y <= 4) return;
         
         boolean[] booleans = new boolean[2048];
-        int i = random.nextInt(4) + 4;
+        int ellipsoidCount = random.nextInt(4) + 4;
 
-        for (int j = 0; j < i; ++j) {
+        for (int j = 0; j < ellipsoidCount; ++j) {
             double d0 = random.nextDouble() * 6.0 + 3.0;
             double d1 = random.nextDouble() * 4.0 + 2.0;
             double d2 = random.nextDouble() * 6.0 + 3.0;
@@ -303,26 +308,104 @@ public class AetherGenerator extends WorldGenerator {
             }
         }
 
-        // Finalize blocks
-        for (int l1 = 0; l1 < 16; ++l1) {
-            for (int i2 = 0; i2 < 16; ++i2) {
-                for (int i3 = 0; i3 < 8; ++i3) {
-                    if (booleans[(l1 * 16 + i2) * 8 + i3]) {
-                        int wx = x + l1 - 8;
-                        int wy = y + i3 - 4;
-                        int wz = z + i2 - 8;
-                        if (wy < 0 || wy > 128) continue;
-                        
-                        boolean flag1 = i3 >= 4;
-                        if (flag1) {
-                            world.setVoxel(wx, wy, wz, 0); // Air
-                        } else {
-                            world.setVoxel(wx, wy, wz, 15); // Water (Overworld water ID is 15)
+        // Validate placement - check boundary is valid before carving (matches AetherLakeFeature)
+        for (int k1 = 0; k1 < 16; ++k1) {
+            for (int k = 0; k < 16; ++k) {
+                for (int l2 = 0; l2 < 8; ++l2) {
+                    boolean flag = !booleans[(k1 * 16 + k) * 8 + l2] && 
+                                   (k1 < 15 && booleans[((k1 + 1) * 16 + k) * 8 + l2] ||
+                                    k1 > 0 && booleans[((k1 - 1) * 16 + k) * 8 + l2] ||
+                                    k < 15 && booleans[(k1 * 16 + k + 1) * 8 + l2] ||
+                                    k > 0 && booleans[(k1 * 16 + (k - 1)) * 8 + l2] ||
+                                    l2 < 7 && booleans[(k1 * 16 + k) * 8 + l2 + 1] ||
+                                    l2 > 0 && booleans[(k1 * 16 + k) * 8 + (l2 - 1)]);
+                    if (flag) {
+                        int wx = x + k1;
+                        int wy = y - 4 + l2;
+                        int wz = z + k;
+                        int blockAtPos = world.getVoxel(wx, wy, wz);
+                        // Aether checks: boundary liquid at water level OR non-solid below water level means invalid
+                        if (l2 >= 4 && isLiquid(blockAtPos)) {
+                            return; // Already has liquid above water level - invalid
+                        }
+                        if (l2 < 4 && !isSolid(blockAtPos) && blockAtPos != aetherFluidId) {
+                            return; // Not solid below water level - invalid
                         }
                     }
                 }
             }
         }
+
+        // Carve the lake - directly set blocks like Aether does
+        for (int l1 = 0; l1 < 16; ++l1) {
+            for (int i2 = 0; i2 < 16; ++i2) {
+                for (int i3 = 0; i3 < 8; ++i3) {
+                    if (booleans[(l1 * 16 + i2) * 8 + i3]) {
+                        int wx = x + l1;
+                        int wy = y - 4 + i3;
+                        int wz = z + i2;
+                        if (wy < 0 || wy > 128) continue;
+                        
+                        boolean isAir = i3 >= 4;
+                        if (isAir) {
+                            world.setVoxel(wx, wy, wz, 0); // Air above water level
+                        } else {
+                            world.setVoxel(wx, wy, wz, aetherFluidId); // Aether fluid
+                        }
+                    }
+                }
+            }
+        }
+
+        // Place top block (holystone) on sky-exposed dirt below the lake air cavity
+        for (int i2 = 0; i2 < 16; ++i2) {
+            for (int j3 = 0; j3 < 16; ++j3) {
+                for (int j4 = 4; j4 < 8; ++j4) {
+                    if (booleans[(i2 * 16 + j3) * 8 + j4]) {
+                        int wx = x + i2;
+                        int wy = y - 4 + j4 - 1;
+                        int wz = z + j3;
+                        if (wy < 0 || wy > 128) continue;
+                        
+                        int blockBelow = world.getVoxel(wx, wy, wz);
+                        if (isDirt(blockBelow)) {
+                            // Check sky exposure: block above must be air and have sky light
+                            int blockAbove = world.getVoxel(wx, wy + 1, wz);
+                            if (blockAbove == 0 && hasSkyLight(world, wx, wy + 1, wz)) {
+                                world.setVoxel(wx, wy, wz, holystoneId);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private boolean isLiquid(int blockId) {
+        // Check if block is a liquid (water or aether fluid)
+        return blockId == 15 || blockId == aetherFluidId;
+    }
+
+    private boolean isSolid(int blockId) {
+        // Solid blocks are anything that isn't air or liquid
+        return blockId != 0 && blockId != 15 && blockId != aetherFluidId;
+    }
+
+    private boolean isDirt(int blockId) {
+        return blockId == dirtId || blockId == grassId;
+    }
+
+    private boolean hasSkyLight(World world, int wx, int wy, int wz) {
+        // Simple sky light check - if block above is air and y is high enough, assume sky light
+        if (wy >= 120) return true; // Above cloud layer = full sky light
+        // Check if there's a clear path to sky (simplified)
+        for (int checkY = wy; checkY <= 128; checkY++) {
+            int blockAtY = world.getVoxel(wx, checkY, wz);
+            if (blockAtY != 0 && blockAtY != coldCloudId && blockAtY != blueCloudId && blockAtY != goldenCloudId) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void placeQuicksoilDisk(World world, int wx, int wy, int wz, int radius) {
