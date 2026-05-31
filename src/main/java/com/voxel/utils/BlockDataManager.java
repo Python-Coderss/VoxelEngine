@@ -26,7 +26,7 @@ import static org.lwjgl.opengl.GL31.*;
  */
 public class BlockDataManager {
     // Stores block data indexed by their integer ID.
-    private final Map<Integer, BlockData> blockRegistry = new HashMap<>();
+    public final Map<Integer, BlockData> blockRegistry = new HashMap<>();
     private final Map<String, Integer> nameToId = new HashMap<>();
 
     // OpenGL IDs for the Buffer and the Texture Buffer Object (TBO).
@@ -38,6 +38,19 @@ public class BlockDataManager {
     private int aabbTextureId;
     private int infoTboId;
     private int infoTextureId;
+
+    /**
+     * Enum for special material effects that require custom shader logic.
+     */
+    public enum MaterialEffect {
+        NONE(0),
+        PORTAL(1),
+        LIQUID(2),
+        WIRE(3);
+
+        public final int id;
+        MaterialEffect(int id) { this.id = id; }
+    }
 
     /**
      * Inner class representing the properties of a single block type.
@@ -54,27 +67,27 @@ public class BlockDataManager {
         // Reflection intensity (0 = matte, 255 = perfect mirror).
         public int reflectivity;
 
+        // Emission intensity (0 = none, 255 = maximum glow).
+        public int emissive;
+
+        // UV distortion intensity (0-255).
+        public int distortion;
+
+        // Special effect ID for the shader.
+        public MaterialEffect effect = MaterialEffect.NONE;
+
         // Diffuse intensity (0-255, default 255).
         public int diffuse = 255;
 
         // Whether the block color should be modified by the biome (e.g., grass).
         public int isTintable;
 
-        // Whether this block is a liquid (water, lava).
-        public boolean isLiquid;
-
-        // Whether this block is a portal (animated swirl).
-        public boolean isPortal;
-
-        // Whether this block is redstone wire (connection arms, power tint).
-        public boolean isRedstoneWire;
-
         // Animated texture properties
         public boolean isAnimated;
         public int frameCount = 1;
 
         // Whether this block occupies the full voxel space (true for most blocks, false
-        // for slabs/stairs/fences).
+        // for slabs/stairs/fences/most portals).
         public boolean isFullBlock;
 
         // The average albedo (color) of the block, extracted from its textures.
@@ -111,6 +124,17 @@ public class BlockDataManager {
     }
 
     /**
+     * Registers a new block with explicit rendering properties including emissive.
+     */
+    public void registerBlock(int id, String name, TextureManager textureManager, String modelsDir, int transparency, int reflectivity, int diffuse, int emissive) {
+        registerBlock(id, name, textureManager, modelsDir, transparency, reflectivity, diffuse);
+        BlockData data = blockRegistry.get(id);
+        if (data != null) {
+            data.emissive = emissive;
+        }
+    }
+
+    /**
      * Registers a new block by parsing its JSON model and mapping textures.
      * 
      * @param id             The integer ID to assign to this block (must be > 0).
@@ -120,6 +144,9 @@ public class BlockDataManager {
      * @param modelsDir      Directory where model JSON files are located.
      */
     public void registerBlock(int id, String name, TextureManager textureManager, String modelsDir) {
+        if (blockRegistry.containsKey(id)) {
+            throw new RuntimeException("Block ID collision detected! ID " + id + " is already registered to '" + blockRegistry.get(id).name + "'. Attempted to register '" + name + "'.");
+        }
         BlockData data = new BlockData();
         data.name = name;
         Map<String, String> textureMap = new HashMap<>();
@@ -178,6 +205,7 @@ public class BlockDataManager {
         } else if (name.contains("water")) {
             data.transparency = 150;
             data.reflectivity = 100;
+            data.effect = MaterialEffect.LIQUID;
         } else if (name.contains("aercloud")) {
             data.transparency = 0;
             data.reflectivity = 0;
@@ -211,13 +239,14 @@ public class BlockDataManager {
             data.isFullBlock = false;
         }
         if (name.contains("water") || name.contains("lava")) {
-            data.isLiquid = true;
+            data.effect = MaterialEffect.LIQUID;
         }
         if (name.contains("portal")) {
-            data.isPortal = true;
+            data.effect = MaterialEffect.PORTAL;
+            data.distortion = 20; // Default distortion for portals
         }
         if (name.contains("redstone_dust") || name.equals("redstone_wire")) {
-            data.isRedstoneWire = true;
+            data.effect = MaterialEffect.WIRE;
         }
         applyMiningDefaults(name, data);
 
@@ -395,21 +424,24 @@ public class BlockDataManager {
                 buffer.put(data.tex[2]);
                 buffer.put(data.tex[3]);
 
-                // ivec4 1: (tex-X, tex+X, transparency, packed_refl_tint_full)
+                // ivec4 1: (tex-X, tex+X, transparency, packed_refl_tint_full_effect_emissive)
                 buffer.put(data.tex[4]);
                 buffer.put(data.tex[5]);
                 buffer.put(data.transparency);
                 int packed = (data.reflectivity & 0xFF) | ((data.isTintable & 1) << 8)
-                        | ((data.isFullBlock ? 1 : 0) << 9) | ((data.isLiquid ? 1 : 0) << 10)
-                        | ((data.isPortal ? 1 : 0) << 11) | ((data.isRedstoneWire ? 1 : 0) << 12);
+                        | ((data.isFullBlock ? 1 : 0) << 9) 
+                        | ((data.effect.id & 0xF) << 10)
+                        | ((data.emissive & 0xFF) << 14);
                 buffer.put(packed);
 
-                // ivec4 2: (albedoR, albedoG, albedoB, packedAnim)
+                // ivec4 2: (albedoR, albedoG, albedoB, packedAnim_diffuse_distortion)
                 buffer.put(data.albedo.getRed());
                 buffer.put(data.albedo.getGreen());
                 buffer.put(data.albedo.getBlue());
-                int packedAnim = (data.isAnimated ? 1 : 0) | ((data.frameCount & 0x3F) << 1) | ((data.diffuse & 0xFF) << 8);
-                buffer.put(packedAnim); // bit0: anim, bit1-6: frames, bit8-15: diffuse
+                int packedAnim = (data.isAnimated ? 1 : 0) | ((data.frameCount & 0x3F) << 1) 
+                        | ((data.diffuse & 0xFF) << 8)
+                        | ((data.distortion & 0xFF) << 16);
+                buffer.put(packedAnim); // bit0: anim, bit1-6: frames, bit8-15: diffuse, bit16-23: distortion
             } else {
                 // Fill with -1 for unused IDs.
                 for (int j = 0; j < 12; j++)
@@ -546,17 +578,17 @@ public class BlockDataManager {
 
     public boolean isLiquid(int blockId) {
         BlockData data = blockRegistry.get(blockId);
-        return data != null && data.isLiquid;
+        return data != null && data.effect == MaterialEffect.LIQUID;
     }
 
     public boolean isPortal(int blockId) {
         BlockData data = blockRegistry.get(blockId);
-        return data != null && data.isPortal;
+        return data != null && data.effect == MaterialEffect.PORTAL;
     }
 
     public boolean isRedstoneWire(int blockId) {
         BlockData data = blockRegistry.get(blockId);
-        return data != null && data.isRedstoneWire;
+        return data != null && data.effect == MaterialEffect.WIRE;
     }
 
     public float getHardness(int blockId) {

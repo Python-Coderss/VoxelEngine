@@ -5,6 +5,8 @@ import com.voxel.lighting.LightPropagationEngine;
 import com.voxel.ui.UILayer;
 import com.voxel.ui.UIManager;
 import com.voxel.utils.BlockDataManager;
+import com.voxel.utils.BlockDataManager.BlockData;
+import com.voxel.utils.BlockDataManager.MaterialEffect;
 import com.voxel.utils.ShaderUtil;
 import com.voxel.utils.TextureManager;
 import com.voxel.world.DimensionManager;
@@ -2446,22 +2448,22 @@ public class Main {
         blockDataManager.registerBlock(14, "sand", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(15, "water", textureManager, "src/main/resources/assets/minecraft/models/block", 150, 100, 255);
         blockDataManager.registerBlock(16, "obsidian", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.registerBlock(17, "glowstone", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(17, "glowstone", textureManager, "src/main/resources/assets/minecraft/models/block", 0, 0, 255, 255);
         blockDataManager.registerBlock(18, "end_stone", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.registerBlock(19, "nether_portal", textureManager, "src/main/resources/assets/minecraft/models/block", 255, 0, 255);
+        blockDataManager.registerBlock(19, "nether_portal", textureManager, "src/main/resources/assets/minecraft/models/block", 60, 0, 255, 180);
         // --- Nether Dimension Blocks ---
         blockDataManager.registerBlock(20, "netherrack", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.registerBlock(21, "lava", textureManager, "src/main/resources/assets/minecraft/models/block", 0, 50, 255);
+        blockDataManager.registerBlock(21, "lava", textureManager, "src/main/resources/assets/minecraft/models/block", 0, 50, 255, 200);
         blockDataManager.registerBlock(22, "soul_sand", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(23, "quartz_ore", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(24, "nether_bricks", textureManager, "src/main/resources/assets/minecraft/models/block");
         // --- Redstone Blocks ---
         blockDataManager.registerBlock(25, "redstone_block", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(26, "redstone_ore", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.registerBlock(27, "redstone_torch", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(27, "redstone_torch", textureManager, "src/main/resources/assets/minecraft/models/block", 0, 0, 255, 200);
         blockDataManager.registerBlock(28, "redstone_lamp", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(29, "redstone_wire", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.registerBlock(30, "redstone_lamp_on", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(30, "redstone_lamp_on", textureManager, "src/main/resources/assets/minecraft/models/block", 0, 0, 255, 255);
         // --- Piston Blocks ---
         blockDataManager.registerBlock(31, "piston_normal", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(32, "sticky_piston", textureManager, "src/main/resources/assets/minecraft/models/block");
@@ -2474,8 +2476,8 @@ public class Main {
         blockDataManager.registerBlock(103, "skyroot_log", textureManager, aetherModels);
         blockDataManager.registerBlock(104, "skyroot_leaves", textureManager, aetherModels);
         blockDataManager.registerBlock(105, "aerogel", textureManager, aetherModels, 120, 30, 255);
-        blockDataManager.registerBlock(106, "aether_portal_ew", textureManager, aetherModels, 255, 0, 255);
-        blockDataManager.registerBlock(106, "aether_portal_ns", textureManager, aetherModels, 255, 0, 255);
+        blockDataManager.registerBlock(106, "aether_portal_ns", textureManager, aetherModels, 0, 0, 255, 0);
+        blockDataManager.registerBlock(115, "aether_portal_ew", textureManager, aetherModels, 0, 0, 255, 0);
         
         blockDataManager.registerBlock(107, "ambrosium_ore", textureManager, aetherModels);
         blockDataManager.registerBlock(108, "gravitite_ore", textureManager, aetherModels);
@@ -2491,9 +2493,9 @@ public class Main {
         blockDataManager.registerBlock(121, "dandelion", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(122, "rose", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(123, "tallgrass", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.registerBlock(124, "blue_aercloud", textureManager, aetherModels);
-        blockDataManager.registerBlock(125, "cold_aercloud", textureManager, aetherModels);
-        blockDataManager.registerBlock(126, "golden_aercloud", textureManager, aetherModels);
+        blockDataManager.registerBlock(124, "blue_aercloud", textureManager, aetherModels, 100, 0, 255);
+        blockDataManager.registerBlock(125, "cold_aercloud", textureManager, aetherModels, 100, 0, 255);
+        blockDataManager.registerBlock(126, "golden_aercloud", textureManager, aetherModels, 100, 0, 255);
         blockDataManager.uploadToGPU();
     }
 
