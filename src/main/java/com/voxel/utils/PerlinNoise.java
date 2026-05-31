@@ -105,6 +105,59 @@ public class PerlinNoise {
                     lerp(u, grad3D(p[ab + 1], x, y - 1, z - 1), grad3D(p[bb + 1], x - 1, y - 1, z - 1))));
     }
 
+    /**
+     * Multi-octave 3D noise sampling for seamless terrain.
+     * Mimics BlendedNoise: stacks octaves at decreasing scales (xzScale, yScale)
+     * with increasing detail factors (xzFactor, yFactor).
+     * The smearScale creates horizontal coherence across chunk boundaries.
+     *
+     * @param x, y, z world coordinates
+     * @param xzScale scale for horizontal axes (0.25 matches Aether mod)
+     * @param yScale scale for vertical axis (0.25 matches Aether mod)
+     * @param xzFactor horizontal detail factor (80.0 matches Aether mod)
+     * @param yFactor vertical detail factor (160.0 matches Aether mod)
+     * @param smearScale smear multiplier for cross-chunk coherence (8.0 max)
+     * @return noise value in [-1, 1] range, roughly
+     */    /**
+     * Multi-octave 3D noise sampling for seamless per-chunk terrain.
+     * Ported from Vanilla's BlendedNoise.createUnseeded(): stacks octaves where
+     * each octave has frequency tied to spread (high spread = high freq + high smearing).
+     * First (low-freq) octave has wide spatial influence for chunk-boundary coherence.
+     * Later (high-freq) octaves are localized for fine detail.
+     *
+     * @param x, y, z world coordinates
+     * @param baseScale base scale for first octave (e.g., 0.25 for Aether)
+     * @param smearScale max smear radius in noise-space (8.0 matches Aether mod)
+     * @return noise value in roughly [-1, 1] range
+     */
+    public float noise3DBlended(float x, float y, float z, float baseScale, double smearScale) {
+        double sum = 0.0;
+        double div = 0.0;
+        double amp = 1.0;
+        double spread = smearScale; // starts at max (8.0 for Aether)
+
+        for (int i = 0; i < 8; i++) {
+            // freq from BlendedNoise: 1 + (spread-1)/spread → ~1.0 to ~2.0
+            // High spread = high frequency = broader island-scale features
+            double freq = 1.0 + (spread - 1.0) / spread;
+            // Smearing: high spread = high smearing = wider cross-chunk influence
+            double smearing = (smearScale / spread) * 0.8;
+
+            float nx = (float)((x + smearing) * baseScale * freq);
+            float ny = (float)(y * baseScale * freq);
+            float nz = (float)((z + smearing) * baseScale * freq);
+
+            sum += noise3D(nx, ny, nz, 1.0f) * amp;
+            div += amp;
+
+            // Next octave: 0.5x amplitude, spread decreases (freq and smearing drop)
+            amp *= 0.5;
+            baseScale *= 2.0f;
+            spread = Math.max(1.0, spread / 1.5);
+        }
+        return (float)(sum / div);
+    }
+
     /** 3D gradient direction based on hash value (16 possible directions). */
     private float grad3D(int hash, float x, float y, float z) {
         int h = hash & 15;
