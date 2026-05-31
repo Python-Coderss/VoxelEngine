@@ -708,7 +708,7 @@ void main() {
                 else uv = vec2(fract(hp.x), 1.0 - fract(hp.y));
             }
 
-            // Animated texture: d2.w contains [isAnimated(bit0) | frameCount(bit1-6) | diffuse(bit8-15)]
+            // Animated texture: d2.w contains [isAnimated(bit0) | frameCount(bit1-6) | diffuse(bit8-15) | distortion(bit16-23)]
             int animPacked = d2.w;
             bool isAnimated = (animPacked & 1) == 1;
             int frameCount = (animPacked >> 1) & 0x3F;
@@ -718,115 +718,87 @@ void main() {
                 tex = tex + frame;
             }
 
-            vec4 texSample = texture(u_BlockTextures, vec3(uv, float(tex)));
+            // Extract material properties
+            int d1w = d1.w;
+            int effectId = (d1w >> 10) & 0xF;
+            float emissive = float((d1w >> 14) & 0xFF) / 255.0;
+            float distortion = float((animPacked >> 16) & 0xFF) / 255.0;
+
+            vec2 finalUv = uv;
+            if (distortion > 0.0) {
+                float swirlTime = u_Time * 1.5;
+                finalUv += vec2(sin(swirlTime + hp.y * 2.0 + hp.x), cos(swirlTime * 0.7 + hp.z * 2.0)) * distortion * 0.004;
+            }
+
+            vec4 texSample = texture(u_BlockTextures, vec3(finalUv, float(tex)));
             float diffuseFactor = float((animPacked >> 8) & 0xFF) / 255.0;
             alb = texSample.rgb * (vec3(d2.rgb)/255.0) * diffuseFactor;
 
-            // Initialize trans/refl from block data
-            bool isLiquid = ((d1.w >> 10) & 1) == 1;
-            bool isPortal = ((d1.w >> 11) & 1) == 1;
-            bool isRedstoneWire = ((d1.w >> 12) & 1) == 1;
-            trans = float(d1.z)/255.0; refl = float(d1.w & 0xFF)/255.0;
-
-            // Alpha-based transparency: use alpha texture value as transparency (0 = transparent, 255 = opaque)
-            // Alpha directly controls transparency: alpha=1.0 means fully opaque (trans=0), alpha=0 means fully transparent (trans=1)
-            // Pixels with alpha < 0.1 are treated as fully transparent (allows sharp edges)
-            if (texSample.a < 0.1) { 
-                trans = 1.0; 
-                alb = vec3(1.0); 
-            } else {
-                // Map alpha [0.1, 1.0] to trans [1.0, 0.0] - gradient transparency for semi-transparent pixels
-                trans = 1.0 - texSample.a;
-            }
-
-            // Portal blocks: semi-transparent with animated swirl
-            if (isPortal) {
-                // Make portal fully transparent so ray passes through
+            // Transparency Logic: Combine base transparency and texture alpha
+            float baseTrans = float(d1.z) / 255.0;
+            float texAlpha = texSample.a;
+            
+            // If alpha is extremely low, treat as a "hole" (pass through with no tint)
+            if (texAlpha < 0.1) {
                 trans = 1.0;
-                // Animated swirl: shift UV over time for a flowing effect
-                float swirlTime = u_Time * 1.5;
-                vec2 swirlUv = uv + vec2(sin(swirlTime + hp.y * 2.0 + hp.x), cos(swirlTime * 0.7 + hp.z * 2.0)) * 0.08;
-                vec4 swirlSample = texture(u_BlockTextures, vec3(swirlUv, float(tex)));
-                vec3 portalColor = swirlSample.rgb;
-                // Use block albedo for portal tint
+                alb = vec3(1.0); // Neutral color for the hole
+            } else {
+                // Otherwise, take the maximum transparency (either from Java property or texture alpha)
+                trans = max(baseTrans, 1.0 - texAlpha);
+            }
+            
+            refl = float(d1.w & 0xFF) / 255.0;
+
+            // Special Effects Logic
+            if (effectId == 1) { // PORTAL
+                trans = mix(trans, 0.6, 0.8);
                 vec3 tint = vec3(d2.rgb) / 255.0;
-                // Add edge glow near portal block borders
                 float edgeDist = 1.0 - min(abs(fract(hp.x) - 0.5), abs(fract(hp.z) - 0.5)) * 2.0;
                 float glow = pow(edgeDist, 3.0) * 0.5;
-                alb = mix(portalColor, tint, 0.5) + tint * glow * 0.3;
+                alb = mix(alb, tint, 0.5) + tint * glow * 0.3;
                 refl = 0.0;
-            } else
-            // Redstone wire: tint by power level and draw connection arms
-            if (isRedstoneWire && texSample.a >= 0.1) {
-                float pf = float(wirePower) / 15.0;
-                vec3 wireColor = vec3(0.6, 0.1, 0.1) + vec3(0.4, 0.1, 0.0) * pf;
-                alb *= wireColor;
-                
-                // Connection arms: on the top face, draw lines toward connected neighbors
-                if (abs(n.y) > 0.5) {
-                    // Top face: use UV to determine position within slab
-                    float relX = fract(hp.x);
-                    float relZ = fract(hp.z);
-                    float nearEdge = 0.0625; // 1/16 block = edge region
-                    
-                    // Check if we're near an edge with a connection
-                    bool nearWest  = relX < nearEdge && (wireConn & 1u) != 0u;
-                    bool nearEast  = relX > (1.0 - nearEdge) && (wireConn & 2u) != 0u;
-                    bool nearNorth = relZ < nearEdge && (wireConn & 4u) != 0u;
-                    bool nearSouth = relZ > (1.0 - nearEdge) && (wireConn & 8u) != 0u;
-                    
-                    if (nearWest || nearEast || nearNorth || nearSouth) {
-                        alb = max(alb, vec3(0.3, 0.05, 0.05) + vec3(0.7, 0.15, 0.1) * pf);
-                    }
+            } else if (effectId == 2) { // LIQUID
+                vec3 liquidTint = vec3(d2.rgb) / 255.0;
+                if (liquidTint.r > liquidTint.b * 1.5) { // Likely Lava
+                    trans = 0.0; refl = 0.05;
+                    alb = mix(alb, liquidTint, 0.3);
+                } else { // Likely Water
+                    trans = 0.6; refl = 0.15;
+                    alb = mix(alb, liquidTint, 0.5);
                 }
-                
-                // Side faces: draw wire on sides that have connections
-                if (abs(n.x) > 0.5) {
-                    // East (+X) or West (-X) face
-                    bool eastFace = n.x > 0.5;
-                    bool westFace = n.x < -0.5;
-                    if ((eastFace && (wireConn & 2u) != 0u) || (westFace && (wireConn & 1u) != 0u)) {                            float nearGround = fract(hp.y);
-                            if (nearGround < 0.125) {
-                            alb = mix(alb, wireColor * 1.5, 0.8);
-                        } else {
-                            trans = 1.0;
-                            alb = vec3(1.0);
-                        }
-                    } else {
-                        trans = 1.0;
-                        alb = vec3(1.0);
+            } else if (effectId == 3) { // WIRE (Redstone)
+                if (texSample.a >= 0.1) {
+                    float pf = float(wirePower) / 15.0;
+                    vec3 wireColor = vec3(0.6, 0.1, 0.1) + vec3(0.4, 0.1, 0.0) * pf;
+                    alb *= wireColor;
+                    
+                    if (abs(n.y) > 0.5) {
+                        float relX = fract(hp.x), relZ = fract(hp.z), nearEdge = 0.0625;
+                        bool nearWest = relX < nearEdge && (wireConn & 1u) != 0u;
+                        bool nearEast = relX > (1.0 - nearEdge) && (wireConn & 2u) != 0u;
+                        bool nearNorth = relZ < nearEdge && (wireConn & 4u) != 0u;
+                        bool nearSouth = relZ > (1.0 - nearEdge) && (wireConn & 8u) != 0u;
+                        if (nearWest || nearEast || nearNorth || nearSouth) alb = max(alb, vec3(0.3, 0.05, 0.05) + vec3(0.7, 0.15, 0.1) * pf);
                     }
-                }
-                if (abs(n.z) > 0.5) {
-                    // South (+Z) or North (-Z) face
-                    bool southFace = n.z > 0.5;
-                    bool northFace = n.z < -0.5;
-                    if ((southFace && (wireConn & 8u) != 0u) || (northFace && (wireConn & 4u) != 0u)) {                            float nearGround = fract(hp.y);
-                            if (nearGround < 0.125) {
-                            alb = mix(alb, wireColor * 1.5, 0.8);
-                        } else {
-                            trans = 1.0;
-                            alb = vec3(1.0);
-                        }
-                    } else {
-                        trans = 1.0;
-                        alb = vec3(1.0);
+                    if (abs(n.x) > 0.5) {
+                        bool eastFace = n.x > 0.5, westFace = n.x < -0.5;
+                        if ((eastFace && (wireConn & 2u) != 0u) || (westFace && (wireConn & 1u) != 0u)) {
+                            if (fract(hp.y) < 0.125) alb = mix(alb, wireColor * 1.5, 0.8);
+                            else { trans = 1.0; alb = vec3(1.0); }
+                        } else { trans = 1.0; alb = vec3(1.0); }
+                    }
+                    if (abs(n.z) > 0.5) {
+                        bool southFace = n.z > 0.5, northFace = n.z < -0.5;
+                        if ((southFace && (wireConn & 8u) != 0u) || (northFace && (wireConn & 4u) != 0u)) {
+                            if (fract(hp.y) < 0.125) alb = mix(alb, wireColor * 1.5, 0.8);
+                            else { trans = 1.0; alb = vec3(1.0); }
+                        } else { trans = 1.0; alb = vec3(1.0); }
                     }
                 }
             }
 
-            if (isLiquid) {
-                // Determine liquid color and properties based on name-based albedo
-                vec3 liquidTint = vec3(d2.rgb) / 255.0;
-                if (liquidTint.r > liquidTint.b * 1.5) { // Likely Lava
-                    trans = 0.0;
-                    refl = 0.05;
-                    alb = mix(alb, liquidTint, 0.3);
-                } else { // Likely Water
-                    trans = 0.6;
-                    refl = 0.15;
-                    alb = mix(alb, liquidTint, 0.5);
-                }
+            if (emissive > 0.0) {
+                final += throu * alb * emissive * 2.0;
             }
 
             if (((d1.w >> 8) & 1) == 1) { vec2 bp = texture(u_BiomeMap, (hp.xz - vec2(u_WorldOffset.xz)) / 2048.0).rg; alb *= texture(u_GrassColormap, vec2(1.0-bp.x, 1.0-bp.y)).rgb; }
@@ -841,7 +813,8 @@ void main() {
         if (trans > 0.0 && !isEnt && voxel == lastTransVoxel) {
             bc = vec3(0.0);
         } else if (trans > 0.0) {
-            // Only accumulate tint at translucent boundaries (first hit, type change, or entity)
+            // Additive color mixing: stack tints instead of multiplying them to avoid dimming
+            final += throu * alb * (1.0 - trans);
             throu *= trans * alb;
         }
 
