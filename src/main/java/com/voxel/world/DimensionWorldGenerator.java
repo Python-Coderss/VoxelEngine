@@ -262,6 +262,7 @@ public class DimensionWorldGenerator extends WorldGenerator {
 
     @Override
     public void decorate(int cx, int cy, int cz, int slot, World world) {
+        // --- Spawn portals ---
         if (cx == 64 && cz == 64) {
             if (dimension == DimensionType.OVERWORLD && cy == 4) {
                 placePortal(world, 1028, 64, 1030, obsidianId, 19); // Nether portal
@@ -269,6 +270,22 @@ public class DimensionWorldGenerator extends WorldGenerator {
             } else if (dimension == DimensionType.NETHER && cy == 2) {
                 placePortal(world, 1028, 32, 1030, obsidianId, 19);
                 placePortal(world, 1028, 32, 1036, glowstoneId, aetherPortalId);
+            }
+        }
+
+        // --- End obsidian spawn platform (5x5 at (100, 47, 0)) ---
+        if (dimension == DimensionType.END && cy == 2) {
+            // Platform spans x=[100,104], z=[0,4], y=47 (chunk cy=2 covers y=32..47)
+            if (cx == 6 && cz == 0) {
+                int platformY = 47;
+                int localY = platformY - (cy << 4); // 47 - 32 = 15
+                int lxStart = 100 - (cx << 4);      // 100 - 96 = 4
+                int lzStart = 0;                     // 0 - 0 = 0
+                for (int lx = lxStart; lx <= lxStart + 4; lx++) {
+                    for (int lz = lzStart; lz <= lzStart + 4; lz++) {
+                        world.setVoxelInPool(slot, lx, localY, lz, obsidianId);
+                    }
+                }
             }
         }
 

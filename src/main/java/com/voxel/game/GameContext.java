@@ -150,6 +150,34 @@ public class GameContext {
     public Runnable updateCursorMode;
     public java.util.function.Consumer<String> statusConsumer;
 
+    // Scale factors relative to Overworld (1.0). Aether: 8 blocks = 1 overworld block. Nether: 8 overworld blocks = 1 nether block.
+    private static final float SCALE_AETHER = 8.0f;
+    private static final float SCALE_NETHER = 0.125f;
+    private static final float SCALE_OVERWORLD = 1.0f;
+    private static final float SCALE_END = 0.0f; // End uses fixed spawn point, not scaled translation
+
+    private static float getScaleFactor(DimensionType dim) {
+        switch (dim) {
+            case AETHER: return SCALE_AETHER;
+            case NETHER: return SCALE_NETHER;
+            case END:    return SCALE_END;
+            default:     return SCALE_OVERWORLD;
+        }
+    }
+
+    /**
+     * Translates a coordinate from the source dimension to the target dimension.
+     * Scale factors: Aether=8x, Nether=0.125x relative to Overworld.
+     * For END dimensions, coordinate translation is not used (fixed spawn instead).
+     */
+    private static float translateCoordinate(float value, DimensionType source, DimensionType target) {
+        float sourceScale = getScaleFactor(source);
+        float targetScale = getScaleFactor(target);
+        // If either is End, translation is handled separately via fixed spawn
+        if (sourceScale == 0.0f || targetScale == 0.0f) return value;
+        return value * targetScale / sourceScale;
+    }
+
     public void setStatus(String msg) {
         statusMessage = msg;
         statusUntil = System.currentTimeMillis() / 1000.0 + 3.0;
@@ -157,7 +185,12 @@ public class GameContext {
         if (statusConsumer != null) statusConsumer.accept(msg);
     }
 
+    /** Legacy overload: translates from the player's current position. */
     public void switchToDimension(DimensionType target) {
+        switchToDimension(target, new Vector3f(player.getPosition()));
+    }
+
+    public void switchToDimension(DimensionType target, Vector3f sourcePosition) {
         DimensionType previous = activeDimension;
         int renderDistance = target == DimensionType.OVERWORLD ? 8 : 6;
 
@@ -176,33 +209,29 @@ public class GameContext {
         redstoneManager = new RedstoneManager(world, chunkManager);
         com.voxel.world.RedstoneLogger.log("DIMENSION SWITCH: created new RedstoneManager for " + target.name + " (was " + previous.name + ")");
         if (previous != target) dimensionManager.unloadDimension(previous);
-        // Find a safe landing spot: full area scan in expanding squares around spawn
-        int spawnY = target.baseHeight + 3;
-        if (target == DimensionType.AETHER || target == DimensionType.END) {
-            boolean foundSurface = false;
-            // Scan increasingly larger squares centered at (1024, 1024)
-            // Max scan radius: 24 blocks (covers 49x49 area)
-            int maxScanRadius = 24;
-            // For Aether, terrain is bounded [0, 128]; scan within that range
-            // For End, baseHeight may be 0 or 60; use a wide scan range
-            int scanYMin = (target == DimensionType.AETHER) ? 40 : Math.max(0, target.baseHeight - 20);
-            int scanYMax = (target == DimensionType.AETHER) ? 128 : target.baseHeight + 10;
-            for (int ox = -maxScanRadius; ox <= maxScanRadius && !foundSurface; ox += 3) {
-                for (int oz = -maxScanRadius; oz <= maxScanRadius && !foundSurface; oz += 3) {
-                    int sx = 1024 + ox, sz = 1024 + oz;
-                    for (int sy = scanYMin; sy < scanYMax; sy++) {
-                        int block = world.getVoxel(sx, sy, sz);
-                        if (block != 0 && block != 106) {
-                            spawnY = sy + 1;
-                            foundSurface = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            if (!foundSurface) spawnY = target.baseHeight; // Fallback if nothing found
+
+        // --- Determine spawn position with coordinate translation ---
+        float tx = translateCoordinate(sourcePosition.x, previous, target);
+        float tz = translateCoordinate(sourcePosition.z, previous, target);
+        int spawnX = Math.round(tx);
+        int spawnZ = Math.round(tz);
+        int spawnY;
+
+        if (target == DimensionType.END) {
+            // End: fixed spawn with obsidian platform (platform placed by End generator decorate)
+            spawnX = 100; spawnZ = 0; spawnY = 49;
+        } else if (target == DimensionType.AETHER) {
+            // Aether: scan for solid ground near translated position
+            spawnY = findSurfaceNear(spawnX, spawnZ, 40, 128, 24);
+        } else if (target == DimensionType.NETHER) {
+            // Nether: cave dimension, scan downward from ceiling
+            spawnY = findNetherSpawn(spawnX, spawnZ);
+        } else {
+            // Overworld: find surface near translated position
+            spawnY = findSurfaceNear(spawnX, spawnZ, 1, 255, 32);
         }
-        player.getPosition().set(1024, spawnY, 1024);
+
+        player.getPosition().set(spawnX + 0.5f, spawnY, spawnZ + 0.5f);
         player.setDimension(target);
         // Sync playerEntity dimension for entity visibility filtering
         if (playerEntity != null) {
@@ -218,6 +247,50 @@ public class GameContext {
         if (uploadWorldToGpu != null) uploadWorldToGpu.run();
         setStatus("Switched to " + target.name);
     }
+
+    /** Scans an area around (cx, cz) for the highest solid block, returns y+1 (air above). */
+    private int findSurfaceNear(int cx, int cz, int yMin, int yMax, int maxRadius) {
+        for (int r = 0; r <= maxRadius; r += 3) {
+            for (int ox = -r; ox <= r; ox += 3) {
+                for (int oz = -r; oz <= r; oz += 3) {
+                    int sx = cx + ox, sz = cz + oz;
+                    for (int sy = yMax - 1; sy >= yMin; sy--) {
+                        int block = world.getVoxel(sx, sy, sz);
+                        if (block != 0 && block != 106) { // 106 = aether portal (not solid ground)
+                            return sy + 1;
+                        }
+                    }
+                }
+            }
+        }
+        // Fallback
+        if (activeDimension == DimensionType.AETHER) return 96;
+        if (activeDimension == DimensionType.NETHER) return 32;
+        return activeDimension.baseHeight + 3;
+    }
+
+    /** Nether-specific spawn finder: scan downward from ceiling for a cave floor. */
+    private int findNetherSpawn(int cx, int cz) {
+        // Scan around for a cave floor: solid block with air above
+        for (int r = 0; r <= 16; r += 4) {
+            for (int ox = -r; ox <= r; ox += 4) {
+                for (int oz = -r; oz <= r; oz += 4) {
+                    int sx = cx + ox, sz = cz + oz;
+                    for (int sy = 110; sy >= 4; sy--) {
+                        int below = world.getVoxel(sx, sy, sz);
+                        int above = world.getVoxel(sx, sy + 1, sz);
+                        int above2 = world.getVoxel(sx, sy + 2, sz);
+                        if (below != 0 && above == 0 && above2 == 0) {
+                            return sy + 1;
+                        }
+                    }
+                }
+            }
+        }
+        return 32; // Fallback: middle of nether
+    }
+
+
 
     /** Floating damage number that appears at an entity's position and fades out. */
     public static class DamageNumber {
