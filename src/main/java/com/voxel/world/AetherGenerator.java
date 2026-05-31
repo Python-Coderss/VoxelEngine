@@ -105,7 +105,9 @@ public class AetherGenerator extends WorldGenerator {
     }
 
     /**
-     * Computes 3D density field matching the Aether mod's skylands.json noise formula.
+     * Computes 3D density field matching the Aether mod's BlendedNoise skylands formula.
+     * Uses multi-octave 3D noise (like Vanilla's BlendedNoise) for seamless,
+     * coherent terrain that generates correctly per-chunk without cross-chunk artifacts.
      */
     private float computeAetherDensity(int x, int y, int z) {
         if (y < 0 || y > 128) return -1.0f;
@@ -115,10 +117,14 @@ public class AetherGenerator extends WorldGenerator {
         // Top slide: 1 at y=56, reaches 0 at y=128
         float topSlide = Math.min(1.0f, Math.max(0.0f, (128.0f - y) / 72.0f));
 
-        // 3D noise - Reduced scale for larger, more cohesive islands (from 0.25 to 0.035)
-        float noise = continentalNoise.noise3D(x, y, z, 0.035f);
-        
-        // Add some connectivity using 2D noise
+        // Multi-octave 3D noise: matches Aether mod's BlendedNoise settings
+        // BlendedNoise.createUnseeded(0.25, 0.25, 80.0, 160.0, 8.0)
+        // First octave: scale=0.25, smear=8.0 (wide influence for chunk coherence)
+        // Subsequent octaves: scale*=2 each time, smear decreases toward 1.0
+        // Divide by 128 to increase noise scale (larger terrain features)
+        float noise = continentalNoise.noise3DBlended(x / 128.0f, y / 128.0f, z / 128.0f, 0.25f, 8.0);
+
+        // Add connectivity using low-frequency 2D continental noise
         float connectivity = continentalNoise.noise(x, z, 0.015f) * 0.2f;
 
         // Density formula: bottomSlide * (topSlide * (noise + 0.07) - 0.1) - 0.15
