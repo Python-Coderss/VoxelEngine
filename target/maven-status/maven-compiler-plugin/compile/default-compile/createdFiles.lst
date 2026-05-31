@@ -55,6 +55,7 @@ com\voxel\tools\UVFinder$Canvas.class
 com\voxel\world\DimensionType.class
 com\voxel\utils\UVGuiTool.class
 com\voxel\entity\Entity.class
+com\voxel\game\GameContext$1.class
 com\voxel\game\FurnaceManager.class
 com\voxel\utils\BlockDataManager$BlockData.class
 com\voxel\world\RedstoneManager.class
