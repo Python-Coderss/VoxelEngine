@@ -1,7 +1,0 @@
-{
-    "textures": {
-        "end": "minecraft:blocks/log_spruce_top",
-        "side": "minecraft:blocks/log_spruce",
-        "all": "minecraft:blocks/log_spruce"
-    }
-}

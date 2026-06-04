@@ -1,9 +1,0 @@
-{
-  "parent": "minecraft:block/dirt_path",
-  "textures": {
-    "bottom": "aether:block/natural/aether_dirt",
-    "particle": "aether:block/natural/aether_dirt",
-    "side": "aether:block/construction/aether_dirt_path_side",
-    "top": "aether:block/construction/aether_dirt_path_top"
-  }
-}

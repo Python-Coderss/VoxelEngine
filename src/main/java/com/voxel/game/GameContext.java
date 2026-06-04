@@ -145,6 +145,10 @@ public class GameContext {
     public enum ActiveUI { NONE, INVENTORY, CHEST, FURNACE, CRAFTING_TABLE }
     public ActiveUI activeUI = ActiveUI.NONE;
 
+    // --- Pending spawn adjustment (deferred until spawn chunks are loaded) ---
+    public int pendingSpawnX = Integer.MIN_VALUE;
+    public int pendingSpawnZ = Integer.MIN_VALUE;
+
     // --- Runnables passed by Main for dimension switching ---
     public Runnable uploadWorldToGpu;
     public Runnable updateCursorMode;
@@ -218,11 +222,15 @@ public class GameContext {
         int spawnY;
 
         if (target == DimensionType.END) {
-            // End: fixed spawn with obsidian platform (platform placed by End generator decorate)
-            spawnX = 100; spawnZ = 0; spawnY = 49;
+            // End: island dimension — search for an island near the translated position
+            spawnY = findIslandSurface(spawnX, spawnZ);
+            pendingSpawnX = spawnX;
+            pendingSpawnZ = spawnZ;
         } else if (target == DimensionType.AETHER) {
-            // Aether: scan for solid ground near translated position
-            spawnY = findSurfaceNear(spawnX, spawnZ, 40, 128, 24);
+            // Aether: island dimension — search for an island near the translated position
+            spawnY = findIslandSurface(spawnX, spawnZ);
+            pendingSpawnX = spawnX;
+            pendingSpawnZ = spawnZ;
         } else if (target == DimensionType.NETHER) {
             // Nether: cave dimension, scan downward from ceiling
             spawnY = findNetherSpawn(spawnX, spawnZ);
@@ -232,6 +240,7 @@ public class GameContext {
         }
 
         player.getPosition().set(spawnX + 0.5f, spawnY, spawnZ + 0.5f);
+        player.getVelocity().set(0);
         player.setDimension(target);
         // Sync playerEntity dimension for entity visibility filtering
         if (playerEntity != null) {
@@ -248,7 +257,7 @@ public class GameContext {
         setStatus("Switched to " + target.name);
     }
 
-    /** Scans an area around (cx, cz) for the highest solid block, returns y+1 (air above). */
+    /** Scans an area around (cx, cz) for the highest solid block, returns y+2 (air above). */
     private int findSurfaceNear(int cx, int cz, int yMin, int yMax, int maxRadius) {
         for (int r = 0; r <= maxRadius; r += 3) {
             for (int ox = -r; ox <= r; ox += 3) {
@@ -257,7 +266,7 @@ public class GameContext {
                     for (int sy = yMax - 1; sy >= yMin; sy--) {
                         int block = world.getVoxel(sx, sy, sz);
                         if (block != 0 && block != 106) { // 106 = aether portal (not solid ground)
-                            return sy + 1;
+                            return sy + 2;
                         }
                     }
                 }
@@ -267,6 +276,50 @@ public class GameContext {
         if (activeDimension == DimensionType.AETHER) return 96;
         if (activeDimension == DimensionType.NETHER) return 32;
         return activeDimension.baseHeight + 3;
+    }
+
+    /**
+     * Called each tick after a dimension switch. Once the spawn chunks are loaded,
+     * re-scans for the island surface and adjusts the player's y to 2 blocks above it.
+     * This prevents fall damage from spawning at a wrong y when chunks weren't ready.
+     */
+    public void adjustSpawnYAfterChunkLoad() {
+        if (pendingSpawnX == Integer.MIN_VALUE) return;
+        int surfaceY = findIslandSurface(pendingSpawnX, pendingSpawnZ);
+        float currentY = player.getPosition().y;
+        // Only adjust if we found a different (real) surface — don't adjust if still fallback
+        if (Math.abs(surfaceY - currentY) > 0.5f && surfaceY > 10 && surfaceY < 200) {
+            player.getPosition().y = surfaceY;
+        }
+        pendingSpawnX = Integer.MIN_VALUE;
+    }
+
+    /**
+     * Island spawn finder: searches within a 6-chunk (96-block) radius for a solid terrain
+     * block (full block) with air above. Used by Aether and End dimensions.
+     * Excludes aerclouds, leaves, portals, and other non-full blocks.
+     */
+    private int findIslandSurface(int cx, int cz) {
+        int radius = 6 * 16; // 6 chunks = 96 blocks
+        for (int r = 0; r <= radius; r += 4) {
+            for (int ox = -r; ox <= r; ox += 4) {
+                for (int oz = -r; oz <= r; oz += 4) {
+                    int sx = cx + ox, sz = cz + oz;
+                    for (int sy = 120; sy >= 20; sy--) {
+                        int block = world.getVoxel(sx, sy, sz);
+                        // Only count full blocks (terrain) — excludes aerclouds, leaves, portals, etc.
+                        if (block != 0 && blockDataManager.isFullBlock(block)) {
+                            int above = world.getVoxel(sx, sy + 1, sz);
+                            if (above == 0) {
+                                return sy + 2;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Fallback: try coarser scan for any solid block
+        return findSurfaceNear(cx, cz, 20, 120, 48);
     }
 
     /** Nether-specific spawn finder: scan downward from ceiling for a cave floor. */
@@ -281,7 +334,7 @@ public class GameContext {
                         int above = world.getVoxel(sx, sy + 1, sz);
                         int above2 = world.getVoxel(sx, sy + 2, sz);
                         if (below != 0 && above == 0 && above2 == 0) {
-                            return sy + 1;
+                            return sy + 2;
                         }
                     }
                 }

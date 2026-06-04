@@ -914,6 +914,10 @@ public class Main {
         boolean chunksReady = chunkManager.isChunkLoaded(pcx, pcz);
 
         if (chunksReady) {
+            // After dimension switch: adjust player y to 1 block above the actual surface
+            // once spawn chunks are loaded (surface scan fails earlier since chunks aren't ready)
+            ctx.adjustSpawnYAfterChunkLoad();
+
             handleInput(dt);
 
             // Parachute deploy: auto-activate when falling fast in the Aether

@@ -1,7 +1,0 @@
-{
-    "textures": {
-        "end": "minecraft:blocks/log_birch_top",
-        "side": "minecraft:blocks/log_birch",
-        "all": "minecraft:blocks/log_birch"
-    }
-}
