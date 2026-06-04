@@ -231,7 +231,7 @@ public class AetherGenerator extends WorldGenerator {
                 int wz = worldZ + lz;
                 float treeValue = treeNoise.noise(wx, wz, 0.3f);
                 boolean isGolden = treeNoise.noise(wx + 500, wz + 500, 0.35f) > 0.45f;
-                float threshold = isGolden ? 0.92f : 0.88f;
+                float threshold = isGolden ? 0.75f : 0.6f;
                 if (treeValue <= threshold) continue;
                 for (int yScan = (cy << 4); yScan < (cy << 4) + 16; yScan++) {
                     int block = world.getVoxel(wx, yScan, wz);
