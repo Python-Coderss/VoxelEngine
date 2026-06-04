@@ -141,8 +141,8 @@ public class Player {
     }
 
     private void handleFallDamage() {
-        if (fallDistance > 4.0f) { // Safe fall height of 4 blocks
-            float damage = (fallDistance - 3.0f) * 1.5f;
+        if (fallDistance > 3.0f) { // Safe fall height of 3 blocks (Minecraft standard)
+            float damage = (float) Math.ceil(fallDistance - 3.0f);
             takeDamage(damage);
         }
         fallDistance = 0;

@@ -1,3 +1,5 @@
 .kilo
 nul
 dev/
+target/
+*.log
