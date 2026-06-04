@@ -41,16 +41,13 @@ public class WorldSaveManager {
 
     /**
      * Saves a chunk column (all 16 y-layers) to disk.
-     * Format: GZIP compressed, 4 bytes per voxel, 16*16*16*16 = 65536 ints = 256KB uncompressed.
-     * Only saves non-air blocks for efficiency.
      */
     public void saveChunk(DimensionType dim, int cx, int cz, World world) {
         try {
             File file = getChunkFile(dim, cx, cz);
             file.getParentFile().mkdirs();
 
-            // Count non-air blocks first
-            int[] data = new int[16 * 16 * 16 * 16]; // All 16 layers, each 16x16x16
+            int[] data = new int[16 * 16 * 16 * 16];
             int count = 0;
 
             for (int cy = 0; cy < 16; cy++) {
@@ -69,8 +66,6 @@ public class WorldSaveManager {
                 }
             }
 
-            // Only save if there are non-air blocks, or if the chunk has been modified
-            // (save anyway to track which chunks have been explored)
             try (DataOutputStream out = new DataOutputStream(
                     new BufferedOutputStream(new GZIPOutputStream(new FileOutputStream(file))))) {
                 out.writeInt(cx);
@@ -78,19 +73,21 @@ public class WorldSaveManager {
                 out.writeInt(count);
                 for (int i = 0; i < data.length; i++) {
                     if (data[i] > 0) {
-                        out.writeShort(i); // index into the flat array
-                        out.writeShort(data[i]); // block type
+                        out.writeShort(i);
+                        out.writeShort(data[i]);
                     }
                 }
             }
+
+            WorldGenLogger.log("DISK_SAVE dim=" + dim.name + " chunk(" + cx + "," + cz + ") blocks=" + count + " -> " + file.getPath());
         } catch (IOException e) {
+            WorldGenLogger.log("DISK_SAVE_ERR dim=" + dim.name + " chunk(" + cx + "," + cz + ") " + e.getMessage());
             System.err.println("Failed to save chunk (" + cx + "," + cz + "): " + e.getMessage());
         }
     }
 
     /**
      * Loads a chunk column from disk into the world.
-     * Returns true if the chunk was loaded, false if it doesn't exist on disk.
      */
     public boolean loadChunk(DimensionType dim, int cx, int cz, World world) {
         File file = getChunkFile(dim, cx, cz);
@@ -101,6 +98,7 @@ public class WorldSaveManager {
             int fileCX = in.readInt();
             int fileCZ = in.readInt();
             if (fileCX != cx || fileCZ != cz) {
+                WorldGenLogger.log("DISK_LOAD_MISMATCH dim=" + dim.name + " expected(" + cx + "," + cz + ") got(" + fileCX + "," + fileCZ + ")");
                 System.err.println("Chunk file mismatch: expected (" + cx + "," + cz + "), got (" + fileCX + "," + fileCZ + ")");
                 return false;
             }
@@ -110,7 +108,6 @@ public class WorldSaveManager {
                 int idx = in.readShort() & 0xFFFF;
                 int blockType = in.readShort() & 0xFFFF;
 
-                // Decode flat index back to world coordinates
                 int cy = idx / 4096;
                 int rem = idx % 4096;
                 int ly = rem / 256;
@@ -124,8 +121,11 @@ public class WorldSaveManager {
 
                 world.setVoxel(wx, wy, wz, blockType);
             }
+
+            WorldGenLogger.log("DISK_LOAD dim=" + dim.name + " chunk(" + cx + "," + cz + ") blocks=" + count + " <- " + file.getPath());
             return true;
         } catch (IOException e) {
+            WorldGenLogger.log("DISK_LOAD_ERR dim=" + dim.name + " chunk(" + cx + "," + cz + ") " + e.getMessage());
             System.err.println("Failed to load chunk (" + cx + "," + cz + "): " + e.getMessage());
             return false;
         }
