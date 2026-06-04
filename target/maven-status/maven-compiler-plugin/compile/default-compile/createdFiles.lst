@@ -1,4 +1,5 @@
 com\voxel\game\CraftingTableManager.class
+com\voxel\world\WorldGenLogger.class
 com\voxel\lighting\LightPropagationEngine.class
 com\voxel\tools\UVFinder$1.class
 com\voxel\crafting\CraftingManager$CraftingRecipe.class

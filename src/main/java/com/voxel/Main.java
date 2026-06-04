@@ -27,6 +27,7 @@ import com.voxel.game.PlayerInventory;
 import com.voxel.game.PortalSystem;
 import com.voxel.world.RedstoneLogger;
 import com.voxel.world.RedstoneManager;
+import com.voxel.world.WorldGenLogger;
 import org.joml.Vector2f;
 import org.joml.Vector2i;
 import org.joml.Vector3f;
@@ -263,6 +264,7 @@ public class Main {
         glDeleteBuffers(craftingItemSSBO);
         chunkManager.shutdown();
         RedstoneLogger.shutdown();
+        WorldGenLogger.shutdown();
 
         glfwDestroyWindow(window);
         glfwTerminate();
@@ -352,6 +354,9 @@ public class Main {
 
         // Initialize world save manager (dev/world folder)
         ctx.worldSaveManager = new com.voxel.world.WorldSaveManager("dev/world");
+
+        // Initialize world gen logging
+        WorldGenLogger.init();
 
         // Initialize dimension system (only create Overworld at startup to save memory)
         dimensionManager = new DimensionManager(blockDataManager, ctx.worldSaveManager);

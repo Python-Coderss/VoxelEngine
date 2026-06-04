@@ -120,9 +120,9 @@ public class AetherGenerator extends WorldGenerator {
         // Multi-octave 3D noise: matches Aether mod's BlendedNoise settings
         // BlendedNoise.createUnseeded(0.25, 0.25, 80.0, 160.0, 8.0)
         // First octave: scale=0.25, smear=8.0 (wide influence for chunk coherence)
-        // Subsequent octaves: scale*=2 each time, smear decreases toward 1.0
-        // Divide by 128 to increase noise scale (larger terrain features)
-        float noise = continentalNoise.noise3DBlended(x / 128.0f, y / 128.0f, z / 128.0f, 0.25f, 8.0);
+        // Subsequent octaves: scale doubles each time, spread decreases toward 1.0
+        // Using xz_scale=0.003125 creates floating island terrain at ~256-1024 block scale
+        float noise = continentalNoise.noise3DBlended(x, y, z, 0.003125f, 8.0);
 
         // Add connectivity using low-frequency 2D continental noise
         float connectivity = continentalNoise.noise(x, z, 0.015f) * 0.2f;
@@ -152,13 +152,16 @@ public class AetherGenerator extends WorldGenerator {
 
     @Override
     public void decorate(int cx, int cy, int cz, int slot, World world) {
+        long t0 = System.currentTimeMillis();
         int worldX = cx << 4;
         int worldZ = cz << 4;
+        int treeCount = 0, shelfCount = 0, cloudCount = 0, lakeCount = 0;
 
         // --- Spawn Portals ---
         if (cx == 64 && cz == 64 && cy == 6) {
-            placePortal(world, 1028, 96, 1030, 17, portalId); // Back to Overworld (Glowstone frame)
-            placePortal(world, 1028, 96, 1036, 16, 19);       // To Nether (Obsidian frame)
+            WorldGenLogger.logChunk("AETHER_PORTAL", cx, cy, cz, "placing spawn portals");
+            placePortal(world, 1028, 96, 1030, 17, portalId);
+            placePortal(world, 1028, 96, 1036, 16, 19);
         }
 
         // --- Quicksoil Shelves ---
@@ -177,6 +180,7 @@ public class AetherGenerator extends WorldGenerator {
                     if (blockHere == 0 && validAbove && blockAbove2 == 0) {
                         int radius = 2 + ((wx * 31 + wz * 73 + yScan * 137) & 3);
                         placeQuicksoilDisk(world, wx, yScan, wz, radius);
+                        shelfCount++;
                         break;
                     }
                 }
@@ -187,36 +191,37 @@ public class AetherGenerator extends WorldGenerator {
         long chunkSeed = ((long) cx * 73856093L) ^ ((long) cz * 19349663L) ^ ((long) cy * 123456789L);
         Random aercloudRng = new Random(chunkSeed);
 
-        // Large aerclouds - Rare signature feature
         if (cy >= 4 && cy <= 6 && aercloudRng.nextInt(40) == 0) {
             generateLargeAercloud(world, worldX, worldZ, cy, aercloudRng, coldCloudId);
+            cloudCount++;
         }
 
-        // Cold aerclouds (White)
         aercloudRng = new Random(chunkSeed ^ 0x12345678L);
         if (cy >= 2 && cy <= 6 && aercloudRng.nextInt(10) == 0) {
             generateAercloud(world, worldX, worldZ, cy, aercloudRng, coldCloudId, 16);
+            cloudCount++;
         }
 
-        // Blue aerclouds (Bouncy)
         aercloudRng = new Random(chunkSeed ^ 0x5A5A5A5AL);
         if (cy >= 2 && cy <= 6 && aercloudRng.nextInt(16) == 0) {
             generateAercloud(world, worldX, worldZ, cy, aercloudRng, blueCloudId, 8);
+            cloudCount++;
         }
 
-        // Golden aerclouds (Fast)
         aercloudRng = new Random(chunkSeed ^ 0x99999999L);
         if (cy >= 5 && cy <= 7 && aercloudRng.nextInt(20) == 0) {
             generateAercloud(world, worldX, worldZ, cy, aercloudRng, goldenCloudId, 4);
+            cloudCount++;
         }
 
-        // --- Lakes (AetherLakeFeature) ---
+        // --- Lakes ---
         aercloudRng = new Random(chunkSeed ^ 0x12345678L);
         if (cy >= 3 && cy <= 5 && aercloudRng.nextInt(15) == 0) {
             int lx = aercloudRng.nextInt(16);
             int lz = aercloudRng.nextInt(16);
             int ly = (cy << 4) + aercloudRng.nextInt(16);
             generateLake(world, worldX + lx, ly, worldZ + lz, aercloudRng);
+            lakeCount++;
         }
 
         // --- Trees and vegetation ---
@@ -224,22 +229,28 @@ public class AetherGenerator extends WorldGenerator {
             for (int lz = 2; lz < 14; lz++) {
                 int wx = worldX + lx;
                 int wz = worldZ + lz;
-                float treeValue = treeNoise.noise(wx, wz, 0.08f);
-                if (treeValue < 0.985f) continue;
-                for (int yScan = cy << 4; yScan < (cy << 4) + 16; yScan++) {
+                float treeValue = treeNoise.noise(wx, wz, 0.3f);
+                boolean isGolden = treeNoise.noise(wx + 500, wz + 500, 0.35f) > 0.45f;
+                float threshold = isGolden ? 0.92f : 0.88f;
+                if (treeValue <= threshold) continue;
+                for (int yScan = (cy << 4); yScan < (cy << 4) + 16; yScan++) {
                     int block = world.getVoxel(wx, yScan, wz);
                     if (block == grassId || block == mossyHolystoneId) {
-                        float goldenChance = continentalNoise.noise(wx, wz, 0.035f);
-                        boolean preferGolden = block == mossyHolystoneId && goldenChance > 0.15f;
-                        if (goldenChance > 0.4f || preferGolden) {
+                        if (isGolden) {
                             placeGoldenOakTree(world, wx, yScan + 1, wz);
                         } else {
                             placeSkyrootTree(world, wx, yScan + 1, wz);
                         }
+                        treeCount++;
                         break;
                     }
                 }
             }
+        }
+
+        if (treeCount > 0 || shelfCount > 0 || cloudCount > 0 || lakeCount > 0) {
+            WorldGenLogger.logChunk("AETHER_DECORATE", cx, cy, cz,
+                "trees=" + treeCount + " shelves=" + shelfCount + " clouds=" + cloudCount + " lakes=" + lakeCount + " (" + (System.currentTimeMillis() - t0) + "ms)");
         }
     }
 
@@ -467,20 +478,38 @@ public class AetherGenerator extends WorldGenerator {
                 world.setVoxel(sx + px, sy + py, sz, portalId);
     }
 
+    /**
+     * Golden Oak tree: branching trunk with wide, layered canopy.
+     * Ported from the Aether mod's GoldenOakTrunkPlacer + foliage shape.
+     */
     private void placeGoldenOakTree(World world, int x, int y, int z) {
-        int trunkHeight = 4 + (int)(Math.abs(continentalNoise.noise(x, z, 0.45f)) * 2.0f);
+        int trunkHeight = 5 + (int)(Math.abs(continentalNoise.noise(x, z, 0.45f)) * 3.0f);
+        int hash = (x * 31 + z * 73) & 0x7FFF;
+        // Trunk
         for (int i = 0; i < trunkHeight; i++) world.setVoxel(x, y + i, z, skyrootLogId);
+        // Branching side logs (mimics Aether's GoldenOakTrunkPlacer)
+        if (trunkHeight >= 5) {
+            int branchY = y + trunkHeight - 3 + (hash % 2);
+            int dx = (hash & 1) == 0 ? 1 : -1;
+            int dz = ((hash >> 1) & 1) == 0 ? 1 : -1;
+            world.setVoxel(x + dx, branchY, z, skyrootLogId);
+            world.setVoxel(x + dx, branchY + 1, z, skyrootLogId);
+            world.setVoxel(x, branchY, z + dz, skyrootLogId);
+            world.setVoxel(x, branchY + 1, z + dz, skyrootLogId);
+        }
+        // Wide layered canopy
         int leafBaseY = y + trunkHeight - 2;
         int leafTopY = y + trunkHeight + 1;
         for (int ly = leafBaseY; ly <= leafTopY; ly++) {
             int offset = ly - leafBaseY;
-            int radius = (offset == 0) ? 3 : (offset <= 2 ? 4 : 2);
+            int radius = (offset == 0) ? 2 : (offset <= 2 ? 3 : 2);
             for (int lx = -radius; lx <= radius; lx++) {
                 for (int lz = -radius; lz <= radius; lz++) {
                     if (lx * lx + lz * lz > radius * radius) continue;
                     if (lx == 0 && lz == 0 && ly > y && ly < y + trunkHeight - 1) continue;
                     int existing = world.getVoxel(x + lx, ly, z + lz);
-                    if (existing == 0 || existing == grassId || existing == holystoneId || existing == dirtId) {
+                    if (existing == 0 || existing == grassId || existing == holystoneId || existing == dirtId
+                            || existing == icestoneId || existing == mossyHolystoneId) {
                         world.setVoxel(x + lx, ly, z + lz, skyrootLeavesId);
                     }
                 }
@@ -488,18 +517,26 @@ public class AetherGenerator extends WorldGenerator {
         }
     }
 
+    /**
+     * Skyroot tree: taller trunk with oval canopy. Matches the Aether mod's skyroot shape.
+     */
     private void placeSkyrootTree(World world, int x, int y, int z) {
         int trunkHeight = 5 + (int)(Math.abs(continentalNoise.noise(x, z, 0.5f)) * 3.0f);
         for (int i = 0; i < trunkHeight; i++) world.setVoxel(x, y + i, z, skyrootLogId);
+        // Oval canopy: wider in the middle
         int leafBaseY = y + trunkHeight - 3;
         int leafTopY = y + trunkHeight;
         for (int ly = leafBaseY; ly <= leafTopY; ly++) {
-            int radius = (ly == leafTopY) ? 1 : (ly == leafBaseY ? 3 : 2);
+            int mid = (leafBaseY + leafTopY) / 2;
+            int distFromMid = Math.abs(ly - mid);
+            int radius = (distFromMid <= 1) ? 2 : 1;
             for (int lx = -radius; lx <= radius; lx++) {
                 for (int lz = -radius; lz <= radius; lz++) {
+                    if (lx * lx + lz * lz > radius * radius) continue;
                     if (lx == 0 && lz == 0 && ly > y && ly < y + trunkHeight - 1) continue;
                     int existing = world.getVoxel(x + lx, ly, z + lz);
-                    if (existing == 0 || existing == grassId || existing == holystoneId || existing == dirtId) {
+                    if (existing == 0 || existing == grassId || existing == holystoneId || existing == dirtId
+                            || existing == icestoneId || existing == mossyHolystoneId) {
                         world.setVoxel(x + lx, ly, z + lz, skyrootLeavesId);
                     }
                 }
