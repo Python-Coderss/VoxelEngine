@@ -1,12 +1,19 @@
 package com.voxel.world;
 
 import com.voxel.World;
+import com.voxel.biome.Biome;
+import com.voxel.biome.BiomeDecorator;
+import com.voxel.biome.BiomeProvider;
+import com.voxel.biome.BiomeRegistry;
 import com.voxel.utils.PerlinNoise;
 
 /**
  * Procedural world generators for each dimension.
- * Overworld uses multi-octave Perlin noise for realistic Minecraft-style terrain.
- * Other dimensions have unique terrain generation logic.
+ * Overworld uses multi-octave Perlin noise + biome system for realistic
+ * Minecraft 1.12.2-style terrain generation with full biome distribution,
+ * decorations, and structures.
+ *
+ * Other dimensions (Nether, End, Aether) have unique terrain generation logic.
  */
 public class DimensionWorldGenerator extends WorldGenerator {
 
@@ -14,8 +21,6 @@ public class DimensionWorldGenerator extends WorldGenerator {
     private final PerlinNoise continentalNoise;
     private final PerlinNoise erosionNoise;
     private final PerlinNoise detailNoise;
-    private final PerlinNoise tempNoise;
-    private final PerlinNoise humNoise;
     private final PerlinNoise treeNoise;
 
     private final int stoneId;
@@ -39,10 +44,19 @@ public class DimensionWorldGenerator extends WorldGenerator {
     private final int oakLeavesId;
     private final int birchLogId;
     private final int spruceLogId;
+    private final int snowLayerId;
+    private final int iceId;
+
+    // Biome system (biomeProvider is inherited from WorldGenerator)
+    private final BiomeDecorator biomeDecorator;
+    private final java.util.Random decorationRand = new java.util.Random();
 
     private static final int WATER_LEVEL = 62;
     private static final int SPAWN_X = 1024;
     private static final int SPAWN_Z = 1024;
+
+    // Structure generators
+    private final com.voxel.world.structure.MapGenStructure structureGen;
 
     public DimensionWorldGenerator(DimensionType dimension, com.voxel.utils.BlockDataManager blockDataManager) {
         super(0, blockDataManager);
@@ -50,9 +64,13 @@ public class DimensionWorldGenerator extends WorldGenerator {
         this.continentalNoise = new PerlinNoise(42);
         this.erosionNoise = new PerlinNoise(123);
         this.detailNoise = new PerlinNoise(456);
-        this.tempNoise = new PerlinNoise(789);
-        this.humNoise = new PerlinNoise(101112);
         this.treeNoise = new PerlinNoise(131415);
+
+        // Initialize biome system for overworld
+        BiomeRegistry.init();
+        super.biomeProvider = new BiomeProvider(42);
+        this.biomeDecorator = new BiomeDecorator();
+        this.structureGen = new com.voxel.world.structure.MapGenStructure(42);
 
         this.stoneId = blockDataManager.findBlockId("stone");
         this.grassId = blockDataManager.findBlockId("grass_block");
@@ -75,6 +93,10 @@ public class DimensionWorldGenerator extends WorldGenerator {
         this.oakLeavesId = blockDataManager.findBlockId("oak_leaves");
         this.birchLogId = blockDataManager.findBlockId("birch_log");
         this.spruceLogId = blockDataManager.findBlockId("spruce_log");
+        Integer slId = blockDataManager.findBlockId("snow_layer");
+        this.snowLayerId = slId != null ? slId : 0;
+        Integer iceIdObj = blockDataManager.findBlockId("ice");
+        this.iceId = iceIdObj != null ? iceIdObj : 0;
     }
 
     @Override
@@ -82,18 +104,23 @@ public class DimensionWorldGenerator extends WorldGenerator {
         if (dimension != DimensionType.OVERWORLD) {
             return dimension.baseHeight;
         }
-        return getFinalHeight(x, z);
+        return getBiomeHeight(x, z);
     }
 
     /**
-     * Gets the raw terrain height at (x,z) BEFORE the spawn pool carving.
+     * Gets terrain height using biome system for biome-specific terrain features.
+     * Uses the biome's base height and height variation combined with noise.
+     * Ported from Minecraft 1.12.2-style terrain generation.
      */
-    private int getRawHeight(int x, int z) {
+    private int getBiomeHeight(int x, int z) {
         float continental = continentalNoise.noise(x, z, 0.0015f) * 22.0f;
         float erosion = erosionNoise.noise(x, z, 0.008f) * 8.0f;
         float detail = detailNoise.noise(x, z, 0.035f) * 3.0f;
+        
+        // Base terrain height
         float height = 58.0f + continental + erosion + detail;
 
+        // Mountains
         float mountainNoise = continentalNoise.noise(x, z, 0.0008f) * 1.5f - 0.3f;
         if (mountainNoise > 0) {
             height += mountainNoise * mountainNoise * 25.0f;
@@ -104,14 +131,27 @@ public class DimensionWorldGenerator extends WorldGenerator {
             height += steepNoise;
         }
 
-        return Math.round(Math.max(1, height));
-    }
+        // Biome height adjustment
+        Biome biome = biomeProvider.getBiome(x, z);
+        float biomeHeightOffset = biome.getBaseHeight() * 8.0f;
+        float biomeVariation = biome.getHeightVariation() * 4.0f;
+        float biomeNoise = detailNoise.noise(x + 500, z + 500, 0.01f) * biomeVariation;
+        height += biomeHeightOffset + biomeNoise;
 
-    /**
-     * Final height including spawn pool carving.
-     */
-    private int getFinalHeight(int x, int z) {
-        int rawHeight = getRawHeight(x, z);
+        // Ocean biomes: terrain goes below water level
+        if (biome instanceof com.voxel.biome.BiomeOcean) {
+            float oceanFloor = 30.0f + continental * 0.5f;
+            height = Math.min(height, oceanFloor);
+        }
+
+        // River biomes: carve valleys
+        if (biome instanceof com.voxel.biome.BiomeRiver) {
+            height = WATER_LEVEL - 6 + erosion * 2.0f;
+        }
+
+        int finalHeight = Math.round(Math.max(1, height));
+
+        // Spawn area pool carving
         float dx = x - SPAWN_X;
         float dz = z - SPAWN_Z;
         float distSq = dx * dx + dz * dz;
@@ -122,11 +162,10 @@ public class DimensionWorldGenerator extends WorldGenerator {
         if (distSq < 100) {
             float ringDist = (float) Math.sqrt(distSq);
             float blend = (ringDist - 5.0f) * 1.0f;
-            int poolEdgeHeight = WATER_LEVEL;
-            return Math.max(poolEdgeHeight + (int) blend, rawHeight);
+            return Math.max(WATER_LEVEL + (int) blend, finalHeight);
         }
 
-        return rawHeight;
+        return finalHeight;
     }
 
     @Override
@@ -136,6 +175,8 @@ public class DimensionWorldGenerator extends WorldGenerator {
                 return generateNether(x, y, z, height);
             case END:
                 return generateEnd(x, y, z, height);
+            case AETHER:
+                return 0; // Aether uses AetherGenerator, not this class
             default:
                 return generateOverworld(x, y, z, height);
         }
@@ -149,24 +190,42 @@ public class DimensionWorldGenerator extends WorldGenerator {
             return 0; // Air
         }
 
+        // Get biome for block type determination
+        Biome biome = biomeProvider.getBiome(x, z);
+        int topBlock = biome.topBlockId;
+        int fillerBlock = biome.fillerBlockId;
+        
+        // Snow biomes: cover with snow on top
+        if (biome.enableSnow && y == height && height > 0) {
+            // Check if block above is air (surface exposed)
+            // Return grass block as base, snow will be placed as decoration
+        }
+
         int depth = height - y;
         if (depth == 0) {
-            if (height < WATER_LEVEL) return sandId;
-            if (isNearWater(x, y, z)) return sandId;
-            return grassId;
+            if (height < WATER_LEVEL) {
+                // Underwater: sand or clay
+                if (biome instanceof com.voxel.biome.BiomeOcean || biome instanceof com.voxel.biome.BiomeRiver) {
+                    return sandId;
+                }
+                return sandId;
+            }
+            // Check near water for sand beaches
+            if (isNearWater(x, z)) return sandId;
+            return topBlock;
         }
         if (depth <= 3) {
             if (height < WATER_LEVEL) return sandId;
-            return dirtId;
+            return fillerBlock;
         }
         return stoneId;
     }
 
-    private boolean isNearWater(int x, int y, int z) {
+    private boolean isNearWater(int x, int z) {
         for (int dx = -3; dx <= 3; dx++) {
             for (int dz = -3; dz <= 3; dz++) {
                 if (dx == 0 && dz == 0) continue;
-                int neighborHeight = getRawHeight(x + dx, z + dz);
+                int neighborHeight = getHeight(x + dx, z + dz);
                 if (neighborHeight < WATER_LEVEL) return true;
             }
         }
@@ -275,12 +334,11 @@ public class DimensionWorldGenerator extends WorldGenerator {
 
         // --- End obsidian spawn platform (5x5 at (100, 47, 0)) ---
         if (dimension == DimensionType.END && cy == 2) {
-            // Platform spans x=[100,104], z=[0,4], y=47 (chunk cy=2 covers y=32..47)
             if (cx == 6 && cz == 0) {
                 int platformY = 47;
-                int localY = platformY - (cy << 4); // 47 - 32 = 15
-                int lxStart = 100 - (cx << 4);      // 100 - 96 = 4
-                int lzStart = 0;                     // 0 - 0 = 0
+                int localY = platformY - (cy << 4);
+                int lxStart = 100 - (cx << 4);
+                int lzStart = 0;
                 for (int lx = lxStart; lx <= lxStart + 4; lx++) {
                     for (int lz = lzStart; lz <= lzStart + 4; lz++) {
                         world.setVoxelInPool(slot, lx, localY, lz, obsidianId);
@@ -294,97 +352,97 @@ public class DimensionWorldGenerator extends WorldGenerator {
         int worldX = cx << 4;
         int worldZ = cz << 4;
 
-        for (int lx = 2; lx < 14; lx++) {
-            for (int lz = 2; lz < 14; lz++) {
+        // --- Structures ---
+        if (cy == 4) { // Only generate structures in the surface layer
+            structureGen.generateStructures(world, cx, cz, biomeProvider);
+        }
+        
+        // Use biome decorations for this chunk
+        // Sample biome at multiple points in the chunk for varied decorations
+        for (int lx = 2; lx < 14; lx += 4) {
+            for (int lz = 2; lz < 14; lz += 4) {
                 int wx = worldX + lx;
                 int wz = worldZ + lz;
+                Biome biome = biomeProvider.getBiome(wx, wz);
+                
+                // Skip spawning near spawn point
                 int dx = wx - SPAWN_X;
                 int dz = wz - SPAWN_Z;
-                if (dx * dx + dz * dz < 100) continue;
-
-                int height = getFinalHeight(wx, wz);
+                if (dx * dx + dz * dz < 150) continue;
+                
+                int height = getHeight(wx, wz);
                 if (height < WATER_LEVEL + 1) continue;
-                int surfaceBlock = world.getVoxel(wx, height, wz);
-                if (surfaceBlock != grassId) continue;
                 if (cy != (height >> 4)) continue;
-
-                float treeValue = treeNoise.noise(wx, wz, 0.1f);
-                if (treeValue >= 0.96f) {
-                    float treeType = treeNoise.noise(wx + 1000, wz + 2000, 0.15f);
-                    if (treeType < 0.0f) placeBirchTree(world, wx, height + 1, wz);
-                    else if (treeType < 0.5f) placeOakTree(world, wx, height + 1, wz);
-                    else placeSpruceTree(world, wx, height + 1, wz);
+                
+                int surfaceBlock = world.getVoxel(wx, height, wz);
+                boolean isSurface = (surfaceBlock == biome.topBlockId || surfaceBlock == 1 || surfaceBlock == 13);
+                if (!isSurface) continue;
+                
+                decorationRand.setSeed((long) wx * 341873128712L + (long) wz * 132897987541L + 42);
+                
+                // --- Tree placement ---
+                if (biome.treesPerChunk > 0 && height > WATER_LEVEL) {
+                    int treeChance = Math.max(1, 16 - biome.treesPerChunk);
+                    if (decorationRand.nextInt(treeChance) == 0) {
+                        placeTreeForBiome(biome, world, wx, height + 1, wz, decorationRand);
+                    }
                 }
-
-                float flowerValue = treeNoise.noise(wx + 500, wz + 500, 0.15f);
-                if (flowerValue > 0.85f) {
-                    int aboveBlock = world.getVoxel(wx, height + 1, wz);
-                    if (aboveBlock == 0) {
-                        float flowerType = treeNoise.noise(wx + 700, wz + 900, 0.2f);
-                        if (flowerType < 0.2f) world.setVoxel(wx, height + 1, wz, dandelionId);
-                        else if (flowerType < 0.6f) world.setVoxel(wx, height + 1, wz, poppyId);
-                        else world.setVoxel(wx, height + 1, wz, tallGrassId);
+                
+                // --- Flower placement ---
+                if (biome.flowersPerChunk > 0 && decorationRand.nextInt(4) == 0) {
+                    int flowerId = biome.pickRandomFlower(decorationRand);
+                    if (flowerId > 0 && world.getVoxel(wx, height + 1, wz) == 0) {
+                        world.setVoxel(wx, height + 1, wz, flowerId);
+                    }
+                }
+                
+                // --- Grass placement ---
+                if (biome.grassPerChunk > 0 && decorationRand.nextInt(3) == 0) {
+                    if (world.getVoxel(wx, height + 1, wz) == 0) {
+                        int grassBlockId = biome.getRandomGrassFeature(decorationRand);
+                        world.setVoxel(wx, height + 1, wz, grassBlockId);
+                    }
+                }
+                
+                // --- Snow cover (cold biomes) ---
+                if (biome.enableSnow && height > WATER_LEVEL && snowLayerId > 0) {
+                    if (world.getVoxel(wx, height + 1, wz) == 0 && world.getVoxel(wx, height, wz) != 15) {
+                        world.setVoxel(wx, height + 1, wz, snowLayerId);
                     }
                 }
             }
         }
     }
 
-    private void placeOakTree(World world, int x, int y, int z) {
-        int trunkHeight = 4 + (int)(Math.abs(continentalNoise.noise(x, z, 0.5f)) * 2.0f);
-        for (int i = 0; i < trunkHeight; i++) world.setVoxel(x, y + i, z, oakLogId);
-        int leafBaseY = y + trunkHeight - 2;
-        int leafTopY = y + trunkHeight;
-        for (int ly = leafBaseY; ly <= leafTopY; ly++) {
-            int radius = (ly == leafTopY) ? 1 : 2;
-            for (int lx = -radius; lx <= radius; lx++) {
-                for (int lz = -radius; lz <= radius; lz++) {
-                    if (Math.abs(lx) == radius && Math.abs(lz) == radius) {
-                        if (treeNoise.noise(x + lx, z + lz, 0.3f) > 0.5f) continue;
-                    }
-                    if (lx == 0 && lz == 0 && ly > y && ly < y + trunkHeight - 1) continue;
-                    int existing = world.getVoxel(x + lx, ly, z + lz);
-                    if (existing == 0 || existing == tallGrassId || existing == grassId) world.setVoxel(x + lx, ly, z + lz, oakLeavesId);
-                }
+    /**
+     * Places a tree appropriate for the given biome at the specified position.
+     */
+    private void placeTreeForBiome(Biome biome, World world, int x, int y, int z, java.util.Random rand) {
+        // Delegate to BiomeDecorator's tree placement methods via a quick inline implementation
+        int treeType = biome.getRandomTreeFeature(rand);
+        if (treeType < 0) return;
+        if (treeType == 0) treeType = rand.nextInt(10);
+        
+        com.voxel.biome.BiomeDecorator decorator = new com.voxel.biome.BiomeDecorator();
+        
+        if (treeType >= 0 && treeType <= 3) {
+            decorator.placeOakTree(world, x, y, z, rand);
+        } else if (treeType == 4 || treeType == 5) {
+            decorator.placeBigOakTree(world, x, y, z, rand);
+        } else if (treeType == 6) {
+            decorator.placeBirchTree(world, x, y, z, rand);
+        } else if (treeType == 7) {
+            decorator.placeSpruceTree(world, x, y, z, rand);
+        } else if (treeType == 8) {
+            decorator.placeJungleTree(world, x, y, z, rand);
+        } else if (treeType == 9) {
+            if (biome instanceof com.voxel.biome.BiomeSavanna) {
+                decorator.placeAcaciaTree(world, x, y, z, rand);
+            } else {
+                decorator.placeDarkOakTree(world, x, y, z, rand);
             }
         }
     }
 
-    private void placeBirchTree(World world, int x, int y, int z) {
-        int trunkHeight = 5 + (int)(Math.abs(continentalNoise.noise(x + 50, z + 100, 0.5f)) * 2.0f);
-        for (int i = 0; i < trunkHeight; i++) world.setVoxel(x, y + i, z, birchLogId);
-        int leafBaseY = y + trunkHeight - 3;
-        int leafTopY = y + trunkHeight;
-        for (int ly = leafBaseY; ly <= leafTopY; ly++) {
-            int radius = (ly == leafTopY) ? 1 : 2;
-            for (int lx = -radius; lx <= radius; lx++) {
-                for (int lz = -radius; lz <= radius; lz++) {
-                    int distSq = lx * lx + lz * lz;
-                    if (distSq > radius * radius) continue;
-                    if (lx == 0 && lz == 0 && ly > y && ly < y + trunkHeight - 1) continue;
-                    int existing = world.getVoxel(x + lx, ly, z + lz);
-                    if (existing == 0 || existing == tallGrassId || existing == grassId) world.setVoxel(x + lx, ly, z + lz, oakLeavesId);
-                }
-            }
-        }
-    }
-
-    private void placeSpruceTree(World world, int x, int y, int z) {
-        int trunkHeight = 6 + (int)(Math.abs(continentalNoise.noise(x + 200, z + 300, 0.4f)) * 3.0f);
-        for (int i = 0; i < trunkHeight; i++) world.setVoxel(x, y + i, z, spruceLogId);
-        int[][] layers = {{trunkHeight - 1, 1}, {trunkHeight - 2, 1}, {trunkHeight - 3, 2}, {trunkHeight - 4, 2}, {trunkHeight - 5, 3}, {trunkHeight - 6, 3}};
-        for (int[] layer : layers) {
-            int ly = y + layer[0];
-            int radius = layer[1];
-            if (ly < y) continue;
-            for (int lx = -radius; lx <= radius; lx++) {
-                for (int lz = -radius; lz <= radius; lz++) {
-                    int distSq = lx * lx + lz * lz;
-                    if (distSq > radius * radius) continue;
-                    int existing = world.getVoxel(x + lx, ly, z + lz);
-                    if (existing == 0 || existing == tallGrassId || existing == grassId) world.setVoxel(x + lx, ly, z + lz, oakLeavesId);
-                }
-            }
-        }
-    }
+    // Old tree methods removed - now using BiomeDecorator for all tree placement
 }

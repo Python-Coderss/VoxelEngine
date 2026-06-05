@@ -3,6 +3,14 @@
     "textures": {
         "top": "blocks/pumpkin_top",
         "front": "blocks/pumpkin_face_off",
-        "side": "blocks/pumpkin_side"
+        "side": "blocks/pumpkin_side",
+        "bottom": "blocks/pumpkin_top",
+        "down": "blocks/pumpkin_top",
+        "up": "blocks/pumpkin_top",
+        "north": "blocks/pumpkin_face_off",
+        "south": "blocks/pumpkin_side",
+        "west": "blocks/pumpkin_side",
+        "east": "blocks/pumpkin_side",
+        "particle": "blocks/pumpkin_face_off"
     }
 }

@@ -2,6 +2,7 @@ package com.voxel.world;
 
 import com.voxel.World;
 import com.voxel.lighting.LightPropagationEngine;
+import com.voxel.utils.BiomeManager;
 import com.voxel.utils.BlockDataManager;
 
 import java.util.EnumMap;
@@ -15,10 +16,12 @@ public class DimensionManager {
     private DimensionType activeDimension = DimensionType.OVERWORLD;
     private final BlockDataManager blockDataManager;
     private final WorldSaveManager saveManager;
+    private final BiomeManager biomeManager;
 
-    public DimensionManager(BlockDataManager blockDataManager, WorldSaveManager saveManager) {
+    public DimensionManager(BlockDataManager blockDataManager, WorldSaveManager saveManager, BiomeManager biomeManager) {
         this.blockDataManager = blockDataManager;
         this.saveManager = saveManager;
+        this.biomeManager = biomeManager;
     }
 
     /**
@@ -41,7 +44,13 @@ public class DimensionManager {
             generator = new DimensionWorldGenerator(type, blockDataManager);
         }
         LightPropagationEngine lightEngine = new LightPropagationEngine(world, blockDataManager);
-        ChunkManager chunkManager = new ChunkManager(world, generator, lightEngine, renderDistance, saveManager, type);
+        ChunkManager chunkManager = new ChunkManager(world, generator, lightEngine, renderDistance, saveManager, type, biomeManager);
+
+        // Wire the biome provider into BiomeManager so the tint map reflects actual biomes
+        if (biomeManager != null && generator.getBiomeProvider() != null) {
+            biomeManager.setBiomeProvider(generator.getBiomeProvider());
+            biomeManager.generateBiomeMap(2048);
+        }
 
         dimensions.put(type, new DimensionInstance(world, chunkManager, generator));
     }

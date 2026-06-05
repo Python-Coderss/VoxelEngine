@@ -82,6 +82,14 @@ public class BlockDataManager {
         // Whether the block color should be modified by the biome (e.g., grass).
         public int isTintable;
 
+        // Tint index: 0=none, 1=grass colormap, 2=foliage colormap.
+        // Maps from Minecraft JSON "tintindex" values (0→1, 1→2).
+        public int tintIndex;
+
+        // Per-face tint mask: bit j (0-5) set if face j should be biome-tinted.
+        // Face order: 0=down, 1=up, 2=north, 3=south, 4=west, 5=east.
+        public int tintFaceMask;
+
         // Animated texture properties
         public boolean isAnimated;
         public int frameCount = 1;
@@ -227,6 +235,11 @@ public class BlockDataManager {
             }
         }
 
+        // Set isTintable from parsed tintIndex
+        if (data.tintIndex > 0) {
+            data.isTintable = 1;
+        }
+
         // Set isFullBlock based on block type
         if (name.contains("slab") || name.contains("stairs") || name.contains("fence") ||
                 name.contains("wall") || name.contains("door") || name.contains("trapdoor") ||
@@ -247,6 +260,9 @@ public class BlockDataManager {
         }
         if (name.contains("redstone_dust") || name.equals("redstone_wire")) {
             data.effect = MaterialEffect.WIRE;
+            data.tintIndex = 0; // Redstone wire handles its own color via WIRE effect
+            data.tintFaceMask = 0;
+            data.isTintable = 0;
         }
         applyMiningDefaults(name, data);
 
@@ -322,10 +338,7 @@ public class BlockDataManager {
             String content = new String(Files.readAllBytes(Paths.get(jsonPath)));
             JSONObject json = new JSONObject(content);
 
-            // Check if this model is marked as tintable (e.g., grass).
-            if (content.contains("\"tintindex\"")) {
-                data.isTintable = 1;
-            }
+            // tintindex is now parsed per-face in the elements section below.
 
             // Extract textures defined in this model.
             if (json.has("textures")) {
@@ -384,6 +397,15 @@ public class BlockDataManager {
                                     JSONArray uv = face.getJSONArray("uv");
                                     uvs[j] = packUV(uv.getInt(0), uv.getInt(1), uv.getInt(2), uv.getInt(3));
                                 }
+                                // Parse tintindex: MC 0→grass(1), MC 1→foliage(2)
+                                if (face.has("tintindex")) {
+                                    int ti = face.getInt("tintindex") + 1;
+                                    if (ti > data.tintIndex) {
+                                        data.tintIndex = ti;
+                                    }
+                                    // Mark this specific face as tinted in the per-face mask
+                                    data.tintFaceMask |= (1 << j);
+                                }
                             }
                         }
                     }
@@ -431,7 +453,9 @@ public class BlockDataManager {
                 int packed = (data.reflectivity & 0xFF) | ((data.isTintable & 1) << 8)
                         | ((data.isFullBlock ? 1 : 0) << 9) 
                         | ((data.effect.id & 0xF) << 10)
-                        | ((data.emissive & 0xFF) << 14);
+                        | ((data.emissive & 0xFF) << 14)
+                        | ((data.tintIndex & 0x3) << 22)
+                        | ((data.tintFaceMask & 0x3F) << 24);
                 buffer.put(packed);
 
                 // ivec4 2: (albedoR, albedoG, albedoB, packedAnim_diffuse_distortion)
@@ -606,11 +630,15 @@ public class BlockDataManager {
         return data != null ? data.albedo : java.awt.Color.WHITE;
     }
 
-    /** Override isTintable flag after registration (disable biome coloring). */
+    /** Override tinting after registration (disable biome coloring). */
     public void setBlockTintable(int blockId, boolean tintable) {
         BlockData data = blockRegistry.get(blockId);
         if (data != null) {
             data.isTintable = tintable ? 1 : 0;
+            if (!tintable) {
+                data.tintIndex = 0;
+                data.tintFaceMask = 0;
+            }
         }
     }
 

@@ -96,8 +96,57 @@ public class ItemDefinitions {
         registerBlock("redstone_wire", "Redstone Wire", 29, "redstone_dust_dot");
         registerBlock("redstone_lamp_on", "Redstone Lamp (lit)", 30, "redstone_lamp_on");
         // --- Pistons ---
-        registerBlock("piston", "Piston", 31, "piston_top_normal");
+        registerBlock("piston", "Piston", 33, "piston_top_normal");
+        
         registerBlock("sticky_piston", "Sticky Piston", 32, "piston_top_sticky");
+        // --- Biome/Decoration Blocks ---
+        registerBlock("dandelion", "Dandelion", 121, "flower_dandelion");
+        registerBlock("poppy", "Poppy", 34, "flower_rose");
+        registerBlock("tallgrass", "Tall Grass", 35, "tallgrass");
+        registerBlock("dead_bush", "Dead Bush", 36, "deadbush");
+        registerBlock("brown_mushroom", "Brown Mushroom", 37, "mushroom_brown");
+        registerBlock("red_mushroom", "Red Mushroom", 38, "mushroom_red");
+        registerBlock("cactus", "Cactus", 39, "cactus_side");
+        registerBlock("reeds", "Sugar Cane", 40, "reeds");
+        registerBlock("waterlily", "Water Lily", 41, "waterlily");
+        registerBlock("pumpkin", "Pumpkin", 42, "pumpkin_face_off");
+        registerBlock("melon", "Melon", 43, "melon_side");
+        registerBlock("vine", "Vines", 44, "vine");
+        registerBlock("birch_log", "Birch Log", 46, "log_birch");
+        registerBlock("spruce_log", "Spruce Log", 47, "log_spruce");
+        registerBlock("spruce_leaves", "Spruce Leaves", 48, "leaves_spruce");
+        registerBlock("jungle_log", "Jungle Log", 49, "log_jungle");
+        registerBlock("jungle_leaves", "Jungle Leaves", 50, "leaves_jungle");
+        registerBlock("acacia_log", "Acacia Log", 51, "log_acacia");
+        registerBlock("dark_oak_log", "Dark Oak Log", 52, "log_big_oak");
+        registerBlock("dark_oak_leaves", "Dark Oak Leaves", 53, "leaves_big_oak");
+        registerBlock("gravel", "Gravel", 54, "gravel");
+        registerBlock("clay", "Clay", 55, "clay");
+        registerBlock("brown_mushroom_block", "Brown Mushroom Block", 56, "mushroom_block_skin_brown");
+        registerBlock("red_mushroom_block", "Red Mushroom Block", 57, "mushroom_block_skin_red");
+        registerBlock("mushroom_stem", "Mushroom Stem", 58, "mushroom_block_skin_stem");
+        registerBlock("sandstone", "Sandstone", 59, "sandstone_top");
+        registerBlock("bone_block", "Bone Block", 60, "bone_block_side");
+        registerBlock("coal_ore", "Coal Ore", 61, "coal_ore");
+        registerBlock("tulip", "Tulip", 62, "flower_tulip_red");
+        registerBlock("azure_bluet", "Azure Bluet", 63, "flower_houstonia");
+        registerBlock("fern", "Fern", 64, "tallgrass_fern");
+        registerBlock("hardened_clay", "Hardened Clay", 65, "hardened_clay");
+        registerBlock("mycelium", "Mycelium", 66, "mycelium_top");
+        registerBlock("snow_layer", "Snow", 67, "snow");
+        registerBlock("ice", "Ice", 68, "ice");
+        registerBlock("packed_ice", "Packed Ice", 69, "ice_packed");
+        registerBlock("cobblestone", "Cobblestone", 71, "cobblestone");
+        registerBlock("red_sand", "Red Sand", 78, "red_sand");
+        registerBlock("iron_ore", "Iron Ore", 81, "iron_ore");
+        registerBlock("gold_ore", "Gold Ore", 82, "gold_ore");
+        registerBlock("diamond_ore", "Diamond Ore", 83, "diamond_ore");
+        registerBlock("emerald_ore", "Emerald Ore", 84, "emerald_ore");
+        registerBlock("lapis_ore", "Lapis Ore", 85, "lapis_ore");
+        registerBlock("wool", "White Wool", 91, "wool_colored_white");
+        // --- Cold/Blue Aercloud remnants ---
+        registerBlock("cold_aercloud", "Cold Aercloud", 125, "cold_aercloud");
+        registerBlock("golden_aercloud", "Golden Aercloud", 126, "golden_aercloud");
         // --- Tools ---
         registerTool("flint_and_steel", "Flint and Steel", "flint_and_steel", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
         registerTool("water_bucket", "Water Bucket", "bucket_water", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
@@ -119,6 +168,14 @@ public class ItemDefinitions {
         registerBlock("mossy_holystone", "Mossy Holystone", 113, "mossy_holystone");
         registerBlock("holystone_bricks", "Holystone Bricks", 114, "holystone_bricks");
         registerBlock("blue_aercloud", "Blue Aercloud", 124, "blue_aercloud");
+        // --- Wood planks ---
+        registerBlock("oak_planks", "Oak Planks", 72, "planks_oak");
+        registerBlock("spruce_planks", "Spruce Planks", 73, "planks_spruce");
+        registerBlock("birch_planks", "Birch Planks", 74, "planks_birch");
+        registerBlock("jungle_planks", "Jungle Planks", 75, "planks_jungle");
+        registerBlock("acacia_planks", "Acacia Planks", 76, "planks_acacia");
+        registerBlock("dark_oak_planks", "Dark Oak Planks", 77, "planks_big_oak");
+        registerBlock("smooth_sandstone", "Smooth Sandstone", 79, "sandstone_smooth");
         registerBlock("crafting_table", "Crafting Table", 115, "crafting_table_top");
         registerBlock("furnace_off", "Furnace", 116, "furnace_front");
         registerBlock("furnace_on", "Furnace", 117, "furnace_front_on");
@@ -145,6 +202,9 @@ public class ItemDefinitions {
     }
 
     private void registerBlock(String itemId, String displayName, int blockId, String textureName) {
+        if (blockItemByBlockId.containsKey(blockId)) {
+            throw new RuntimeException("Item block ID collision! ID " + blockId + " is already registered to '" + blockItemByBlockId.get(blockId) + "'. Attempted to register '" + itemId + "'.");
+        }
         Color albedo = blockDataManager.getAlbedo(blockId);
         Vector4f color = new Vector4f(albedo.getRed() / 255.0f, albedo.getGreen() / 255.0f, albedo.getBlue() / 255.0f, 1.0f);
         int iconLayer = textureManager.getTextureIndex(textureName);

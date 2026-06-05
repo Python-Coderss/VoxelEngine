@@ -210,8 +210,6 @@ public class Main {
     private volatile boolean running = true;
     private CameraMode cameraMode = CameraMode.FIRST_PERSON;
 
-    private int lastBiomeOffsetX = 0;
-    private int lastBiomeOffsetZ = 0;
 
     private volatile float craftingCameraYaw;    // Fixed yaw while using crafting table (volatile: read by GL thread)
     private volatile float craftingCameraPitch;   // Fixed pitch while using crafting table
@@ -359,7 +357,7 @@ public class Main {
         WorldGenLogger.init();
 
         // Initialize dimension system (only create Overworld at startup to save memory)
-        dimensionManager = new DimensionManager(blockDataManager, ctx.worldSaveManager);
+        dimensionManager = new DimensionManager(blockDataManager, ctx.worldSaveManager, biomeManager);
         dimensionManager.createDimension(DimensionType.OVERWORLD, 8);
         // Other dimensions (Nether, End, Aether) are created lazily when first visited
 
@@ -1350,14 +1348,10 @@ public class Main {
 
             uploadDirtyChunks();
 
-            // Slide the biome map when the world buffer recenters
-            int curOX = world.getOffsetX();
-            int curOZ = world.getOffsetZ();
-            if (curOX != lastBiomeOffsetX || curOZ != lastBiomeOffsetZ) {
-                biomeManager.slideBiomeMap(lastBiomeOffsetX, lastBiomeOffsetZ, curOX, curOZ);
+            // Upload biome map to GPU when the gen thread has slid it
+            if (chunkManager.isBiomeMapDirty()) {
                 biomeManager.uploadBiomeMap();
-                lastBiomeOffsetX = curOX;
-                lastBiomeOffsetZ = curOZ;
+                chunkManager.clearBiomeMapDirty();
             }
 
             updateInventoryUi();
@@ -1736,6 +1730,12 @@ public class Main {
         title.append(" | ").append(gameMode == GameMode.CREATIVE ? "creative" : "survival");
         Vector3f pos = player.getPosition();
         title.append(String.format(Locale.US, " | XYZ: %.2f, %.2f, %.2f", pos.x, pos.y, pos.z));
+
+        // Add current biome at player position
+        int bx = (int) Math.floor(pos.x);
+        int bz = (int) Math.floor(pos.z);
+        com.voxel.biome.Biome biome = biomeManager.getBiomeProvider().getBiome(bx, bz);
+        title.append(" | ").append(biome.name);
 
         int pcx = (int) Math.floor(pos.x) >> 4;
         int pcz = (int) Math.floor(pos.z) >> 4;
@@ -2446,7 +2446,7 @@ public class Main {
             "src/main/resources/assets/minecraft/textures/colormap/grass.png",
             "src/main/resources/assets/minecraft/textures/colormap/foliage.png"
         );
-        biomeManager.generateBiomeMap(2048);
+        
         blockDataManager = new BlockDataManager();
         blockDataManager.registerBlock(1, "grass_block", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(2, "stone", textureManager, "src/main/resources/assets/minecraft/models/block");
@@ -2505,6 +2505,61 @@ public class Main {
         blockDataManager.registerBlock(124, "blue_aercloud", textureManager, aetherModels, 100, 0, 255);
         blockDataManager.registerBlock(125, "cold_aercloud", textureManager, aetherModels, 100, 0, 255);
         blockDataManager.registerBlock(126, "golden_aercloud", textureManager, aetherModels, 100, 0, 255);
+        // --- Biome decoration blocks (IDs 34-91 inclusive) ---
+        String mcModels = "src/main/resources/assets/minecraft/models/block";
+        blockDataManager.registerBlock(34, "poppy", textureManager, mcModels);
+        blockDataManager.registerBlock(35, "tallgrass", textureManager, mcModels);
+        blockDataManager.registerBlock(36, "dead_bush", textureManager, mcModels);
+        blockDataManager.registerBlock(37, "brown_mushroom", textureManager, mcModels);
+        blockDataManager.registerBlock(38, "red_mushroom", textureManager, mcModels);
+        blockDataManager.registerBlock(39, "cactus", textureManager, mcModels);
+        blockDataManager.registerBlock(40, "reeds", textureManager, mcModels);
+        blockDataManager.registerBlock(41, "waterlily", textureManager, mcModels);
+        blockDataManager.registerBlock(42, "pumpkin", textureManager, mcModels);
+        blockDataManager.registerBlock(43, "melon", textureManager, mcModels);
+        blockDataManager.registerBlock(44, "vine", textureManager, mcModels);
+        blockDataManager.registerBlock(45, "oak_sapling", textureManager, mcModels);
+        blockDataManager.registerBlock(46, "birch_log", textureManager, mcModels);
+        blockDataManager.registerBlock(47, "spruce_log", textureManager, mcModels);
+        blockDataManager.registerBlock(48, "spruce_leaves", textureManager, mcModels);
+        blockDataManager.registerBlock(49, "jungle_log", textureManager, mcModels);
+        blockDataManager.registerBlock(50, "jungle_leaves", textureManager, mcModels);
+        blockDataManager.registerBlock(51, "acacia_log", textureManager, mcModels);
+        blockDataManager.registerBlock(52, "dark_oak_log", textureManager, mcModels);
+        blockDataManager.registerBlock(53, "dark_oak_leaves", textureManager, mcModels);
+        blockDataManager.registerBlock(54, "gravel", textureManager, mcModels);
+        blockDataManager.registerBlock(55, "clay", textureManager, mcModels);
+        blockDataManager.registerBlock(56, "brown_mushroom_block", textureManager, mcModels);
+        blockDataManager.registerBlock(57, "red_mushroom_block", textureManager, mcModels);
+        blockDataManager.registerBlock(58, "mushroom_stem", textureManager, mcModels);
+        blockDataManager.registerBlock(59, "sandstone", textureManager, mcModels);
+        blockDataManager.registerBlock(60, "bone_block", textureManager, mcModels);
+        blockDataManager.registerBlock(61, "coal_ore", textureManager, mcModels);
+        blockDataManager.registerBlock(62, "tulip", textureManager, mcModels);
+        blockDataManager.registerBlock(63, "azure_bluet", textureManager, mcModels);
+        blockDataManager.registerBlock(64, "fern", textureManager, mcModels);
+        blockDataManager.registerBlock(65, "hardened_clay", textureManager, mcModels);
+        blockDataManager.registerBlock(66, "mycelium", textureManager, mcModels);
+        blockDataManager.registerBlock(67, "snow_layer", textureManager, mcModels);
+        blockDataManager.registerBlock(68, "ice", textureManager, mcModels);
+        blockDataManager.registerBlock(69, "packed_ice", textureManager, mcModels);
+        blockDataManager.registerBlock(70, "birch_sapling", textureManager, mcModels);
+        blockDataManager.registerBlock(71, "cobblestone", textureManager, mcModels);
+        blockDataManager.registerBlock(72, "oak_planks", textureManager, mcModels);
+        blockDataManager.registerBlock(73, "spruce_planks", textureManager, mcModels);
+        blockDataManager.registerBlock(74, "birch_planks", textureManager, mcModels);
+        blockDataManager.registerBlock(75, "jungle_planks", textureManager, mcModels);
+        blockDataManager.registerBlock(76, "acacia_planks", textureManager, mcModels);
+        blockDataManager.registerBlock(77, "dark_oak_planks", textureManager, mcModels);
+        blockDataManager.registerBlock(78, "red_sand", textureManager, mcModels);
+        blockDataManager.registerBlock(79, "smooth_sandstone", textureManager, mcModels);
+        blockDataManager.registerBlock(80, "acacia_sapling", textureManager, mcModels);
+        blockDataManager.registerBlock(81, "iron_ore", textureManager, mcModels);
+        blockDataManager.registerBlock(82, "gold_ore", textureManager, mcModels);
+        blockDataManager.registerBlock(83, "diamond_ore", textureManager, mcModels);
+        blockDataManager.registerBlock(84, "emerald_ore", textureManager, mcModels);
+        blockDataManager.registerBlock(85, "lapis_ore", textureManager, mcModels);
+        blockDataManager.registerBlock(91, "wool", textureManager, mcModels);
         blockDataManager.uploadToGPU();
     }
 

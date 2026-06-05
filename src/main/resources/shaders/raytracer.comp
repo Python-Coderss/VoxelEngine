@@ -801,7 +801,18 @@ void main() {
                 final += throu * alb * emissive * 2.0;
             }
 
-            if (((d1.w >> 8) & 1) == 1) { vec2 bp = texture(u_BiomeMap, (hp.xz - vec2(u_WorldOffset.xz)) / 2048.0).rg; alb *= texture(u_GrassColormap, vec2(1.0-bp.x, 1.0-bp.y)).rgb; }
+            // Biome tinting: tintIndex packed in bits 22-23 of d1.w
+            // 0=none, 1=grass colormap, 2=foliage colormap
+            // Per-face tint mask in bits 24-29: bit j (0-5) set if face j should tint
+            // Only tint pixels with alpha > 0.5 to avoid bleeding through transparent regions
+            { int ti = (d1.w >> 22) & 3;
+              int tintFaceMask = (d1.w >> 24) & 0x3F;
+              if (ti > 0 && ((tintFaceMask >> face) & 1) == 1 && texSample.a > 0.5) {
+                vec2 bp = texture(u_BiomeMap, (hp.xz - vec2(u_WorldOffset.xz)) / 2048.0).rg;
+                vec2 cmUV = vec2(1.0-bp.x, 1.0-bp.y);
+                if (ti == 1) alb *= texture(u_GrassColormap, cmUV).rgb;
+                else alb *= texture(u_FoliageColormap, cmUV).rgb;
+              } }
         }
 
         float shadS = fastShadow(hp + n * 0.01, at.sunDir, 100.0);
