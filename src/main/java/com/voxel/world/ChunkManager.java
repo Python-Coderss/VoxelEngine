@@ -2,6 +2,7 @@ package com.voxel.world;
 
 import com.voxel.World;
 import com.voxel.lighting.LightPropagationEngine;
+import com.voxel.utils.BiomeManager;
 import org.joml.Vector3f;
 import java.util.*;
 import java.util.concurrent.*;
@@ -25,6 +26,7 @@ public class ChunkManager {
     private final WorldGenerator generator;
     private final LightPropagationEngine lightEngine;
     private final WorldSaveManager saveManager;
+    private final BiomeManager biomeManager;
     private final DimensionType dimension;
     private final int renderDistance;
     private final int chunkHeight = 16;
@@ -39,6 +41,9 @@ public class ChunkManager {
     // ── Dirty tracking (accessed by main thread for GPU upload) ──
     private final Set<Integer> dirtySlots = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean tableDirty = new AtomicBoolean(false);
+    private final AtomicBoolean biomeMapDirty = new AtomicBoolean(false);
+    private int lastBiomeOffsetX = 0;
+    private int lastBiomeOffsetZ = 0;
 
     // ── Single dedicated world-gen thread with FIFO task queue ──
     private final BlockingDeque<Runnable> taskQueue = new LinkedBlockingDeque<>();
@@ -53,11 +58,13 @@ public class ChunkManager {
     private static final int BUFFER_HALF_CHUNKS = World.REGION_SIZE / 2;
 
     public ChunkManager(World world, WorldGenerator generator, LightPropagationEngine lightEngine,
-                        int renderDistance, WorldSaveManager saveManager, DimensionType dimension) {
+                        int renderDistance, WorldSaveManager saveManager, DimensionType dimension,
+                        BiomeManager biomeManager) {
         this.world = world;
         this.generator = generator;
         this.lightEngine = lightEngine;
         this.saveManager = saveManager;
+        this.biomeManager = biomeManager;
         this.dimension = dimension;
         this.renderDistance = renderDistance;
 
@@ -162,6 +169,8 @@ public class ChunkManager {
     public Set<Integer> getDirtySlots() { return dirtySlots; }
     public boolean isTableDirty() { return tableDirty.get(); }
     public void clearDirty() { tableDirty.set(false); dirtySlots.clear(); }
+    public boolean isBiomeMapDirty() { return biomeMapDirty.get(); }
+    public void clearBiomeMapDirty() { biomeMapDirty.set(false); }
 
     public void shutdown() {
         running = false;
@@ -308,9 +317,21 @@ public class ChunkManager {
         int newOffsetX = (pcx - BUFFER_HALF_CHUNKS) << 4;
         int newOffsetZ = (pcz - BUFFER_HALF_CHUNKS) << 4;
 
+        // Capture old biome offsets before recentering
+        int oldBiomeX = lastBiomeOffsetX;
+        int oldBiomeZ = lastBiomeOffsetZ;
+
         WorldGenLogger.log("RECENTER oldOffset(" + world.getOffsetX() + "," + world.getOffsetZ()
             + ") -> newOffset(" + newOffsetX + "," + newOffsetZ
             + ") loadedChunks=" + loadedChunks.size());
+
+        // Slide the biome map on the gen thread alongside recenter
+        if (biomeManager != null) {
+            biomeManager.slideBiomeMap(oldBiomeX, oldBiomeZ, newOffsetX, newOffsetZ);
+            lastBiomeOffsetX = newOffsetX;
+            lastBiomeOffsetZ = newOffsetZ;
+            biomeMapDirty.set(true);
+        }
 
         // Clear the indirection table
         world.setOrigin(newOffsetX, 0, newOffsetZ);

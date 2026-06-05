@@ -1,6 +1,7 @@
 {
     "parent": "block/cross",
     "textures": {
-        "cross": "blocks/double_plant_paeonia_top"
+        "all": "blocks/double_plant_paeonia_top",
+        "particle": "blocks/double_plant_paeonia_top"
     }
 }

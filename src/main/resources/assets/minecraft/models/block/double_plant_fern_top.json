@@ -1,0 +1,7 @@
+{
+    "parent": "block/cross",
+    "textures": {
+        "all": "blocks/double_plant_fern_top",
+        "particle": "blocks/double_plant_fern_top"
+    }
+}

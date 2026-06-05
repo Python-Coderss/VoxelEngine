@@ -1,5 +1,7 @@
 package com.voxel.world;
 
+import com.voxel.biome.BiomeProvider;
+
 /**
  * Base world generator. All terrain generation is handled by
  * {@link DimensionWorldGenerator} which overrides getHeight(),
@@ -7,9 +9,15 @@ package com.voxel.world;
  */
 public class WorldGenerator {
     protected final com.voxel.utils.BlockDataManager blockDataManager;
+    protected BiomeProvider biomeProvider;
 
     public WorldGenerator(long seed, com.voxel.utils.BlockDataManager blockDataManager) {
         this.blockDataManager = blockDataManager;
+    }
+
+    /** Returns the biome provider for this generator, or null if not available. */
+    public BiomeProvider getBiomeProvider() {
+        return biomeProvider;
     }
 
     public int getHeight(int x, int z) {

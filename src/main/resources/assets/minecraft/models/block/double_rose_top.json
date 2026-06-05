@@ -1,6 +1,7 @@
 {
     "parent": "block/cross",
     "textures": {
-        "cross": "blocks/double_plant_rose_top"
+        "all": "blocks/double_plant_rose_top",
+        "particle": "blocks/double_plant_rose_top"
     }
 }
