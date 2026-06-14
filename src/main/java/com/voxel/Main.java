@@ -28,6 +28,7 @@ import com.voxel.game.PortalSystem;
 import com.voxel.world.RedstoneLogger;
 import com.voxel.world.RedstoneManager;
 import com.voxel.world.WorldGenLogger;
+import com.voxel.GameLogger;
 import org.joml.Vector2f;
 import org.joml.Vector2i;
 import org.joml.Vector3f;
@@ -95,7 +96,7 @@ public class Main {
     private long window;
     private int quadProgram, computeProgram;
     private int quadVAO, quadVBO, renderTexture;
-    private int indirectionSSBO, chunkPoolSSBO, bitmaskSSBO, occlusionSSBO, pointLightSSBO;
+    private int indirectionSSBO, chunkPoolSSBO, bitmaskSSBO, occlusionSSBO, pointLightSSBO, lightSSBO;
 
     // Cached compute shader uniform locations (avoid glGetUniformLocation per frame)
     private int locBlockTextures, locEntityTextures, locBlockData, locBlockAABBs, locBlockAABBInfo, locBlockAABBUVs;
@@ -105,6 +106,8 @@ public class Main {
     private int locHeartUVs;
     private int locCraftingItemCount;
     private int craftingItemSSBO;
+    private java.util.Iterator<Integer> dirtyUploadIterator;
+    private static final int MAX_DIRTY_UPLOADS_PER_FRAME = 48;
     private int locSunDir, locSunColor, locMoonDir, locMoonColor, locSkyZenith, locSkyHorizon, locAmbient;
     private int locDimensionID;
 
@@ -259,10 +262,12 @@ public class Main {
         glDeleteBuffers(bitmaskSSBO);
         glDeleteBuffers(occlusionSSBO);
         glDeleteBuffers(pointLightSSBO);
+        glDeleteBuffers(lightSSBO);
         glDeleteBuffers(craftingItemSSBO);
         chunkManager.shutdown();
         RedstoneLogger.shutdown();
         WorldGenLogger.shutdown();
+        GameLogger.shutdown();
 
         glfwDestroyWindow(window);
         glfwTerminate();
@@ -354,6 +359,8 @@ public class Main {
         ctx.worldSaveManager = new com.voxel.world.WorldSaveManager("dev/world");
 
         // Initialize world gen logging
+        GameLogger.init();
+
         WorldGenLogger.init();
 
         // Initialize dimension system (only create Overworld at startup to save memory)
@@ -1418,6 +1425,7 @@ public class Main {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, pointLightSSBO);
             entityManager.bind(6, 7);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, craftingItemSSBO);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, lightSSBO);
 
             uploadCraftingItems();
 
@@ -2622,6 +2630,7 @@ public class Main {
         if (bitmaskSSBO != 0) glDeleteBuffers(bitmaskSSBO);
         if (occlusionSSBO != 0) glDeleteBuffers(occlusionSSBO);
         if (pointLightSSBO != 0) glDeleteBuffers(pointLightSSBO);
+        if (lightSSBO != 0) glDeleteBuffers(lightSSBO);
 
         indirectionSSBO = glCreateBuffers();
         glNamedBufferStorage(indirectionSSBO, buf, GL_DYNAMIC_STORAGE_BIT);
@@ -2650,6 +2659,9 @@ public class Main {
         // Crafting item SSBO (max 9 items * 32 bytes each = 288 bytes)
         craftingItemSSBO = glCreateBuffers();
         glNamedBufferStorage(craftingItemSSBO, 288, GL_DYNAMIC_STORAGE_BIT);
+        // Light pool SSBO (same size as chunk pool: poolSize * 16³ ints)
+        lightSSBO = glCreateBuffers();
+        glNamedBufferStorage(lightSSBO, (long) poolSize * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * Integer.BYTES, GL_DYNAMIC_STORAGE_BIT);
 
         uploadDirtyChunks();
     }
@@ -2659,10 +2671,46 @@ public class Main {
     private java.nio.IntBuffer reusableMaskBuf;
     private java.nio.ShortBuffer reusableOccBuf;
     private java.nio.IntBuffer reusableTableBuf;
+    private java.nio.IntBuffer reusableLightBuf;
 
     private void uploadDirtyChunks() {
+        // Light pool upload: check BEFORE the dirty-slots early return.
+        // The gen thread sets lightsNeedUpload=true asynchronously after BFS;
+        // if we early-return because dirty slots are exhausted, the light pool
+        // would never reach the GPU.
+        if (chunkManager.needsLightUpload() && !chunkManager.isLightingActive()) {
+            int[] lightPool = world.getLightPool();
+
+            // Crash-assert: if BFS claims success but the light pool is all zeros,
+            // there is a data-race or BFS bug -- fail fast with a clear message.
+            boolean anyNonZero = false;
+            for (int v : lightPool) {
+                if (v != 0) { anyNonZero = true; break; }
+            }
+            if (!anyNonZero) {
+                throw new IllegalStateException(
+                    "FATAL: lightsNeedUpload=true but light pool is ALL ZEROS (" + lightPool.length + " ints). BFS ran but produced no output.");
+            }
+
+            java.nio.IntBuffer lightBuf = MemoryUtil.memAllocInt(lightPool.length);
+            lightBuf.put(lightPool).flip();
+            glNamedBufferSubData(lightSSBO, 0, lightBuf);
+            MemoryUtil.memFree(lightBuf);
+            chunkManager.clearLightUpload();
+        }
+
         java.util.Set<Integer> dirty = chunkManager.getDirtySlots();
-        if (dirty.isEmpty() && !chunkManager.isTableDirty()) return;
+
+        // Capped upload: persist an iterator across frames to avoid per-frame spikes
+        if (dirtyUploadIterator == null) {
+            dirtyUploadIterator = dirty.iterator();
+        }
+
+        boolean tableDirty = chunkManager.isTableDirty();
+        if (!dirtyUploadIterator.hasNext() && !tableDirty) {
+            dirtyUploadIterator = null;
+            return;
+        }
 
         int vpc = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
         int poolSize = world.getPoolSizeForAlloc();
@@ -2673,23 +2721,31 @@ public class Main {
             if (reusableMaskBuf != null) MemoryUtil.memFree(reusableMaskBuf);
             if (reusableOccBuf != null) MemoryUtil.memFree(reusableOccBuf);
             if (reusableTableBuf != null) MemoryUtil.memFree(reusableTableBuf);
+            if (reusableLightBuf != null) MemoryUtil.memFree(reusableLightBuf);
             reusableVoxelBuf = MemoryUtil.memAllocInt(vpc);
             reusableMaskBuf = MemoryUtil.memAllocInt(128);
             reusableOccBuf = MemoryUtil.memAllocShort(vpc);
             reusableTableBuf = MemoryUtil.memAllocInt(REGION_SIZE * REGION_SIZE * REGION_SIZE);
+            reusableLightBuf = MemoryUtil.memAllocInt(vpc);
         }
 
-        if (chunkManager.isTableDirty()) {
+        if (tableDirty) {
             int[] table = world.getIndirectionTable();
             reusableTableBuf.clear();
             reusableTableBuf.put(table).flip();
             glNamedBufferSubData(indirectionSSBO, 0, reusableTableBuf);
+            chunkManager.clearTableDirtyOnly();
         }
 
         int[] pool = world.getChunkPool();
         int[] masks = world.getBitmaskPool();
         short[] occs = world.getOcclusionPool();
-        for (int s : dirty) {
+
+        int uploaded = 0;
+        while (dirtyUploadIterator.hasNext() && uploaded < MAX_DIRTY_UPLOADS_PER_FRAME) {
+            int s = dirtyUploadIterator.next();
+            dirtyUploadIterator.remove();
+
             reusableVoxelBuf.clear();
             reusableVoxelBuf.put(pool, s * vpc, vpc).flip();
             glNamedBufferSubData(chunkPoolSSBO, (long) s * vpc * Integer.BYTES, reusableVoxelBuf);
@@ -2701,8 +2757,15 @@ public class Main {
             reusableOccBuf.clear();
             reusableOccBuf.put(occs, s * vpc, vpc).flip();
             glNamedBufferSubData(occlusionSSBO, (long) s * vpc * Short.BYTES, reusableOccBuf);
+
+            uploaded++;
         }
-        chunkManager.clearDirty();
+
+        // Iterator exhausted: reset for next cycle
+        if (!dirtyUploadIterator.hasNext()) {
+            dirtyUploadIterator = null;
+        }
+
     }
 
     public static void main(String[] args) {

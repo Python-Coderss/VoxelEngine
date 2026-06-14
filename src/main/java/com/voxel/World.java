@@ -31,6 +31,10 @@ public class World {
     // Each chunk (16x16x16 = 4096 voxels) requires 4096 bits = 128 integers.
     private final int[] bitmaskPool;
 
+    // The light pool stores packed RGB light values (8 bits per channel, 0-255).
+    // 1 int per voxel = 4096 ints per chunk.
+    private final int[] lightPool;
+
     // The occlusion pool stores a 14-bit mask for directional sky visibility
     // 1 short per voxel = 4096 shorts per chunk.
     private final short[] occlusionPool;
@@ -55,6 +59,7 @@ public class World {
 
         int voxelsPerChunk = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
         chunkPool = new int[poolSize * voxelsPerChunk];
+        lightPool = new int[poolSize * voxelsPerChunk];
         bitmaskPool = new int[poolSize * (voxelsPerChunk / 32)];
         occlusionPool = new short[poolSize * voxelsPerChunk];
     }
@@ -172,6 +177,7 @@ public class World {
     public int[] getIndirectionTable() { return indirectionTable; }
     public int[] getChunkPool() { return chunkPool; }
     public int[] getBitmaskPool() { return bitmaskPool; }
+    public int[] getLightPool() { return lightPool; }
     public short[] getOcclusionPool() { return occlusionPool; }
     public int getPoolSizeForAlloc() { return poolSize; }
 
@@ -239,6 +245,7 @@ public class World {
         int startIdx = slot << 12;
         for (int i = 0; i < voxelsPerChunk; i++) {
             chunkPool[startIdx + i] = 0;
+            lightPool[startIdx + i] = 0;
             occlusionPool[startIdx + i] = 0;
         }
 

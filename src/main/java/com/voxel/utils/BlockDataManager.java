@@ -625,6 +625,18 @@ public class BlockDataManager {
         return data != null ? data.preferredTool : "hand";
     }
 
+    /** @return true if this block emits light (emissive > 0). */
+    public boolean isEmissive(int blockId) {
+        BlockData data = blockRegistry.get(blockId);
+        return data != null && data.emissive > 0;
+    }
+
+    /** @return the emissive value (0-255) for the block, or 0 if unknown. */
+    public int getEmissive(int blockId) {
+        BlockData data = blockRegistry.get(blockId);
+        return data != null ? data.emissive : 0;
+    }
+
     public java.awt.Color getAlbedo(int blockId) {
         BlockData data = blockRegistry.get(blockId);
         return data != null ? data.albedo : java.awt.Color.WHITE;

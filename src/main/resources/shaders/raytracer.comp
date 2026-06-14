@@ -23,6 +23,9 @@ layout(std430, binding = 2) buffer readonly restrict ChunkPool { uint voxelPool[
 layout(std430, binding = 3) buffer readonly restrict BitmaskPool { uint bitmasks[]; };
 layout(std430, binding = 4) buffer readonly restrict OcclusionPool { uint occlusionPool[]; };
 
+// Block light propagation (wave BFS result): packed RGB per voxel [R|G<<10|B<<20] (10-bit/channel)
+layout(std430, binding = 9) buffer readonly restrict LightPool { uint lightPool[]; };
+
 // Point Lights
 struct PointLight { vec3 position; float radius; vec3 color; float intensity; };
 layout(std430, binding = 5) buffer readonly restrict PointLightBuffer { 
@@ -61,14 +64,6 @@ layout(location = 7) uniform vec4 u_HeartUVs[3]; // [0]=Full, [1]=Half, [2]=Empt
 const int WORLD_SIZE = 2048;
 const uint EMPTY = 0xFFFFFFFF;
 const float PI = 3.14159265359;
-
-const vec3 OCC_DIRS[14] = vec3[](
-    vec3(0.0, 1.0, 0.0),
-    vec3(0.707, 0.707, 0.0), vec3(-0.707, 0.707, 0.0), vec3(0.0, 0.707, 0.707), vec3(0.0, 0.707, -0.707),
-    vec3(0.5, 0.707, 0.5), vec3(-0.5, 0.707, 0.5), vec3(0.5, 0.707, -0.5), vec3(-0.5, 0.707, -0.5),
-    vec3(0.866, 0.5, 0.0), vec3(-0.866, 0.5, 0.0), vec3(0.0, 0.5, 0.866), vec3(0.0, 0.5, -0.866),
-    vec3(0.0, 0.3, 0.0)
-);
 
 struct Atmosphere { vec3 sunDir, moonDir, sunColor, moonColor, skyZenith, skyHorizon, ambient; };
 
@@ -131,7 +126,6 @@ Atmosphere GetAtmosphere(float t) {
 }
 
 vec3 ACESFilm(vec3 x) { return clamp((x*(2.51*x + 0.03))/(x*(2.43*x + 0.59) + 0.14), 0.0, 1.0); }
-float IGN(vec2 n) { return fract(52.9829189 * fract(dot(n, vec2(0.06339546, 0.02474039)))); }
 
 vec3 GetSky(vec3 rd, Atmosphere at) {
     float d = max(0.0, rd.y);
@@ -276,15 +270,15 @@ uint getVoxelOcclusion(ivec3 p) {
     return (voxelIdx & 1) == 0 ? (packedv & 0xFFFFu) : (packedv >> 16);
 }
 
-float computeOcclusionVis(ivec3 p, vec3 targetDir) {
-    uint mask = getVoxelOcclusion(p);
-    float sum = 0.0, wSum = 0.0;
-    for(int i=0; i<14; i++) {
-        float w = pow(max(0.0, dot(OCC_DIRS[i], targetDir)), 3.0);
-        if ((mask & (1u << i)) != 0) sum += w;
-        wSum += w;
-    }
-    return sum / max(wSum, 0.0001);
+vec3 sampleLightPoolRGB(ivec3 p) {
+    ivec3 rel = p - u_WorldOffset;
+    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(2048)))) return vec3(0);
+    uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
+    if (slot == EMPTY) return vec3(0);
+    int voxelIdx = (rel.x & 15) | ((rel.y & 15) << 4) | ((rel.z & 15) << 8);
+    uint idx = (slot << 12u) | uint(voxelIdx);
+    uint packedv = lightPool[idx];
+    return vec3(float(packedv & 0x3FFu), float((packedv >> 10) & 0x3FFu), float((packedv >> 20) & 0x3FFu));
 }
 
 float fastShadow(vec3 ro, vec3 rd, float maxDist) {
@@ -294,7 +288,7 @@ float fastShadow(vec3 ro, vec3 rd, float maxDist) {
     vec3 p = ro + rd * (max(0.0, tn) + 0.05); ivec3 mp = ivec3(floor(p));
     vec3 dd = abs(1.0 / rd); ivec3 s = ivec3(sign(rd));
     vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < 16; i++) {  // reduced from 32 → 16
         if (any(lessThan(mp, bufMin)) || any(greaterThanEqual(mp, bufMax))) break;
         if (min(sd.x, min(sd.y, sd.z)) > maxDist) break;
         ivec3 rel = mp - u_WorldOffset;
@@ -338,7 +332,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT
     vec3 dd = abs(1.0 / rd); ivec3 s = ivec3(sign(rd));
     vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
     int side = 0; if (skipFirst) side = advanceDDA(mp, sd, dd, s);
-    for (int i = 0; i < 128; i++) {
+    for (int i = 0; i < 72; i++) {  // reduced from 128 → 72 for perf
         if (any(lessThan(mp, bufMin)) || any(greaterThanEqual(mp, bufMax))) break;
         ivec3 rel = mp - u_WorldOffset;
         uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
@@ -353,12 +347,9 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT
                     uint wirePower = (rawVoxel >> 16) & 0xFu;
                     uint wireConn = (rawVoxel >> 20) & 0xFu;
                     
-                    // Optimization: Skip voxels that are the same as our current medium (lastVoxel)
                     if (voxelType != lastVoxel) {
-                        // Check if this block is a full cube or has custom AABBs
                         ivec4 d1 = texelFetch(u_BlockData, int(voxelType) * 3 + 1);
                         if (((d1.w >> 9) & 1) == 1) {
-                            // Full block: return hit immediately
                             resVoxel = voxelType;
                             resWirePower = wirePower;
                             resWireConn = wireConn;
@@ -368,12 +359,10 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT
                             return true;
                         }
                         
-                        // Non-full block: check custom AABBs
                         ivec4 info = texelFetch(u_BlockAABBInfo, int(voxelType));
                         int aabbOffset = info.x;
                         int aabbCount = info.y;
                         if (aabbCount == 0) {
-                            // No custom AABBs (e.g., water, lava): treat as full block hit
                             resVoxel = voxelType;
                             resWirePower = wirePower;
                             resWireConn = wireConn;
@@ -384,7 +373,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT
                         }
                         float exitT = st + min(sd.x, min(sd.y, sd.z));
                         vec3 blockOrigin = floor(vec3(mp));
-                        for (int k = 0; k < min(aabbCount, 8); k++) {
+                        for (int k = 0; k < min(aabbCount, 6); k++) {  // reduced from 8 → 6 for perf
                             vec3 bMin = texelFetch(u_BlockAABBs, aabbOffset + k * 2).xyz + blockOrigin;
                             vec3 bMax = texelFetch(u_BlockAABBs, aabbOffset + k * 2 + 1).xyz + blockOrigin;
                             float aTn, aTf;
@@ -573,19 +562,12 @@ void main() {
     vec3 final = vec3(0.0), throu = vec3(1.0), ro = camPos; bool skip = false;
     uint lastTransVoxel = 0xFFFFFFFFu; // Track last translucent block type to skip same-type faces
 
-    for (int b = 0; b < 4; b++) {
+    for (int b = 0; b < 2; b++) {  // reduced from 4 → 2 bounces for perf
         float t; vec3 n; uint voxel, eTex, wirePower, wireConn; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx;
         if (!traceAll(ro, rd, skip, lastTransVoxel, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx)) { final += throu * GetSky(rd, at); break; }
         
-        float vMax = min(t, 48.0); float dither = IGN(vec2(px) + u_Time);
-        vec3 godRays = vec3(0.0); float vStep = 4.0;
-        for(float dt = dither * vStep; dt < vMax; dt += vStep) {
-            uint m = getVoxelOcclusion(ivec3(floor(ro + rd * dt)));
-            if (bitCount(m) <= 2) godRays += (at.sunColor * computeOcclusionVis(ivec3(floor(ro + rd * dt)), at.sunDir)) * 0.01 * vStep;
-        }
-        final += throu * godRays;
-
         vec3 hp = ro + rd * t, alb; float trans = 0, refl = 0;
+        vec3 beam = vec3(0.0); // hoisted — assigned in each hit-type path below
         // Crafting item: 3D miniature block rendered with block's face textures
         if (craftingIdx >= 0) {
             int blockId = floatBitsToInt(craftingItems[craftingIdx].position.w);
@@ -628,7 +610,7 @@ void main() {
             } else {
                 alb = texel.rgb * (vec3(d2.rgb)/255.0);
                 trans = 1.0 - texel.a; refl = 0.1;
-                vec3 beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
+                beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
                 vec3 bc = alb * beam * (1.0 - trans);
                 float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, GetSky(rd, at), fog);
                 final += throu * bc;
@@ -658,6 +640,7 @@ void main() {
                     else alb = heartCol.rgb;
                 }
                 refl = 0.0;
+                beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
             } else {
                 vec4 entTex = texture(u_EntityTextures, vec3(eUv, float(eTex)));
                 // Apply alpha-based transparency (0 = transparent, 255 = opaque)
@@ -672,6 +655,8 @@ void main() {
                     vec3 tint = vec3(entities[entIdx].tintR, entities[entIdx].tintG, entities[entIdx].tintB);
                     alb = mix(alb, alb * tint, entities[entIdx].tintAmount);
                 }
+                // Compute sun+ambient lighting for the entity (same as block path)
+                beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
             }
         } else {
             ivec4 d0 = texelFetch(u_BlockData, int(voxel)*3), d1 = texelFetch(u_BlockData, int(voxel)*3+1), d2 = texelFetch(u_BlockData, int(voxel)*3+2);
@@ -813,11 +798,26 @@ void main() {
                 if (ti == 1) alb *= texture(u_GrassColormap, cmUV).rgb;
                 else alb *= texture(u_FoliageColormap, cmUV).rgb;
               } }
+
+            // Compute direct+ambient lighting for the block (same as crafting item path)
+            beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
         }
 
-        float shadS = fastShadow(hp + n * 0.01, at.sunDir, 100.0);
-        float occAmb = float(bitCount(getVoxelOcclusion(ivec3(floor(hp + n * 0.5))))) / 14.0;
-        vec3 beam = at.sunColor * max(0.0, dot(n, at.sunDir)) * shadS + (at.ambient * occAmb);
+        // Sample block light from the nearest non-full-block voxel adjacent to the hit face
+        // Light pool = pre-computed indirect illumination from block emissions.
+        // Added as a direct contribution at this bounce — does not affect throughput.
+        vec3 blockLightCol = vec3(0.0);
+        ivec3 lightSamplePos = ivec3(floor(hp + n * 0.5));
+        blockLightCol = sampleLightPoolRGB(lightSamplePos);
+        if (blockLightCol == vec3(0.0)) {
+            lightSamplePos = ivec3(floor(hp - n * 0.5));
+            blockLightCol = sampleLightPoolRGB(lightSamplePos);
+        }
+
+        // Block light from pre-computed BFS propagation: normalize from 10-bit (0-1023) range.
+        vec3 blockLightContrib = blockLightCol / 256.0;
+        beam += blockLightContrib;  // Integrate block lighting into direct illumination
+
         vec3 bc = alb * beam * (1.0 - trans - refl);
         float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, GetSky(rd, at), fog);
         // Skip face and tint accumulation between identical translucent blocks (e.g., water-water, glass-glass)
@@ -828,7 +828,6 @@ void main() {
             final += throu * alb * (1.0 - trans);
             throu *= trans * alb;
         }
-
         final += throu * bc;
 
         // Transmission/refl: set up next ray
