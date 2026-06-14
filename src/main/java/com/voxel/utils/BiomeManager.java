@@ -49,12 +49,12 @@ public class BiomeManager {
     }
 
     /**
-     * Generates a 2D map covering the entire world where each pixel stores
-     * Temperature (R channel) and Humidity (G channel).
-     * Values are derived from the biome at each location via BiomeProvider.
+     * Generates CPU-side biome data for the given world size.
+     * Safe to call from any thread (no OpenGL calls).
+     * The GPU texture is created lazily by uploadBiomeMap() on the render thread.
      * @param worldSize The size of the world (e.g., 2048).
      */
-    public void generateBiomeMap(int worldSize) {
+    public void generateBiomeData(int worldSize) {
         this.biomeWorldSize = worldSize;
 
         // Free old buffer if it exists
@@ -70,24 +70,7 @@ public class BiomeManager {
             }
         }
         biomeData.flip();
-
-        // 1. Create a 2D texture on the GPU.
-        if (biomeMapId != 0) glDeleteTextures(biomeMapId);
-        biomeMapId = glCreateTextures(GL_TEXTURE_2D);
-
-        // 2. Allocate storage for the map (RG format, 8 bits per channel).
-        glTextureStorage2D(biomeMapId, 1, GL_RG8, worldSize, worldSize);
-
-        // 3. Upload the generated buffer to the texture.
-        glTextureSubImage2D(biomeMapId, 0, 0, 0, worldSize, worldSize, GL_RG, GL_UNSIGNED_BYTE, biomeData);
-        
-        // 4. Set texture parameters (Linear filtering for smooth transitions).
-        glTextureParameteri(biomeMapId, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTextureParameteri(biomeMapId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTextureParameteri(biomeMapId, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTextureParameteri(biomeMapId, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-        // Keep biomeData on CPU for sliding window updates.
+        // GPU texture creation is deferred to uploadBiomeMap() on the render thread.
     }
 
     /**
@@ -146,12 +129,23 @@ public class BiomeManager {
 
     /**
      * Uploads the CPU-side biome data to the GPU texture.
-     * Must be called on the render thread.
+     * Creates the texture if it doesn't exist yet. Must be called on the render thread.
      */
     public void uploadBiomeMap() {
         synchronized (biomeLock) {
-            if (biomeData == null || biomeMapId == 0) return;
+            if (biomeData == null) return;
             biomeData.rewind();
+
+            // Lazy texture creation: deferred from generateBiomeData() to avoid GL calls off-thread
+            if (biomeMapId == 0) {
+                biomeMapId = glCreateTextures(GL_TEXTURE_2D);
+                glTextureStorage2D(biomeMapId, 1, GL_RG8, biomeWorldSize, biomeWorldSize);
+                glTextureParameteri(biomeMapId, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTextureParameteri(biomeMapId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTextureParameteri(biomeMapId, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTextureParameteri(biomeMapId, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            }
+
             glTextureSubImage2D(biomeMapId, 0, 0, 0, biomeWorldSize, biomeWorldSize, GL_RG, GL_UNSIGNED_BYTE, biomeData);
         }
     }

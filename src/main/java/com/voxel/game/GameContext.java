@@ -254,6 +254,7 @@ public class GameContext {
         }
 
         if (uploadWorldToGpu != null) uploadWorldToGpu.run();
+        // Lighting builds incrementally as chunks load in the new dimension.
         setStatus("Switched to " + target.name);
     }
 

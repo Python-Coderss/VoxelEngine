@@ -44,12 +44,13 @@ public class DimensionManager {
             generator = new DimensionWorldGenerator(type, blockDataManager);
         }
         LightPropagationEngine lightEngine = new LightPropagationEngine(world, blockDataManager);
-        ChunkManager chunkManager = new ChunkManager(world, generator, lightEngine, renderDistance, saveManager, type, biomeManager);
+        ChunkManager chunkManager = new ChunkManager(world, generator, lightEngine, renderDistance, saveManager, type, biomeManager, blockDataManager);
 
         // Wire the biome provider into BiomeManager so the tint map reflects actual biomes
         if (biomeManager != null && generator.getBiomeProvider() != null) {
             biomeManager.setBiomeProvider(generator.getBiomeProvider());
-            biomeManager.generateBiomeMap(2048);
+            biomeManager.generateBiomeData(2048);
+            chunkManager.markBiomeMapDirty();
         }
 
         dimensions.put(type, new DimensionInstance(world, chunkManager, generator));

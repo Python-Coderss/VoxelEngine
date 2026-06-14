@@ -18,7 +18,6 @@ The engine uses a data-driven material system that allows you to define how each
 | **Effect** | `Enum` | - | Special shader logic for specific block types (Portal, Liquid, Wire). |
 
 ## Material Effects (MaterialEffect Enum)
-
 The `MaterialEffect` enum allows you to select specialized rendering logic:
 
 *   **`NONE` (0):** Standard block rendering.
