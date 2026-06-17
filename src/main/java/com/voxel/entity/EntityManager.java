@@ -1,6 +1,7 @@
 package com.voxel.entity;
 
 import com.voxel.world.DimensionType;
+import org.joml.Vector3f;
 import org.lwjgl.system.MemoryUtil;
 import java.nio.FloatBuffer;
 import java.util.ArrayList;
@@ -53,18 +54,28 @@ public class EntityManager {
      * Uploads all entities to GPU (legacy, for backward compatibility).
      */
     public void uploadToGPU() {
-        uploadToGPU(null);
+        uploadToGPU(null, null);
     }
 
     /**
      * Uploads entities to GPU, optionally filtering by dimension.
      * If activeDimension is null, all entities are uploaded.
-     * Otherwise, only entities matching the active dimension are uploaded.
+     * If cameraPos is provided, only entities within 64 blocks are uploaded.
      */
-    public void uploadToGPU(DimensionType activeDimension) {
+    public void uploadToGPU(DimensionType activeDimension, Vector3f cameraPos) {
+        float cullDistSq = cameraPos != null ? 64.0f * 64.0f : Float.MAX_VALUE; // 64-block radius
+
+        // First pass: count visible entities
         int visibleCount = 0;
         for (Entity e : entities) {
-            if (activeDimension == null || e.dimension == activeDimension) visibleCount++;
+            if (activeDimension != null && e.dimension != activeDimension) continue;
+            if (cameraPos != null) {
+                float dx = e.position.x - cameraPos.x;
+                float dy = e.position.y - cameraPos.y;
+                float dz = e.position.z - cameraPos.z;
+                if (dx * dx + dy * dy + dz * dz > cullDistSq) continue;
+            }
+            visibleCount++;
         }
 
         java.nio.ByteBuffer entityBuffer = MemoryUtil.memAlloc(visibleCount * ENTITY_STRIDE * 4);
@@ -72,6 +83,12 @@ public class EntityManager {
 
         for (Entity entity : entities) {
             if (activeDimension != null && entity.dimension != activeDimension) continue;
+            if (cameraPos != null) {
+                float dx = entity.position.x - cameraPos.x;
+                float dy = entity.position.y - cameraPos.y;
+                float dz = entity.position.z - cameraPos.z;
+                if (dx * dx + dy * dy + dz * dz > cullDistSq) continue;
+            }
             int partOffset = allParts.size();
             int partCount = entity.parts.size();
 

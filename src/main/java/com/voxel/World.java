@@ -217,17 +217,16 @@ public class World {
     /**
      * Sets a voxel ID with extra data packed into the upper bits.
      * The type occupies the lower 16 bits, and extra data occupies bits 16-23.
-     * Callers that need to store additional per-voxel information (e.g. redstone
-     * power level) should use this method. The extra data can be retrieved via
-     * {@link #getRawVoxel(int, int, int)} and masking the appropriate bits.
+     * Bit 31 is the solid flag (1=solid, 0=air) for GPU raytracing.
      */
     public void setVoxelInPool(int slot, int lx, int ly, int lz, int type, int extra) {
         int packed = (type & 0xFFFF) | ((extra & 0xFF) << 16);
+        if (type > 0) packed |= 0x80000000; // Solid flag for GPU
         int bitIdx = lx | (ly << 4) | (lz << 8);
         int poolIdx = (slot << 12) | bitIdx;
         chunkPool[poolIdx] = packed;
 
-        // Update Bitmask (1 bit per voxel)
+        // Update Bitmask (kept for CPU-side queries; GPU uses bit 31)
         int wordIdx = (slot << 7) | (bitIdx >> 5);
         int bit = 1 << (bitIdx & 31);
         if (type > 0) {
