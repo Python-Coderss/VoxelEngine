@@ -223,6 +223,7 @@ public class ChunkManager {
     public void markBiomeMapDirty() { biomeMapDirty.set(true); }
     public boolean needsLightUpload() { return lightsNeedUpload; }
     public void clearLightUpload() { lightsNeedUpload = false; }
+    public Map<Long, Integer[]> getLoadedChunks() { return loadedChunks; }
 
     // volatile guard: true while gen thread is modifying light pool
     private volatile boolean lightingActive = false;

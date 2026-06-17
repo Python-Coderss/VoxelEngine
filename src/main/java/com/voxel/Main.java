@@ -29,6 +29,8 @@ import com.voxel.world.RedstoneLogger;
 import com.voxel.world.RedstoneManager;
 import com.voxel.world.WorldGenLogger;
 import com.voxel.GameLogger;
+import org.joml.FrustumIntersection;
+import org.joml.Matrix4f;
 import org.joml.Vector2f;
 import org.joml.Vector2i;
 import org.joml.Vector3f;
@@ -108,9 +110,23 @@ public class Main {
     private int craftingItemSSBO;
     private java.util.Iterator<Integer> dirtyUploadIterator;
     private static final int MAX_DIRTY_UPLOADS_PER_FRAME = 48;
-    private int locSunDir, locSunColor, locMoonDir, locMoonColor, locSkyZenith, locSkyHorizon, locAmbient;
-    private int locDimensionID;
+    private int locQuadPass; // Cached quad shader u_Pass uniform
 
+    // ── Depth prepass: hardware-rasterized chunk AABBs for DDA sky-skip ──
+    private int chunkDepthProgram;       // chunk_depth.vert + chunk_depth.frag
+    private int chunkDepthFBO;           // FBO for depth + chunk-origin attachments
+    private int chunkDepthTex;           // GL_DEPTH_COMPONENT24 — rasterized depth
+    private int chunkOriginTex;          // GL_R32UI — packed chunk section coords
+    private int cubeVAO, cubeVBO;        // Unit cube mesh (36 vertices)
+    private int chunkVisibilitySSBO;     // Frustum-culled chunk section list
+    private IntBuffer chunkVisBuffer;    // CPU-side buffer for upload
+    private static final int MAX_VISIBLE_CHUNKS = 8192;
+    private int locVPMatrix;             // u_VP uniform in chunk_depth.vert
+    private int locWorldOffsetDepth;     // u_WorldOffset uniform in chunk_depth.vert
+    private int locDepthTex;             // u_DepthTex uniform in raytracer.comp
+    private int locChunkOriginTex;       // u_ChunkOriginTex uniform in raytracer.comp
+
+    private FloatBuffer persistentPlBuf; // Persistent FloatBuffer for pointLightSSBO (no per-frame alloc)
     private com.voxel.entity.EntityManager entityManager;
     private World world;
     private com.voxel.world.ChunkManager chunkManager;
@@ -223,7 +239,13 @@ public class Main {
     private float combatTime = 0.0f;
     private double lastAttackTime = 0;
     private double lastRollTime = 0;
+    private boolean inventoryUiDirty = true; // Skip updateInventoryUi when nothing changed
     private boolean combatMode = false;
+    // State tracking for skipping redundant UI updates
+    private boolean prevInventoryOpenForUi = false;
+    private boolean prevCommandModeForUi = false;
+    private int prevSelectedSlot = -1;
+    private float prevHealth = -1;
 
     private Vector4f uvHeartFull = new Vector4f(99, 2, 7, 7);
     private Vector4f uvHeartHalf = new Vector4f(108, 2, 7, 7);
@@ -264,6 +286,15 @@ public class Main {
         glDeleteBuffers(pointLightSSBO);
         glDeleteBuffers(lightSSBO);
         glDeleteBuffers(craftingItemSSBO);
+        glDeleteBuffers(chunkVisibilitySSBO);
+        glDeleteVertexArrays(cubeVAO);
+        glDeleteBuffers(cubeVBO);
+        glDeleteProgram(chunkDepthProgram);
+        glDeleteFramebuffers(chunkDepthFBO);
+        glDeleteTextures(chunkDepthTex);
+        glDeleteTextures(chunkOriginTex);
+        if (chunkVisBuffer != null) MemoryUtil.memFree(chunkVisBuffer);
+        if (persistentPlBuf != null) MemoryUtil.memFree(persistentPlBuf);
         chunkManager.shutdown();
         RedstoneLogger.shutdown();
         WorldGenLogger.shutdown();
@@ -304,8 +335,68 @@ public class Main {
         computeProgram = ShaderUtil.createProgram(
             ShaderUtil.compileShader("src/main/resources/shaders/raytracer.comp", GL_COMPUTE_SHADER)
         );
+        locQuadPass = glGetUniformLocation(quadProgram, "u_Pass"); // Cache to avoid per-frame lookup
         cacheUniformLocations();
-        cacheAtmosphereUniforms();
+        // Atmosphere uniforms handled by AtmosphereRenderer (no per-frame glGetUniformLocation)
+
+        // ── Depth prepass setup ──
+        chunkDepthProgram = ShaderUtil.createProgram(
+            ShaderUtil.compileShader("src/main/resources/shaders/chunk_depth.vert", GL_VERTEX_SHADER),
+            ShaderUtil.compileShader("src/main/resources/shaders/chunk_depth.frag", GL_FRAGMENT_SHADER)
+        );
+        locVPMatrix = glGetUniformLocation(chunkDepthProgram, "u_VP");
+        locWorldOffsetDepth = glGetUniformLocation(chunkDepthProgram, "u_WorldOffset");
+        locDepthTex = glGetUniformLocation(computeProgram, "u_DepthTex");
+        locChunkOriginTex = glGetUniformLocation(computeProgram, "u_ChunkOriginTex");
+
+        // FBO: depth attachment + GL_R32UI chunk origin attachment
+        chunkDepthFBO = glCreateFramebuffers();
+        chunkDepthTex = glCreateTextures(GL_TEXTURE_2D);
+        glTextureStorage2D(chunkDepthTex, 1, GL_DEPTH_COMPONENT24, width, height);
+        glTextureParameteri(chunkDepthTex, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTextureParameteri(chunkDepthTex, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTextureParameteri(chunkDepthTex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(chunkDepthTex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glNamedFramebufferTexture(chunkDepthFBO, GL_DEPTH_ATTACHMENT, chunkDepthTex, 0);
+
+        chunkOriginTex = glCreateTextures(GL_TEXTURE_2D);
+        glTextureStorage2D(chunkOriginTex, 1, GL_R32UI, width, height);
+        glTextureParameteri(chunkOriginTex, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTextureParameteri(chunkOriginTex, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glNamedFramebufferTexture(chunkDepthFBO, GL_COLOR_ATTACHMENT0, chunkOriginTex, 0);
+        glNamedFramebufferDrawBuffer(chunkDepthFBO, GL_COLOR_ATTACHMENT0);
+
+        int fboStatus = glCheckNamedFramebufferStatus(chunkDepthFBO, GL_FRAMEBUFFER);
+        if (fboStatus != GL_FRAMEBUFFER_COMPLETE) throw new RuntimeException("Depth prepass FBO incomplete: " + fboStatus);
+
+        // Cube VBO: unit cube (0,0,0) → (1,1,1), triangulated 36 vertices
+        // Corner defs: 0:(0,0,0) 1:(1,0,0) 2:(1,1,0) 3:(0,1,0) 4:(0,0,1) 5:(1,0,1) 6:(1,1,1) 7:(0,1,1)
+        float[] cubeVerts = {
+            // +Z face: 5(1,0,1),6(1,1,1),7(0,1,1), 5,7,4(0,0,1)
+            1,0,1, 1,1,1, 0,1,1, 1,0,1, 0,1,1, 0,0,1,
+            // -Z face: 0(0,0,0),3(0,1,0),2(1,1,0), 0,2,1(1,0,0)
+            0,0,0, 0,1,0, 1,1,0, 0,0,0, 1,1,0, 1,0,0,
+            // +X face: 1(1,0,0),2(1,1,0),6(1,1,1), 1,6,5(1,0,1)
+            1,0,0, 1,1,0, 1,1,1, 1,0,0, 1,1,1, 1,0,1,
+            // -X face: 0(0,0,0),4(0,0,1),7(0,1,1), 0,7,3(0,1,0)
+            0,0,0, 0,0,1, 0,1,1, 0,0,0, 0,1,1, 0,1,0,
+            // +Y face: 3(0,1,0),7(0,1,1),6(1,1,1), 3,6,2(1,1,0)
+            0,1,0, 0,1,1, 1,1,1, 0,1,0, 1,1,1, 1,1,0,
+            // -Y face: 0(0,0,0),1(1,0,0),5(1,0,1), 0,5,4(0,0,1)
+            0,0,0, 1,0,0, 1,0,1, 0,0,0, 1,0,1, 0,0,1
+        };
+        cubeVAO = glCreateVertexArrays();
+        cubeVBO = glCreateBuffers();
+        glNamedBufferStorage(cubeVBO, cubeVerts, 0);
+        glVertexArrayVertexBuffer(cubeVAO, 0, cubeVBO, 0, 3 * Float.BYTES);
+        glEnableVertexArrayAttrib(cubeVAO, 0);
+        glVertexArrayAttribFormat(cubeVAO, 0, 3, GL_FLOAT, false, 0);
+        glVertexArrayAttribBinding(cubeVAO, 0, 0);
+
+        // Chunk visibility SSBO: frustum-culled chunk section list
+        chunkVisibilitySSBO = glCreateBuffers();
+        glNamedBufferStorage(chunkVisibilitySSBO, (long) MAX_VISIBLE_CHUNKS * 4, GL_DYNAMIC_STORAGE_BIT);
+        chunkVisBuffer = MemoryUtil.memAllocInt(MAX_VISIBLE_CHUNKS);
 
         entityManager = new com.voxel.entity.EntityManager();
         com.voxel.entity.EnemyEntity.setEntityManager(entityManager);
@@ -378,6 +469,10 @@ public class Main {
         redstoneManager = new RedstoneManager(world, chunkManager);
         ctx.redstoneManager = redstoneManager;
 
+        // Persistent FloatBuffer for pointLightSSBO zeroing
+        persistentPlBuf = MemoryUtil.memAllocFloat(4);
+        persistentPlBuf.put(0, Float.intBitsToFloat(0));
+
         playerEntity = new com.voxel.entity.PlayerEntity(10_000, new Vector3f(player.getPosition()), textureManager);
         playerEntity.dimension = activeDimension;
         entityManager.addEntity(playerEntity);
@@ -408,16 +503,6 @@ public class Main {
         locCraftingItemCount = glGetUniformLocation(computeProgram, "u_CraftingItemCount");
     }
 
-    private void cacheAtmosphereUniforms() {
-        locSunDir = glGetUniformLocation(computeProgram, "u_SunDir");
-        locSunColor = glGetUniformLocation(computeProgram, "u_SunColor");
-        locMoonDir = glGetUniformLocation(computeProgram, "u_MoonDir");
-        locMoonColor = glGetUniformLocation(computeProgram, "u_MoonColor");
-        locSkyZenith = glGetUniformLocation(computeProgram, "u_SkyZenith");
-        locSkyHorizon = glGetUniformLocation(computeProgram, "u_SkyHorizon");
-        locAmbient = glGetUniformLocation(computeProgram, "u_Ambient");
-        locDimensionID = glGetUniformLocation(computeProgram, "u_DimensionID");
-    }
 
     private void spawnInitialEnemies(Player p) {
         for (int i = 0; i < 3; i++) {
@@ -512,7 +597,7 @@ public class Main {
                 background.uvScale = new Vector2f(uScaleInset, vScaleInset);
             }
             final int slotIndex = index;
-            background.onClick = () -> playerInventory.handleCraftingSlotClick(slotIndex);
+            background.onClick = () -> { playerInventory.handleCraftingSlotClick(slotIndex); inventoryUiDirty = true; };
             background.visible = false; // Hidden initially, shown with inventory
             craftingSlotBackgrounds[index] = background;
             layer.addElement(background);
@@ -554,7 +639,7 @@ public class Main {
                 new Vector4f(0.9f, 0.9f, 0.9f, 1)
             );
             final int slotIndex = i;
-            bg.onClick = () -> playerInventory.handleCrafting3x3SlotClick(slotIndex);
+            bg.onClick = () -> { playerInventory.handleCrafting3x3SlotClick(slotIndex); inventoryUiDirty = true; };
             bg.visible = false;
             crafting3x3SlotBackgrounds[i] = bg;
             layer.addElement(bg);
@@ -586,7 +671,7 @@ public class Main {
                 background.uvScale = new Vector2f(uScaleInset, vScaleInset);
             }
             final int slotIndex = index;
-            background.onClick = () -> playerInventory.handleInventorySlotClick(slotIndex);
+            background.onClick = () -> { playerInventory.handleInventorySlotClick(slotIndex); inventoryUiDirty = true; };
             slotBackgrounds[index] = background;
             layer.addElement(background);
 
@@ -704,7 +789,7 @@ public class Main {
             new Vector4f(0.9f, 0.9f, 0.9f, 1)
         );
         furnaceInputBg.visible = false;
-        furnaceInputBg.onClick = () -> handleFurnaceSlotClick(0);
+        furnaceInputBg.onClick = () -> { handleFurnaceSlotClick(0); inventoryUiDirty = true; };
         layer.addElement(furnaceInputBg);
 
         furnaceInputItem = new UILayer.UIElement(
@@ -722,7 +807,7 @@ public class Main {
             new Vector4f(0.85f, 0.85f, 0.7f, 1)
         );
         furnaceFuelBg.visible = false;
-        furnaceFuelBg.onClick = () -> handleFurnaceSlotClick(1);
+        furnaceFuelBg.onClick = () -> { handleFurnaceSlotClick(1); inventoryUiDirty = true; };
         layer.addElement(furnaceFuelBg);
 
         furnaceFuelItem = new UILayer.UIElement(
@@ -757,7 +842,7 @@ public class Main {
             new Vector4f(0.9f, 0.8f, 0.7f, 1)
         );
         furnaceOutputBg.visible = false;
-        furnaceOutputBg.onClick = () -> handleFurnaceSlotClick(2);
+        furnaceOutputBg.onClick = () -> { handleFurnaceSlotClick(2); inventoryUiDirty = true; };
         layer.addElement(furnaceOutputBg);
 
         furnaceOutputItem = new UILayer.UIElement(
@@ -803,7 +888,7 @@ public class Main {
                 new Vector4f(0.85f, 0.7f, 0.55f, 1)
             );
             final int slotIdx = i;
-            bg.onClick = () -> handleChestSlotClick(slotIdx);
+            bg.onClick = () -> { handleChestSlotClick(slotIdx); inventoryUiDirty = true; };
             bg.visible = false;
             chestSlotBackgrounds[i] = bg;
             layer.addElement(bg);
@@ -1368,16 +1453,50 @@ public class Main {
             for (UILayer layer : uiLayers) layer.render(uiManager);
             uiManager.end();
 
-            entityManager.uploadToGPU(activeDimension);
-
-            FloatBuffer plBuf = MemoryUtil.memAllocFloat(4);
-            plBuf.put(0, Float.intBitsToFloat(0));
-            glNamedBufferSubData(pointLightSSBO, 0, plBuf);
-            MemoryUtil.memFree(plBuf);
-
             Vector3f cameraPos = getActiveCameraPosition();
+
+            entityManager.uploadToGPU(activeDimension, cameraPos);
+
+            persistentPlBuf.rewind();
+            glNamedBufferSubData(pointLightSSBO, 0, persistentPlBuf);
+
+            // Compute camera vectors early (used by prepass and compute dispatch)
+            double ry = Math.toRadians(yaw), rp = Math.toRadians(pitch);
+            float fx = (float) (Math.cos(ry) * Math.cos(rp)), fy = (float) Math.sin(rp), fz = (float) (Math.sin(ry) * Math.cos(rp));
+            float rx = -fz, rz = fx;
+            float rl = (float) Math.sqrt(rx * rx + rz * rz);
+            if (rl > 0) { rx /= rl; rz /= rl; }
+            float ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;
             
-            // Add Camera Shake
+            // ── Depth prepass: hardware-rasterize chunk section AABBs ──
+            // Frustum-cull loaded chunks, draw instanced cubes into FBO
+            int visibleCount = buildVisibleChunkList(cameraPos, fx, fy, fz);
+            glBindFramebuffer(GL_FRAMEBUFFER, chunkDepthFBO);
+            glClearDepth(1.0);
+            glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
+            if (visibleCount > 0) {
+                glNamedBufferSubData(chunkVisibilitySSBO, 0, chunkVisBuffer);
+                glUseProgram(chunkDepthProgram);
+                glUniform3i(locWorldOffsetDepth, world.getOffsetX(), world.getOffsetY(), world.getOffsetZ());
+                float fovRad = (float) Math.toRadians(70.0);
+                float aspect = (float) width / height;
+                Matrix4f proj = new Matrix4f().perspective(fovRad, aspect, 0.1f, 2048.0f);
+                Vector3f lookTarget = new Vector3f(cameraPos.x + fx, cameraPos.y + fy, cameraPos.z + fz);
+                Matrix4f view = new Matrix4f().lookAt(cameraPos, lookTarget, new Vector3f(0, 1, 0));
+                Matrix4f vp = new Matrix4f(proj).mul(view);
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    glUniformMatrix4fv(locVPMatrix, false, vp.get(stack.mallocFloat(16)));
+                }
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, chunkVisibilitySSBO);
+                glBindVertexArray(cubeVAO);
+                glEnable(GL_DEPTH_TEST);
+                glDepthFunc(GL_LESS);
+                glDrawArraysInstanced(GL_TRIANGLES, 0, 36, visibleCount);
+                glDisable(GL_DEPTH_TEST);
+            }
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            
+            // Add Camera Shake (after prepass so depth coords are stable)
             if (cameraShake > 0.01f) {
                 cameraPos.x += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
                 cameraPos.y += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
@@ -1387,23 +1506,13 @@ public class Main {
             glUseProgram(computeProgram);
             glProgramUniform3f(computeProgram, 0, cameraPos.x, cameraPos.y, cameraPos.z);
 
-            double ry = Math.toRadians(yaw), rp = Math.toRadians(pitch);
-            float fx = (float) (Math.cos(ry) * Math.cos(rp)), fy = (float) Math.sin(rp), fz = (float) (Math.sin(ry) * Math.cos(rp));
-            float rx = -fz, rz = fx;
-            float rl = (float) Math.sqrt(rx * rx + rz * rz);
-            if (rl > 0) {
-                rx /= rl;
-                rz /= rl;
-            }
-            float ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;
-
             glProgramUniform3f(computeProgram, 1, fx, fy, fz);
             glProgramUniform3f(computeProgram, 2, rx, 0, rz);
             glProgramUniform3f(computeProgram, 3, ux, uy, uz);
             glProgramUniform1f(computeProgram, 4, worldTime);
             glProgramUniform1i(computeProgram, 5, entityManager.getEntityCount(activeDimension));
             atmosphereRenderer.upload(worldTime, activeDimension);
-            glProgramUniform1i(computeProgram, locDimensionID, activeDimension.id);
+            glProgramUniform1i(computeProgram, atmosphereRenderer.locDimensionID(), activeDimension.id);
             // Upload world sliding window offset
             glProgramUniform3i(computeProgram, 6, world.getOffsetX(), world.getOffsetY(), world.getOffsetZ());
 
@@ -1427,6 +1536,14 @@ public class Main {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, craftingItemSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, lightSSBO);
 
+            // Bind depth prepass textures for compute shader (sky early-out)
+            glActiveTexture(GL_TEXTURE18);
+            glBindTexture(GL_TEXTURE_2D, chunkDepthTex);
+            glUniform1i(locDepthTex, 18);
+            glActiveTexture(GL_TEXTURE19);
+            glBindTexture(GL_TEXTURE_2D, chunkOriginTex);
+            glUniform1i(locChunkOriginTex, 19);
+
             uploadCraftingItems();
 
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
@@ -1438,7 +1555,7 @@ public class Main {
             glClear(GL_COLOR_BUFFER_BIT);
             glUseProgram(quadProgram);
             glBindTextureUnit(0, renderTexture);
-            glUniform1i(glGetUniformLocation(quadProgram, "u_Pass"), 1);
+            glUniform1i(locQuadPass, 1);
             glBindVertexArray(quadVAO);
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
@@ -1639,6 +1756,7 @@ public class Main {
             if (cell >= 0) {
                 System.out.println("Crafting: slot click " + cell);
                 playerInventory.handleCrafting3x3SlotClick(cell);
+                inventoryUiDirty = true;
                 return;
             }
             System.out.println("Crafting: cell miss, falling through to UI");
@@ -1665,6 +1783,7 @@ public class Main {
 
     private void openCommandMode() {
         if (inventoryOpen) setInventoryOpen(false);
+        inventoryUiDirty = true;
         commandMode = true;
         ctx.commandMode = true;
         ctx.leftMousePressedThisFrame = false; // prevent stale press from inventory
@@ -1673,6 +1792,7 @@ public class Main {
     }
 
     private void cancelCommandMode() {
+        inventoryUiDirty = true;
         commandMode = false;
         ctx.commandMode = false;
         commandBuffer.setLength(0);
@@ -1680,6 +1800,7 @@ public class Main {
     }
 
     private void toggleInventory() {
+        inventoryUiDirty = true;
         setInventoryOpen(!inventoryOpen);
     }
 
@@ -1690,6 +1811,7 @@ public class Main {
     }
 
     private void setInventoryOpen(boolean open) {
+        inventoryUiDirty = true;
         inventoryOpen = open;
         ctx.inventoryOpen = open;
         if (open) {
@@ -1765,7 +1887,65 @@ public class Main {
         statusUntil = glfwGetTime() + 3.0;
         statusLineOffset = 0;
         System.out.println(message);
-    }    private void updateInventoryUi() {
+    }
+
+    /** Frustum-cull loaded chunk sections and build packed visibility list for depth prepass. */
+    private int buildVisibleChunkList(Vector3f camPos, float fx, float fy, float fz) {
+        chunkVisBuffer.clear(); // Reset limit to capacity so absolute puts don't throw
+        int count = 0;
+        int worldOx = world.getOffsetX(), worldOy = world.getOffsetY(), worldOz = world.getOffsetZ();
+        float fovRad = (float) Math.toRadians(70.0);
+        float aspect = (float) width / height;
+        Matrix4f proj = new Matrix4f().perspective(fovRad, aspect, 0.1f, 2048.0f);
+        Vector3f lookTarget = new Vector3f(camPos.x + fx, camPos.y + fy, camPos.z + fz);
+        Matrix4f viewM = new Matrix4f().lookAt(camPos, lookTarget, new Vector3f(0, 1, 0));
+        FrustumIntersection frustum = new FrustumIntersection(new Matrix4f(proj).mul(viewM));
+        for (Map.Entry<Long, Integer[]> entry : chunkManager.getLoadedChunks().entrySet()) {
+            long key = entry.getKey();
+            int absCX = (int) (key >> 32), absCZ = (int) key;
+            Integer[] slots = entry.getValue();
+            int relCX = absCX - (worldOx >> 4), relCZ = absCZ - (worldOz >> 4);
+            for (int cy = 0; cy < 16; cy++) {
+                if (slots[cy] == World.EMPTY) continue;
+                if (count >= MAX_VISIBLE_CHUNKS) break;
+                float minX = absCX << 4, minZ = absCZ << 4;
+                float minY = (cy << 4) + worldOy;
+                if (frustum.testAab(minX, minY, minZ, minX + 16, minY + 16, minZ + 16)) {
+                    chunkVisBuffer.put(count++, relCX | (cy << 8) | (relCZ << 16));
+                }
+            }
+            if (count >= MAX_VISIBLE_CHUNKS) break;
+        }
+        chunkVisBuffer.position(0).limit(Math.max(count, 1));
+        return count;
+    }
+
+    private void updateInventoryUi() {
+        // Always update carried item position (drag-and-drop follows mouse every frame)
+        ItemStack carried = playerInventory.getCarriedStack();
+        carriedItemElement.visible = inventoryOpen && carried != null;
+        if (carriedItemElement.visible) {
+            ItemDefinition carriedDef = itemDefinitions.getDefinition(carried.itemId);
+            carriedItemElement.textureId = textureManager.getTextureArrayId();
+            carriedItemElement.textureType = 2;
+            carriedItemElement.layer = carriedDef.iconLayer;
+            carriedItemElement.color.set(1, 1, 1, 0.9f);
+            carriedItemElement.pos.set(lastMouseX - 14, lastMouseY - 14);
+            carriedItemElement.size.set(28, 28);
+        }
+
+        // Skip full UI rebuild when nothing has changed (save ~200 element updates/frame)
+        int selSlot = playerInventory.getSelectedSlot();
+        float hp = player.getHealth();
+        if (!inventoryUiDirty && inventoryOpen == prevInventoryOpenForUi && commandMode == prevCommandModeForUi
+                && selSlot == prevSelectedSlot && Math.abs(hp - prevHealth) < 0.05f) {
+            return;
+        }
+        inventoryUiDirty = false;
+        prevInventoryOpenForUi = inventoryOpen;
+        prevCommandModeForUi = commandMode;
+        prevSelectedSlot = selSlot;
+        prevHealth = hp;
         double time = glfwGetTime();
         crosshairElement.visible = !inventoryOpen && !commandMode;
         inventoryPanelElement.visible = inventoryOpen;
@@ -2168,17 +2348,6 @@ public class Main {
             }
         }
 
-        carriedItemElement.visible = inventoryOpen && playerInventory.getCarriedStack() != null;
-        if (carriedItemElement.visible) {
-            ItemDefinition definition = itemDefinitions.getDefinition(playerInventory.getCarriedStack().itemId);
-            carriedItemElement.textureId = textureManager.getTextureArrayId();
-            carriedItemElement.textureType = 2; // Array
-            carriedItemElement.layer = definition.iconLayer;
-            carriedItemElement.color.set(1, 1, 1, 0.9f);
-            carriedItemElement.pos.set(lastMouseX - 14, lastMouseY - 14);
-            carriedItemElement.size.set(28, 28);
-        }
-
         if (itemNameDisplayUntil > time) {
             itemNameElement.visible = true;
             float alpha = (float) Math.min(1.0, (itemNameDisplayUntil - time) / 0.5);
@@ -2201,7 +2370,7 @@ public class Main {
         }
 
         // Update Player Hearts
-        float hp = player.getHealth();
+        hp = player.getHealth();
         for (int i = 0; i < 10; i++) {
             float texW = uiTextureSize.x;
             float texH = uiTextureSize.y;
@@ -2494,7 +2663,7 @@ public class Main {
         blockDataManager.registerBlock(104, "skyroot_leaves", textureManager, aetherModels);
         blockDataManager.registerBlock(105, "aerogel", textureManager, aetherModels, 120, 30, 255);
         blockDataManager.registerBlock(106, "aether_portal_ns", textureManager, aetherModels, 0, 0, 255, 0);
-        blockDataManager.registerBlock(115, "aether_portal_ew", textureManager, aetherModels, 0, 0, 255, 0);
+        blockDataManager.registerBlock(127, "aether_portal_ew", textureManager, aetherModels, 0, 0, 255, 0);
         
         blockDataManager.registerBlock(107, "ambrosium_ore", textureManager, aetherModels);
         blockDataManager.registerBlock(108, "gravitite_ore", textureManager, aetherModels);
@@ -2504,6 +2673,11 @@ public class Main {
         blockDataManager.registerBlock(112, "skyroot_planks", textureManager, aetherModels);
         blockDataManager.registerBlock(113, "mossy_holystone", textureManager, aetherModels);
         blockDataManager.registerBlock(114, "holystone_bricks", textureManager, aetherModels);
+        // --- Functional Blocks (crafting table, furnace, chest) ---
+        blockDataManager.registerBlock(115, "crafting_table", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(116, "furnace_off", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(117, "furnace_on", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(118, "chest", textureManager, "src/main/resources/assets/minecraft/models/block");
         // --- Vegetation & Decorative Blocks ---
         blockDataManager.registerBlock(119, "birch_log", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockDataManager.registerBlock(120, "spruce_log", textureManager, "src/main/resources/assets/minecraft/models/block");

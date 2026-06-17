@@ -17,6 +17,15 @@ layout(location = 6) uniform ivec3 u_WorldOffset;
 layout(location = 10) uniform int u_DimensionID;
 layout(location = 11) uniform int u_CraftingItemCount;
 
+// Pre-computed atmosphere uniforms (set by AtmosphereRenderer on CPU)
+layout(location = 12) uniform vec3 u_SunDir;
+layout(location = 13) uniform vec3 u_SunColor;
+layout(location = 14) uniform vec3 u_MoonDir;
+layout(location = 15) uniform vec3 u_MoonColor;
+layout(location = 16) uniform vec3 u_SkyZenith;
+layout(location = 17) uniform vec3 u_SkyHorizon;
+layout(location = 18) uniform vec3 u_Ambient;
+
 // SSBOs
 layout(std430, binding = 1) buffer readonly restrict IndirectionTable { uint chunkSlots[]; };
 layout(std430, binding = 2) buffer readonly restrict ChunkPool { uint voxelPool[]; };
@@ -59,6 +68,11 @@ uniform sampler2D u_GrassColormap;
 uniform sampler2D u_FoliageColormap;
 uniform sampler2D u_UITexture;
 uniform sampler2D u_UISource;
+
+// Depth prepass textures: hardware-rasterized chunk AABB depth + chunk origin
+uniform sampler2D u_DepthTex;
+uniform usampler2D u_ChunkOriginTex;
+
 layout(location = 7) uniform vec4 u_HeartUVs[3]; // [0]=Full, [1]=Half, [2]=Empty
 
 const int WORLD_SIZE = 2048;
@@ -234,6 +248,14 @@ vec2 entityCuboidAtlasUv(vec3 localPos, vec3 localNormal, vec3 halfSize, PartDat
     return (p0 + uvInFace * (p1 - p0)) / 64.0;
 }
 
+// ── Chunk-entry skip: compute world-space chunk AABB from packed origin coords ──
+// Used by main() to jump DDA to the rasterized chunk entry point
+void getChunkAABB(uint packedv, out vec3 bMin, out vec3 bMax) {
+    ivec3 chunkCoord = ivec3(int(packedv & 0xFFu), int((packedv >> 8) & 0xFFu), int((packedv >> 16) & 0xFFu));
+    bMin = vec3(chunkCoord) * 16.0 + vec3(u_WorldOffset);
+    bMax = bMin + 16.0;
+}
+
 int advanceDDA(inout ivec3 mp, inout vec3 sd, vec3 dd, ivec3 s) {
     int side = (sd.x < sd.y) ? (sd.x < sd.z ? 0 : 2) : (sd.y < sd.z ? 1 : 2);
     if (side == 0) { sd.x += dd.x; mp.x += s.x; }
@@ -254,9 +276,12 @@ int skipChunk(inout ivec3 mp, inout vec3 sd, vec3 dd, ivec3 s) {
     return side;
 }
 
+// Solid bit is packed as bit 31 of the voxel value in chunkPool
+// Eliminates the separate bitmask SSBO read
 bool isBitSolid(uint slot, ivec3 p) {
     int bi = (p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8);
-    return (bitmasks[(slot << 7) | (bi >> 5)] & (1u << (bi & 31))) != 0;
+    uint raw = voxelPool[(slot << 12) | bi];
+    return (raw >> 31) != 0u;
 }
 
 uint getVoxelOcclusion(ivec3 p) {
@@ -429,10 +454,10 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT, 
         EntityData ent = entities[i];
         roToEnt = ent.position - ro;
         entDistSq = dot(roToEnt, roToEnt);
-        // Skip entities > 128 blocks away (far beyond render distance)
-        if (entDistSq > 16384.0) continue;
-        // Skip entities behind the camera and more than 48 blocks away
-        if (dot(roToEnt, rd) < 0.0 && entDistSq > 400.0) continue;
+        // Skip entities > 32 blocks away (tight cull; CPU pre-filters <= 64 blocks)
+        if (entDistSq > 1024.0) continue;
+        // Skip entities behind the camera and more than 16 blocks away
+        if (dot(roToEnt, rd) < 0.0 && entDistSq > 256.0) continue;
         
         mat3 entRotation = rotationMatrix(ent.rotation);
         
@@ -558,9 +583,30 @@ void main() {
     vec4 uiCol = texture(u_UITexture, (vec2(px) + 0.5) / vec2(sz));
     if (uiCol.a >= 0.99) { imageStore(imgOutput, px, vec4(pow(uiCol.rgb, vec3(1.0/2.2)), 1.0)); return; }
 
-    Atmosphere at = GetAtmosphere(u_Time);
+    // Atmosphere pre-computed on CPU (AtmosphereRenderer) — avoids per-pixel computation
+    Atmosphere at;
+    at.sunDir = u_SunDir;
+    at.moonDir = u_MoonDir;
+    at.sunColor = u_SunColor;
+    at.moonColor = u_MoonColor;
+    at.skyZenith = u_SkyZenith;
+    at.skyHorizon = u_SkyHorizon;
+    at.ambient = u_Ambient;
     vec3 final = vec3(0.0), throu = vec3(1.0), ro = camPos; bool skip = false;
     uint lastTransVoxel = 0xFFFFFFFFu; // Track last translucent block type to skip same-type faces
+
+    // ── Depth prepass: hardware-rasterized chunk AABBs tell us if there's a chunk here ──
+    // Sky pixels (depth >= 1.0) skip ALL DDA — massive win when looking up (~90% of pixels)
+    // For chunk-hit pixels, DDA starts from camera position (avoids Z-fighting at boundaries)
+    float depthVal = texelFetch(u_DepthTex, px, 0).r;
+    if (depthVal >= 1.0) {
+        // No chunk in this direction — pure sky, zero DDA cost
+        vec3 sky = GetSky(rd, at);
+        vec3 result = ACESFilm(sky);
+        if (uiCol.a > 0.0) result = mix(result, uiCol.rgb, uiCol.a);
+        imageStore(imgOutput, px, vec4(pow(result, vec3(1.0/2.2)), 1.0));
+        return;
+    }
 
     for (int b = 0; b < 2; b++) {  // reduced from 4 → 2 bounces for perf
         float t; vec3 n; uint voxel, eTex, wirePower, wireConn; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx;
