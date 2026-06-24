@@ -2,6 +2,7 @@ package com.voxel.world;
 
 import com.voxel.World;
 import com.voxel.lighting.LightPropagationEngine;
+import com.voxel.lighting.LightEngine;
 import com.voxel.utils.BiomeManager;
 import com.voxel.utils.BlockDataManager;
 
@@ -44,7 +45,8 @@ public class DimensionManager {
             generator = new DimensionWorldGenerator(type, blockDataManager);
         }
         LightPropagationEngine lightEngine = new LightPropagationEngine(world, blockDataManager);
-        ChunkManager chunkManager = new ChunkManager(world, generator, lightEngine, renderDistance, saveManager, type, biomeManager, blockDataManager);
+        LightEngine newLightEngine = new LightEngine(world, blockDataManager);
+        ChunkManager chunkManager = new ChunkManager(world, generator, lightEngine, newLightEngine, renderDistance, saveManager, type, biomeManager, blockDataManager);
 
         // Wire the biome provider into BiomeManager so the tint map reflects actual biomes
         if (biomeManager != null && generator.getBiomeProvider() != null) {

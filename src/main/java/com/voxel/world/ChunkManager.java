@@ -3,18 +3,18 @@ package com.voxel.world;
 import com.voxel.GameLogger;
 import com.voxel.World;
 import com.voxel.lighting.LightPropagationEngine;
-import com.voxel.lighting.LightSource;
-import com.voxel.lighting.LightType;
+import com.voxel.lighting.LightEngine;
 import com.voxel.utils.BiomeManager;
 import com.voxel.utils.BlockDataManager;
 import org.joml.Vector3f;
-import org.joml.Vector3i;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.voxel.world.WorldSaveManager;
 import com.voxel.world.DimensionType;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Manages chunk loading and unloading on a SINGLE dedicated world-gen thread.
@@ -30,6 +30,7 @@ public class ChunkManager {
     private final World world;
     private final WorldGenerator generator;
     private final LightPropagationEngine lightEngine;
+    private final LightEngine mcLightEngine;
     private final BlockDataManager blockDataManager;
     private final WorldSaveManager saveManager;
     private final BiomeManager biomeManager;
@@ -59,11 +60,17 @@ public class ChunkManager {
     private int lastPlayerCX = -1000, lastPlayerCZ = -1000;
     private float lastYaw = 0;
 
-    // ── Lighting: per-source BFS tracking (LinkedHashSet for deterministic iteration) ──
-    private final Map<Long, Set<Long>> chunkLightSources = new HashMap<>();
+    // ── Lighting ──
     private volatile boolean lightsNeedUpload = false;
 
-    // ── Deferred lighting: chunks waiting for 5×5 grid to load before BFS runs ──
+    // ── Dedicated lighting thread: processes all BFS work off the gen thread ──
+    private final BlockingDeque<Runnable> lightQueue = new LinkedBlockingDeque<>();
+    private final Thread lightThread;
+    private volatile boolean lightRunning = true;
+    // Cancelled light task keys: gen thread signals this before unload; light thread checks before doing work
+    private final Set<Long> cancelledLightTasks = ConcurrentHashMap.newKeySet();
+
+    // ── Deferred lighting: chunks waiting for 5×5 grid to load before light runs ──
     private final Set<Long> pendingLighting = new HashSet<>();
     private static final int LIGHT_GRID_RADIUS = 5; // 11×11 player zone: which chunks to light
     private static final int BFS_WAIT_RADIUS = 2;   // 5×5 BFS wait zone: 24 neighbors must be loaded before BFS runs
@@ -73,11 +80,13 @@ public class ChunkManager {
     private static final int BUFFER_HALF_CHUNKS = World.REGION_SIZE / 2;
 
     public ChunkManager(World world, WorldGenerator generator, LightPropagationEngine lightEngine,
+                        LightEngine mcLightEngine,
                         int renderDistance, WorldSaveManager saveManager, DimensionType dimension,
                         BiomeManager biomeManager, BlockDataManager blockDataManager) {
         this.world = world;
         this.generator = generator;
         this.lightEngine = lightEngine;
+        this.mcLightEngine = mcLightEngine;
         this.saveManager = saveManager;
         this.biomeManager = biomeManager;
         this.blockDataManager = blockDataManager;
@@ -96,6 +105,11 @@ public class ChunkManager {
         genThread = new Thread(this::runGenLoop, "WorldGen");
         genThread.setDaemon(true);
         genThread.start();
+
+        // Start the dedicated lighting thread (offloads BFS from gen thread)
+        lightThread = new Thread(this::runLightLoop, "Lighting");
+        lightThread.setDaemon(true);
+        lightThread.start();
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -116,6 +130,56 @@ public class ChunkManager {
         }
         // Queue is deliberately NOT drained on shutdown — stale tasks
         // from a previous dimension are discarded, not processed.
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  LIGHT THREAD LOOP — processes BFS work off the gen thread
+    // ══════════════════════════════════════════════════════════════════
+
+    private void runLightLoop() {
+        while (lightRunning) {
+            try {
+                Runnable task = lightQueue.take();
+                task.run();
+            } catch (InterruptedException e) {
+                if (!lightRunning) break;
+            } catch (Exception e) {
+                WorldGenLogger.log("LIGHT_THREAD error: " + e.getMessage());
+                e.printStackTrace();
+            }
+        }
+        // Drain remaining tasks on shutdown (unlike gen thread) so light pool is consistent
+        Runnable task;
+        while ((task = lightQueue.poll()) != null) {
+            try { task.run(); } catch (Exception ignored) {}
+        }
+    }
+
+    /**
+     * Posts a lighting task to the dedicated light thread.
+     * The task checks cancellation and verifies slots haven't changed (prevents stale-slot
+     * corruption when a chunk is unloaded and immediately reloaded).
+     * @param chunkKey The chunk key for cancellation tracking
+     * @param expectedSlots The slot array the task should operate on, or null if dynamic
+     * @param work The lighting work to perform
+     */
+    private void postLightTask(long chunkKey, Integer[] expectedSlots, Runnable work) {
+        lightQueue.addLast(() -> {
+            if (cancelledLightTasks.remove(chunkKey)) return; // cancelled by unload
+            // Verify slots haven't changed (chunk wasn't unloaded and reloaded)
+            if (expectedSlots != null && loadedChunks.get(chunkKey) != expectedSlots) return;
+            lightingActiveCount.incrementAndGet();
+            try {
+                work.run();
+            } finally {
+                lightingActiveCount.decrementAndGet();
+            }
+        });
+    }
+
+    /** Convenience overload for tasks that don't capture slots (dynamic lookup). */
+    private void postLightTask(long chunkKey, Runnable work) {
+        postLightTask(chunkKey, null, work);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -158,30 +222,32 @@ public class ChunkManager {
         int slot = world.getChunkSlot(x, y, z);
         if (slot == World.EMPTY) return false;
 
-        int oldBlock = world.getVoxel(x, y, z);
         world.setVoxel(x, y, z, type);
 
         int cx = x >> 4;
         int cy = y >> 4;
         int cz = z >> 4;
 
-        boolean isEmissiveNew = blockDataManager.isEmissive(type);
-        boolean isEmissiveOld = blockDataManager.isEmissive(oldBlock);
-
         // Always mark slot dirty synchronously so GPU sees voxel data change immediately.
         // Lighting BFS is deferred to gen thread (async), but occlusion is baked sync.
         lightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
         dirtySlots.add(slot);
 
-        // Post per-source add/remove tasks to the gen thread
-        if (isEmissiveOld) {
-            int oldId = oldBlock;
-            taskQueue.addLast(() -> removeLightSource(x, y, z, oldId));
-        }
-        if (isEmissiveNew) {
-            int newId = type;
-            taskQueue.addLast(() -> addLightSourceFromBlock(x, y, z, newId));
-        }
+        // Post lighting updates to the dedicated light thread unconditionally
+        // (block changes always affect light: placing blocks creates shadows, breaking lets light through)
+        final int colCx = x >> 4;
+        final int colCz = z >> 4;
+        long colKey = chunkKey(colCx, colCz);
+        postLightTask(colKey, () -> {
+            Set<Integer> aff = mcLightEngine.checkBlockLight(x, y, z);
+            Integer[] colSlots = loadedChunks.get(colKey);
+            if (colSlots != null) {
+                aff.addAll(mcLightEngine.generateSkyLight(colCx, colCz, colSlots));
+            }
+            dirtySlots.addAll(aff);
+            lightsNeedUpload = true;
+            tableDirty.set(true);
+        });
         return true;
     }
 
@@ -193,23 +259,25 @@ public class ChunkManager {
         int slot = world.getChunkSlot(x, y, z);
         if (slot == World.EMPTY) return false;
 
-        int oldBlock = world.getVoxel(x, y, z);
         world.setVoxelWithData(x, y, z, type, extra);
-
-        boolean isEmissiveNew = blockDataManager.isEmissive(type);
-        boolean isEmissiveOld = blockDataManager.isEmissive(oldBlock);
 
         // Always mark dirty synchronously so GPU sees voxel data change immediately.
         dirtySlots.add(slot);
 
-        if (isEmissiveOld) {
-            int oldId = oldBlock;
-            taskQueue.addLast(() -> removeLightSource(x, y, z, oldId));
-        }
-        if (isEmissiveNew) {
-            int newId = type;
-            taskQueue.addLast(() -> addLightSourceFromBlock(x, y, z, newId));
-        }
+        // Post lighting updates to the dedicated light thread unconditionally
+        final int colCx2 = x >> 4;
+        final int colCz2 = z >> 4;
+        long colKey2 = chunkKey(colCx2, colCz2);
+        postLightTask(colKey2, () -> {
+            Set<Integer> aff = mcLightEngine.checkBlockLight(x, y, z);
+            Integer[] colSlots = loadedChunks.get(colKey2);
+            if (colSlots != null) {
+                aff.addAll(mcLightEngine.generateSkyLight(colCx2, colCz2, colSlots));
+            }
+            dirtySlots.addAll(aff);
+            lightsNeedUpload = true;
+            tableDirty.set(true);
+        });
         return true;
     }
 
@@ -225,15 +293,20 @@ public class ChunkManager {
     public void clearLightUpload() { lightsNeedUpload = false; }
     public Map<Long, Integer[]> getLoadedChunks() { return loadedChunks; }
 
-    // volatile guard: true while gen thread is modifying light pool
-    private volatile boolean lightingActive = false;
-    public boolean isLightingActive() { return lightingActive; }
+    // volatile guard: true while any thread (gen or light) is modifying light pool
+    private final AtomicInteger lightingActiveCount = new AtomicInteger(0);
+    public boolean isLightingActive() { return lightingActiveCount.get() > 0; }
 
     public void shutdown() {
         running = false;
         taskQueue.clear(); // Discard stale tasks from old dimension
         genThread.interrupt();
         try { genThread.join(5000); } catch (InterruptedException ignored) {}
+
+        // Shut down light thread
+        lightRunning = false;
+        lightThread.interrupt();
+        try { lightThread.join(5000); } catch (InterruptedException ignored) {}
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -482,6 +555,8 @@ public class ChunkManager {
 
         // Register in loadedChunks and indirection table
         loadedChunks.put(key, slots);
+        // Clear any stale cancellation from a previous unload of this chunk position
+        cancelledLightTasks.remove(key);
         for (int sectionY = 0; sectionY < chunkHeight; sectionY++) {
             world.setChunkSlot(cx, sectionY, cz, slots[sectionY]);
         }
@@ -492,28 +567,26 @@ public class ChunkManager {
                 world.setChunkSlot(cx, sectionY, cz, slots[sectionY]);
             }
             WorldGenLogger.logChunk("LOAD_DISK", cx, -1, cz, "loaded from disk, clearing stale light pool and baking occlusion");
-            // Clear stale light pool data from recycled slots before additive BFS.
-            // Without this, values from a previous run's chunks cause updateVoxelLight
-            // to skip propagation (already 255, or wrong color).
-            int[] lp = world.getLightPool();
+            // Clear stale light pool data from recycled slots
             for (int cy = 0; cy < chunkHeight; cy++) {
                 int s = slots[cy];
-                int base = s << 12;
-                for (int i = 0; i < 4096; i++) lp[base + i] = 0;
+                world.clearLightPoolSlot(s);
                 lightEngine.bakeChunkOcclusion(s, cx, cy, cz);
                 dirtySlots.add(s);
             }
             tableDirty.set(true);
-            // Lighting only within 11×11 grid around player; outside chunks stay dark.
-            // Defer ALL BFS until 5×5 grid around this chunk is fully loaded so light can
-            // propagate across chunk boundaries without cutting off at unloaded neighbors.
+            // Minecraft-style lighting: posted to dedicated light thread
             if (Math.abs(cx - lastPlayerCX) <= LIGHT_GRID_RADIUS && Math.abs(cz - lastPlayerCZ) <= LIGHT_GRID_RADIUS) {
                 if (is5x5Loaded(cx, cz)) {
-                    repropagateNeighborLights(cx, cz);
-                    if (hasEmissiveSource(cx, cz, slots)) {
-                        scanAndAddLightSources(cx, cz, slots);
-                    }
-                    runPendingLightingIn5x5(cx, cz);
+                    postLightTask(key, slots, () -> {
+                        dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, slots));
+                        for (int cy = 0; cy < chunkHeight; cy++) {
+                            dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, cy, cz, slots[cy]));
+                        }
+                        lightsNeedUpload = true;
+                        tableDirty.set(true);
+                        runPendingLightingIn5x5(cx, cz);
+                    });
                 } else {
                     pendingLighting.add(chunkKey(cx, cz));
                     GameLogger.log("LIGHT deferred chunk(" + cx + "," + cz + ") waiting for 5×5 grid");
@@ -564,20 +637,23 @@ public class ChunkManager {
         WorldGenLogger.logChunk("GEN_PASS3_BAKE", cx, -1, cz,
             "occlusion baked (" + (System.currentTimeMillis() - t3) + "ms)");
 
-        // Pass 4: Commit — final re-registration
+        // Pass 4: Commit + Minecraft-style lighting
         for (int sectionY = 0; sectionY < chunkHeight; sectionY++) {
             world.setChunkSlot(cx, sectionY, cz, slots[sectionY]);
         }
         tableDirty.set(true);
-        // Lighting only within 11×11 grid around player; outside chunks stay dark.
-        // Defer ALL BFS until 5×5 grid around this chunk is fully loaded.
+        // Lighting only within 11×11 grid around player; posted to dedicated light thread
         if (Math.abs(cx - lastPlayerCX) <= LIGHT_GRID_RADIUS && Math.abs(cz - lastPlayerCZ) <= LIGHT_GRID_RADIUS) {
             if (is5x5Loaded(cx, cz)) {
-                repropagateNeighborLights(cx, cz);
-                if (hasEmissiveSource(cx, cz, slots)) {
-                    scanAndAddLightSources(cx, cz, slots);
-                }
-                runPendingLightingIn5x5(cx, cz);
+                postLightTask(key, slots, () -> {
+                    dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, slots));
+                    for (int cy = 0; cy < chunkHeight; cy++) {
+                        dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, cy, cz, slots[cy]));
+                    }
+                    lightsNeedUpload = true;
+                    tableDirty.set(true);
+                    runPendingLightingIn5x5(cx, cz);
+                });
             } else {
                 pendingLighting.add(chunkKey(cx, cz));
                 GameLogger.log("LIGHT deferred chunk(" + cx + "," + cz + ") waiting for 5×5 grid");
@@ -594,18 +670,17 @@ public class ChunkManager {
     private void unloadChunk(long key, Integer[] slots) {
         int cx = unpackX(key);
         int cz = unpackZ(key);
-        WorldGenLogger.logChunk("UNLOAD", cx, -1, cz, "saving, removing lights, and freeing slots");
+        WorldGenLogger.logChunk("UNLOAD", cx, -1, cz, "saving and freeing slots");
+
+        // Cancel any pending light tasks for this chunk BEFORE freeing slots
+        cancelledLightTasks.add(key);
+
         if (saveManager != null) {
             saveManager.saveChunk(dimension, cx, cz, world);
         }
-        // Subtract all light sources in this chunk before clearing data
-        removeChunkLightSources(cx, cz);
-        int[] lp = world.getLightPool();
         for (int cy = 0; cy < chunkHeight; cy++) {
             world.clearChunkSlot(cx, cy, cz);
-            // Zero light pool for the freed slot so it starts clean when recycled
-            int base = slots[cy] << 12;
-            for (int i = 0; i < 4096; i++) lp[base + i] = 0;
+            world.clearLightPoolSlot(slots[cy]);
             freeSlotStack[freeSlotTop++] = slots[cy];
         }
         int slotHash = java.util.Arrays.hashCode(slots);
@@ -614,307 +689,65 @@ public class ChunkManager {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  LIGHTING: per-source add/remove, rebuild
+    //  LIGHTING: Minecraft-style rebuild
     // ══════════════════════════════════════════════════════════════════
 
     /**
-     * Rebuilds all lighting from scratch, processing sources in distance-from-player spiral.
+     * Rebuilds all lighting from scratch using Minecraft-style dual-channel approach.
      * Posts to front of gen thread queue; world gen pauses until complete.
      */
     public void rebuildAllLighting(Vector3f playerPos) {
-        float px = playerPos.x, pz = playerPos.z;
         taskQueue.addFirst(() -> {
-            lightsNeedUpload = false;  // block uploads during rebuild
+            lightsNeedUpload = false;
+            lightingActiveCount.incrementAndGet();
             long t0 = System.currentTimeMillis();
-            int[] lp = world.getLightPool();
-            int[] it = world.getIndirectionTable();
 
-            // Clear light pool for loaded slots
-            for (Integer[] slots : loadedChunks.values()) {
-                for (int cy = 0; cy < chunkHeight; cy++) {
-                    int base = slots[cy] << 12;
-                    for (int i = 0; i < 4096; i++) lp[base + i] = 0;
-                }
-            }
-            chunkLightSources.clear();
-
-            // Collect chunks sorted by distance from player (spiral)
-            Map<Long, Integer> distMap = new HashMap<>();
-            for (Long ck : loadedChunks.keySet()) {
-                int cx = unpackX(ck), cz = unpackZ(ck);
-                float dx = (cx << 4) + 8 - px, dz = (cz << 4) + 8 - pz;
-                distMap.put(ck, (int)(dx * dx + dz * dz));
-            }
-            List<Long> sorted = new ArrayList<>(loadedChunks.keySet());
-            sorted.sort((a, b) -> {
-                int cmp = Integer.compare(distMap.get(a), distMap.get(b));
-                if (cmp != 0) return cmp;
-                return Long.compare(a, b);  // tiebreaker: deterministic chunk-key order
-            });
-
-            // Quick first pass: count total emissive sources
-            int grandTotal = 0;
-            for (Long ck : sorted) {
-                Integer[] slots = loadedChunks.get(ck);
-                if (slots == null) continue;
-                int cx = unpackX(ck), cz = unpackZ(ck);
-                int[] cp = world.getChunkPool();
-                for (int cy = 0; cy < chunkHeight; cy++) {
-                    int slot = slots[cy];
-                    if (slot == World.EMPTY) continue;
-                    int wy = cy << 4;
-                    for (int ly = 0; ly < 16; ly++)
-                        for (int lz = 0; lz < 16; lz++)
-                            for (int lx = 0; lx < 16; lx++) {
-                                int bid = cp[(slot << 12) | (lx | (ly << 4) | (lz << 8))] & 0xFFFF;
-                                if (blockDataManager.isEmissive(bid)) grandTotal++;
-                            }
-                }
-            }
-
-            int total = 0, skipped = 0, lastPct = -1;
-            for (Long ck : sorted) {
-                Integer[] slots = loadedChunks.get(ck);
-                if (slots == null) continue;
-                int cx = unpackX(ck), cz = unpackZ(ck);
-                int[] cp = world.getChunkPool();
-                for (int cy = 0; cy < chunkHeight; cy++) {
-                    int slot = slots[cy];
-                    if (slot == World.EMPTY) continue;
-                    int wy = cy << 4;
-                    for (int ly = 0; ly < 16; ly++) {
-                        for (int lz = 0; lz < 16; lz++) {
-                            for (int lx = 0; lx < 16; lx++) {
-                                int bid = cp[(slot << 12) | (lx | (ly << 4) | (lz << 8))] & 0xFFFF;
-                                if (!blockDataManager.isEmissive(bid)) continue;
-                                int wx = (cx << 4) + lx, wy2 = wy + ly, wz = (cz << 4) + lz;
-                                LightSource src = createLightSource(wx, wy2, wz, bid);
-                                lightingActive = true;
-                                Set<Integer> aff = lightEngine.runSingleSourceBFS(src, lp, it, true);
-                                lightingActive = false;
-                                if (!aff.isEmpty()) {
-                                    total++;
-                                    dirtySlots.addAll(aff);
-                                    lightsNeedUpload = true;
-                                    chunkLightSources.computeIfAbsent(ck, k -> new LinkedHashSet<>()).add(posKey(wx, wy2, wz));
-                                } else skipped++;
-                                lastPct = printProgressBar(total + skipped, grandTotal, lastPct, "LIGHT rebuild");
-                            }
-                        }
-                    }
-                }
-            }
-            System.out.println();
+            Set<Integer> dirty = mcLightEngine.rebuildAllLighting(loadedChunks);
+            dirtySlots.addAll(dirty);
             tableDirty.set(true);
             lightsNeedUpload = true;
+            lightingActiveCount.decrementAndGet();
+
             long elapsed = System.currentTimeMillis() - t0;
-            GameLogger.log("LIGHT rebuild done: " + total + " sources" + (skipped > 0 ? " (" + skipped + " skipped)" : "") + ", " + elapsed + "ms, lightsNeedUpload=true, dirtySlots=" + dirtySlots.size());
+            GameLogger.log("LIGHT rebuild done: " + dirty.size() + " dirty slots, " + elapsed + "ms");
         });
     }
 
-    // ── Called from gen thread only ──
-
-    private void addLightSourceFromBlock(int x, int y, int z, int blockId) {
-        // Bake occlusion first — the new emissive block may be solid and should occlude sky.
-        // This runs on the gen thread so both occlusion and light are updated atomically
-        // before the slot is marked dirty.
-        int cx = x >> 4, cy = y >> 4, cz = z >> 4;
-        int slot = world.getChunkSlot(x, y, z);
-        if (slot != World.EMPTY) {
-            lightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
-        }
-
-        LightSource src = createLightSource(x, y, z, blockId);
-        long ck = chunkKey(x >> 4, z >> 4);
-        lightingActive = true;
-        Set<Integer> affected = lightEngine.runSingleSourceBFS(src, world.getLightPool(), world.getIndirectionTable(), true);
-        lightingActive = false;
-        if (!affected.isEmpty()) {
-            dirtySlots.addAll(affected);
-            tableDirty.set(true);
-            lightsNeedUpload = true;
-            chunkLightSources.computeIfAbsent(ck, k -> new LinkedHashSet<>()).add(posKey(x, y, z));
-            GameLogger.log("LIGHT add source block=" + blockId + " at (" + x + "," + y + "," + z + ") affected=" + affected.size() + " slots dirtySlots=" + dirtySlots.size());
-        } else {
-            GameLogger.log("LIGHT add source block=" + blockId + " at (" + x + "," + y + "," + z + ") BFS EMPTY (surrounded or out of range)");
-        }
-    }
-
-    private void removeLightSource(int x, int y, int z, int oldBlockId) {
-        LightSource src = createLightSource(x, y, z, oldBlockId);
-        long ck = chunkKey(x >> 4, z >> 4);
-        lightingActive = true;
-        Set<Integer> affected = lightEngine.runSingleSourceBFS(src, world.getLightPool(), world.getIndirectionTable(), false);
-        lightingActive = false;
-        if (!affected.isEmpty()) {
-            dirtySlots.addAll(affected);
-            tableDirty.set(true);
-            lightsNeedUpload = true;  // GPU must re-upload after subtract
-        }
-        Set<Long> set = chunkLightSources.get(ck);
-        if (set != null) set.remove(posKey(x, y, z));
-    }
-
-    private void scanAndAddLightSources(int cx, int cz, Integer[] slots) {
-        int[] chunkPool = world.getChunkPool();
-        int[] indirection = world.getIndirectionTable();
-        int[] lightPool = world.getLightPool();
-        long ck = chunkKey(cx, cz);
-
-        // Pre-count emissive sources for progress bar
-        int grandTotal = 0;
-        for (int cy = 0; cy < chunkHeight; cy++) {
-            int slot = slots[cy];
-            if (slot == World.EMPTY) continue;
-            for (int ly = 0; ly < 16; ly++)
-                for (int lz = 0; lz < 16; lz++)
-                    for (int lx = 0; lx < 16; lx++) {
-                        int bid = chunkPool[(slot << 12) | (lx | (ly << 4) | (lz << 8))] & 0xFFFF;
-                        if (blockDataManager.isEmissive(bid)) grandTotal++;
-                    }
-        }
-        if (grandTotal == 0) {
-            GameLogger.log("LIGHT scanAndAdd chunk(" + cx + "," + cz + ") 0 emissive sources — skipping");
-            return;
-        }
-
-        int found = 0, processed = 0, lastPct = -1;
-        String prefix = "LIGHT chunk(" + cx + "," + cz + ")";
-        for (int cy = 0; cy < chunkHeight; cy++) {
-            int slot = slots[cy];
-            if (slot == World.EMPTY) continue;
-            int worldY = cy << 4;
-            for (int ly = 0; ly < 16; ly++) {
-                for (int lz = 0; lz < 16; lz++) {
-                    for (int lx = 0; lx < 16; lx++) {
-                        int blockId = chunkPool[(slot << 12) | (lx | (ly << 4) | (lz << 8))] & 0xFFFF;
-                        if (!blockDataManager.isEmissive(blockId)) continue;
-                        int wx = (cx << 4) + lx, wy = worldY + ly, wz = (cz << 4) + lz;
-                        LightSource src = createLightSource(wx, wy, wz, blockId);
-                        lightingActive = true;
-                        Set<Integer> affected = lightEngine.runSingleSourceBFS(src, lightPool, indirection, true);
-                        lightingActive = false;
-                        processed++;
-                        if (!affected.isEmpty()) {
-                            dirtySlots.addAll(affected);
-                            lightsNeedUpload = true;
-                            chunkLightSources.computeIfAbsent(ck, k -> new LinkedHashSet<>()).add(posKey(wx, wy, wz));
-                            found++;
-                        }
-                        lastPct = printProgressBar(processed, grandTotal, lastPct, prefix);
-                    }
-                }
-            }
-        }
-        System.out.println();
-        GameLogger.log("LIGHT scanAndAdd chunk(" + cx + "," + cz + ") found " + found + " emissive, dirtySlots=" + dirtySlots.size());
-    }
-
     /**
-     * After a chunk loads, re-propagate light from adjacent chunks' emissive sources
-     * into the new chunk. Subtract-then-re-add pattern ensures no double-counting
-     * in the neighbor's own voxels.
+     * Prints block light and sky light values around the given position for debugging.
+     * Called from the game thread (F3+L hotkey).
      */
-    private void repropagateNeighborLights(int cx, int cz) {
-        long[] neighbors = {
-            chunkKey(cx - 1, cz), chunkKey(cx + 1, cz),
-            chunkKey(cx, cz - 1), chunkKey(cx, cz + 1)
-        };
-        int[] lp = world.getLightPool();
-        int[] it = world.getIndirectionTable();
-
-        // Pre-count total neighbor sources for progress bar
-        int grandTotal = 0;
-        for (long nk : neighbors) {
-            Set<Long> sources = chunkLightSources.get(nk);
-            if (sources != null) grandTotal += sources.size();
-        }
-        if (grandTotal == 0) {
-            GameLogger.log("LIGHT repropagate chunk(" + cx + "," + cz + ") 0 neighbor sources — skipping");
-            return;
-        }
-
-        int totalPropagated = 0, processed = 0, lastPct = -1;
-        String prefix = "LIGHT re-prop chunk(" + cx + "," + cz + ")";
-        for (long nk : neighbors) {
-            Set<Long> sources = chunkLightSources.get(nk);
-            if (sources == null || sources.isEmpty()) continue;
-            for (long pk : sources) {
-                int x = unpackPosX(pk), y = unpackPosY(pk), z = unpackPosZ(pk);
-                int bid = world.getVoxel(x, y, z);
-                if (bid > 0 && blockDataManager.isEmissive(bid)) {
-                    LightSource src = createLightSource(x, y, z, bid);
-                    lightingActive = true;
-                    lightEngine.runSingleSourceBFS(src, lp, it, false);
-                    Set<Integer> affected = lightEngine.runSingleSourceBFS(src, lp, it, true);
-                    lightingActive = false;
-                    processed++;
-                    if (!affected.isEmpty()) {
-                        dirtySlots.addAll(affected);
-                        lightsNeedUpload = true;
-                        totalPropagated++;
-                    }
-                    lastPct = printProgressBar(processed, grandTotal, lastPct, prefix);
+    public void dumpBlockLight(Vector3f pos) {
+        int px = (int) Math.floor(pos.x);
+        int py = (int) Math.floor(pos.y);
+        int pz = (int) Math.floor(pos.z);
+        int range = 4;
+        System.out.println("=== Block Light Debug at (" + px + ", " + py + ", " + pz + ") ===");
+        for (int y = py + range; y >= py - range; y--) {
+            StringBuilder line = new StringBuilder(String.format("y=%3d: ", y));
+            for (int x = px - range; x <= px + range; x++) {
+                int blockId = world.getVoxel(x, y, pz);
+                int sky = 0, block = 0;
+                int slot = world.getChunkSlot(x, y, pz);
+                if (slot != World.EMPTY) {
+                    int lx = x & 15, ly = y & 15, lz = pz & 15;
+                    sky = world.getSkyLight(slot, lx, ly, lz);
+                    block = world.getBlockLight(slot, lx, ly, lz);
+                }
+                if (blockId > 0) {
+                    line.append(String.format("[%s]S%dB%d ", blockDataManager.getName(blockId).substring(0, Math.min(4, blockDataManager.getName(blockId).length())), sky, block));
+                } else if (sky > 0 || block > 0) {
+                    line.append(String.format("[air]S%dB%d ", sky, block));
+                } else {
+                    line.append("...... ");
                 }
             }
-        }
-        System.out.println();
-        if (totalPropagated > 0) {
-            GameLogger.log("LIGHT repropagate chunk(" + cx + "," + cz + ") re-propagated " + totalPropagated + " neighbor sources, dirtySlots=" + dirtySlots.size());
+            System.out.println(line.toString());
         }
     }
 
-    private void removeChunkLightSources(int cx, int cz) {
-        long ck = chunkKey(cx, cz);
-        Set<Long> set = chunkLightSources.remove(ck);
-        if (set == null || set.isEmpty()) {
-            GameLogger.log("LIGHT remove chunk(" + cx + "," + cz + ") 0 sources — skipping");
-            return;
-        }
-        int[] lp = world.getLightPool();
-        int[] it = world.getIndirectionTable();
-        int grandTotal = set.size();
-        int processed = 0, lastPct = -1;
-        String prefix = "LIGHT remove chunk(" + cx + "," + cz + ")";
-        for (long pk : set) {
-            int x = unpackPosX(pk), y = unpackPosY(pk), z = unpackPosZ(pk);
-            int bid = world.getVoxel(x, y, z);
-            if (bid > 0 && blockDataManager.isEmissive(bid)) {
-                LightSource src = createLightSource(x, y, z, bid);
-                lightingActive = true;
-                Set<Integer> affected = lightEngine.runSingleSourceBFS(src, lp, it, false);
-                lightingActive = false;
-                processed++;
-                if (!affected.isEmpty()) {
-                    dirtySlots.addAll(affected);
-                    tableDirty.set(true);
-                    lightsNeedUpload = true;  // GPU must re-upload after subtract
-                }
-                lastPct = printProgressBar(processed, grandTotal, lastPct, prefix);
-            }
-        }
-        System.out.println();
-    }
-
-    private LightSource createLightSource(int x, int y, int z, int blockId) {
-        int emissive = blockDataManager.getEmissive(blockId);
-        java.awt.Color albedo = blockDataManager.getAlbedo(blockId);
-        return new LightSource(
-            new Vector3i(x, y, z),
-            new Vector3f(albedo.getRed() / 255f, albedo.getGreen() / 255f, albedo.getBlue() / 255f),
-            emissive,
-            15f,
-            LightType.BLOCK
-        );
-    }
-
-    // ── Position packing for light source tracking ──
-    private static long posKey(int x, int y, int z) {
-        return ((long)(x & 0x7FF) << 22) | ((long)(y & 0x7FF) << 11) | (long)(z & 0x7FF);
-    }
-    private static int unpackPosX(long p) { return (int)((p >>> 22) & 0x7FF); }
-    private static int unpackPosY(long p) { return (int)((p >>> 11) & 0x7FF); }
-    private static int unpackPosZ(long p) { return (int)(p & 0x7FF); }
+    /** @return the BlockDataManager for light debug queries */
+    public BlockDataManager getBlockDataManager() { return blockDataManager; }
 
     // ══════════════════════════════════════════════════════════════════
     //  HELPERS
@@ -936,22 +769,6 @@ public class ChunkManager {
         return pct;
     }
 
-    // ── Quick check: does this chunk have any emissive blocks? ──
-    private boolean hasEmissiveSource(int cx, int cz, Integer[] slots) {
-        int[] cp = world.getChunkPool();
-        for (int cy = 0; cy < chunkHeight; cy++) {
-            int slot = slots[cy];
-            if (slot == World.EMPTY) continue;
-            for (int ly = 0; ly < 16; ly++)
-                for (int lz = 0; lz < 16; lz++)
-                    for (int lx = 0; lx < 16; lx++) {
-                        int bid = cp[(slot << 12) | (lx | (ly << 4) | (lz << 8))] & 0xFFFF;
-                        if (blockDataManager.isEmissive(bid)) return true;
-                    }
-        }
-        return false;
-    }
-
     // ── Lighting grid check: 5×5 (center + 24 neighbors) fully loaded? ──
     private boolean is5x5Loaded(int cx, int cz) {
         for (int dx = -BFS_WAIT_RADIUS; dx <= BFS_WAIT_RADIUS; dx++) {
@@ -963,9 +780,7 @@ public class ChunkManager {
     }
 
     /**
-     * Flush pending lighting: runs repropagateNeighborLights for every pending chunk
-     * within the 11×11 grid around the player, and scanAndAddLightSources only for
-     * chunks that have emissive sources. Chunks outside the 11×11 stay pending.
+     * Flush pending lighting using the Minecraft-style LightEngine.
      * Called at the end of a manageChunks cycle.
      */
     private void flushPendingLighting() {
@@ -990,18 +805,21 @@ public class ChunkManager {
             int cx = unpackX(nk), cz = unpackZ(nk);
             // Only flush chunks within the 11×11 grid around the player
             if (Math.abs(cx - lastPlayerCX) > LIGHT_GRID_RADIUS || Math.abs(cz - lastPlayerCZ) > LIGHT_GRID_RADIUS) {
-                continue;  // stays in pendingLighting for later
+                continue;
             }
-            if (!pendingLighting.remove(nk)) continue; // already processed via cascade
+            if (!pendingLighting.remove(nk)) continue;
             Integer[] nslots = loadedChunks.get(nk);
             if (nslots == null) continue;
-            // Defer ALL BFS until 5×5 grid around the chunk is fully loaded.
             if (is5x5Loaded(cx, cz)) {
-                repropagateNeighborLights(cx, cz);
-                if (hasEmissiveSource(cx, cz, nslots)) {
-                    scanAndAddLightSources(cx, cz, nslots);
-                }
-                runPendingLightingIn5x5(cx, cz);
+                postLightTask(nk, nslots, () -> {
+                    dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, nslots));
+                    for (int cy = 0; cy < chunkHeight; cy++) {
+                        dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, cy, cz, nslots[cy]));
+                    }
+                    lightsNeedUpload = true;
+                    tableDirty.set(true);
+                    runPendingLightingIn5x5(cx, cz);
+                });
             } else {
                 pendingLighting.add(chunkKey(cx, cz));
                 GameLogger.log("LIGHT defer (flush) chunk(" + cx + "," + cz + ") 5×5 not loaded");
@@ -1021,8 +839,15 @@ public class ChunkManager {
                     pendingLighting.remove(nk);
                     Integer[] nslots = loadedChunks.get(nk);
                     if (nslots != null) {
-                        scanAndAddLightSources(nx, nz, nslots);
-                        repropagateNeighborLights(nx, nz);
+                        int finalNx = nx, finalNz = nz; // capture for lambda
+                        postLightTask(nk, nslots, () -> {
+                            dirtySlots.addAll(mcLightEngine.generateSkyLight(finalNx, finalNz, nslots));
+                            for (int cy = 0; cy < chunkHeight; cy++) {
+                                dirtySlots.addAll(mcLightEngine.propagateBlockLight(finalNx, cy, finalNz, nslots[cy]));
+                            }
+                            lightsNeedUpload = true;
+                            tableDirty.set(true);
+                        });
                     }
                 }
             }

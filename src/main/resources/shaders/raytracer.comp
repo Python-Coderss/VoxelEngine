@@ -32,7 +32,7 @@ layout(std430, binding = 2) buffer readonly restrict ChunkPool { uint voxelPool[
 layout(std430, binding = 3) buffer readonly restrict BitmaskPool { uint bitmasks[]; };
 layout(std430, binding = 4) buffer readonly restrict OcclusionPool { uint occlusionPool[]; };
 
-// Block light propagation (wave BFS result): packed RGB per voxel [R|G<<10|B<<20] (10-bit/channel)
+// Block light propagation: Minecraft packed format [sky(0-3)|block(4-7)] per voxel
 layout(std430, binding = 9) buffer readonly restrict LightPool { uint lightPool[]; };
 
 // Point Lights
@@ -295,15 +295,20 @@ uint getVoxelOcclusion(ivec3 p) {
     return (voxelIdx & 1) == 0 ? (packedv & 0xFFFFu) : (packedv >> 16);
 }
 
-vec3 sampleLightPoolRGB(ivec3 p) {
+// Sample Minecraft packed lightmap at world position.
+// Returns vec2 where x = skyLight (0-15), y = blockLight (0-15)
+vec2 sampleLightmap(ivec3 p) {
     ivec3 rel = p - u_WorldOffset;
-    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(2048)))) return vec3(0);
+    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(2048)))) return vec2(0);
     uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
-    if (slot == EMPTY) return vec3(0);
+    if (slot == EMPTY) return vec2(0);
     int voxelIdx = (rel.x & 15) | ((rel.y & 15) << 4) | ((rel.z & 15) << 8);
     uint idx = (slot << 12u) | uint(voxelIdx);
     uint packedv = lightPool[idx];
-    return vec3(float(packedv & 0x3FFu), float((packedv >> 10) & 0x3FFu), float((packedv >> 20) & 0x3FFu));
+    // bits 0-3 = sky light, bits 4-7 = block light
+    float sky = float(packedv & 0xFu);
+    float block = float((packedv >> 4u) & 0xFu);
+    return vec2(sky, block);
 }
 
 float fastShadow(vec3 ro, vec3 rd, float maxDist) {
@@ -849,20 +854,25 @@ void main() {
             beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
         }
 
-        // Sample block light from the nearest non-full-block voxel adjacent to the hit face
-        // Light pool = pre-computed indirect illumination from block emissions.
-        // Added as a direct contribution at this bounce — does not affect throughput.
-        vec3 blockLightCol = vec3(0.0);
+        // Sample Minecraft lightmap from the nearest non-full-block voxel adjacent to the hit face
+        // Sky light = top-down propagation (0-15), Block light = flood-fill from emissive sources (0-15)
         ivec3 lightSamplePos = ivec3(floor(hp + n * 0.5));
-        blockLightCol = sampleLightPoolRGB(lightSamplePos);
-        if (blockLightCol == vec3(0.0)) {
+        vec2 lightMap = sampleLightmap(lightSamplePos);
+        if (lightMap == vec2(0.0)) {
             lightSamplePos = ivec3(floor(hp - n * 0.5));
-            blockLightCol = sampleLightPoolRGB(lightSamplePos);
+            lightMap = sampleLightmap(lightSamplePos);
         }
 
-        // Block light from pre-computed BFS propagation: normalize from 10-bit (0-1023) range.
-        vec3 blockLightContrib = blockLightCol / 256.0;
-        beam += blockLightContrib;  // Integrate block lighting into direct illumination
+        // Combine sky + block into a single illumination multiplier
+        // Block light from emissive sources gets 5x boost for lighting nearby blocks
+        float skyContrib = lightMap.x / 15.0;
+        float blockContrib = min(lightMap.y * 5.0, 15.0) / 15.0;
+        float totalLightContrib = max(skyContrib, blockContrib);
+        
+        // Scale existing direct+ambient lighting by the max lightmap value
+        beam *= totalLightContrib;
+        // Add a small minimum ambient to prevent absolute pitch-black shadows
+        beam += at.ambient * 0.3;
 
         vec3 bc = alb * beam * (1.0 - trans - refl);
         float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, GetSky(rd, at), fog);
