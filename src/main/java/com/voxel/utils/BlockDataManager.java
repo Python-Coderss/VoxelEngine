@@ -637,6 +637,28 @@ public class BlockDataManager {
         return data != null ? data.emissive : 0;
     }
 
+    /**
+     * Returns the light opacity of a block in Minecraft light units (0-15).
+     * Full blocks return 16 (fully opaque), transparent blocks return partial values:
+     * water=3, leaves=1, ice=3, cobweb=1, glass/portals=0.
+     * Non-full blocks that don't attenuate light (torches, flowers) return 0.
+     */
+    public int getOpacity(int blockId) {
+        if (blockId <= 0) return 0;
+        BlockData data = blockRegistry.get(blockId);
+        if (data == null) return 0;
+        if (data.isFullBlock) return 16; // fully opaque
+        if (data.effect == MaterialEffect.LIQUID) return 3; // water, lava
+        if (data.effect == MaterialEffect.PORTAL) return 0; // portals don't block light
+        // Non-full blocks with models (leaves, slabs, etc.) - use name as hint
+        String name = (data.name != null) ? data.name.toLowerCase() : "";
+        if (name.contains("leaves") || name.contains("leaf")) return 1;
+        if (name.contains("ice")) return 3;
+        if (name.contains("cobweb") || name.contains("web")) return 1;
+        // Glass and most non-full blocks are transparent to light
+        return 0;
+    }
+
     public java.awt.Color getAlbedo(int blockId) {
         BlockData data = blockRegistry.get(blockId);
         return data != null ? data.albedo : java.awt.Color.WHITE;

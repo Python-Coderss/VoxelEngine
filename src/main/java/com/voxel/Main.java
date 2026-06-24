@@ -1934,6 +1934,13 @@ public class Main {
             carriedItemElement.size.set(28, 28);
         }
 
+
+        // Always update command text (not guarded by inventoryUiDirty - every keystroke matters)
+        commandTextElement.visible = commandMode;
+        if (commandMode) {
+            commandTextElement.text = commandBuffer.toString() + "_";
+        }
+
         // Skip full UI rebuild when nothing has changed (save ~200 element updates/frame)
         int selSlot = playerInventory.getSelectedSlot();
         float hp = player.getHealth();
@@ -2354,11 +2361,6 @@ public class Main {
             itemNameElement.color.w = alpha;
         } else {
             itemNameElement.visible = false;
-        }
-
-        commandTextElement.visible = commandMode;
-        if (commandMode) {
-            commandTextElement.text = commandBuffer.toString() + "_";
         }
 
         statusTextElement.visible = !statusMessage.isEmpty() && time < statusUntil;

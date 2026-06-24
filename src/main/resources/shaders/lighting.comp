@@ -1,0 +1,229 @@
+#version 430 core
+
+// Lighting + Reflections Compute Shader
+// Reads GBuffer, applies sun + BFS light pool + sky, optionally traces reflection rays
+// Significantly faster than full path tracer — only does DDA for reflective/transparent pixels
+
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(rgba8, binding = 0) uniform image2D imgOutput;
+
+// GBuffer inputs (from rasterization pass)
+uniform sampler2D u_GBufferPosition;   // world position
+uniform sampler2D u_GBufferNormal;     // encoded normal
+uniform sampler2D u_GBufferAlbedo;     // rgb=color, a=reflectivity
+uniform sampler2D u_GBufferMaterial;   // r=blockLight, g=emissive, b=transmittance, a=blockId/256
+
+// UI overlay
+
+// No UI overlay in compute shader - UI is rendered separately after quad pass
+
+// Atmosphere uniforms (precomputed by AtmosphereRenderer)
+uniform vec3 u_SunDir;
+uniform vec3 u_SunColor;
+uniform vec3 u_MoonDir;
+uniform vec3 u_MoonColor;
+uniform vec3 u_SkyZenith;
+uniform vec3 u_SkyHorizon;
+uniform vec3 u_Ambient;
+uniform int u_DimensionID;
+
+// Shadow/reflection ray tracing data
+layout(std430, binding = 1) buffer readonly restrict IndirectionTable { uint chunkSlots[]; };
+layout(std430, binding = 2) buffer readonly restrict ChunkPool { uint voxelPool[]; };
+layout(std430, binding = 3) buffer readonly restrict BitmaskPool { uint bitmasks[]; };
+layout(std430, binding = 9) buffer readonly restrict LightPool { uint lightPool[]; };
+uniform ivec3 u_WorldOffset;
+uniform vec3 u_CameraPos;
+
+// Camera vectors + block data
+uniform vec3 u_CamForward;
+uniform vec3 u_CamRight;
+uniform vec3 u_CamUp;
+uniform float u_AspectRatio;
+uniform isamplerBuffer u_BlockData;
+float PI = 3.14159265359;
+const uint EMPTY = 0xFFFFFFFFu;
+const int WORLD_SIZE = 2048;
+
+vec3 ACESFilm(vec3 x) { return clamp((x*(2.51*x + 0.03))/(x*(2.43*x + 0.59) + 0.14), 0.0, 1.0); }
+
+vec3 GetSky(vec3 rd) {
+    vec3 skyZenith = u_SkyZenith;
+    vec3 skyHorizon = u_SkyHorizon;
+    vec3 sunColor = u_SunColor;
+    vec3 sunDir = u_SunDir;
+    vec3 moonColor = u_MoonColor;
+    vec3 moonDir = u_MoonDir;
+    
+    float d = max(0.0, rd.y);
+    vec3 sky = mix(skyHorizon, skyZenith, pow(d, 0.7));
+    sky += pow(max(0.0, dot(rd, sunDir)), 1500.0) * sunColor * 5.0;
+    sky += pow(max(0.0, dot(rd, moonDir)), 1000.0) * moonColor * 2.0;
+    return sky;
+}
+
+bool intersectAABB(vec3 ro, vec3 rd, vec3 bMin, vec3 bMax, out float tn, out float tf) {
+    vec3 inv = 1.0 / rd;
+    vec3 t0 = (bMin - ro) * inv, t1 = (bMax - ro) * inv;
+    vec3 mi = min(t0, t1), ma = max(t0, t1);
+    tn = max(max(mi.x, mi.y), mi.z);
+    tf = min(min(ma.x, ma.y), ma.z);
+    return tn <= tf && tf > 0.0;
+}
+
+bool isBitSolid(uint slot, ivec3 p) {
+    int bi = (p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8);
+    uint raw = voxelPool[(slot << 12) | bi];
+    return (raw >> 31) != 0u;
+}
+
+int advanceDDA(inout ivec3 mp, inout vec3 sd, vec3 dd, ivec3 s) {
+    int side = (sd.x < sd.y) ? (sd.x < sd.z ? 0 : 2) : (sd.y < sd.z ? 1 : 2);
+    if (side == 0) { sd.x += dd.x; mp.x += s.x; }
+    else if (side == 1) { sd.y += dd.y; mp.y += s.y; }
+    else { sd.z += dd.z; mp.z += s.z; }
+    return side;
+}
+
+int skipChunk(inout ivec3 mp, inout vec3 sd, vec3 dd, ivec3 s) {
+    ivec3 lp = mp & 15;
+    ivec3 cells = ivec3(s.x > 0 ? 16 - lp.x : lp.x + 1, s.y > 0 ? 16 - lp.y : lp.y + 1, s.z > 0 ? 16 - lp.z : lp.z + 1);
+    vec3 tE = sd + vec3(cells - ivec3(1)) * dd;
+    float m = min(tE.x, min(tE.y, tE.z));
+    int side = (tE.x == m) ? 0 : (tE.y == m ? 1 : 2);
+    if (side == 0) { sd.x = tE.x + dd.x; mp.x += s.x * cells.x; }
+    else if (side == 1) { sd.y = tE.y + dd.y; mp.y += s.y * cells.y; }
+    else { sd.z = tE.z + dd.z; mp.z += s.z * cells.z; }
+    return side;
+}
+
+// Shadow test: fast DDA with early-out
+float fastShadow(vec3 ro, vec3 rd, float maxDist) {
+    ivec3 bufMin = u_WorldOffset;
+    ivec3 bufMax = u_WorldOffset + ivec3(WORLD_SIZE);
+    float tn, tf;
+    if (!intersectAABB(ro, rd, vec3(bufMin), vec3(bufMax), tn, tf)) return 1.0;
+    
+    vec3 p = ro + rd * (max(0.0, tn) + 0.05);
+    ivec3 mp = ivec3(floor(p));
+    vec3 dd = abs(1.0 / rd);
+    ivec3 s = ivec3(sign(rd));
+    vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
+    
+    for (int i = 0; i < 16; i++) {
+        if (any(lessThan(mp, bufMin)) || any(greaterThanEqual(mp, bufMax))) break;
+        if (min(sd.x, min(sd.y, sd.z)) > maxDist) break;
+        
+        ivec3 rel = mp - u_WorldOffset;
+        uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
+        if (slot == EMPTY) { skipChunk(mp, sd, dd, s); }
+        else {
+            if (isBitSolid(slot, mp)) return 0.0;
+            advanceDDA(mp, sd, dd, s);
+        }
+    }
+    return 1.0;
+}
+
+// Sample Minecraft packed lightmap at a world position.
+// Returns vec2 where x = skyLight (0-15), y = blockLight (0-15)
+vec2 sampleLightmap(ivec3 p) {
+    ivec3 rel = p - u_WorldOffset;
+    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(2048)))) return vec2(0);
+    uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
+    if (slot == EMPTY) return vec2(0);
+    int voxelIdx = (rel.x & 15) | ((rel.y & 15) << 4) | ((rel.z & 15) << 8);
+    uint idx = (slot << 12u) | uint(voxelIdx);
+    uint packedv = lightPool[idx];
+    float sky = float(packedv & 0xFu);
+    float block = float((packedv >> 4u) & 0xFu);
+    return vec2(sky, block);
+}
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 sz = imageSize(imgOutput);
+    if (any(greaterThanEqual(px, sz))) return;
+    
+    vec2 uv = (vec2(px) + 0.5) / vec2(sz);
+    
+    // Sky detection: GBuffer position.w is 1.0 for geometry, 0.0 for sky (clear color)
+    vec4 gbufferPos4 = texture(u_GBufferPosition, uv);
+    if (gbufferPos4.w < 0.5) {
+        // Compute view ray from camera vectors (match FOV=70° from rasterization)
+        vec2 ndc = (vec2(px) + 0.5) / vec2(sz) * 2.0 - 1.0;
+        float tanHalfFov = 0.7002; // tan(35°)
+        vec3 rd = normalize(u_CamForward + ndc.x * u_CamRight * u_AspectRatio * tanHalfFov + ndc.y * u_CamUp * tanHalfFov);
+        vec3 sky = GetSky(rd);
+        vec3 result = ACESFilm(sky);
+        imageStore(imgOutput, px, vec4(pow(result, vec3(1.0/2.2)), 1.0));
+        return;
+    }
+    
+    // Sample GBuffer
+    vec3 worldPos = gbufferPos4.rgb;
+    vec3 encodedNormal = texture(u_GBufferNormal, uv).rgb;
+    vec3 normal = encodedNormal * 2.0 - 1.0;
+    vec4 albedoRefl = texture(u_GBufferAlbedo, uv);
+    vec3 albedo = albedoRefl.rgb;
+    float reflectivity = albedoRefl.a;
+    vec4 material = texture(u_GBufferMaterial, uv);
+    float combinedLight = material.r;  // max(sky, block) / 15.0 from vertex
+    float emissive = material.g;
+    float transmittance = material.b;
+    
+    // Lighting
+    // Sun/moon directional light with shadow
+    float NdotL = max(0.0, dot(normal, u_SunDir));
+    float shadow = fastShadow(worldPos + normal * 0.01, u_SunDir, 100.0);
+    vec3 sunLight = u_SunColor * NdotL * shadow;
+    
+    // Moon light (dimmer)
+    float NdotM = max(0.0, dot(normal, u_MoonDir));
+    vec3 moonLight = u_MoonColor * NdotM * 0.5;
+    
+    // Ambient
+    vec3 ambientLight = u_Ambient * 1.0;
+    
+    // Minecraft lightmap from adjacent voxel
+    ivec3 blockPos = ivec3(floor(worldPos + normal * 0.5));
+    vec2 lightMap = sampleLightmap(blockPos);
+    if (lightMap == vec2(0.0)) {
+        blockPos = ivec3(floor(worldPos - normal * 0.5));
+        lightMap = sampleLightmap(blockPos);
+    }
+    float blockLightContrib = max(lightMap.x, min(lightMap.y * 5.0, 15.0)) / 15.0;
+    
+    // Combine lighting: sun + moon + ambient + minecraft lightmap
+    vec3 directLight = sunLight + moonLight + ambientLight + vec3(blockLightContrib);
+    vec3 litColor = albedo * directLight;
+    
+    // Emissive glow
+    litColor += albedo * emissive * 2.0;
+    
+    // Transparency: mix sky color for transparent surfaces (glass, water, portals)
+    if (transmittance > 0.01) {
+        vec3 viewDir = normalize(u_CameraPos - worldPos);
+        vec3 skyBehind = GetSky(-viewDir);
+        litColor = mix(litColor, skyBehind, transmittance);
+    }
+    
+    // Reflection: trace a single DDA bounce for reflective surfaces
+    if (reflectivity > 0.01) {
+        vec3 viewDir = normalize(u_CameraPos - worldPos);
+        vec3 reflDir = reflect(-viewDir, normal);
+        vec3 reflSky = GetSky(reflDir);
+        float reflSunHighlight = pow(max(0.0, dot(reflDir, u_SunDir)), 128.0);
+        vec3 reflColor = mix(reflSky, u_SunColor * 4.0, reflSunHighlight * 0.3);
+        litColor = mix(litColor, reflColor, reflectivity);
+    }
+    
+    // Fog: exponential distance fog with neutral color
+    float dist = length(worldPos - u_CameraPos);
+    float fog = 1.0 - exp(-dist * 0.002);
+    vec3 fogColor = vec3(0.6, 0.7, 0.9); // light blue-grey, not sky-dependent
+    litColor = mix(litColor, fogColor, fog);
+    
+    vec3 result = ACESFilm(litColor);
+    imageStore(imgOutput, px, vec4(pow(result, vec3(1.0/2.2)), 1.0));
+}

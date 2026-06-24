@@ -236,23 +236,103 @@ public class World {
         }
     }
 
-    /**
-     * Clears all voxels in a given chunk slot.
-     */
-    public void clearChunkPoolSlot(int slot) {
-        int voxelsPerChunk = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
-        int startIdx = slot << 12;
-        for (int i = 0; i < voxelsPerChunk; i++) {
-            chunkPool[startIdx + i] = 0;
-            lightPool[startIdx + i] = 0;
-            occlusionPool[startIdx + i] = 0;
-        }
-
-        int startBitWord = slot << 7;
-        for (int i = 0; i < 128; i++) {
-            bitmaskPool[startBitWord + i] = 0;
-        }
+/**
+ * Clears all voxels in a given chunk slot.
+ */
+public void clearChunkPoolSlot(int slot) {
+    int voxelsPerChunk = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+    int startIdx = slot << 12;
+    for (int i = 0; i < voxelsPerChunk; i++) {
+        chunkPool[startIdx + i] = 0;
+        lightPool[startIdx + i] = 0;
+        occlusionPool[startIdx + i] = 0;
     }
+
+    int startBitWord = slot << 7;
+    for (int i = 0; i < 128; i++) {
+        bitmaskPool[startBitWord + i] = 0;
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  Minecraft-style light accessors (sky light + block light)
+//  lightPool format: bits 0-3 = sky light (0-15), bits 4-7 = block light (0-15)
+// ══════════════════════════════════════════════════════════════════
+
+private static final int LIGHT_SKY_SHIFT = 0;
+private static final int LIGHT_BLOCK_SHIFT = 4;
+private static final int LIGHT_SKY_MASK = 0xF;
+private static final int LIGHT_BLOCK_MASK = 0xF0;
+
+/**
+ * Sets the sky light value (0-15) for a voxel in a given chunk slot at local coords.
+ */
+public void setSkyLight(int slot, int lx, int ly, int lz, int value) {
+    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+    int current = lightPool[poolIdx];
+    lightPool[poolIdx] = (current & ~LIGHT_SKY_MASK) | ((value & 0xF) << LIGHT_SKY_SHIFT);
+}
+
+/**
+ * Gets the sky light value (0-15) for a voxel in a given chunk slot at local coords.
+ */
+public int getSkyLight(int slot, int lx, int ly, int lz) {
+    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+    return (lightPool[poolIdx] >> LIGHT_SKY_SHIFT) & 0xF;
+}
+
+/**
+ * Sets the block light value (0-15) for a voxel in a given chunk slot at local coords.
+ */
+public void setBlockLight(int slot, int lx, int ly, int lz, int value) {
+    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+    int current = lightPool[poolIdx];
+    lightPool[poolIdx] = (current & ~LIGHT_BLOCK_MASK) | ((value & 0xF) << LIGHT_BLOCK_SHIFT);
+}
+
+/**
+ * Gets the block light value (0-15) for a voxel in a given chunk slot at local coords.
+ */
+public int getBlockLight(int slot, int lx, int ly, int lz) {
+    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+    return (lightPool[poolIdx] >> LIGHT_BLOCK_SHIFT) & 0xF;
+}
+
+/**
+ * Gets the packed lightmap (Minecraft-style: sky in lower 4 bits, block in upper 4 bits)
+ * from the light pool at world coordinates. Returns 0 if outside the buffer.
+ */
+public int getPackedLightmap(int x, int y, int z) {
+    int rx = x - offsetX;
+    int ry = y - offsetY;
+    int rz = z - offsetZ;
+    if (rx < 0 || ry < 0 || rz < 0 || rx >= REGION_SIZE * CHUNK_SIZE || ry >= REGION_SIZE * CHUNK_SIZE || rz >= REGION_SIZE * CHUNK_SIZE) return 0;
+
+    int cx = rx >> 4;
+    int cy = ry >> 4;
+    int cz = rz >> 4;
+    int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
+    int slot = indirectionTable[tableIdx];
+    if (slot == EMPTY) return 0;
+
+    int poolIdx = (slot << 12) | ((rx & 15) | ((ry & 15) << 4) | ((rz & 15) << 8));
+    int raw = lightPool[poolIdx];
+    // Minecraft packed format: (sky << 20) | (block << 4)
+    int sky = raw & 0xF;
+    int block = (raw >> 4) & 0xF;
+    return (sky << 20) | (block << 4);
+}
+
+/**
+ * Clears the light pool (sky+block) for a single chunk slot. Leaves other pools unchanged.
+ */
+public void clearLightPoolSlot(int slot) {
+    int startIdx = slot << 12;
+    int voxelsPerChunk = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+    for (int i = 0; i < voxelsPerChunk; i++) {
+        lightPool[startIdx + i] = 0;
+    }
+}
 
     /**
      * Sets a voxel ID at world coordinates. Does nothing if the chunk is not allocated.
