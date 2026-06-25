@@ -299,9 +299,9 @@ uint getVoxelOcclusion(ivec3 p) {
 // Returns vec2 where x = skyLight (0-15), y = blockLight (0-15)
 vec2 sampleLightmap(ivec3 p) {
     ivec3 rel = p - u_WorldOffset;
-    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(2048)))) return vec2(0);
+    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(2048)))) return vec2(-1);
     uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
-    if (slot == EMPTY) return vec2(0);
+    if (slot == EMPTY) return vec2(-1);
     int voxelIdx = (rel.x & 15) | ((rel.y & 15) << 4) | ((rel.z & 15) << 8);
     uint idx = (slot << 12u) | uint(voxelIdx);
     uint packedv = lightPool[idx];
@@ -858,10 +858,12 @@ void main() {
         // Sky light = top-down propagation (0-15), Block light = flood-fill from emissive sources (0-15)
         ivec3 lightSamplePos = ivec3(floor(hp + n * 0.5));
         vec2 lightMap = sampleLightmap(lightSamplePos);
-        if (lightMap == vec2(0.0)) {
+        if (lightMap.x < 0.0) {
             lightSamplePos = ivec3(floor(hp - n * 0.5));
             lightMap = sampleLightmap(lightSamplePos);
         }
+        // Default to zero light if both samples landed in empty chunks
+        if (lightMap.x < 0.0) lightMap = vec2(0.0);
 
         // Combine sky + block into a single illumination multiplier
         // Block light from emissive sources gets 5x boost for lighting nearby blocks

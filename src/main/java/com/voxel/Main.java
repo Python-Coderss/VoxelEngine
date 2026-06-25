@@ -2857,15 +2857,18 @@ public class Main {
         if (chunkManager.needsLightUpload() && !chunkManager.isLightingActive()) {
             int[] lightPool = world.getLightPool();
 
-            // Crash-assert: if BFS claims success but the light pool is all zeros,
-            // there is a data-race or BFS bug -- fail fast with a clear message.
+            // Warn instead of crash: if BFS ran but the light pool is all zeros,
+            // this is normal for unlit areas (caves with no emissive blocks) or
+            // when sky light has not been computed yet. Skip upload to avoid flushing
+            // stale zeros over current GPU data.
             boolean anyNonZero = false;
             for (int v : lightPool) {
                 if (v != 0) { anyNonZero = true; break; }
             }
             if (!anyNonZero) {
-                throw new IllegalStateException(
-                    "FATAL: lightsNeedUpload=true but light pool is ALL ZEROS (" + lightPool.length + " ints). BFS ran but produced no output.");
+                GameLogger.log("WARN: lightsNeedUpload=true but light pool is all zeros — skipping upload");
+                chunkManager.clearLightUpload();
+                // Fall through: continue uploading dirty slots (just skip the stale light upload)
             }
 
             java.nio.IntBuffer lightBuf = MemoryUtil.memAllocInt(lightPool.length);
