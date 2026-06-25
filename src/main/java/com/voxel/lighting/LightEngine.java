@@ -5,8 +5,6 @@ import com.voxel.utils.BlockDataManager;
 import com.voxel.utils.Direction;
 import com.voxel.GameLogger;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.Set;
 import java.util.HashSet;
 
@@ -38,9 +36,12 @@ public class LightEngine {
     /** Height limit for sky light computation. */
     public static final int WORLD_HEIGHT = 256;
 
+    private final int bufSize; // World.REGION_SIZE * World.CHUNK_SIZE (2048)
+
     public LightEngine(World world, BlockDataManager blockDataManager) {
         this.world = world;
         this.blockDataManager = blockDataManager;
+        this.bufSize = World.REGION_SIZE * World.CHUNK_SIZE;
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -62,7 +63,8 @@ public class LightEngine {
 
         int worldBaseX = cx << 4;
         int worldBaseZ = cz << 4;
-        int bufMaxY = world.getOffsetY() + 2048;
+        int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
+        int bufMaxYRel = oy + bufSize;
 
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
@@ -74,13 +76,9 @@ public class LightEngine {
 
                 // Propagate sky light downward from topY
                 int skyLight = MAX_LIGHT;
-                for (int y = Math.min(topY, bufMaxY - 1); y >= 0; y--) {
-                    int slot = getSlotForWorldPos(wx, y, wz);
-                    if (slot == World.EMPTY) {
-                        // No chunk loaded at this y — can't set sky light
-                        // If we're above the loaded area, skip; if inside, continue
-                        continue;
-                    }
+                for (int y = Math.min(topY, bufMaxYRel - 1); y >= 0; y--) {
+                    int slot = getSlotForWorldPos(wx, y, wz, ox, oy, oz);
+                    if (slot == World.EMPTY) continue;
 
                     int blockId = world.getVoxel(wx, y, wz);
                     int ly = y & 15;
@@ -93,7 +91,6 @@ public class LightEngine {
 
                     if (skyLight <= 0) break;
 
-                    // Diminish based on opacity: full blocks absorb remaining light
                     int opacity = getBlockOpacity(blockId);
                     skyLight = Math.max(0, skyLight - opacity);
                 }
@@ -107,23 +104,68 @@ public class LightEngine {
      * Scans downward from the world height limit.
      */
     private int findTopBlockY(int wx, int wz) {
-        int bufMaxY = world.getOffsetY() + 2048;
-        for (int y = bufMaxY - 1; y >= 0; y--) {
+        int bufMaxYRel = world.getOffsetY() + bufSize;
+        for (int y = bufMaxYRel - 1; y >= 0; y--) {
             int blockId = world.getVoxel(wx, y, wz);
             if (blockId > 0 && blockDataManager.isFullBlock(blockId)) {
                 return y + 1; // sky light starts above the top block
             }
         }
         // No blocks found — sky reaches the bottom with full brightness
-        return bufMaxY - 1;
+        return bufMaxYRel - 1;
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  BLOCK LIGHT
+    //  BLOCK LIGHT — optimized with primitive LongQueue + inlined bounds
     // ══════════════════════════════════════════════════════════════════
 
+    /** Primitive long ring-buffer for BFS nodes. Packs x|y|z|dist into one long. */
+    private static class LongQueue {
+        private long[] elements;
+        private int head, tail, size, mask;
+
+        LongQueue(int capacity) {
+            int cap = 1;
+            while (cap < capacity) cap <<= 1;
+            elements = new long[cap];
+            mask = cap - 1;
+        }
+
+        void add(long v) {
+            if (size == elements.length) {
+                long[] na = new long[elements.length << 1];
+                for (int i = 0; i < size; i++) na[i] = elements[(head + i) & mask];
+                elements = na;
+                mask = elements.length - 1;
+                head = 0;
+                tail = size;
+            }
+            elements[tail] = v;
+            tail = (tail + 1) & mask;
+            size++;
+        }
+
+        long poll() {
+            long v = elements[head];
+            head = (head + 1) & mask;
+            size--;
+            return v;
+        }
+
+        boolean isEmpty() { return size == 0; }
+    }
+
+    /** Bit layout: z(11 bits, 0-10) | y(11 bits, 11-21) | x(11 bits, 22-32) | dist(4 bits, 33-36) */
+    private static long packNode(int x, int y, int z, int dist) {
+        return ((long)(x & 0x7FF) << 22) | ((long)(y & 0x7FF) << 11) | ((long)(z & 0x7FF)) | ((long)(dist & 0xF) << 33);
+    }
+    private static int nodeX(long p) { return (int)((p >>> 22) & 0x7FF); }
+    private static int nodeY(long p) { return (int)((p >>> 11) & 0x7FF); }
+    private static int nodeZ(long p) { return (int)(p & 0x7FF); }
+    private static int nodeDist(long p) { return (int)((p >>> 33) & 0xF); }
+
     /**
-     * Propagaes block light from all emissive sources in a chunk section.
+     * Propagates block light from all emissive sources in a chunk section.
      * Flood-fill BFS: light diminishes by 1+opacity per step, full blocks block propagation.
      *
      * @param cx   Absolute chunk X coordinate
@@ -138,7 +180,11 @@ public class LightEngine {
         int worldBaseY = cy << 4;
         int worldBaseZ = cz << 4;
 
-        Deque<LightNode> queue = new ArrayDeque<>();
+        LongQueue queue = new LongQueue(256);
+
+        // Pre-compute buffer bounds (stable for the entire propagation)
+        int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
+        int maxRel = bufSize - 1;
 
         for (int ly = 0; ly < 16; ly++) {
             for (int lz = 0; lz < 16; lz++) {
@@ -146,47 +192,48 @@ public class LightEngine {
                     int wx = worldBaseX + lx;
                     int wy = worldBaseY + ly;
                     int wz = worldBaseZ + lz;
-                    int blockId = world.getVoxel(wx, wy, wz);
 
-                    int emissive = blockDataManager.getEmissive(blockId);
+                    int emissive = blockDataManager.getEmissive(world.getVoxel(wx, wy, wz));
                     if (emissive > 0) {
                         int lightLevel = Math.min(emissive, MAX_LIGHT);
                         world.setBlockLight(slot, lx, ly, lz, lightLevel);
                         dirtySlots.add(slot);
-                        queue.add(new LightNode(wx, wy, wz, lightLevel));
+                        queue.add(packNode(wx, wy, wz, lightLevel));
                     }
                 }
             }
         }
 
-        // Flood-fill BFS
+        // Flood-fill BFS with inlined bounds check
+        Direction[] dirs = Direction.values();
         while (!queue.isEmpty()) {
-            LightNode node = queue.poll();
-            for (Direction dir : Direction.values()) {
-                int nx = node.x + dir.x;
-                int ny = node.y + dir.y;
-                int nz = node.z + dir.z;
+            long node = queue.poll();
+            int nx0 = nodeX(node), ny0 = nodeY(node), nz0 = nodeZ(node);
+            int dist = nodeDist(node);
 
-                if (!isInBuffer(nx, ny, nz)) continue;
+            for (Direction dir : dirs) {
+                int nx = nx0 + dir.x;
+                int ny = ny0 + dir.y;
+                int nz = nz0 + dir.z;
 
-                int neighborSlot = getSlotForWorldPos(nx, ny, nz);
-                if (neighborSlot == World.EMPTY) continue;
+                // Inline bounds + slot lookup (avoids two method calls per neighbor)
+                int rnx = nx - ox, rny = ny - oy, rnz = nz - oz;
+                if (rnx < 0 || rny < 0 || rnz < 0 || rnx > maxRel || rny > maxRel || rnz > maxRel) continue;
 
-                int blockId = world.getVoxel(nx, ny, nz);
-                int opacity = getBlockOpacity(blockId);
-                int nextLevel = node.distance - Math.max(1, opacity);
+                int nSlot = world.getChunkSlot(nx, ny, nz);
+                if (nSlot == World.EMPTY) continue;
+
+                int opacity = getBlockOpacity(world.getVoxel(nx, ny, nz));
+                int nextLevel = dist - Math.max(1, opacity);
                 if (nextLevel <= 0) continue;
 
-                int nlx = nx & 15;
-                int nly = ny & 15;
-                int nlz = nz & 15;
-
-                int current = world.getBlockLight(neighborSlot, nlx, nly, nlz);
+                int nlx = nx & 15, nly = ny & 15, nlz = nz & 15;
+                int current = world.getBlockLight(nSlot, nlx, nly, nlz);
                 if (current < nextLevel) {
-                    world.setBlockLight(neighborSlot, nlx, nly, nlz, nextLevel);
-                    dirtySlots.add(neighborSlot);
+                    world.setBlockLight(nSlot, nlx, nly, nlz, nextLevel);
+                    dirtySlots.add(nSlot);
                     if (nextLevel > 1) {
-                        queue.add(new LightNode(nx, ny, nz, nextLevel));
+                        queue.add(packNode(nx, ny, nz, nextLevel));
                     }
                 }
             }
@@ -209,38 +256,45 @@ public class LightEngine {
         int slot = getSlotForWorldPos(x, y, z);
         if (slot == World.EMPTY) return dirtySlots;
 
+        int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
+        int maxRel = bufSize - 1;
+
         int lx = x & 15, ly = y & 15, lz = z & 15;
         int currentLight = world.getBlockLight(slot, lx, ly, lz);
         int blockId = world.getVoxel(x, y, z);
         int emissive = blockDataManager.getEmissive(blockId);
 
-        Deque<LightNode> removeQueue = new ArrayDeque<>();
-        Deque<LightNode> addQueue = new ArrayDeque<>();
+        LongQueue removeQueue = new LongQueue(64);
+        LongQueue addQueue = new LongQueue(64);
 
         // Capture initial state
         if (emissive > 0) {
             int lightLevel = Math.min(emissive, MAX_LIGHT);
             world.setBlockLight(slot, lx, ly, lz, lightLevel);
             dirtySlots.add(slot);
-            addQueue.add(new LightNode(x, y, z, lightLevel));
+            addQueue.add(packNode(x, y, z, lightLevel));
         } else {
             world.setBlockLight(slot, lx, ly, lz, 0);
             dirtySlots.add(slot);
             if (currentLight > 0) {
-                removeQueue.add(new LightNode(x, y, z, currentLight));
+                removeQueue.add(packNode(x, y, z, currentLight));
             }
         }
 
+        Direction[] dirs = Direction.values();
+
         // 1. Darken previous light boundaries (un-propagate)
         while (!removeQueue.isEmpty()) {
-            LightNode node = removeQueue.poll();
-            int lightLevel = node.distance;
+            long node = removeQueue.poll();
+            int nx0 = nodeX(node), ny0 = nodeY(node), nz0 = nodeZ(node);
+            int lightLevel = nodeDist(node);
 
-            for (Direction dir : Direction.values()) {
-                int nx = node.x + dir.x, ny = node.y + dir.y, nz = node.z + dir.z;
-                if (!isInBuffer(nx, ny, nz)) continue;
+            for (Direction dir : dirs) {
+                int nx = nx0 + dir.x, ny = ny0 + dir.y, nz = nz0 + dir.z;
+                int rnx = nx - ox, rny = ny - oy, rnz = nz - oz;
+                if (rnx < 0 || rny < 0 || rnz < 0 || rnx > maxRel || rny > maxRel || rnz > maxRel) continue;
 
-                int nSlot = getSlotForWorldPos(nx, ny, nz);
+                int nSlot = world.getChunkSlot(nx, ny, nz);
                 if (nSlot == World.EMPTY) continue;
 
                 int nlx = nx & 15, nly = ny & 15, nlz = nz & 15;
@@ -249,27 +303,29 @@ public class LightEngine {
                 if (nLight != 0 && nLight < lightLevel) {
                     world.setBlockLight(nSlot, nlx, nly, nlz, 0);
                     dirtySlots.add(nSlot);
-                    removeQueue.add(new LightNode(nx, ny, nz, nLight));
+                    removeQueue.add(packNode(nx, ny, nz, nLight));
                 } else if (nLight >= lightLevel) {
-                    addQueue.add(new LightNode(nx, ny, nz, nLight));
+                    addQueue.add(packNode(nx, ny, nz, nLight));
                 }
             }
         }
 
         // 2. Flood fill returning light + emissive (re-propagate)
         while (!addQueue.isEmpty()) {
-            LightNode node = addQueue.poll();
-            for (Direction dir : Direction.values()) {
-                int nx = node.x + dir.x, ny = node.y + dir.y, nz = node.z + dir.z;
-                if (!isInBuffer(nx, ny, nz)) continue;
+            long node = addQueue.poll();
+            int nx0 = nodeX(node), ny0 = nodeY(node), nz0 = nodeZ(node);
+            int dist = nodeDist(node);
 
-                int nSlot = getSlotForWorldPos(nx, ny, nz);
+            for (Direction dir : dirs) {
+                int nx = nx0 + dir.x, ny = ny0 + dir.y, nz = nz0 + dir.z;
+                int rnx = nx - ox, rny = ny - oy, rnz = nz - oz;
+                if (rnx < 0 || rny < 0 || rnz < 0 || rnx > maxRel || rny > maxRel || rnz > maxRel) continue;
+
+                int nSlot = world.getChunkSlot(nx, ny, nz);
                 if (nSlot == World.EMPTY) continue;
 
-                int nBlockId = world.getVoxel(nx, ny, nz);
-                int opacity = getBlockOpacity(nBlockId);
-                int expectedLight = node.distance - Math.max(1, opacity);
-
+                int opacity = getBlockOpacity(world.getVoxel(nx, ny, nz));
+                int expectedLight = dist - Math.max(1, opacity);
                 if (expectedLight <= 0) continue;
 
                 int nlx = nx & 15, nly = ny & 15, nlz = nz & 15;
@@ -278,7 +334,7 @@ public class LightEngine {
                 if (current < expectedLight) {
                     world.setBlockLight(nSlot, nlx, nly, nlz, expectedLight);
                     dirtySlots.add(nSlot);
-                    addQueue.add(new LightNode(nx, ny, nz, expectedLight));
+                    addQueue.add(packNode(nx, ny, nz, expectedLight));
                 }
             }
         }
@@ -348,13 +404,8 @@ public class LightEngine {
     //  HELPERS
     // ══════════════════════════════════════════════════════════════════
 
-    /**
-     * Returns the light opacity of a block in units of 0-15.
-     * Full blocks = 16 (completely opaque to light).
-     * Uses BlockDataManager.getOpacity for partial opacity (water=3, leaves=1, etc.).
-     */
     private int getBlockOpacity(int blockId) {
-        if (blockId <= 0) return 0; // air
+        if (blockId <= 0) return 0;
         return blockDataManager.getOpacity(blockId);
     }
 
@@ -362,26 +413,10 @@ public class LightEngine {
         return world.getChunkSlot(x, y, z);
     }
 
-    private boolean isInBuffer(int x, int y, int z) {
-        int rx = x - world.getOffsetX();
-        int ry = y - world.getOffsetY();
-        int rz = z - world.getOffsetZ();
-        return rx >= 0 && ry >= 0 && rz >= 0
-            && rx < World.REGION_SIZE * World.CHUNK_SIZE
-            && ry < World.REGION_SIZE * World.CHUNK_SIZE
-            && rz < World.REGION_SIZE * World.CHUNK_SIZE;
-    }
-
-    /** Simple BFS node for block light propagation. */
-    private static class LightNode {
-        final int x, y, z;
-        final int distance; // light level at this node
-
-        LightNode(int x, int y, int z, int distance) {
-            this.x = x;
-            this.y = y;
-            this.z = z;
-            this.distance = distance;
-        }
+    /** Faster overload with pre-computed buffer origin — skips World.getOffsetX/Y/Z calls. */
+    private int getSlotForWorldPos(int x, int y, int z, int ox, int oy, int oz) {
+        int rx = x - ox, ry = y - oy, rz = z - oz;
+        if (rx < 0 || ry < 0 || rz < 0 || rx >= bufSize || ry >= bufSize || rz >= bufSize) return World.EMPTY;
+        return world.getIndirectionTable()[(rx >> 4) + (ry >> 4) * World.REGION_SIZE + (rz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
     }
 }
