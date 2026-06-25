@@ -1063,7 +1063,7 @@ public class Main {
         player.setPitch(pitch);
 
         if (playerEntity != null) {
-            playerEntity.syncFromPlayer(player, playerYaw, pitch, cameraMode == CameraMode.THIRD_PERSON, dt);
+            playerEntity.syncFromPlayer(player, playerYaw, pitch, cameraMode == CameraMode.THIRD_PERSON_FOLLOW, dt);
         }
 
         // --- Crafting cutscene: walk player towards the table ---
@@ -1326,7 +1326,7 @@ public class Main {
                 }
             }
 
-            if (cameraMode == CameraMode.THIRD_PERSON) {
+            if (cameraMode == CameraMode.THIRD_PERSON_FOLLOW) {
                 playerYaw = (float) Math.toDegrees(Math.atan2(dz, dx));
             }
         }
@@ -1516,6 +1516,15 @@ public class Main {
             // Upload world sliding window offset
             glProgramUniform3i(computeProgram, 6, world.getOffsetX(), world.getOffsetY(), world.getOffsetZ());
 
+            // Upload block break overlay uniform
+            if (ctx.breakTargetX != Integer.MIN_VALUE) {
+                glProgramUniform3i(computeProgram, 19, ctx.breakTargetX, ctx.breakTargetY, ctx.breakTargetZ);
+                glProgramUniform1f(computeProgram, 20, ctx.breakProgress / Math.max(1.0f, ctx.blockDataManager.getHardness(ctx.world.getVoxel(ctx.breakTargetX, ctx.breakTargetY, ctx.breakTargetZ))));
+            } else {
+                glProgramUniform3i(computeProgram, 19, 0, 0, 0);
+                glProgramUniform1f(computeProgram, 20, 0.0f);
+            }
+
             // Upload UI UVs
             glUniform4f(locHeartUVs, uvHeartFull.x, uvHeartFull.y, uvHeartFull.z, uvHeartFull.w);
             glUniform4f(locHeartUVs + 1, uvHeartHalf.x, uvHeartHalf.y, uvHeartHalf.z, uvHeartHalf.w);
@@ -1599,7 +1608,7 @@ public class Main {
                 combatMode = !combatMode;
                 ctx.combatMode = combatMode;
                 if (combatMode) {
-                    cameraMode = CameraMode.THIRD_PERSON;
+                    cameraMode = CameraMode.THIRD_PERSON_FOLLOW;
                     ctx.cameraMode = cameraMode;
                     ctx.lockedEntityIndex = -1; // Reset lock when toggling
                 }
@@ -1805,7 +1814,7 @@ public class Main {
     }
 
     private void toggleCameraMode() {
-        cameraMode = cameraMode == CameraMode.FIRST_PERSON ? CameraMode.THIRD_PERSON : CameraMode.FIRST_PERSON;
+        cameraMode = cameraMode == CameraMode.FIRST_PERSON ? CameraMode.THIRD_PERSON_FOLLOW : CameraMode.FIRST_PERSON;
         ctx.cameraMode = cameraMode;
         setStatus("Camera: " + (cameraMode == CameraMode.FIRST_PERSON ? "first person" : "third person"));
     }

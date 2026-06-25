@@ -35,6 +35,10 @@ layout(std430, binding = 4) buffer readonly restrict OcclusionPool { uint occlus
 // Block light propagation: Minecraft packed format [sky(0-3)|block(4-7)] per voxel
 layout(std430, binding = 9) buffer readonly restrict LightPool { uint lightPool[]; };
 
+// Block break overlay uniforms
+layout(location = 19) uniform ivec3 u_BreakTargetPos;
+layout(location = 20) uniform float u_BreakProgress;
+
 // Point Lights
 struct PointLight { vec3 position; float radius; vec3 color; float intensity; };
 layout(std430, binding = 5) buffer readonly restrict PointLightBuffer { 
@@ -854,6 +858,24 @@ void main() {
 
             // Compute direct+ambient lighting for the block (same as crafting item path)
             beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
+
+            // ── Block break overlay: darken + crack pattern on the targeted block ──
+            if (u_BreakProgress > 0.0) {
+                ivec3 blockCoord = ivec3(floor(hp));
+                if (blockCoord.x == u_BreakTargetPos.x && blockCoord.y == u_BreakTargetPos.y && blockCoord.z == u_BreakTargetPos.z) {
+                    float darken = 1.0 - u_BreakProgress * 0.4;
+                    alb *= darken;
+                    float crackThreshold = 0.3 + u_BreakProgress * 0.5;
+                    vec2 crackUv = uv * 4.0;
+                    vec2 crackCell = floor(crackUv);
+                    vec2 crackFrac = fract(crackUv) - 0.5;
+                    float hash = fract(sin(dot(crackCell, vec2(12.9898, 78.233))) * 43758.5453);
+                    if (hash < crackThreshold) {
+                        float crackLine = 1.0 - abs(crackFrac.x * crackFrac.y) * 4.0;
+                        if (crackLine > 0.7) alb *= 0.5;
+                    }
+                }
+            }
         }
 
         // Sample Minecraft lightmap from the nearest non-full-block voxel adjacent to the hit face

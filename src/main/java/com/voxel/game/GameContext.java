@@ -26,7 +26,13 @@ import java.util.List;
  */
 public class GameContext {
     public enum GameMode { SURVIVAL, CREATIVE }
-    public enum CameraMode { FIRST_PERSON, THIRD_PERSON }
+    public enum CameraMode {
+        FIRST_PERSON,
+        THIRD_PERSON_FOLLOW,
+        THIRD_PERSON_ORBIT,
+        THIRD_PERSON_FIXED,
+        CINEMATIC
+    }
 
     // --- World / Dimension ---
     public World world;
@@ -53,6 +59,8 @@ public class GameContext {
     // --- Mutable game state ---
     public GameMode gameMode = GameMode.SURVIVAL;
     public CameraMode cameraMode = CameraMode.FIRST_PERSON;
+    public com.voxel.camera.CutsceneManager cutsceneManager = new com.voxel.camera.CutsceneManager();
+    public boolean cutsceneActive = false;
     public float worldTime = 720.0f;
     public boolean combatMode = false;
     public boolean inventoryOpen = false;
@@ -120,6 +128,8 @@ public class GameContext {
     public int breakTargetY = Integer.MIN_VALUE;
     public int breakTargetZ = Integer.MIN_VALUE;
     public float breakProgress = 0.0f;
+    public boolean breakOverlayDirty = false;
+    public float breakOverlayProgress = 0.0f;
     public boolean leftMouseHeld = false;
     public boolean leftMousePressedThisFrame = false;
     public double lastPortalTeleportTime = 0;
