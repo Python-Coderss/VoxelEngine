@@ -345,7 +345,85 @@ public class TextureManager {
         return idx;
     }
     
-    public int getTextureCount() {
+        public int getTextureCount() {
         return texturePaths.size();
+    }
+
+    // ========================================================================
+    // Destroy Stage Textures (Minecraft block break overlay, 10 frames)
+    // ========================================================================
+
+    private int destroyStageArrayId = 0;
+    private static final int DESTROY_STAGE_COUNT = 10;
+
+    /**
+     * Loads the destroy_stage_0 through destroy_stage_9 textures into a dedicated
+     * 16x16 texture array for block break overlay rendering.
+     * Path: src/main/resources/assets/minecraft/textures/blocks/destroy_stage_<n>.png
+     */
+    public void loadDestroyStages(String blocksDir) {
+        if (destroyStageArrayId == 0) {
+            destroyStageArrayId = glGenTextures();
+            glBindTexture(GL_TEXTURE_2D_ARRAY, destroyStageArrayId);
+            glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8, TEXTURE_SIZE, TEXTURE_SIZE, DESTROY_STAGE_COUNT);
+        }
+        glBindTexture(GL_TEXTURE_2D_ARRAY, destroyStageArrayId);
+
+        for (int i = 0; i < DESTROY_STAGE_COUNT; i++) {
+            String path = blocksDir + "/destroy_stage_" + i + ".png";
+            try {
+                java.io.File f = new java.io.File(path);
+                if (!f.exists()) {
+                    System.err.println("Destroy stage texture not found: " + path);
+                    continue;
+                }
+                java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(f);
+                if (img == null) continue;
+
+                // Scale to TEXTURE_SIZE if needed
+                if (img.getWidth() != TEXTURE_SIZE || img.getHeight() != TEXTURE_SIZE) {
+                    java.awt.image.BufferedImage scaled = new java.awt.image.BufferedImage(TEXTURE_SIZE, TEXTURE_SIZE, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                    java.awt.Graphics2D g = scaled.createGraphics();
+                    g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+                    g.drawImage(img, 0, 0, TEXTURE_SIZE, TEXTURE_SIZE, null);
+                    g.dispose();
+                    img = scaled;
+                }
+
+                int[] pixels = new int[TEXTURE_SIZE * TEXTURE_SIZE];
+                img.getRGB(0, 0, TEXTURE_SIZE, TEXTURE_SIZE, pixels, 0, TEXTURE_SIZE);
+
+                java.nio.ByteBuffer buffer = org.lwjgl.system.MemoryUtil.memAlloc(TEXTURE_SIZE * TEXTURE_SIZE * 4);
+                for (int y = 0; y < TEXTURE_SIZE; y++) {
+                    for (int x = 0; x < TEXTURE_SIZE; x++) {
+                        int pixel = pixels[y * TEXTURE_SIZE + x];
+                        buffer.put((byte) ((pixel >> 16) & 0xFF)); // R
+                        buffer.put((byte) ((pixel >> 8) & 0xFF));  // G
+                        buffer.put((byte) (pixel & 0xFF));         // B
+                        buffer.put((byte) ((pixel >> 24) & 0xFF)); // A
+                    }
+                }
+                buffer.flip();
+                glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, i, TEXTURE_SIZE, TEXTURE_SIZE, 1, GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+                org.lwjgl.system.MemoryUtil.memFree(buffer);
+
+            } catch (Exception e) {
+                System.err.println("Failed to load destroy stage: " + path + " - " + e.getMessage());
+            }
+        }
+
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    }
+
+    public int getDestroyStageArrayId() {
+        return destroyStageArrayId;
+    }
+
+    public int getDestroyStageCount() {
+        return DESTROY_STAGE_COUNT;
     }
 }

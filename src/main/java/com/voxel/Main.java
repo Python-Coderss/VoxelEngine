@@ -1212,6 +1212,11 @@ public class Main {
             redstoneManager.tickLamps();
         }
 
+        // Update cutscene manager for cinematic camera shots
+        Vector3f pPosCM = player.getPosition();
+        Vector3f pLookTargetCM = new Vector3f(pPosCM).add(getLookDirection().mul(10.0f));
+        ctx.cutsceneManager.update(dt, pPosCM, pLookTargetCM, combatMode);
+
         chunkManager.update(player.getPosition(), yaw);
     }
 
@@ -1516,7 +1521,7 @@ public class Main {
             // Upload world sliding window offset
             glProgramUniform3i(computeProgram, 6, world.getOffsetX(), world.getOffsetY(), world.getOffsetZ());
 
-            // Upload block break overlay uniform
+            // Upload block break overlay uniforms
             if (ctx.breakTargetX != Integer.MIN_VALUE) {
                 glProgramUniform3i(computeProgram, 19, ctx.breakTargetX, ctx.breakTargetY, ctx.breakTargetZ);
                 glProgramUniform1f(computeProgram, 20, ctx.breakProgress / Math.max(1.0f, ctx.blockDataManager.getHardness(ctx.world.getVoxel(ctx.breakTargetX, ctx.breakTargetY, ctx.breakTargetZ))));
@@ -1524,6 +1529,9 @@ public class Main {
                 glProgramUniform3i(computeProgram, 19, 0, 0, 0);
                 glProgramUniform1f(computeProgram, 20, 0.0f);
             }
+            // Upload destroy stage base layer index (computed from Minecraft destroy_stage_0 texture)
+            int destroyBaseLayer = textureManager.getTextureIndex("destroy_stage_0");
+            glProgramUniform1i(computeProgram, 21, destroyBaseLayer < 0 ? -1 : destroyBaseLayer);
 
             // Upload UI UVs
             glUniform4f(locHeartUVs, uvHeartFull.x, uvHeartFull.y, uvHeartFull.z, uvHeartFull.w);
@@ -1531,6 +1539,11 @@ public class Main {
             glUniform4f(locHeartUVs + 2, uvHeartEmpty.x, uvHeartEmpty.y, uvHeartEmpty.z, uvHeartEmpty.w);
 
             bindTextures();
+
+            // Bind destroy_stage texture array at texture unit 17
+            glActiveTexture(GL_TEXTURE17);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, textureManager.getDestroyStageArrayId());
+            glUniform1i(glGetUniformLocation(computeProgram, "u_DestroyStages"), 17);
 
             glActiveTexture(GL_TEXTURE15);
             glBindTexture(GL_TEXTURE_2D, uiTextureId);
@@ -1814,9 +1827,12 @@ public class Main {
     }
 
     private void toggleCameraMode() {
-        cameraMode = cameraMode == CameraMode.FIRST_PERSON ? CameraMode.THIRD_PERSON_FOLLOW : CameraMode.FIRST_PERSON;
+        CameraMode[] modes = CameraMode.values();
+        int currentOrdinal = cameraMode.ordinal();
+        int nextOrdinal = (currentOrdinal + 1) % modes.length;
+        cameraMode = modes[nextOrdinal];
         ctx.cameraMode = cameraMode;
-        setStatus("Camera: " + (cameraMode == CameraMode.FIRST_PERSON ? "first person" : "third person"));
+        setStatus("Camera: " + cameraMode.name().toLowerCase().replace('_', ' '));
     }
 
     private void setInventoryOpen(boolean open) {
@@ -2628,6 +2644,7 @@ public class Main {
             "src/main/resources/assets/aether/textures/block/miscellaneous"
         );
         textureManager.loadEntityTextures("src/main/resources/assets/minecraft/textures/entity");
+        textureManager.loadDestroyStages("src/main/resources/assets/minecraft/textures/blocks");
         
         biomeManager = new com.voxel.utils.BiomeManager();
         biomeManager.loadColormaps(
@@ -2989,6 +3006,11 @@ public class Main {
         // Crafting camera: 45° isometric-like angle, position computed during cutscene setup
         if (ctx.craftingTableOpen) {
             return new Vector3f(ctx.cutsceneCameraTargetPos);
+        }
+
+        // Cutscene manager active: use its computed position
+        if (ctx.cutsceneManager.isActive()) {
+            return new Vector3f(ctx.cutsceneManager.getCameraPosition());
         }
 
         if (cameraMode == CameraMode.FIRST_PERSON) {
