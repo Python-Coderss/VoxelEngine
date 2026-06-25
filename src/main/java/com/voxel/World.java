@@ -245,7 +245,7 @@ public void clearChunkPoolSlot(int slot) {
     for (int i = 0; i < voxelsPerChunk; i++) {
         chunkPool[startIdx + i] = 0;
         lightPool[startIdx + i] = 0;
-        occlusionPool[startIdx + i] = 0;
+        occlusionPool[startIdx + i] = (short)0x3FFF; // sky-visible default, not pitch-black
     }
 
     int startBitWord = slot << 7;
