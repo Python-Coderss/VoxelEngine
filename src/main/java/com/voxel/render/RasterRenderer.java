@@ -50,15 +50,6 @@ public class RasterRenderer {
     private int gbufferPosition, gbufferNormal, gbufferAlbedo, gbufferMaterial;
     private int gbufferDepth;
 
-    // Lighting compute shader
-    private int lightingProgram;
-    private int locLightGBufferPos, locLightGBufferNorm, locLightGBufferAlbedo, locLightGBufferMat;
-    private int locLightBlockData;
-    private int locLightSunDir, locLightSunColor, locLightMoonDir, locLightMoonColor;
-    private int locLightSkyZenith, locLightSkyHorizon, locLightAmbient, locLightDimensionID;
-    private int locLightWorldOffset, locLightCameraPos;
-    private int locLightCamForward, locLightCamRight, locLightCamUp, locLightAspectRatio;
-
     // Mesh storage: Map<absSectorKey, ChunkMesh> where key = absCX | (absCY << 20) | (absCZ << 40)
     private final Map<Long, ChunkMesh> meshes = new HashMap<>();
 
@@ -108,30 +99,6 @@ public class RasterRenderer {
         locVPGbuffer = glGetUniformLocation(gbufferProgram, "u_VP");
         locWorldOffsetGbuffer = glGetUniformLocation(gbufferProgram, "u_WorldOffset");
         locCameraPosGbuffer = glGetUniformLocation(gbufferProgram, "u_CameraPos");
-
-        // Compile lighting compute shader
-        lightingProgram = ShaderUtil.createProgram(
-            ShaderUtil.compileShader("src/main/resources/shaders/lighting.comp", GL_COMPUTE_SHADER)
-        );
-        locLightGBufferPos = glGetUniformLocation(lightingProgram, "u_GBufferPosition");
-        locLightGBufferNorm = glGetUniformLocation(lightingProgram, "u_GBufferNormal");
-        locLightGBufferAlbedo = glGetUniformLocation(lightingProgram, "u_GBufferAlbedo");
-        locLightGBufferMat = glGetUniformLocation(lightingProgram, "u_GBufferMaterial");
-        locLightBlockData = glGetUniformLocation(lightingProgram, "u_BlockData");
-        locLightSunDir = glGetUniformLocation(lightingProgram, "u_SunDir");
-        locLightSunColor = glGetUniformLocation(lightingProgram, "u_SunColor");
-        locLightMoonDir = glGetUniformLocation(lightingProgram, "u_MoonDir");
-        locLightMoonColor = glGetUniformLocation(lightingProgram, "u_MoonColor");
-        locLightSkyZenith = glGetUniformLocation(lightingProgram, "u_SkyZenith");
-        locLightSkyHorizon = glGetUniformLocation(lightingProgram, "u_SkyHorizon");
-        locLightAmbient = glGetUniformLocation(lightingProgram, "u_Ambient");
-        locLightDimensionID = glGetUniformLocation(lightingProgram, "u_DimensionID");
-        locLightWorldOffset = glGetUniformLocation(lightingProgram, "u_WorldOffset");
-        locLightCameraPos = glGetUniformLocation(lightingProgram, "u_CameraPos");
-        locLightCamForward = glGetUniformLocation(lightingProgram, "u_CamForward");
-        locLightCamRight = glGetUniformLocation(lightingProgram, "u_CamRight");
-        locLightCamUp = glGetUniformLocation(lightingProgram, "u_CamUp");
-        locLightAspectRatio = glGetUniformLocation(lightingProgram, "u_AspectRatio");
 
         // Create GBuffer FBO
         createGBuffer(width, height);
@@ -305,62 +272,6 @@ public class RasterRenderer {
 
         glDisable(GL_DEPTH_TEST);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-        // --- Lighting compute shader pass ---
-        glUseProgram(lightingProgram);
-
-        // Bind GBuffer textures
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, gbufferPosition);
-        glUniform1i(locLightGBufferPos, 0);
-
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, gbufferNormal);
-        glUniform1i(locLightGBufferNorm, 1);
-
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, gbufferAlbedo);
-        glUniform1i(locLightGBufferAlbedo, 2);
-
-        glActiveTexture(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D, gbufferMaterial);
-        glUniform1i(locLightGBufferMat, 3);
-
-        // Depth prepass textures
-
-        // Block data TBO
-        glActiveTexture(GL_TEXTURE7);
-        glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getTextureId());
-        glUniform1i(locLightBlockData, 7);
-
-        // SSBOs for DDA
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, sharedIndirectionSSBO);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, sharedChunkPoolSSBO);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, sharedBitmaskSSBO);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, sharedLightSSBO);
-
-        // World offset + camera
-        glUniform3i(locLightWorldOffset, worldOx, worldOy, worldOz);
-        glUniform3f(locLightCameraPos, cameraPos.x, cameraPos.y, cameraPos.z);
-
-        // Camera vectors for sky/reflection ray computation
-        float aspectRatio = (float) width / height;
-        float crx = -fz, crz = fx;
-        float crl = (float) Math.sqrt(crx * crx + crz * crz);
-        if (crl > 0) { crx /= crl; crz /= crl; }
-        float cux = -crz * fy, cuy = crz * fx - crx * fz, cuz = crx * fy;
-        glUniform3f(locLightCamForward, fx, fy, fz);
-        glUniform3f(locLightCamRight, crx, 0, crz);
-        glUniform3f(locLightCamUp, cux, cuy, cuz);
-        glUniform1f(locLightAspectRatio, aspectRatio);
-
-        // Atmosphere
-        uploadAtmosphere(worldTime, dimension);
-
-        // Dispatch lighting compute shader
-        glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
-        glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
-        glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
     }
 
     /** Build a mesh for a chunk sector immediately (called from render thread). */
@@ -391,49 +302,6 @@ public class RasterRenderer {
         }
     }
 
-    private void uploadAtmosphere(float worldTime, DimensionType dim) {
-        float t = worldTime;
-        float cycle = (t / 1440.0f) % 1.0f;
-        float angle = cycle * 2.0f * 3.14159265359f - (3.14159265359f * 0.5f);
-
-        if (dim == DimensionType.NETHER) {
-            glUniform3f(locLightSunDir, 0f, -0.5f, 0f);
-            glUniform3f(locLightSunColor, 0.6f, 0.2f, 0.05f);
-            glUniform3f(locLightMoonDir, 0f, 0.5f, 0f);
-            glUniform3f(locLightMoonColor, 0f, 0f, 0f);
-            glUniform3f(locLightSkyZenith, 0.3f, 0.05f, 0.02f);
-            glUniform3f(locLightSkyHorizon, 0.5f, 0.15f, 0.05f);
-            glUniform3f(locLightAmbient, 0.08f, 0.03f, 0.01f);
-            glUniform1i(locLightDimensionID, dim.id);
-        } else {
-            float sinA = (float) Math.sin(angle);
-            float cosA = (float) Math.cos(angle);
-            float len = (float) Math.sqrt(cosA * cosA + sinA * sinA + 0.3f * 0.3f);
-            glUniform3f(locLightSunDir, cosA / len, sinA / len, 0.3f / len);
-            glUniform3f(locLightMoonDir, -cosA / len, -sinA / len, -0.3f / len);
-
-            float h = sinA / len;
-            float tSky = Math.max(0, Math.min(1, (h + 0.15f) / 0.3f));
-            float sSky = tSky * tSky * (3 - 2 * tSky);
-            glUniform3f(locLightSkyZenith, 0.01f + 0.09f * sSky, 0.02f + 0.33f * sSky, 0.05f + 0.7f * sSky);
-            glUniform3f(locLightSkyHorizon, 0.02f + 0.88f * sSky, 0.03f + 0.37f * sSky, 0.08f + 0.82f * sSky);
-
-            float tSun = Math.max(0, Math.min(1, (h + 0.1f) / 0.2f));
-            float sSun = tSun * tSun * (3 - 2 * tSun);
-            glUniform3f(locLightSunColor, sSun, 0.5f + 0.48f * sSun, 0.2f + 0.7f * sSun);
-
-            tSun = Math.max(0, Math.min(1, (-h + 0.1f) / 0.2f));
-            sSun = tSun * tSun * (3 - 2 * tSun);
-            glUniform3f(locLightMoonColor, 0.2f * sSun, 0.25f * sSun, 0.4f * sSun);
-
-            float tAmb = Math.max(0, Math.min(1, (h + 0.2f) / 0.4f));
-            float sAmb = tAmb * tAmb * (3 - 2 * tAmb);
-            glUniform3f(locLightAmbient, 0.02f + 0.02f * sAmb, 0.03f + 0.11f * sAmb, 0.07f + 0.23f * sAmb);
-
-            glUniform1i(locLightDimensionID, dim.id);
-        }
-    }
-
     public void delete() {
         for (ChunkMesh mesh : meshes.values()) mesh.delete();
         meshes.clear();
@@ -444,7 +312,6 @@ public class RasterRenderer {
         if (gbufferAlbedo != 0) glDeleteTextures(gbufferAlbedo);
         if (gbufferMaterial != 0) glDeleteTextures(gbufferMaterial);
         if (gbufferDepth != 0) glDeleteTextures(gbufferDepth);
-        if (lightingProgram != 0) glDeleteProgram(lightingProgram);
         if (gbufferProgram != 0) glDeleteProgram(gbufferProgram);
         if (visBuffer != null) MemoryUtil.memFree(visBuffer);
     }

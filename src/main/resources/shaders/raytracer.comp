@@ -32,6 +32,9 @@ layout(std430, binding = 2) buffer readonly restrict ChunkPool { uint voxelPool[
 layout(std430, binding = 3) buffer readonly restrict BitmaskPool { uint bitmasks[]; };
 layout(std430, binding = 4) buffer readonly restrict OcclusionPool { uint occlusionPool[]; };
 
+// Block light propagation: Minecraft packed format [sky(0-3)|block(4-7)] per voxel
+layout(std430, binding = 9) buffer readonly restrict LightPool { uint lightPool[]; };
+
 // Block break overlay uniforms
 layout(location = 19) uniform ivec3 u_BreakTargetPos;
 layout(location = 20) uniform float u_BreakProgress;
@@ -296,6 +299,22 @@ uint getVoxelOcclusion(ivec3 p) {
     uint uintIdx = (slot << 11u) | uint(voxelIdx >> 1);
     uint packedv = occlusionPool[uintIdx];
     return (voxelIdx & 1) == 0 ? (packedv & 0xFFFFu) : (packedv >> 16);
+}
+
+// Sample Minecraft packed lightmap at world position.
+// Returns vec2 where x = skyLight (0-15), y = blockLight (0-15)
+vec2 sampleLightmap(ivec3 p) {
+    ivec3 rel = p - u_WorldOffset;
+    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(2048)))) return vec2(-1);
+    uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
+    if (slot == EMPTY) return vec2(-1);
+    int voxelIdx = (rel.x & 15) | ((rel.y & 15) << 4) | ((rel.z & 15) << 8);
+    uint idx = (slot << 12u) | uint(voxelIdx);
+    uint packedv = lightPool[idx];
+    // bits 0-3 = sky light, bits 4-7 = block light
+    float sky = float(packedv & 0xFu);
+    float block = float((packedv >> 4u) & 0xFu);
+    return vec2(sky, block);
 }
 
 float fastShadow(vec3 ro, vec3 rd, float maxDist) {
@@ -841,6 +860,20 @@ void main() {
 
             // Compute direct+ambient lighting for the block (same as crafting item path)
             beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
+
+            // Sample Minecraft lightmap from the nearest non-full-block voxel adjacent to the hit face
+            ivec3 lightSamplePos = ivec3(floor(hp + n * 0.5));
+            vec2 lightMap = sampleLightmap(lightSamplePos);
+            if (lightMap.x < 0.0) {
+                lightSamplePos = ivec3(floor(hp - n * 0.5));
+                lightMap = sampleLightmap(lightSamplePos);
+            }
+            if (lightMap.x < 0.0) lightMap = vec2(0.0);
+            float skyContrib = lightMap.x / 15.0;
+            float blockContrib = min(lightMap.y * 5.0, 15.0) / 15.0;
+            float totalLightContrib = max(skyContrib, blockContrib);
+            beam *= totalLightContrib;
+            beam += at.ambient * 0.3;
 
             // ── Block break overlay: Minecraft destroy_stage texture on all 6 faces ──
             if (u_BreakProgress > 0.0 && u_DestroyBaseLayer >= 0) {
