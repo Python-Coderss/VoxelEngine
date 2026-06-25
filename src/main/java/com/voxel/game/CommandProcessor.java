@@ -44,6 +44,7 @@ public class CommandProcessor {
             case "dim": handleDimension(parts); break;
             case "help": handleHelp(); break;
             case "list": handleList(parts); break;
+            case "camera": handleCamera(parts); break;
             default: ctx.setStatus("Unknown command: /" + command + ". Type /help for commands."); break;
         }
     }
@@ -132,7 +133,41 @@ public class CommandProcessor {
         sb.append("\n  /spawn - Teleport to spawn");
         sb.append("\n  /dimension <overworld|nether|end|aether> - Switch dimension");
         sb.append("\n  /setuv <full|half|empty> <x> <y> [w] [h] - Adjust heart UVs");
+        sb.append("\n  /camera <follow|orbit|fixed|cinematic> - Set camera shot type");
         ctx.setStatus(sb.toString());
+    }
+
+    private void handleCamera(String[] parts) {
+        if (parts.length < 2) {
+            ctx.setStatus("Usage: /camera <follow|orbit|fixed|cinematic>");
+            return;
+        }
+        String mode = parts[1].toLowerCase(Locale.ROOT);
+        switch (mode) {
+            case "follow":
+            case "third":
+                ctx.cameraMode = CameraMode.THIRD_PERSON_FOLLOW;
+                ctx.setStatus("Camera: third person follow");
+                break;
+            case "orbit":
+                ctx.cameraMode = CameraMode.THIRD_PERSON_ORBIT;
+                ctx.setStatus("Camera: orbit");
+                break;
+            case "fixed":
+                ctx.cameraMode = CameraMode.THIRD_PERSON_FIXED;
+                ctx.setStatus("Camera: fixed");
+                break;
+            case "cinematic":
+                ctx.cameraMode = CameraMode.CINEMATIC;
+                // Start a basic cinematic orbit shot
+                ctx.cutsceneManager.startShot(
+                    com.voxel.camera.CutsceneManager.CameraShot.follow(0, 6.0f, 2.5f, 0.8f)
+                );
+                ctx.setStatus("Camera: cinematic (dynamic orbit)");
+                break;
+            default:
+                ctx.setStatus("Unknown camera mode: " + mode + ". Use: follow, orbit, fixed, or cinematic");
+        }
     }
 
     private void handleList(String[] parts) {

@@ -38,6 +38,7 @@ layout(std430, binding = 9) buffer readonly restrict LightPool { uint lightPool[
 // Block break overlay uniforms
 layout(location = 19) uniform ivec3 u_BreakTargetPos;
 layout(location = 20) uniform float u_BreakProgress;
+layout(location = 21) uniform int u_DestroyBaseLayer;
 
 // Point Lights
 struct PointLight { vec3 position; float radius; vec3 color; float intensity; };
@@ -72,6 +73,7 @@ uniform sampler2D u_GrassColormap;
 uniform sampler2D u_FoliageColormap;
 uniform sampler2D u_UITexture;
 uniform sampler2D u_UISource;
+uniform sampler2DArray u_DestroyStages;
 
 // Depth prepass textures: hardware-rasterized chunk AABB depth + chunk origin
 uniform sampler2D u_DepthTex;
@@ -859,20 +861,27 @@ void main() {
             // Compute direct+ambient lighting for the block (same as crafting item path)
             beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
 
-            // ── Block break overlay: darken + crack pattern on the targeted block ──
-            if (u_BreakProgress > 0.0) {
+            // ── Block break overlay: Minecraft destroy_stage texture on all 6 faces ──
+            if (u_BreakProgress > 0.0 && u_DestroyBaseLayer >= 0) {
                 ivec3 blockCoord = ivec3(floor(hp));
                 if (blockCoord.x == u_BreakTargetPos.x && blockCoord.y == u_BreakTargetPos.y && blockCoord.z == u_BreakTargetPos.z) {
-                    float darken = 1.0 - u_BreakProgress * 0.4;
-                    alb *= darken;
-                    float crackThreshold = 0.3 + u_BreakProgress * 0.5;
-                    vec2 crackUv = uv * 4.0;
-                    vec2 crackCell = floor(crackUv);
-                    vec2 crackFrac = fract(crackUv) - 0.5;
-                    float hash = fract(sin(dot(crackCell, vec2(12.9898, 78.233))) * 43758.5453);
-                    if (hash < crackThreshold) {
-                        float crackLine = 1.0 - abs(crackFrac.x * crackFrac.y) * 4.0;
-                        if (crackLine > 0.7) alb *= 0.5;
+                    // Compute face-relative UV for the overlay (all 6 faces)
+                    vec2 overlayUv;
+                    if (abs(n.x) > 0.5) {
+                        overlayUv = vec2(fract(hp.z), 1.0 - fract(hp.y));
+                    } else if (abs(n.y) > 0.5) {
+                        overlayUv = vec2(fract(hp.x), fract(hp.z));
+                    } else {
+                        overlayUv = vec2(fract(hp.x), 1.0 - fract(hp.y));
+                    }
+                    // Select destroy stage (0-9) based on progress
+                    int stage = clamp(int(u_BreakProgress * 10.0), 0, 9);
+                    vec4 destroyTex = texture(u_DestroyStages, vec3(overlayUv, stage));
+                    // Alpha blend the black crack overlay over the block albedo (Minecraft-style)
+                    float overlayAlpha = destroyTex.a;
+                    if (overlayAlpha > 0.01) {
+                        vec3 crackColor = vec3(0.0, 0.0, 0.0);
+                        alb = mix(alb, crackColor, overlayAlpha * 0.8);
                     }
                 }
             }
