@@ -870,7 +870,7 @@ void main() {
             }
             if (lightMap.x < 0.0) lightMap = vec2(0.0);
             float skyContrib = lightMap.x / 15.0;
-            float blockContrib = min(lightMap.y * 5.0, 15.0) / 15.0;
+            float blockContrib = max(lightMap.y * 5.0, 1.0) / 15.0;
             float totalLightContrib = max(skyContrib, blockContrib);
             beam *= totalLightContrib;
             beam += at.ambient * 0.3;
