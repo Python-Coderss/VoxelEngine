@@ -233,6 +233,33 @@ public class ChunkManager {
         lightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
         dirtySlots.add(slot);
 
+        // ── Immediate light pool seed on block break ──
+        // When a block is broken, the shader samples the lightmap at the now-empty position
+        // for adjacent faces (using hp + n * 0.5). If we don't update the light pool here,
+        // those faces will render black because the light pool still contains the stale
+        // values from when the solid block was there (sky=0, block=0).
+        // We seed from the brightest neighbor as a rough approximation for the 1-frame gap
+        // before the async BFS light task completes.
+        if (type == 0) {
+            int lx = x & 15, ly = y & 15, lz = z & 15;
+            int maxSky = 0, maxBlock = 0;
+            int[][] dirs = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+            for (int[] d : dirs) {
+                int nx = x + d[0], ny = y + d[1], nz = z + d[2];
+                int ns = world.getChunkSlot(nx, ny, nz);
+                if (ns != World.EMPTY) {
+                    int nlx = nx & 15, nly = ny & 15, nlz = nz & 15;
+                    maxSky = Math.max(maxSky, world.getSkyLight(ns, nlx, nly, nlz));
+                    maxBlock = Math.max(maxBlock, world.getBlockLight(ns, nlx, nly, nlz));
+                }
+            }
+            world.setSkyLight(slot, lx, ly, lz, maxSky);
+            world.setBlockLight(slot, lx, ly, lz, maxBlock);
+            // Signal GPU upload immediately so the seeded values don't sit stale on CPU
+            lightsNeedUpload = true;
+            tableDirty.set(true);
+        }
+
         // Post lighting updates to the dedicated light thread unconditionally
         // (block changes always affect light: placing blocks creates shadows, breaking lets light through)
         final int colCx = x >> 4;
