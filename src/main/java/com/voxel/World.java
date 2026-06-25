@@ -255,14 +255,23 @@ public void clearChunkPoolSlot(int slot) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  Minecraft-style light accessors (sky light + block light)
-//  lightPool format: bits 0-3 = sky light (0-15), bits 4-7 = block light (0-15)
+//  Minecraft-style light accessors (sky light + RGB block light)
+//  lightPool format per int:
+//    bits 0-3  = sky light (0-15)
+//    bits 4-7  = block light Red   (0-15)
+//    bits 8-11 = block light Green (0-15)
+//    bits 12-15 = block light Blue  (0-15)
 // ══════════════════════════════════════════════════════════════════
 
 private static final int LIGHT_SKY_SHIFT = 0;
-private static final int LIGHT_BLOCK_SHIFT = 4;
+private static final int LIGHT_BLOCK_R_SHIFT = 4;
+private static final int LIGHT_BLOCK_G_SHIFT = 8;
+private static final int LIGHT_BLOCK_B_SHIFT = 12;
 private static final int LIGHT_SKY_MASK = 0xF;
-private static final int LIGHT_BLOCK_MASK = 0xF0;
+private static final int LIGHT_BLOCK_R_MASK = 0xF0;
+private static final int LIGHT_BLOCK_G_MASK = 0xF00;
+private static final int LIGHT_BLOCK_B_MASK = 0xF000;
+private static final int LIGHT_BLOCK_ALL_MASK = 0xFFF0;
 
 /**
  * Sets the sky light value (0-15) for a voxel in a given chunk slot at local coords.
@@ -282,25 +291,58 @@ public int getSkyLight(int slot, int lx, int ly, int lz) {
 }
 
 /**
- * Sets the block light value (0-15) for a voxel in a given chunk slot at local coords.
+ * Sets all three block light channel (R,G,B, 0-15 each) for a voxel.
  */
-public void setBlockLight(int slot, int lx, int ly, int lz, int value) {
+public void setBlockLightRGB(int slot, int lx, int ly, int lz, int r, int g, int b) {
     int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
     int current = lightPool[poolIdx];
-    lightPool[poolIdx] = (current & ~LIGHT_BLOCK_MASK) | ((value & 0xF) << LIGHT_BLOCK_SHIFT);
+    lightPool[poolIdx] = (current & ~LIGHT_BLOCK_ALL_MASK)
+        | ((r & 0xF) << LIGHT_BLOCK_R_SHIFT)
+        | ((g & 0xF) << LIGHT_BLOCK_G_SHIFT)
+        | ((b & 0xF) << LIGHT_BLOCK_B_SHIFT);
 }
 
 /**
- * Gets the block light value (0-15) for a voxel in a given chunk slot at local coords.
+ * Sets block light to the same value in all three channels (white light).
+ * Backward-compatible with old single-intensity callers.
+ */
+public void setBlockLight(int slot, int lx, int ly, int lz, int value) {
+    setBlockLightRGB(slot, lx, ly, lz, value, value, value);
+}
+
+/**
+ * Gets the block light intensity (max of R,G,B, 0-15).
  */
 public int getBlockLight(int slot, int lx, int ly, int lz) {
     int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
-    return (lightPool[poolIdx] >> LIGHT_BLOCK_SHIFT) & 0xF;
+    int r = (lightPool[poolIdx] >> LIGHT_BLOCK_R_SHIFT) & 0xF;
+    int g = (lightPool[poolIdx] >> LIGHT_BLOCK_G_SHIFT) & 0xF;
+    int b = (lightPool[poolIdx] >> LIGHT_BLOCK_B_SHIFT) & 0xF;
+    return Math.max(r, Math.max(g, b));
+}
+
+/** Gets the block light Red channel (0-15). */
+public int getBlockLightR(int slot, int lx, int ly, int lz) {
+    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+    return (lightPool[poolIdx] >> LIGHT_BLOCK_R_SHIFT) & 0xF;
+}
+
+/** Gets the block light Green channel (0-15). */
+public int getBlockLightG(int slot, int lx, int ly, int lz) {
+    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+    return (lightPool[poolIdx] >> LIGHT_BLOCK_G_SHIFT) & 0xF;
+}
+
+/** Gets the block light Blue channel (0-15). */
+public int getBlockLightB(int slot, int lx, int ly, int lz) {
+    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+    return (lightPool[poolIdx] >> LIGHT_BLOCK_B_SHIFT) & 0xF;
 }
 
 /**
- * Gets the packed lightmap (Minecraft-style: sky in lower 4 bits, block in upper 4 bits)
- * from the light pool at world coordinates. Returns 0 if outside the buffer.
+ * Gets the packed lightmap from the light pool at world coordinates.
+ * Returns packed RGBA-like int: sky(bit 20-23) | blockR(bit 16-19) | blockG(bit 12-15) | blockB(bit 8-11) | 0(lower bits)
+ * Returns 0 if outside the buffer.
  */
 public int getPackedLightmap(int x, int y, int z) {
     int rx = x - offsetX;
@@ -317,10 +359,11 @@ public int getPackedLightmap(int x, int y, int z) {
 
     int poolIdx = (slot << 12) | ((rx & 15) | ((ry & 15) << 4) | ((rz & 15) << 8));
     int raw = lightPool[poolIdx];
-    // Minecraft packed format: (sky << 20) | (block << 4)
     int sky = raw & 0xF;
-    int block = (raw >> 4) & 0xF;
-    return (sky << 20) | (block << 4);
+    int r = (raw >> LIGHT_BLOCK_R_SHIFT) & 0xF;
+    int g = (raw >> LIGHT_BLOCK_G_SHIFT) & 0xF;
+    int b = (raw >> LIGHT_BLOCK_B_SHIFT) & 0xF;
+    return (sky << 20) | (r << 16) | (g << 12) | (b << 8);
 }
 
 /**

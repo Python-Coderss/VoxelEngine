@@ -9,7 +9,7 @@ import java.util.Set;
 import java.util.HashSet;
 
 /**
- * Minecraft-style dual-channel lighting engine.
+ * Minecraft-style lighting engine with RGB block light support.
  *
  * Sky light (EnumSkyBlock.SKY):
  *   Propagates top-down from the world ceiling. Each column is computed independently:
@@ -18,13 +18,17 @@ import java.util.HashSet;
  *
  * Block light (EnumSkyBlock.BLOCK):
  *   Flood-fills outward from emissive block sources (torches, glowstone, etc.).
- *   Each step away from the source reduces light by 1. Opaque blocks block propagation.
- *   Light values range from 0 to 15.
+ *   Each step away from the source reduces light by 1 per channel. Opaque blocks block propagation.
+ *   Light values range from 0 to 15 per RGB channel.
  *
  * Light is stored in the existing World.lightPool using a packed format:
- *   bits 0-3 = sky light (0-15)
- *   bits 4-7 = block light (0-15)
+ *   bits 0-3  = sky light (0-15)
+ *   bits 4-7  = block light Red   (0-15)
+ *   bits 8-11 = block light Green (0-15)
+ *   bits 12-15 = block light Blue  (0-15)
  */
+
+import com.voxel.utils.BlockDataManager;
 public class LightEngine {
 
     private final World world;
@@ -155,18 +159,34 @@ public class LightEngine {
         boolean isEmpty() { return size == 0; }
     }
 
-    /** Bit layout: z(11 bits, 0-10) | y(11 bits, 11-21) | x(11 bits, 22-32) | dist(4 bits, 33-36) */
-    private static long packNode(int x, int y, int z, int dist) {
-        return ((long)(x & 0x7FF) << 22) | ((long)(y & 0x7FF) << 11) | ((long)(z & 0x7FF)) | ((long)(dist & 0xF) << 33);
+    /** Bit layout: z(11 bits, 0-10) | y(11 bits, 11-21) | x(11 bits, 22-32) | r(4 bits, 33-36) | g(4 bits, 37-40) | b(4 bits, 41-44) */
+    private static long packNodeRGB(int x, int y, int z, int r, int g, int b) {
+        return ((long)(x & 0x7FF) << 22) | ((long)(y & 0x7FF) << 11) | ((long)(z & 0x7FF))
+            | ((long)(r & 0xF) << 33) | ((long)(g & 0xF) << 37) | ((long)(b & 0xF) << 41);
     }
     private static int nodeX(long p) { return (int)((p >>> 22) & 0x7FF); }
     private static int nodeY(long p) { return (int)((p >>> 11) & 0x7FF); }
     private static int nodeZ(long p) { return (int)(p & 0x7FF); }
-    private static int nodeDist(long p) { return (int)((p >>> 33) & 0xF); }
+    private static int nodeR(long p) { return (int)((p >>> 33) & 0xF); }
+    private static int nodeG(long p) { return (int)((p >>> 37) & 0xF); }
+    private static int nodeB(long p) { return (int)((p >>> 41) & 0xF); }
+    /** Returns intensity (max of R,G,B) from a packed RGB node. */
+    private static int nodeIntensity(long p) {
+        int r = (int)((p >>> 33) & 0xF);
+        int g = (int)((p >>> 37) & 0xF);
+        int b = (int)((p >>> 41) & 0xF);
+        return Math.max(r, Math.max(g, b));
+    }
+
+    /** Convenience: packs a single intensity as white light R=G=B=intensity. */
+    private static long packNodeWhite(int x, int y, int z, int intensity) {
+        return packNodeRGB(x, y, z, intensity, intensity, intensity);
+    }
 
     /**
      * Propagates block light from all emissive sources in a chunk section.
-     * Flood-fill BFS: light diminishes by 1+opacity per step, full blocks block propagation.
+     * Flood-fill BFS: each RGB channel diminishes by 1+opacity per step, full blocks block propagation.
+     * Color tint is preserved from source through propagation.
      *
      * @param cx   Absolute chunk X coordinate
      * @param cy   Absolute chunk section Y coordinate
@@ -193,12 +213,21 @@ public class LightEngine {
                     int wy = worldBaseY + ly;
                     int wz = worldBaseZ + lz;
 
-                    int emissive = blockDataManager.getEmissive(world.getVoxel(wx, wy, wz));
+                    int blockId = world.getVoxel(wx, wy, wz);
+                    int emissive = blockDataManager.getEmissive(blockId);
                     if (emissive > 0) {
-                        int lightLevel = Math.min(emissive, MAX_LIGHT);
-                        world.setBlockLight(slot, lx, ly, lz, lightLevel);
+                        // Read block's light color and scale by emissive intensity
+                        int rgb15 = blockDataManager.getBlockLightRGB15(blockId);
+                        int r = (rgb15 >> 8) & 0xF;
+                        int g = (rgb15 >> 4) & 0xF;
+                        int b = rgb15 & 0xF;
+                        if (r == 0 && g == 0 && b == 0) {
+                            // Fallback: use white at emissive-derived intensity
+                            r = g = b = Math.min(emissive, 15);
+                        }
+                        world.setBlockLightRGB(slot, lx, ly, lz, r, g, b);
                         dirtySlots.add(slot);
-                        queue.add(packNode(wx, wy, wz, lightLevel));
+                        queue.add(packNodeRGB(wx, wy, wz, r, g, b));
                     }
                 }
             }
@@ -209,7 +238,8 @@ public class LightEngine {
         while (!queue.isEmpty()) {
             long node = queue.poll();
             int nx0 = nodeX(node), ny0 = nodeY(node), nz0 = nodeZ(node);
-            int dist = nodeDist(node);
+            int r = nodeR(node), g = nodeG(node), b = nodeB(node);
+            int intensity = Math.max(r, Math.max(g, b));
 
             for (Direction dir : dirs) {
                 int nx = nx0 + dir.x;
@@ -224,16 +254,28 @@ public class LightEngine {
                 if (nSlot == World.EMPTY) continue;
 
                 int opacity = getBlockOpacity(world.getVoxel(nx, ny, nz));
-                int nextLevel = dist - Math.max(1, opacity);
-                if (nextLevel <= 0) continue;
+                int step = Math.max(1, opacity);
+                int nextR = Math.max(0, r - step);
+                int nextG = Math.max(0, g - step);
+                int nextB = Math.max(0, b - step);
+                int nextIntensity = Math.max(nextR, Math.max(nextG, nextB));
+                if (nextIntensity <= 0) continue;
 
                 int nlx = nx & 15, nly = ny & 15, nlz = nz & 15;
-                int current = world.getBlockLight(nSlot, nlx, nly, nlz);
-                if (current < nextLevel) {
-                    world.setBlockLight(nSlot, nlx, nly, nlz, nextLevel);
+                int curR = world.getBlockLightR(nSlot, nlx, nly, nlz);
+                int curG = world.getBlockLightG(nSlot, nlx, nly, nlz);
+                int curB = world.getBlockLightB(nSlot, nlx, nly, nlz);
+                int curIntensity = Math.max(curR, Math.max(curG, curB));
+
+                if (curIntensity < nextIntensity) {
+                    // Take the max of each channel independently (supports overlapping sources)
+                    world.setBlockLightRGB(nSlot, nlx, nly, nlz,
+                        Math.max(curR, nextR),
+                        Math.max(curG, nextG),
+                        Math.max(curB, nextB));
                     dirtySlots.add(nSlot);
-                    if (nextLevel > 1) {
-                        queue.add(packNode(nx, ny, nz, nextLevel));
+                    if (nextIntensity > 1) {
+                        queue.add(packNodeRGB(nx, ny, nz, nextR, nextG, nextB));
                     }
                 }
             }
@@ -245,6 +287,7 @@ public class LightEngine {
     /**
      * Runs block light BFS from a single source position (for block placement/removal).
      * Uses incremental darken+flood instead of brute-force clear+rebuild for real-time performance.
+     * RGB-aware: darkens and re-propagates per-channel.
      *
      * @param x World X coordinate of changed block
      * @param y World Y coordinate of changed block
@@ -260,24 +303,33 @@ public class LightEngine {
         int maxRel = bufSize - 1;
 
         int lx = x & 15, ly = y & 15, lz = z & 15;
-        int currentLight = world.getBlockLight(slot, lx, ly, lz);
+        int curR = world.getBlockLightR(slot, lx, ly, lz);
+        int curG = world.getBlockLightG(slot, lx, ly, lz);
+        int curB = world.getBlockLightB(slot, lx, ly, lz);
+        int curIntensity = Math.max(curR, Math.max(curG, curB));
         int blockId = world.getVoxel(x, y, z);
         int emissive = blockDataManager.getEmissive(blockId);
 
         LongQueue removeQueue = new LongQueue(64);
         LongQueue addQueue = new LongQueue(64);
 
-        // Capture initial state
+        // Capture initial state with RGB
         if (emissive > 0) {
-            int lightLevel = Math.min(emissive, MAX_LIGHT);
-            world.setBlockLight(slot, lx, ly, lz, lightLevel);
+            int rgb15 = blockDataManager.getBlockLightRGB15(blockId);
+            int srcR = (rgb15 >> 8) & 0xF;
+            int srcG = (rgb15 >> 4) & 0xF;
+            int srcB = rgb15 & 0xF;
+            if (srcR == 0 && srcG == 0 && srcB == 0) {
+                srcR = srcG = srcB = Math.min(emissive, 15);
+            }
+            world.setBlockLightRGB(slot, lx, ly, lz, srcR, srcG, srcB);
             dirtySlots.add(slot);
-            addQueue.add(packNode(x, y, z, lightLevel));
+            addQueue.add(packNodeRGB(x, y, z, srcR, srcG, srcB));
         } else {
-            world.setBlockLight(slot, lx, ly, lz, 0);
+            world.setBlockLightRGB(slot, lx, ly, lz, 0, 0, 0);
             dirtySlots.add(slot);
-            if (currentLight > 0) {
-                removeQueue.add(packNode(x, y, z, currentLight));
+            if (curIntensity > 0) {
+                removeQueue.add(packNodeRGB(x, y, z, curR, curG, curB));
             }
         }
 
@@ -287,7 +339,8 @@ public class LightEngine {
         while (!removeQueue.isEmpty()) {
             long node = removeQueue.poll();
             int nx0 = nodeX(node), ny0 = nodeY(node), nz0 = nodeZ(node);
-            int lightLevel = nodeDist(node);
+            int oldR = nodeR(node), oldG = nodeG(node), oldB = nodeB(node);
+            int oldIntensity = Math.max(oldR, Math.max(oldG, oldB));
 
             for (Direction dir : dirs) {
                 int nx = nx0 + dir.x, ny = ny0 + dir.y, nz = nz0 + dir.z;
@@ -298,14 +351,17 @@ public class LightEngine {
                 if (nSlot == World.EMPTY) continue;
 
                 int nlx = nx & 15, nly = ny & 15, nlz = nz & 15;
-                int nLight = world.getBlockLight(nSlot, nlx, nly, nlz);
+                int nR = world.getBlockLightR(nSlot, nlx, nly, nlz);
+                int nG = world.getBlockLightG(nSlot, nlx, nly, nlz);
+                int nB = world.getBlockLightB(nSlot, nlx, nly, nlz);
+                int nIntensity = Math.max(nR, Math.max(nG, nB));
 
-                if (nLight != 0 && nLight < lightLevel) {
-                    world.setBlockLight(nSlot, nlx, nly, nlz, 0);
+                if (nIntensity != 0 && nIntensity < oldIntensity && nR <= oldR && nG <= oldG && nB <= oldB) {
+                    world.setBlockLightRGB(nSlot, nlx, nly, nlz, 0, 0, 0);
                     dirtySlots.add(nSlot);
-                    removeQueue.add(packNode(nx, ny, nz, nLight));
-                } else if (nLight >= lightLevel) {
-                    addQueue.add(packNode(nx, ny, nz, nLight));
+                    removeQueue.add(packNodeRGB(nx, ny, nz, nR, nG, nB));
+                } else if (nIntensity >= oldIntensity) {
+                    addQueue.add(packNodeRGB(nx, ny, nz, nR, nG, nB));
                 }
             }
         }
@@ -314,7 +370,8 @@ public class LightEngine {
         while (!addQueue.isEmpty()) {
             long node = addQueue.poll();
             int nx0 = nodeX(node), ny0 = nodeY(node), nz0 = nodeZ(node);
-            int dist = nodeDist(node);
+            int r = nodeR(node), g = nodeG(node), b = nodeB(node);
+            int intensity = Math.max(r, Math.max(g, b));
 
             for (Direction dir : dirs) {
                 int nx = nx0 + dir.x, ny = ny0 + dir.y, nz = nz0 + dir.z;
@@ -325,16 +382,28 @@ public class LightEngine {
                 if (nSlot == World.EMPTY) continue;
 
                 int opacity = getBlockOpacity(world.getVoxel(nx, ny, nz));
-                int expectedLight = dist - Math.max(1, opacity);
-                if (expectedLight <= 0) continue;
+                int step = Math.max(1, opacity);
+                int nextR = Math.max(0, r - step);
+                int nextG = Math.max(0, g - step);
+                int nextB = Math.max(0, b - step);
+                int nextIntensity = Math.max(nextR, Math.max(nextG, nextB));
+                if (nextIntensity <= 0) continue;
 
                 int nlx = nx & 15, nly = ny & 15, nlz = nz & 15;
-                int current = world.getBlockLight(nSlot, nlx, nly, nlz);
+                int curR2 = world.getBlockLightR(nSlot, nlx, nly, nlz);
+                int curG2 = world.getBlockLightG(nSlot, nlx, nly, nlz);
+                int curB2 = world.getBlockLightB(nSlot, nlx, nly, nlz);
+                int curInt2 = Math.max(curR2, Math.max(curG2, curB2));
 
-                if (current < expectedLight) {
-                    world.setBlockLight(nSlot, nlx, nly, nlz, expectedLight);
+                if (curInt2 < nextIntensity) {
+                    world.setBlockLightRGB(nSlot, nlx, nly, nlz,
+                        Math.max(curR2, nextR),
+                        Math.max(curG2, nextG),
+                        Math.max(curB2, nextB));
                     dirtySlots.add(nSlot);
-                    addQueue.add(packNode(nx, ny, nz, expectedLight));
+                    if (nextIntensity > 1) {
+                        addQueue.add(packNodeRGB(nx, ny, nz, nextR, nextG, nextB));
+                    }
                 }
             }
         }

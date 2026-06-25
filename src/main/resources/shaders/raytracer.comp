@@ -301,20 +301,23 @@ uint getVoxelOcclusion(ivec3 p) {
     return (voxelIdx & 1) == 0 ? (packedv & 0xFFFFu) : (packedv >> 16);
 }
 
-// Sample Minecraft packed lightmap at world position.
-// Returns vec2 where x = skyLight (0-15), y = blockLight (0-15)
-vec2 sampleLightmap(ivec3 p) {
+// Sample RGB lightmap at world position.
+// Returns vec4 where x = skyLight (0-15), yzw = blockLight RGB (0-15 each)
+// Returns vec4(-1) if outside buffer.
+vec4 sampleLightmap(ivec3 p) {
     ivec3 rel = p - u_WorldOffset;
-    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(2048)))) return vec2(-1);
+    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(2048)))) return vec4(-1);
     uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
-    if (slot == EMPTY) return vec2(-1);
+    if (slot == EMPTY) return vec4(-1);
     int voxelIdx = (rel.x & 15) | ((rel.y & 15) << 4) | ((rel.z & 15) << 8);
     uint idx = (slot << 12u) | uint(voxelIdx);
     uint packedv = lightPool[idx];
-    // bits 0-3 = sky light, bits 4-7 = block light
+    // bits 0-3 = sky light, bits 4-7 = block R, bits 8-11 = block G, bits 12-15 = block B
     float sky = float(packedv & 0xFu);
-    float block = float((packedv >> 4u) & 0xFu);
-    return vec2(sky, block);
+    float blockR = float((packedv >> 4u) & 0xFu);
+    float blockG = float((packedv >> 8u) & 0xFu);
+    float blockB = float((packedv >> 12u) & 0xFu);
+    return vec4(sky, blockR, blockG, blockB);
 }
 
 float fastShadow(vec3 ro, vec3 rd, float maxDist) {
@@ -861,18 +864,26 @@ void main() {
             // Compute direct+ambient lighting for the block (same as crafting item path)
             beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
 
-            // Sample Minecraft lightmap from the nearest non-full-block voxel adjacent to the hit face
+            // Sample RGB lightmap from the nearest non-full-block voxel adjacent to the hit face
             ivec3 lightSamplePos = ivec3(floor(hp + n * 0.5));
-            vec2 lightMap = sampleLightmap(lightSamplePos);
+            vec4 lightMap = sampleLightmap(lightSamplePos);
             if (lightMap.x < 0.0) {
                 lightSamplePos = ivec3(floor(hp - n * 0.5));
                 lightMap = sampleLightmap(lightSamplePos);
             }
-            if (lightMap.x < 0.0) lightMap = vec2(0.0);
+            if (lightMap.x < 0.0) lightMap = vec4(0.0);
             float skyContrib = lightMap.x / 15.0;
-            float blockContrib = max(lightMap.y * 5.0, 1.0) / 15.0;
+            // Block light: RGB channels with intensity + color tint
+            float blockR = lightMap.y, blockG = lightMap.z, blockB = lightMap.w;
+            float blockIntensity = max(max(blockR, blockG), blockB);
+            float blockContrib = max(blockIntensity * 5.0, 1.0) / 15.0;
             float totalLightContrib = max(skyContrib, blockContrib);
-            beam *= totalLightContrib;
+            // Apply block light tint: color the beam with the RGB light source color
+            vec3 blockTint = vec3(1.0);
+            if (blockIntensity > 0.001) {
+                blockTint = vec3(blockR, blockG, blockB) / blockIntensity;
+            }
+            beam *= totalLightContrib * mix(vec3(1.0), blockTint, blockContrib * 0.8);
             beam += at.ambient * 0.3;
 
             // ── Block break overlay: Minecraft destroy_stage texture on all 6 faces ──
