@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Base class for all entities in the voxel engine.
@@ -27,6 +28,14 @@ public class Entity {
     public Vector3f tintColor = new Vector3f(1.0f, 1.0f, 1.0f);
     public float tintAmount = 0.0f;
 
+    // ── Animation system ──
+    private Animation currentAnimation = null;
+    private String currentAnimName = null;
+    private float animTime = 0.0f;
+    private boolean animPlaying = false;
+    private Map<String, Vector3f> basePartOffsets = new java.util.LinkedHashMap<>();
+    private Map<String, Vector3f> basePartRotations = new java.util.LinkedHashMap<>();
+
     public Entity(int id, Vector3f position) {
         this.id = id;
         this.position = new Vector3f(position);
@@ -39,6 +48,7 @@ public class Entity {
         loadModelRecursive(path, textureManager, loadedParts);
         this.parts.clear();
         this.parts.addAll(loadedParts.values());
+        storeBasePose(); // Store initial model pose for animation blending
     }
 
     private int resolveTextureIndex(String texName, com.voxel.utils.TextureManager textureManager) {
@@ -140,6 +150,129 @@ public class Entity {
     }
 
     public void update(float dt) {
-        // Basic update logic, can be overridden
+        // Update animation if playing
+        if (animPlaying && currentAnimation != null) {
+            animTime += dt;
+            float duration = currentAnimation.getDuration();
+            if (duration > 0 && animTime >= duration) {
+                if (currentAnimation.isLooping()) {
+                    animTime -= duration;
+                } else {
+                    animTime = duration;
+                    animPlaying = false;
+                }
+            }
+            // Sample and apply animation to parts
+            Map<String, Animation.Keyframe> sample = currentAnimation.sample(animTime);
+            for (ModelPart part : parts) {
+                Animation.Keyframe kf = sample.get(part.name);
+                if (kf != null) {
+                    // Apply animation offset on top of base pose
+                    Vector3f baseOff = basePartOffsets.get(part.name);
+                    if (baseOff != null) {
+                        part.offset.set(baseOff).add(kf.offset);
+                    } else {
+                        part.offset.set(kf.offset);
+                    }
+                    Vector3f baseRot = basePartRotations.get(part.name);
+                    if (baseRot != null) {
+                        part.rotation.set(baseRot).add(kf.rotation);
+                    } else {
+                        part.rotation.set(kf.rotation);
+                    }
+                }
+            }
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  Animation API
+    // ════════════════════════════════════════════════════════════════
+
+    /** Play an animation by name. Clears any current animation. */
+    public void playAnimation(Animation anim) {
+        // Store base pose before playing
+        storeBasePose();
+        this.currentAnimation = anim;
+        this.currentAnimName = anim != null ? anim.getName() : null;
+        this.animTime = 0.0f;
+        this.animPlaying = anim != null;
+    }
+
+    /** Play an animation, blending from the current state. */
+    public void playAnimationBlended(Animation anim) {
+        playAnimation(anim);
+    }
+
+    /** Stop the current animation and restore base pose. */
+    public void stopAnimation() {
+        this.animPlaying = false;
+        this.currentAnimation = null;
+        this.currentAnimName = null;
+        this.animTime = 0.0f;
+        restoreBasePose();
+    }
+
+    /** Whether an animation is currently playing. */
+    public boolean isAnimating() { return animPlaying; }
+
+    /** Get the name of the current animation, or null. */
+    public String getCurrentAnimName() { return currentAnimName; }
+
+    /** Get animation progress [0,1]. */
+    public float getAnimProgress() {
+        if (currentAnimation == null || currentAnimation.getDuration() <= 0) return 0;
+        return Math.min(1.0f, animTime / currentAnimation.getDuration());
+    }
+
+    public void storeBasePose() {
+        basePartOffsets.clear();
+        basePartRotations.clear();
+        for (ModelPart part : parts) {
+            basePartOffsets.put(part.name, new Vector3f(part.offset));
+            basePartRotations.put(part.name, new Vector3f(part.rotation));
+        }
+    }
+
+    private void restoreBasePose() {
+        for (ModelPart part : parts) {
+            Vector3f baseOff = basePartOffsets.get(part.name);
+            if (baseOff != null) part.offset.set(baseOff);
+            Vector3f baseRot = basePartRotations.get(part.name);
+            if (baseRot != null) part.rotation.set(baseRot);
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  Model Swapping API (for dynamic model changes during animations)
+    // ════════════════════════════════════════════════════════════════
+
+    /** Replace the current model with a new one. Clears animation state. */
+    public void swapModel(String newModelPath, com.voxel.utils.TextureManager textureManager) {
+        stopAnimation();
+        loadModel(newModelPath, textureManager);
+    }
+
+    /**
+     * Replace a single part's texture by name.
+     * Useful for texture swaps in animations (e.g., blinking, mouth movement).
+     */
+    public void setPartTexture(String partName, int newTextureIndex) {
+        for (ModelPart part : parts) {
+            if (part.name.equals(partName)) {
+                part.textureIndex = newTextureIndex;
+                return;
+            }
+        }
+    }
+
+    /**
+     * Find a part by name.
+     */
+    public ModelPart findPart(String name) {
+        for (ModelPart part : parts) {
+            if (part.name.equals(name)) return part;
+        }
+        return null;
     }
 }
