@@ -94,6 +94,10 @@ public class BlockDataManager {
         public boolean isAnimated;
         public int frameCount = 1;
 
+        // Color of emitted block light. Packed as 0x00RRGGBB (each 0-255). Default white.
+        // Applied at the light intensity level determined by emissive.
+        public int lightColor = 0x00FFFFFF;
+
         // Whether this block occupies the full voxel space (true for most blocks, false
         // for slabs/stairs/fences/most portals).
         public boolean isFullBlock;
@@ -635,6 +639,45 @@ public class BlockDataManager {
     public int getEmissive(int blockId) {
         BlockData data = blockRegistry.get(blockId);
         return data != null ? data.emissive : 0;
+    }
+
+    /**
+     * Returns the color of emitted light as a packed int 0x00RRGGBB (each 0-255).
+     * Returns white (0xFFFFFF) for non-emissive or unknown blocks.
+     */
+    public int getLightColor(int blockId) {
+        BlockData data = blockRegistry.get(blockId);
+        return data != null ? data.lightColor : 0x00FFFFFF;
+    }
+
+    /**
+     * Returns the RGB light values (0-15 each) for an emissive block, scaled by emissive intensity.
+     * Packed as (R << 8) | (G << 4) | B. Returns 0 for non-emissive blocks.
+     * The light color (0xRRGGBB, each 0-255) is scaled to the 0-15 range
+     * using the emissive-derived light level (min(emissive, 15)).
+     */
+    public int getBlockLightRGB15(int blockId) {
+        if (blockId <= 0) return 0;
+        BlockData data = blockRegistry.get(blockId);
+        if (data == null || data.emissive <= 0) return 0;
+        int intensity = Math.min(data.emissive, 15); // emissive 0-255 → 0-15
+        if (intensity <= 0) return 0;
+        // Scale color channels by intensity (maps 0-255 color through 0-15 light level)
+        int r = ((data.lightColor >> 16) & 0xFF) * intensity / 255;
+        int g = ((data.lightColor >> 8) & 0xFF) * intensity / 255;
+        int b = (data.lightColor & 0xFF) * intensity / 255;
+        return (r << 8) | (g << 4) | b;
+    }
+
+    /**
+     * Convenience: sets the light color for a registered block.
+     * @param r,g,b 0-255 each
+     */
+    public void setLightColor(int blockId, int r, int g, int b) {
+        BlockData data = blockRegistry.get(blockId);
+        if (data != null) {
+            data.lightColor = ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF);
+        }
     }
 
     /**
