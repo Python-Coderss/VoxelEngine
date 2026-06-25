@@ -32,9 +32,6 @@ layout(std430, binding = 2) buffer readonly restrict ChunkPool { uint voxelPool[
 layout(std430, binding = 3) buffer readonly restrict BitmaskPool { uint bitmasks[]; };
 layout(std430, binding = 4) buffer readonly restrict OcclusionPool { uint occlusionPool[]; };
 
-// Block light propagation: Minecraft packed format [sky(0-3)|block(4-7)] per voxel
-layout(std430, binding = 9) buffer readonly restrict LightPool { uint lightPool[]; };
-
 // Block break overlay uniforms
 layout(location = 19) uniform ivec3 u_BreakTargetPos;
 layout(location = 20) uniform float u_BreakProgress;
@@ -299,22 +296,6 @@ uint getVoxelOcclusion(ivec3 p) {
     uint uintIdx = (slot << 11u) | uint(voxelIdx >> 1);
     uint packedv = occlusionPool[uintIdx];
     return (voxelIdx & 1) == 0 ? (packedv & 0xFFFFu) : (packedv >> 16);
-}
-
-// Sample Minecraft packed lightmap at world position.
-// Returns vec2 where x = skyLight (0-15), y = blockLight (0-15)
-vec2 sampleLightmap(ivec3 p) {
-    ivec3 rel = p - u_WorldOffset;
-    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(2048)))) return vec2(-1);
-    uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
-    if (slot == EMPTY) return vec2(-1);
-    int voxelIdx = (rel.x & 15) | ((rel.y & 15) << 4) | ((rel.z & 15) << 8);
-    uint idx = (slot << 12u) | uint(voxelIdx);
-    uint packedv = lightPool[idx];
-    // bits 0-3 = sky light, bits 4-7 = block light
-    float sky = float(packedv & 0xFu);
-    float block = float((packedv >> 4u) & 0xFu);
-    return vec2(sky, block);
 }
 
 float fastShadow(vec3 ro, vec3 rd, float maxDist) {
@@ -885,34 +866,6 @@ void main() {
                     }
                 }
             }
-        }
-
-        // Sample Minecraft lightmap from the nearest non-full-block voxel adjacent to the hit face
-        // Sky light = top-down propagation (0-15), Block light = flood-fill from emissive sources (0-15)
-        ivec3 lightSamplePos = ivec3(floor(hp + n * 0.5));
-        vec2 lightMap = sampleLightmap(lightSamplePos);
-        if (lightMap.x < 0.0) {
-            lightSamplePos = ivec3(floor(hp - n * 0.5));
-            lightMap = sampleLightmap(lightSamplePos);
-        }
-        // Default to zero light if both samples landed in empty chunks
-        if (lightMap.x < 0.0) lightMap = vec2(0.0);
-
-        // Combine sky + block into a single illumination multiplier
-        // Block light from emissive sources gets 5x boost for lighting nearby blocks
-        float skyContrib = lightMap.x / 15.0;
-        float blockContrib = min(lightMap.y * 5.0, 15.0) / 15.0;
-        float totalLightContrib = max(skyContrib, blockContrib);
-        
-        // Non-block (entity) path: additive light field, matching lighting.comp block formula.
-        // Block path: multiplicative light field (original raytracer behavior, preserves directional shading).
-        if (isEnt) {
-            // Additive: light field adds on top of directional + ambient (cave torches light entities)
-            beam += vec3(totalLightContrib);
-        } else {
-            // Multiplicative: light field modulates directional light (blocks keep original look)
-            beam *= totalLightContrib;
-            beam += at.ambient * 0.3;
         }
 
         vec3 bc = alb * beam * (1.0 - trans - refl);
