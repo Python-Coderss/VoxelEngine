@@ -691,7 +691,8 @@ void main() {
                     else alb = heartCol.rgb;
                 }
                 refl = 0.0;
-                beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
+                beam = at.ambient + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
+                beam += at.moonColor * max(0.0, dot(n, at.moonDir)) * 0.5;
             } else {
                 vec4 entTex = texture(u_EntityTextures, vec3(eUv, float(eTex)));
                 // Apply alpha-based transparency (0 = transparent, 255 = opaque)
@@ -706,8 +707,9 @@ void main() {
                     vec3 tint = vec3(entities[entIdx].tintR, entities[entIdx].tintG, entities[entIdx].tintB);
                     alb = mix(alb, alb * tint, entities[entIdx].tintAmount);
                 }
-                // Compute sun+ambient lighting for the entity (same as block path)
-                beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
+                // Compute lighting for the entity: directional (sun+moon) + ambient
+                beam = at.ambient + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
+                beam += at.moonColor * max(0.0, dot(n, at.moonDir)) * 0.5;
             }
         } else {
             ivec4 d0 = texelFetch(u_BlockData, int(voxel)*3), d1 = texelFetch(u_BlockData, int(voxel)*3+1), d2 = texelFetch(u_BlockData, int(voxel)*3+2);
@@ -871,10 +873,16 @@ void main() {
         float blockContrib = min(lightMap.y * 5.0, 15.0) / 15.0;
         float totalLightContrib = max(skyContrib, blockContrib);
         
-        // Scale existing direct+ambient lighting by the max lightmap value
-        beam *= totalLightContrib;
-        // Add a small minimum ambient to prevent absolute pitch-black shadows
-        beam += at.ambient * 0.3;
+        // Non-block (entity) path: additive light field, matching lighting.comp block formula.
+        // Block path: multiplicative light field (original raytracer behavior, preserves directional shading).
+        if (isEnt) {
+            // Additive: light field adds on top of directional + ambient (cave torches light entities)
+            beam += vec3(totalLightContrib);
+        } else {
+            // Multiplicative: light field modulates directional light (blocks keep original look)
+            beam *= totalLightContrib;
+            beam += at.ambient * 0.3;
+        }
 
         vec3 bc = alb * beam * (1.0 - trans - refl);
         float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, GetSky(rd, at), fog);
