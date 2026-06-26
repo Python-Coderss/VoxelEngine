@@ -2,7 +2,6 @@ package com.voxel.world;
 
 import com.voxel.GameLogger;
 import com.voxel.World;
-import com.voxel.lighting.LightPropagationEngine;
 import com.voxel.lighting.LightEngine;
 import com.voxel.utils.BiomeManager;
 import com.voxel.utils.BlockDataManager;
@@ -29,7 +28,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ChunkManager {
     private final World world;
     private final WorldGenerator generator;
-    private final LightPropagationEngine lightEngine;
     private final LightEngine mcLightEngine;
     private final BlockDataManager blockDataManager;
     private final WorldSaveManager saveManager;
@@ -79,13 +77,12 @@ public class ChunkManager {
     private static final int RECENTER_MARGIN_CHUNKS = 16;
     private static final int BUFFER_HALF_CHUNKS = World.REGION_SIZE / 2;
 
-    public ChunkManager(World world, WorldGenerator generator, LightPropagationEngine lightEngine,
+    public ChunkManager(World world, WorldGenerator generator,
                         LightEngine mcLightEngine,
                         int renderDistance, WorldSaveManager saveManager, DimensionType dimension,
                         BiomeManager biomeManager, BlockDataManager blockDataManager) {
         this.world = world;
         this.generator = generator;
-        this.lightEngine = lightEngine;
         this.mcLightEngine = mcLightEngine;
         this.saveManager = saveManager;
         this.biomeManager = biomeManager;
@@ -222,6 +219,7 @@ public class ChunkManager {
         int slot = world.getChunkSlot(x, y, z);
         if (slot == World.EMPTY) return false;
 
+        int oldBlockId = world.getVoxel(x, y, z);
         world.setVoxel(x, y, z, type);
 
         int cx = x >> 4;
@@ -229,8 +227,8 @@ public class ChunkManager {
         int cz = z >> 4;
 
         // Always mark slot dirty synchronously so GPU sees voxel data change immediately.
-        // Lighting BFS is deferred to gen thread (async), but occlusion is baked sync.
-        lightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
+        // Lighting BFS is deferred to light thread (async), but occlusion is baked sync.
+        mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
         dirtySlots.add(slot);
 
         // ── Immediate light pool seed on block break ──
@@ -264,9 +262,10 @@ public class ChunkManager {
         // (block changes always affect light: placing blocks creates shadows, breaking lets light through)
         final int colCx = x >> 4;
         final int colCz = z >> 4;
+        final int fOldBlockId = oldBlockId;
         long colKey = chunkKey(colCx, colCz);
         postLightTask(colKey, () -> {
-            Set<Integer> aff = mcLightEngine.checkBlockLight(x, y, z);
+            Set<Integer> aff = mcLightEngine.onBlockChanged(x, y, z, fOldBlockId);
             Integer[] colSlots = loadedChunks.get(colKey);
             if (colSlots != null) {
                 aff.addAll(mcLightEngine.generateSkyLight(colCx, colCz, colSlots));
@@ -286,6 +285,7 @@ public class ChunkManager {
         int slot = world.getChunkSlot(x, y, z);
         if (slot == World.EMPTY) return false;
 
+        int oldBlockId = world.getVoxel(x, y, z);
         world.setVoxelWithData(x, y, z, type, extra);
 
         // Always mark dirty synchronously so GPU sees voxel data change immediately.
@@ -294,9 +294,10 @@ public class ChunkManager {
         // Post lighting updates to the dedicated light thread unconditionally
         final int colCx2 = x >> 4;
         final int colCz2 = z >> 4;
+        final int fOldBlockId2 = oldBlockId;
         long colKey2 = chunkKey(colCx2, colCz2);
         postLightTask(colKey2, () -> {
-            Set<Integer> aff = mcLightEngine.checkBlockLight(x, y, z);
+            Set<Integer> aff = mcLightEngine.onBlockChanged(x, y, z, fOldBlockId2);
             Integer[] colSlots = loadedChunks.get(colKey2);
             if (colSlots != null) {
                 aff.addAll(mcLightEngine.generateSkyLight(colCx2, colCz2, colSlots));
@@ -598,7 +599,7 @@ public class ChunkManager {
             for (int cy = 0; cy < chunkHeight; cy++) {
                 int s = slots[cy];
                 world.clearLightPoolSlot(s);
-                lightEngine.bakeChunkOcclusion(s, cx, cy, cz);
+                mcLightEngine.bakeChunkOcclusion(s, cx, cy, cz);
                 dirtySlots.add(s);
             }
             tableDirty.set(true);
@@ -658,7 +659,7 @@ public class ChunkManager {
         // Pass 3: Bake occlusion
         long t3 = System.currentTimeMillis();
         for (int cy = 0; cy < chunkHeight; cy++) {
-            lightEngine.bakeChunkOcclusion(slots[cy], cx, cy, cz);
+            mcLightEngine.bakeChunkOcclusion(slots[cy], cx, cy, cz);
             dirtySlots.add(slots[cy]);
         }
         WorldGenLogger.logChunk("GEN_PASS3_BAKE", cx, -1, cz,

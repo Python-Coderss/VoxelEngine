@@ -9,7 +9,7 @@ in vec3 vWorldPos;
 flat in vec3 vNormal;
 in vec2 vTexCoord;
 flat in uint vBlockId;
-flat in vec2 vLightmap;   // (skyLight/15.0, blockLight/15.0)
+flat in vec2 vLightmap;   // normalized (skyLight/255.0, blockLight/255.0)
 in float vFogFactor;
 
 // GBuffer outputs (MRT)

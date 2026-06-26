@@ -40,17 +40,17 @@ void main() {
     vTexCoord = aTexCoord;
     vBlockId = aBlockId;
     
-    // Decode Minecraft packed lightmap:
-    //   bits 0-3  = sky light  (0-15), scaled by 240 to 0-240
-    //   bits 4-7  = block light (0-15), scaled by 240
-    //   bits 8-15 = unused (0)
-    //   bits 16-19 = sky light in upper nibble (Minecraft format: sky<<20 | block<<4)
-    // Actually format from getPackedLightmap() is (sky << 20) | (block << 4)
-    // So:
-    //   sky  = (aLightRGB >> 20) & 0xF  → 0-15
-    //   block = (aLightRGB >> 4) & 0xF  → 0-15
-    float skyLight = float((aLightRGB >> 20u) & 0xFu) / 15.0;
-    float blockLight = float((aLightRGB >> 4u) & 0xFu) / 15.0;
+    // Decode 8-bit packed lightmap:
+    //   bits 24-31 = sky light (0-255)
+    //   bits 16-23 = block R (0-255)
+    //   bits 8-15  = block G (0-255)
+    //   bits 0-7   = block B (0-255)
+    // Format from getPackedLightmap() is (sky << 24) | (r << 16) | (g << 8) | b
+    float skyLight = float((aLightRGB >> 24u) & 0xFFu) / 255.0;
+    float blockR = float((aLightRGB >> 16u) & 0xFFu) / 255.0;
+    float blockG = float((aLightRGB >> 8u) & 0xFFu) / 255.0;
+    float blockB = float(aLightRGB & 0xFFu) / 255.0;
+    float blockLight = max(max(blockR, blockG), blockB);
     vLightmap = vec2(skyLight, blockLight);
     
     // Distance fog factor

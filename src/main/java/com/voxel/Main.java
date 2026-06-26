@@ -1,7 +1,6 @@
 package com.voxel;
 
 import com.voxel.crafting.CraftingManager;
-import com.voxel.lighting.LightPropagationEngine;
 import com.voxel.ui.UILayer;
 import com.voxel.ui.UIManager;
 import com.voxel.utils.BlockDataManager;
