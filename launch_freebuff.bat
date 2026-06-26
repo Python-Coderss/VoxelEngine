@@ -1,0 +1,2 @@
+set BUN_JSC_gcMaxHeapSize=536870912
+freebuff

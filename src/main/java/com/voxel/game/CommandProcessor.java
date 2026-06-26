@@ -133,13 +133,13 @@ public class CommandProcessor {
         sb.append("\n  /spawn - Teleport to spawn");
         sb.append("\n  /dimension <overworld|nether|end|aether> - Switch dimension");
         sb.append("\n  /setuv <full|half|empty> <x> <y> [w] [h] - Adjust heart UVs");
-        sb.append("\n  /camera <follow|orbit|fixed|cinematic> - Set camera shot type");
+        sb.append("\n  /camera <follow|orbit|fixed> - Set camera shot type");
         ctx.setStatus(sb.toString());
     }
 
     private void handleCamera(String[] parts) {
         if (parts.length < 2) {
-            ctx.setStatus("Usage: /camera <follow|orbit|fixed|cinematic>");
+            ctx.setStatus("Usage: /camera <follow|orbit|fixed>");
             return;
         }
         String mode = parts[1].toLowerCase(Locale.ROOT);
@@ -157,16 +157,8 @@ public class CommandProcessor {
                 ctx.cameraMode = CameraMode.THIRD_PERSON_FIXED;
                 ctx.setStatus("Camera: fixed");
                 break;
-            case "cinematic":
-                ctx.cameraMode = CameraMode.CINEMATIC;
-                // Start a basic cinematic orbit shot
-                ctx.cutsceneManager.startShot(
-                    com.voxel.camera.CutsceneManager.CameraShot.follow(0, 6.0f, 2.5f, 0.8f)
-                );
-                ctx.setStatus("Camera: cinematic (dynamic orbit)");
-                break;
             default:
-                ctx.setStatus("Unknown camera mode: " + mode + ". Use: follow, orbit, fixed, or cinematic");
+                ctx.setStatus("Unknown camera mode: " + mode + ". Use: follow, orbit, or fixed");
         }
     }
 
