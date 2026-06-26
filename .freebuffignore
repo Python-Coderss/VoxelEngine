@@ -1,0 +1,32 @@
+# Build directories
+target/
+build/
+bin/
+out/
+
+# IDE
+.idea/
+*.iml
+.settings/
+.classpath
+.project
+
+# Dependencies
+lib/
+deps/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+
+# Dev scratch
+dev/
+
+# Generated files
+src/generated/
+
+# VSCode
+.vscode/

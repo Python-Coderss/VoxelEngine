@@ -30,8 +30,7 @@ public class GameContext {
         FIRST_PERSON,
         THIRD_PERSON_FOLLOW,
         THIRD_PERSON_ORBIT,
-        THIRD_PERSON_FIXED,
-        CINEMATIC
+        THIRD_PERSON_FIXED
     }
 
     // --- World / Dimension ---
@@ -59,7 +58,6 @@ public class GameContext {
     // --- Mutable game state ---
     public GameMode gameMode = GameMode.SURVIVAL;
     public CameraMode cameraMode = CameraMode.FIRST_PERSON;
-    public com.voxel.camera.CutsceneManager cutsceneManager = new com.voxel.camera.CutsceneManager();
     public boolean cutsceneActive = false;
     public float worldTime = 720.0f;
     public boolean combatMode = false;

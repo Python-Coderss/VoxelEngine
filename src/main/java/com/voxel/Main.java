@@ -477,6 +477,7 @@ public class Main {
         entityManager.addEntity(playerEntity);
 
 
+
         // Spawn initial enemies
         spawnInitialEnemies(player);
 
@@ -509,6 +510,7 @@ public class Main {
             zombie.dimension = activeDimension;
             zombie.setWorld(world);
             entityManager.addEntity(zombie);
+            
         }
     }
 
@@ -1062,8 +1064,10 @@ public class Main {
         player.setPitch(pitch);
 
         if (playerEntity != null) {
-            playerEntity.syncFromPlayer(player, playerYaw, pitch, cameraMode == CameraMode.THIRD_PERSON_FOLLOW, dt);
+            playerEntity.syncFromPlayer(player, playerYaw, pitch, cameraMode != CameraMode.FIRST_PERSON, dt);
         }
+
+
 
         // --- Crafting cutscene: walk player towards the table ---
         if (ctx.craftingCutsceneActive) {
@@ -1211,10 +1215,6 @@ public class Main {
             redstoneManager.tickLamps();
         }
 
-        // Update cutscene manager for cinematic camera shots
-        Vector3f pPosCM = player.getPosition();
-        Vector3f pLookTargetCM = new Vector3f(pPosCM).add(getLookDirection().mul(10.0f));
-        ctx.cutsceneManager.update(dt, pPosCM, pLookTargetCM, combatMode);
 
         chunkManager.update(player.getPosition(), yaw);
     }
@@ -1382,6 +1382,7 @@ public class Main {
                         ));
                         // Enemy telegraph: flash on hit
                         enemy.hitFlashTime = 0.3f;
+                        
                         
                         // Combo hit text
                         String[] comboText = {"Hit!", "Double!", "TRIPLE!"};
@@ -1829,9 +1830,13 @@ public class Main {
         CameraMode[] modes = CameraMode.values();
         int currentOrdinal = cameraMode.ordinal();
         int nextOrdinal = (currentOrdinal + 1) % modes.length;
-        cameraMode = modes[nextOrdinal];
+        CameraMode newMode = modes[nextOrdinal];
+
+        cameraMode = newMode;
         ctx.cameraMode = cameraMode;
-        setStatus("Camera: " + cameraMode.name().toLowerCase().replace('_', ' '));
+
+        String modeName = cameraMode.name().toLowerCase().replace('_', ' ');
+        setStatus("Camera: " + modeName);
     }
 
     private void setInventoryOpen(boolean open) {
@@ -3012,10 +3017,7 @@ public class Main {
             return new Vector3f(ctx.cutsceneCameraTargetPos);
         }
 
-        // Cutscene manager active: use its computed position
-        if (ctx.cutsceneManager.isActive()) {
-            return new Vector3f(ctx.cutsceneManager.getCameraPosition());
-        }
+        // Cutscene manager active:
 
         if (cameraMode == CameraMode.FIRST_PERSON) {
             return eye;
