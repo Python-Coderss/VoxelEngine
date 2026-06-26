@@ -31,9 +31,16 @@ public class World {
     // Each chunk (16x16x16 = 4096 voxels) requires 4096 bits = 128 integers.
     private final int[] bitmaskPool;
 
-    // The light pool stores packed RGB light values (8 bits per channel, 0-255).
+    // The light pool stores packed sky+block RGB light values (8 bits per channel, 0-255).
+    // bits 0-7 = sky, bits 8-15 = block R, bits 16-23 = block G, bits 24-31 = block B.
+    // Block RGB is the additive sum of all per-type contributions.
     // 1 int per voxel = 4096 ints per chunk.
     private final int[] lightPool;
+
+    // Temp light field: byte per voxel for per-type scalar intensity BFS.
+    // Reused for each type's BFS pass during world gen, or for single-source
+    // add/subtract during runtime block changes. Holds intensity 0-255.
+    private final byte[] tempLightPool;
 
     // The occlusion pool stores a 14-bit mask for directional sky visibility
     // 1 short per voxel = 4096 shorts per chunk.
@@ -60,6 +67,7 @@ public class World {
         int voxelsPerChunk = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
         chunkPool = new int[poolSize * voxelsPerChunk];
         lightPool = new int[poolSize * voxelsPerChunk];
+        tempLightPool = new byte[poolSize * voxelsPerChunk];
         bitmaskPool = new int[poolSize * (voxelsPerChunk / 32)];
         occlusionPool = new short[poolSize * voxelsPerChunk];
     }
@@ -179,6 +187,7 @@ public class World {
     public int[] getBitmaskPool() { return bitmaskPool; }
     public int[] getLightPool() { return lightPool; }
     public short[] getOcclusionPool() { return occlusionPool; }
+    public byte[] getTempLightPool() { return tempLightPool; }
     public int getPoolSizeForAlloc() { return poolSize; }
 
     /**
@@ -255,52 +264,49 @@ public void clearChunkPoolSlot(int slot) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  Minecraft-style light accessors (sky light + RGB block light)
-//  lightPool format per int:
-//    bits 0-3  = sky light (0-15)
-//    bits 4-7  = block light Red   (0-15)
-//    bits 8-11 = block light Green (0-15)
-//    bits 12-15 = block light Blue  (0-15)
+//  Light accessors (sky light + RGB block light)
+//  lightPool format per int (8 bits per channel):
+//    bits 0-7   = sky light (0-255)
+//    bits 8-15  = block light Red   (0-255)
+//    bits 16-23 = block light Green (0-255)
+//    bits 24-31 = block light Blue  (0-255)
 // ══════════════════════════════════════════════════════════════════
 
 private static final int LIGHT_SKY_SHIFT = 0;
-private static final int LIGHT_BLOCK_R_SHIFT = 4;
-private static final int LIGHT_BLOCK_G_SHIFT = 8;
-private static final int LIGHT_BLOCK_B_SHIFT = 12;
-private static final int LIGHT_SKY_MASK = 0xF;
-private static final int LIGHT_BLOCK_R_MASK = 0xF0;
-private static final int LIGHT_BLOCK_G_MASK = 0xF00;
-private static final int LIGHT_BLOCK_B_MASK = 0xF000;
-private static final int LIGHT_BLOCK_ALL_MASK = 0xFFF0;
+private static final int LIGHT_BLOCK_R_SHIFT = 8;
+private static final int LIGHT_BLOCK_G_SHIFT = 16;
+private static final int LIGHT_BLOCK_B_SHIFT = 24;
+private static final int LIGHT_SKY_MASK = 0xFF;
+private static final int LIGHT_BLOCK_R_MASK = 0xFF00;
+private static final int LIGHT_BLOCK_G_MASK = 0xFF0000;
+private static final int LIGHT_BLOCK_B_MASK = (int) 0xFF000000L;
+private static final int LIGHT_BLOCK_ALL_MASK = 0xFFFFFF00;
 
 /**
  * Sets the sky light value (0-15) for a voxel in a given chunk slot at local coords.
- */
-public void setSkyLight(int slot, int lx, int ly, int lz, int value) {
-    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
-    int current = lightPool[poolIdx];
-    lightPool[poolIdx] = (current & ~LIGHT_SKY_MASK) | ((value & 0xF) << LIGHT_SKY_SHIFT);
-}
+ */    public void setSkyLight(int slot, int lx, int ly, int lz, int value) {
+        int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+        int current = lightPool[poolIdx];
+        lightPool[poolIdx] = (current & ~LIGHT_SKY_MASK) | ((value & 0xFF) << LIGHT_SKY_SHIFT);
+    }
 
 /**
  * Gets the sky light value (0-15) for a voxel in a given chunk slot at local coords.
- */
-public int getSkyLight(int slot, int lx, int ly, int lz) {
-    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
-    return (lightPool[poolIdx] >> LIGHT_SKY_SHIFT) & 0xF;
-}
+ */    public int getSkyLight(int slot, int lx, int ly, int lz) {
+        int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+        return (lightPool[poolIdx] >> LIGHT_SKY_SHIFT) & 0xFF;
+    }
 
 /**
  * Sets all three block light channel (R,G,B, 0-15 each) for a voxel.
- */
-public void setBlockLightRGB(int slot, int lx, int ly, int lz, int r, int g, int b) {
-    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
-    int current = lightPool[poolIdx];
-    lightPool[poolIdx] = (current & ~LIGHT_BLOCK_ALL_MASK)
-        | ((r & 0xF) << LIGHT_BLOCK_R_SHIFT)
-        | ((g & 0xF) << LIGHT_BLOCK_G_SHIFT)
-        | ((b & 0xF) << LIGHT_BLOCK_B_SHIFT);
-}
+ */    public void setBlockLightRGB(int slot, int lx, int ly, int lz, int r, int g, int b) {
+        int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+        int current = lightPool[poolIdx];
+        lightPool[poolIdx] = (current & ~LIGHT_BLOCK_ALL_MASK)
+            | ((r & 0xFF) << LIGHT_BLOCK_R_SHIFT)
+            | ((g & 0xFF) << LIGHT_BLOCK_G_SHIFT)
+            | ((b & 0xFF) << LIGHT_BLOCK_B_SHIFT);
+    }
 
 /**
  * Sets block light to the same value in all three channels (white light).
@@ -312,59 +318,54 @@ public void setBlockLight(int slot, int lx, int ly, int lz, int value) {
 
 /**
  * Gets the block light intensity (max of R,G,B, 0-15).
- */
-public int getBlockLight(int slot, int lx, int ly, int lz) {
-    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
-    int r = (lightPool[poolIdx] >> LIGHT_BLOCK_R_SHIFT) & 0xF;
-    int g = (lightPool[poolIdx] >> LIGHT_BLOCK_G_SHIFT) & 0xF;
-    int b = (lightPool[poolIdx] >> LIGHT_BLOCK_B_SHIFT) & 0xF;
-    return Math.max(r, Math.max(g, b));
-}
+ */    public int getBlockLight(int slot, int lx, int ly, int lz) {
+        int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+        int r = (lightPool[poolIdx] >> LIGHT_BLOCK_R_SHIFT) & 0xFF;
+        int g = (lightPool[poolIdx] >> LIGHT_BLOCK_G_SHIFT) & 0xFF;
+        int b = (lightPool[poolIdx] >> LIGHT_BLOCK_B_SHIFT) & 0xFF;
+        return Math.max(r, Math.max(g, b));
+    }
 
-/** Gets the block light Red channel (0-15). */
-public int getBlockLightR(int slot, int lx, int ly, int lz) {
-    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
-    return (lightPool[poolIdx] >> LIGHT_BLOCK_R_SHIFT) & 0xF;
-}
+/** Gets the block light Red channel (0-15). */    public int getBlockLightR(int slot, int lx, int ly, int lz) {
+        int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+        return (lightPool[poolIdx] >> LIGHT_BLOCK_R_SHIFT) & 0xFF;
+    }
 
-/** Gets the block light Green channel (0-15). */
-public int getBlockLightG(int slot, int lx, int ly, int lz) {
-    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
-    return (lightPool[poolIdx] >> LIGHT_BLOCK_G_SHIFT) & 0xF;
-}
+/** Gets the block light Green channel (0-15). */    public int getBlockLightG(int slot, int lx, int ly, int lz) {
+        int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+        return (lightPool[poolIdx] >> LIGHT_BLOCK_G_SHIFT) & 0xFF;
+    }
 
-/** Gets the block light Blue channel (0-15). */
-public int getBlockLightB(int slot, int lx, int ly, int lz) {
-    int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
-    return (lightPool[poolIdx] >> LIGHT_BLOCK_B_SHIFT) & 0xF;
-}
+/** Gets the block light Blue channel (0-15). */    public int getBlockLightB(int slot, int lx, int ly, int lz) {
+        int poolIdx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+        return (lightPool[poolIdx] >> LIGHT_BLOCK_B_SHIFT) & 0xFF;
+    }
 
 /**
  * Gets the packed lightmap from the light pool at world coordinates.
  * Returns packed RGBA-like int: sky(bit 20-23) | blockR(bit 16-19) | blockG(bit 12-15) | blockB(bit 8-11) | 0(lower bits)
  * Returns 0 if outside the buffer.
- */
-public int getPackedLightmap(int x, int y, int z) {
-    int rx = x - offsetX;
-    int ry = y - offsetY;
-    int rz = z - offsetZ;
-    if (rx < 0 || ry < 0 || rz < 0 || rx >= REGION_SIZE * CHUNK_SIZE || ry >= REGION_SIZE * CHUNK_SIZE || rz >= REGION_SIZE * CHUNK_SIZE) return 0;
+ */    public int getPackedLightmap(int x, int y, int z) {
+        int rx = x - offsetX;
+        int ry = y - offsetY;
+        int rz = z - offsetZ;
+        if (rx < 0 || ry < 0 || rz < 0 || rx >= REGION_SIZE * CHUNK_SIZE || ry >= REGION_SIZE * CHUNK_SIZE || rz >= REGION_SIZE * CHUNK_SIZE) return 0;
 
-    int cx = rx >> 4;
-    int cy = ry >> 4;
-    int cz = rz >> 4;
-    int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
-    int slot = indirectionTable[tableIdx];
-    if (slot == EMPTY) return 0;
+        int cx = rx >> 4;
+        int cy = ry >> 4;
+        int cz = rz >> 4;
+        int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
+        int slot = indirectionTable[tableIdx];
+        if (slot == EMPTY) return 0;
 
-    int poolIdx = (slot << 12) | ((rx & 15) | ((ry & 15) << 4) | ((rz & 15) << 8));
-    int raw = lightPool[poolIdx];
-    int sky = raw & 0xF;
-    int r = (raw >> LIGHT_BLOCK_R_SHIFT) & 0xF;
-    int g = (raw >> LIGHT_BLOCK_G_SHIFT) & 0xF;
-    int b = (raw >> LIGHT_BLOCK_B_SHIFT) & 0xF;
-    return (sky << 20) | (r << 16) | (g << 12) | (b << 8);
-}
+        int poolIdx = (slot << 12) | ((rx & 15) | ((ry & 15) << 4) | ((rz & 15) << 8));
+        int raw = lightPool[poolIdx];
+        int sky = raw & 0xFF;
+        int r = (raw >> LIGHT_BLOCK_R_SHIFT) & 0xFF;
+        int g = (raw >> LIGHT_BLOCK_G_SHIFT) & 0xFF;
+        int b = (raw >> LIGHT_BLOCK_B_SHIFT) & 0xFF;
+        return (sky << 24) | (r << 16) | (g << 8) | b;
+    }
 
 /**
  * Clears the light pool (sky+block) for a single chunk slot. Leaves other pools unchanged.

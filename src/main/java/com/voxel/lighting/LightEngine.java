@@ -9,30 +9,42 @@ import java.util.Set;
 import java.util.HashSet;
 
 /**
- * Minecraft-style lighting engine with RGB block light support.
+ * Per-type additive lighting engine.
  *
  * Sky light (EnumSkyBlock.SKY):
  *   Propagates top-down from the world ceiling. Each column is computed independently:
  *   starting from the highest block, sky light = 15 and diminishes by block opacity
  *   as it descends.
  *
- * Block light (EnumSkyBlock.BLOCK):
- *   Flood-fills outward from emissive block sources (torches, glowstone, etc.).
- *   Each step away from the source reduces light by 1 per channel. Opaque blocks block propagation.
- *   Light values range from 0 to 15 per RGB channel.
+ * Block light (per-type additive):
+ *   Each light source type (defined by unique emissive × lightColor pair) propagates
+ *   a SCALAR intensity (0-15) through BFS flood-fill. The per-type intensity field
+ *   is accumulated into a temporary byte[] pool, then tinted by the type's lightColor
+ *   and ADDED to the main light pool's RGB channels.
  *
- * Light is stored in the existing World.lightPool using a packed format:
- *   bits 0-3  = sky light (0-15)
- *   bits 4-7  = block light Red   (0-15)
- *   bits 8-11 = block light Green (0-15)
- *   bits 12-15 = block light Blue  (0-15)
+ *   World gen: per-type batched BFS — all sources of each type in a section propagate
+ *   together, then tint+add to main.
+ *
+ *   Runtime block changes: single-source BFS for the changed source, then tint+add
+ *   (for placing) or tint+subtract (for breaking) from the main pool.
+ *
+ * Light is stored in the World.lightPool using a packed format (8 bits per channel):
+ *   bits 0-7  = sky light (0-255)
+ *   bits 8-15 = block light Red   (0-255)
+ *   bits 16-23 = block light Green (0-255)
+ *   bits 24-31 = block light Blue  (0-255)
+ *
+ * Block RGB is the additive sum of all per-type tinted contributions, NOT a max.
+ *
+ * LightEngine keeps internal logic at 0-15 intensity levels and scales
+ * by ×17 when writing to pools, ÷17 when reading from pools.
  */
 
-import com.voxel.utils.BlockDataManager;
 public class LightEngine {
 
     private final World world;
     private final BlockDataManager blockDataManager;
+    private final byte[] tempField;  // reference to World.tempLightPool, reused for per-type BFS
 
     /** Maximum light value (both sky and block). */
     public static final int MAX_LIGHT = 15;
@@ -46,6 +58,7 @@ public class LightEngine {
         this.world = world;
         this.blockDataManager = blockDataManager;
         this.bufSize = World.REGION_SIZE * World.CHUNK_SIZE;
+        this.tempField = world.getTempLightPool();
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -87,9 +100,9 @@ public class LightEngine {
                     int blockId = world.getVoxel(wx, y, wz);
                     int ly = y & 15;
 
-                    int currentSky = world.getSkyLight(slot, lx, ly, lz);
+                    int currentSky = world.getSkyLight(slot, lx, ly, lz) / 17;
                     if (currentSky != skyLight) {
-                        world.setSkyLight(slot, lx, ly, lz, skyLight);
+                        world.setSkyLight(slot, lx, ly, lz, skyLight * 17);
                         dirtySlots.add(slot);
                     }
 
@@ -159,34 +172,198 @@ public class LightEngine {
         boolean isEmpty() { return size == 0; }
     }
 
-    /** Bit layout: z(11 bits, 0-10) | y(11 bits, 11-21) | x(11 bits, 22-32) | r(4 bits, 33-36) | g(4 bits, 37-40) | b(4 bits, 41-44) */
-    private static long packNodeRGB(int x, int y, int z, int r, int g, int b) {
+    /** Scalar BFS node: packs x|y|z|intensity into one long. */
+    // Bit layout: z(11 bits, 0-10) | y(11 bits, 11-21) | x(11 bits, 22-32) | intensity(4 bits, 33-36)
+    private static long packNodeScalar(int x, int y, int z, int intensity) {
         return ((long)(x & 0x7FF) << 22) | ((long)(y & 0x7FF) << 11) | ((long)(z & 0x7FF))
-            | ((long)(r & 0xF) << 33) | ((long)(g & 0xF) << 37) | ((long)(b & 0xF) << 41);
+            | ((long)(intensity & 0xF) << 33);
     }
     private static int nodeX(long p) { return (int)((p >>> 22) & 0x7FF); }
     private static int nodeY(long p) { return (int)((p >>> 11) & 0x7FF); }
     private static int nodeZ(long p) { return (int)(p & 0x7FF); }
-    private static int nodeR(long p) { return (int)((p >>> 33) & 0xF); }
-    private static int nodeG(long p) { return (int)((p >>> 37) & 0xF); }
-    private static int nodeB(long p) { return (int)((p >>> 41) & 0xF); }
-    /** Returns intensity (max of R,G,B) from a packed RGB node. */
-    private static int nodeIntensity(long p) {
-        int r = (int)((p >>> 33) & 0xF);
-        int g = (int)((p >>> 37) & 0xF);
-        int b = (int)((p >>> 41) & 0xF);
-        return Math.max(r, Math.max(g, b));
+    private static int nodeIntensityScalar(long p) { return (int)((p >>> 33) & 0xF); }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  TEMP FIELD HELPERS
+    // ══════════════════════════════════════════════════════════════════
+
+    /** Clears the temp field for a single chunk slot. */
+    private void clearTempFieldSlot(int slot) {
+        int start = slot << 12;
+        int end = start + 4096;
+        java.util.Arrays.fill(tempField, start, end, (byte) 0);
     }
 
-    /** Convenience: packs a single intensity as white light R=G=B=intensity. */
-    private static long packNodeWhite(int x, int y, int z, int intensity) {
-        return packNodeRGB(x, y, z, intensity, intensity, intensity);
+    // ══════════════════════════════════════════════════════════════════
+    //  SCALAR BFS — flood-fills from seeded sources into tempField
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Flood-fill BFS: propagates scalar intensity (0-15) from a seeded queue
+     * into the temp byte field (stored as 0-255 = intensity × 17).
+     *
+     * @param queue Pre-seeded with source nodes via packNodeScalar
+     * @param ox,oy,oz Buffer origin (pre-computed for perf)
+     * @param dirtySlots Set to fill with affected slot indices
+     */
+    private void floodFillScalar(LongQueue queue, int ox, int oy, int oz, Set<Integer> dirtySlots) {
+        int maxRel = bufSize - 1;
+        Direction[] dirs = Direction.values();
+        int[] mainPool = world.getLightPool();
+
+        while (!queue.isEmpty()) {
+            long node = queue.poll();
+            int nx0 = nodeX(node), ny0 = nodeY(node), nz0 = nodeZ(node);
+            int cur = nodeIntensityScalar(node);
+
+            for (Direction dir : dirs) {
+                int nx = nx0 + dir.x;
+                int ny = ny0 + dir.y;
+                int nz = nz0 + dir.z;
+
+                int rnx = nx - ox, rny = ny - oy, rnz = nz - oz;
+                if (rnx < 0 || rny < 0 || rnz < 0 || rnx > maxRel || rny > maxRel || rnz > maxRel) continue;
+
+                int nSlot = world.getIndirectionTable()[(rnx >> 4) + (rny >> 4) * World.REGION_SIZE + (rnz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
+                if (nSlot == World.EMPTY) continue;
+
+                int opacity = getBlockOpacity(world.getVoxel(nx, ny, nz));
+                int step = Math.max(1, opacity);
+                int next = Math.max(0, cur - step);
+                if (next <= 0) continue;
+
+                int nidx = (nSlot << 12) | ((rnx & 15) | ((rny & 15) << 4) | ((rnz & 15) << 8));
+                int existing = tempField[nidx] & 0xFF;
+                int next255 = next * 17;
+
+                if (next255 > existing) {
+                    tempField[nidx] = (byte) next255;
+                    dirtySlots.add(nSlot);
+                    if (next > 1) {
+                        queue.add(packNodeScalar(nx, ny, nz, next));
+                    }
+                }
+            }
+        }
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  APPLY TINT — add/subtract tinted temp field to/from main pool
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Reads the temp field for all dirty slots, applies the block's lightColor tint,
+     * and either adds or subtracts the tinted contribution from the main light pool.
+     * Clears the temp field for processed slots as it goes.
+     *
+     * @param blockId The block whose lightColor tint to apply
+     * @param add true to add, false to subtract
+     * @param dirtySlots Set of slot indices to process (also receives any new dirty slots from main pool changes)
+     */
+    private void applyTintToMain(int blockId, boolean add, Set<Integer> dirtySlots) {
+        int lightColor = blockDataManager.getLightColor(blockId);
+        int tr = (lightColor >> 16) & 0xFF;
+        int tg = (lightColor >> 8) & 0xFF;
+        int tb = lightColor & 0xFF;
+
+        int[] mainPool = world.getLightPool();
+
+        // Collect slots to remove; avoid ConcurrentModificationException by removing after iteration
+        java.util.List<Integer> toRemove = new java.util.ArrayList<>();
+
+        for (int slot : dirtySlots) {
+            int base = slot << 12;
+            boolean slotChanged = false;
+
+            for (int i = 0; i < 4096; i++) {
+                int idx = base | i;
+                int rawIntensity = tempField[idx] & 0xFF;
+                if (rawIntensity == 0) continue;
+
+                // rawIntensity = intensity * 17, convert back to 0-15
+                int level = rawIntensity / 17;
+                // Clip to valid range (should be 0-15 already, but guard)
+                if (level > 15) level = 15;
+
+                // Compute tinted contribution in 0-255 range
+                int cr = level * tr / 15;
+                int cg = level * tg / 15;
+                int cb = level * tb / 15;
+
+                int current = mainPool[idx];
+                int curR = (current >> 8) & 0xFF;
+                int curG = (current >> 16) & 0xFF;
+                int curB = (current >> 24) & 0xFF;
+
+                int newR, newG, newB;
+                if (add) {
+                    newR = Math.min(255, curR + cr);
+                    newG = Math.min(255, curG + cg);
+                    newB = Math.min(255, curB + cb);
+                } else {
+                    newR = Math.max(0, curR - cr);
+                    newG = Math.max(0, curG - cg);
+                    newB = Math.max(0, curB - cb);
+                }
+
+                if (newR != curR || newG != curG || newB != curB) {
+                    mainPool[idx] = (current & 0xFF) // preserve sky
+                        | (newR << 8) | (newG << 16) | (newB << 24);
+                    slotChanged = true;
+                }
+            }
+
+            // Clear temp field for this slot so next type pass starts clean
+            java.util.Arrays.fill(tempField, base, base + 4096, (byte) 0);
+
+            // If main pool didn't actually change, mark for removal from dirty set
+            if (!slotChanged) {
+                toRemove.add(slot);
+            }
+        }
+
+        dirtySlots.removeAll(toRemove);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  SINGLE-SOURCE BFS — for runtime block place/break
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Computes the scalar intensity field for a single light source at (x,y,z)
+     * into the temp field. Used for runtime block changes where only one source
+     * is added or removed.
+     *
+     * @return Set of slot indices that received temp field writes
+     */
+    public Set<Integer> computeSingleSourceContribution(int x, int y, int z, int intensity) {
+        Set<Integer> dirtySlots = new HashSet<>();
+        int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
+
+        int slot = world.getChunkSlot(x, y, z);
+        if (slot == World.EMPTY) return dirtySlots;
+
+        int lx = x & 15, ly = y & 15, lz = z & 15;
+        int idx = (slot << 12) | (lx | (ly << 4) | (lz << 8));
+        tempField[idx] = (byte) (intensity * 17);
+        dirtySlots.add(slot);
+
+        LongQueue queue = new LongQueue(256);
+        queue.add(packNodeScalar(x, y, z, intensity));
+
+        floodFillScalar(queue, ox, oy, oz, dirtySlots);
+        return dirtySlots;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  PER-TYPE BATCH BFS — for world gen / section rebuilds
+    // ══════════════════════════════════════════════════════════════════
 
     /**
      * Propagates block light from all emissive sources in a chunk section.
-     * Flood-fill BFS: each RGB channel diminishes by 1+opacity per step, full blocks block propagation.
-     * Color tint is preserved from source through propagation.
+     * Groups sources by type (emissive × lightColor), then runs one scalar BFS
+     * per type into the temp field, tints it by the type's color, and adds the
+     * result to the main pool.
      *
      * @param cx   Absolute chunk X coordinate
      * @param cy   Absolute chunk section Y coordinate
@@ -199,12 +376,11 @@ public class LightEngine {
         int worldBaseX = cx << 4;
         int worldBaseY = cy << 4;
         int worldBaseZ = cz << 4;
-
-        LongQueue queue = new LongQueue(256);
-
-        // Pre-compute buffer bounds (stable for the entire propagation)
         int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
-        int maxRel = bufSize - 1;
+
+        // Phase 1: Collect sources grouped by light type key.
+        // Key = (emissive << 24) | (lightColor & 0xFFFFFF) — unique per emissive×color pair.
+        java.util.Map<Integer, java.util.List<int[]>> sourcesByType = new java.util.HashMap<>();
 
         for (int ly = 0; ly < 16; ly++) {
             for (int lz = 0; lz < 16; lz++) {
@@ -215,67 +391,121 @@ public class LightEngine {
 
                     int blockId = world.getVoxel(wx, wy, wz);
                     int emissive = blockDataManager.getEmissive(blockId);
-                    if (emissive > 0) {
-                        // Read block's light color and scale by emissive intensity
-                        int rgb15 = blockDataManager.getBlockLightRGB15(blockId);
-                        int r = (rgb15 >> 8) & 0xF;
-                        int g = (rgb15 >> 4) & 0xF;
-                        int b = rgb15 & 0xF;
-                        if (r == 0 && g == 0 && b == 0) {
-                            // Fallback: use white at emissive-derived intensity
-                            r = g = b = Math.min(emissive, 15);
-                        }
-                        world.setBlockLightRGB(slot, lx, ly, lz, r, g, b);
-                        dirtySlots.add(slot);
-                        queue.add(packNodeRGB(wx, wy, wz, r, g, b));
-                    }
+                    if (emissive <= 0) continue;
+
+                    int lightColor = blockDataManager.getLightColor(blockId);
+                    int typeKey = (emissive << 24) | (lightColor & 0xFFFFFF);
+                    int intensity = Math.min(emissive, 15);
+
+                    sourcesByType.computeIfAbsent(typeKey, k -> new java.util.ArrayList<>())
+                        .add(new int[]{wx, wy, wz, intensity, blockId});
                 }
             }
         }
 
-        // Flood-fill BFS with inlined bounds check
-        Direction[] dirs = Direction.values();
-        while (!queue.isEmpty()) {
-            long node = queue.poll();
-            int nx0 = nodeX(node), ny0 = nodeY(node), nz0 = nodeZ(node);
-            int r = nodeR(node), g = nodeG(node), b = nodeB(node);
-            int intensity = Math.max(r, Math.max(g, b));
+        if (sourcesByType.isEmpty()) return dirtySlots;
 
-            for (Direction dir : dirs) {
-                int nx = nx0 + dir.x;
-                int ny = ny0 + dir.y;
-                int nz = nz0 + dir.z;
+        // Phase 2: For each type, run scalar BFS, tint, add to main.
+        for (java.util.Map.Entry<Integer, java.util.List<int[]>> entry : sourcesByType.entrySet()) {
+            int typeKey = entry.getKey();
+            int emissive = (typeKey >> 24) & 0xFF;
+            int lightColor = typeKey & 0xFFFFFF;
+            int blockId = entry.getValue().get(0)[4]; // representative blockId for tint
 
-                // Inline bounds + slot lookup (avoids two method calls per neighbor)
-                int rnx = nx - ox, rny = ny - oy, rnz = nz - oz;
-                if (rnx < 0 || rny < 0 || rnz < 0 || rnx > maxRel || rny > maxRel || rnz > maxRel) continue;
+            // Clear temp field for this slot
+            clearTempFieldSlot(slot);
 
-                int nSlot = world.getChunkSlot(nx, ny, nz);
-                if (nSlot == World.EMPTY) continue;
+            // Seed all sources of this type
+            LongQueue queue = new LongQueue(256);
+            Set<Integer> typeDirty = new HashSet<>();
+            for (int[] src : entry.getValue()) {
+                int sx = src[0], sy = src[1], sz = src[2];
+                int intensity = src[3];
 
-                int opacity = getBlockOpacity(world.getVoxel(nx, ny, nz));
-                int step = Math.max(1, opacity);
-                int nextR = Math.max(0, r - step);
-                int nextG = Math.max(0, g - step);
-                int nextB = Math.max(0, b - step);
-                int nextIntensity = Math.max(nextR, Math.max(nextG, nextB));
-                if (nextIntensity <= 0) continue;
+                int slx = sx & 15, sly = sy & 15, slz = sz & 15;
+                int sidx = (slot << 12) | (slx | (sly << 4) | (slz << 8));
+                int existing = tempField[sidx] & 0xFF;
+                int intensity255 = intensity * 17;
+                if (intensity255 > existing) {
+                    tempField[sidx] = (byte) intensity255;
+                    typeDirty.add(slot);
+                }
+                queue.add(packNodeScalar(sx, sy, sz, intensity));
+            }
 
-                int nlx = nx & 15, nly = ny & 15, nlz = nz & 15;
-                int curR = world.getBlockLightR(nSlot, nlx, nly, nlz);
-                int curG = world.getBlockLightG(nSlot, nlx, nly, nlz);
-                int curB = world.getBlockLightB(nSlot, nlx, nly, nlz);
-                int curIntensity = Math.max(curR, Math.max(curG, curB));
+            // Flood-fill
+            floodFillScalar(queue, ox, oy, oz, typeDirty);
 
-                if (curIntensity < nextIntensity) {
-                    // Take the max of each channel independently (supports overlapping sources)
-                    world.setBlockLightRGB(nSlot, nlx, nly, nlz,
-                        Math.max(curR, nextR),
-                        Math.max(curG, nextG),
-                        Math.max(curB, nextB));
-                    dirtySlots.add(nSlot);
-                    if (nextIntensity > 1) {
-                        queue.add(packNodeRGB(nx, ny, nz, nextR, nextG, nextB));
+            // Tint and add to main pool
+            applyTintToMain(blockId, true, typeDirty);
+            dirtySlots.addAll(typeDirty);
+        }
+
+        return dirtySlots;
+    }
+
+    /**
+     * Handles a block change at (x,y,z).
+     *
+     * If the change involves an emissive source (old or new):
+     *   - Run single-source BFS for the removed source (using oldBlockId) and SUBTRACT
+     *   - Run single-source BFS for the placed source (using current block) and ADD
+     *
+     * If neither side is emissive (e.g., dirt → stone):
+     *   - Full rebuild of the 3×3×3 section cube using per-type batch mode
+     *
+     * @param x,y,z       World coordinates of changed block
+     * @param oldBlockId  Block ID that was at this position before the change
+     * @return Set of dirty slot indices
+     */
+    public Set<Integer> onBlockChanged(int x, int y, int z, int oldBlockId) {
+        Set<Integer> dirtySlots = new HashSet<>();
+        int newBlockId = world.getVoxel(x, y, z);
+        int oldEmissive = blockDataManager.getEmissive(oldBlockId);
+        int newEmissive = blockDataManager.getEmissive(newBlockId);
+
+        if (oldEmissive > 0 || newEmissive > 0) {
+            // ── Light source changed: single-source add/subtract ──
+            if (oldEmissive > 0) {
+                int intensity = Math.min(oldEmissive, 15);
+                Set<Integer> contrib = computeSingleSourceContribution(x, y, z, intensity);
+                applyTintToMain(oldBlockId, false, contrib);
+                dirtySlots.addAll(contrib);
+            }
+            if (newEmissive > 0) {
+                int intensity = Math.min(newEmissive, 15);
+                Set<Integer> contrib = computeSingleSourceContribution(x, y, z, intensity);
+                applyTintToMain(newBlockId, true, contrib);
+                dirtySlots.addAll(contrib);
+            }
+        } else {
+            // ── Non-emissive block change: full rebuild of 3×3×3 section cube ──
+            int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
+            int cx = x >> 4, cy = y >> 4, cz = z >> 4;
+
+            // Cache and clear block light in main pool for all 27 sections
+            int[][][] cachedSlots = new int[3][3][3];
+            for (int dcx = -1; dcx <= 1; dcx++) {
+                for (int dcy = -1; dcy <= 1; dcy++) {
+                    for (int dcz = -1; dcz <= 1; dcz++) {
+                        int slot = getSlotForSection(cx + dcx, cy + dcy, cz + dcz, ox, oy, oz);
+                        cachedSlots[dcx + 1][dcy + 1][dcz + 1] = slot;
+                        if (slot != World.EMPTY) {
+                            world.clearLightPoolSlot(slot);
+                            dirtySlots.add(slot);
+                        }
+                    }
+                }
+            }
+
+            // Re-propagate all 27 sections using per-type batch
+            for (int dcx = -1; dcx <= 1; dcx++) {
+                for (int dcy = -1; dcy <= 1; dcy++) {
+                    for (int dcz = -1; dcz <= 1; dcz++) {
+                        int slot = cachedSlots[dcx + 1][dcy + 1][dcz + 1];
+                        if (slot != World.EMPTY) {
+                            dirtySlots.addAll(propagateBlockLight(cx + dcx, cy + dcy, cz + dcz, slot));
+                        }
                     }
                 }
             }
@@ -284,130 +514,14 @@ public class LightEngine {
         return dirtySlots;
     }
 
-    /**
-     * Runs block light BFS from a single source position (for block placement/removal).
-     * Uses incremental darken+flood instead of brute-force clear+rebuild for real-time performance.
-     * RGB-aware: darkens and re-propagates per-channel.
-     *
-     * @param x World X coordinate of changed block
-     * @param y World Y coordinate of changed block
-     * @param z World Z coordinate of changed block
-     * @return Set of dirty slot indices
-     */
-    public Set<Integer> checkBlockLight(int x, int y, int z) {
-        Set<Integer> dirtySlots = new HashSet<>();
-        int slot = getSlotForWorldPos(x, y, z);
-        if (slot == World.EMPTY) return dirtySlots;
-
-        int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
-        int maxRel = bufSize - 1;
-
-        int lx = x & 15, ly = y & 15, lz = z & 15;
-        int curR = world.getBlockLightR(slot, lx, ly, lz);
-        int curG = world.getBlockLightG(slot, lx, ly, lz);
-        int curB = world.getBlockLightB(slot, lx, ly, lz);
-        int curIntensity = Math.max(curR, Math.max(curG, curB));
-        int blockId = world.getVoxel(x, y, z);
-        int emissive = blockDataManager.getEmissive(blockId);
-
-        LongQueue removeQueue = new LongQueue(64);
-        LongQueue addQueue = new LongQueue(64);
-
-        // Capture initial state with RGB
-        if (emissive > 0) {
-            int rgb15 = blockDataManager.getBlockLightRGB15(blockId);
-            int srcR = (rgb15 >> 8) & 0xF;
-            int srcG = (rgb15 >> 4) & 0xF;
-            int srcB = rgb15 & 0xF;
-            if (srcR == 0 && srcG == 0 && srcB == 0) {
-                srcR = srcG = srcB = Math.min(emissive, 15);
-            }
-            world.setBlockLightRGB(slot, lx, ly, lz, srcR, srcG, srcB);
-            dirtySlots.add(slot);
-            addQueue.add(packNodeRGB(x, y, z, srcR, srcG, srcB));
-        } else {
-            world.setBlockLightRGB(slot, lx, ly, lz, 0, 0, 0);
-            dirtySlots.add(slot);
-            if (curIntensity > 0) {
-                removeQueue.add(packNodeRGB(x, y, z, curR, curG, curB));
-            }
-        }
-
-        Direction[] dirs = Direction.values();
-
-        // 1. Darken previous light boundaries (un-propagate)
-        while (!removeQueue.isEmpty()) {
-            long node = removeQueue.poll();
-            int nx0 = nodeX(node), ny0 = nodeY(node), nz0 = nodeZ(node);
-            int oldR = nodeR(node), oldG = nodeG(node), oldB = nodeB(node);
-            int oldIntensity = Math.max(oldR, Math.max(oldG, oldB));
-
-            for (Direction dir : dirs) {
-                int nx = nx0 + dir.x, ny = ny0 + dir.y, nz = nz0 + dir.z;
-                int rnx = nx - ox, rny = ny - oy, rnz = nz - oz;
-                if (rnx < 0 || rny < 0 || rnz < 0 || rnx > maxRel || rny > maxRel || rnz > maxRel) continue;
-
-                int nSlot = world.getChunkSlot(nx, ny, nz);
-                if (nSlot == World.EMPTY) continue;
-
-                int nlx = nx & 15, nly = ny & 15, nlz = nz & 15;
-                int nR = world.getBlockLightR(nSlot, nlx, nly, nlz);
-                int nG = world.getBlockLightG(nSlot, nlx, nly, nlz);
-                int nB = world.getBlockLightB(nSlot, nlx, nly, nlz);
-                int nIntensity = Math.max(nR, Math.max(nG, nB));
-
-                if (nIntensity != 0 && nIntensity < oldIntensity && nR <= oldR && nG <= oldG && nB <= oldB) {
-                    world.setBlockLightRGB(nSlot, nlx, nly, nlz, 0, 0, 0);
-                    dirtySlots.add(nSlot);
-                    removeQueue.add(packNodeRGB(nx, ny, nz, nR, nG, nB));
-                } else if (nIntensity >= oldIntensity) {
-                    addQueue.add(packNodeRGB(nx, ny, nz, nR, nG, nB));
-                }
-            }
-        }
-
-        // 2. Flood fill returning light + emissive (re-propagate)
-        while (!addQueue.isEmpty()) {
-            long node = addQueue.poll();
-            int nx0 = nodeX(node), ny0 = nodeY(node), nz0 = nodeZ(node);
-            int r = nodeR(node), g = nodeG(node), b = nodeB(node);
-            int intensity = Math.max(r, Math.max(g, b));
-
-            for (Direction dir : dirs) {
-                int nx = nx0 + dir.x, ny = ny0 + dir.y, nz = nz0 + dir.z;
-                int rnx = nx - ox, rny = ny - oy, rnz = nz - oz;
-                if (rnx < 0 || rny < 0 || rnz < 0 || rnx > maxRel || rny > maxRel || rnz > maxRel) continue;
-
-                int nSlot = world.getChunkSlot(nx, ny, nz);
-                if (nSlot == World.EMPTY) continue;
-
-                int opacity = getBlockOpacity(world.getVoxel(nx, ny, nz));
-                int step = Math.max(1, opacity);
-                int nextR = Math.max(0, r - step);
-                int nextG = Math.max(0, g - step);
-                int nextB = Math.max(0, b - step);
-                int nextIntensity = Math.max(nextR, Math.max(nextG, nextB));
-                if (nextIntensity <= 0) continue;
-
-                int nlx = nx & 15, nly = ny & 15, nlz = nz & 15;
-                int curR2 = world.getBlockLightR(nSlot, nlx, nly, nlz);
-                int curG2 = world.getBlockLightG(nSlot, nlx, nly, nlz);
-                int curB2 = world.getBlockLightB(nSlot, nlx, nly, nlz);
-                int curInt2 = Math.max(curR2, Math.max(curG2, curB2));
-
-                if (curInt2 < nextIntensity) {
-                    world.setBlockLightRGB(nSlot, nlx, nly, nlz,
-                        Math.max(curR2, nextR),
-                        Math.max(curG2, nextG),
-                        Math.max(curB2, nextB));
-                    dirtySlots.add(nSlot);
-                    if (nextIntensity > 1) {
-                        addQueue.add(packNodeRGB(nx, ny, nz, nextR, nextG, nextB));
-                    }
-                }
-            }
-        }
-        return dirtySlots;
+    /** Fast slot lookup from absolute section coords + pre-computed buffer origin. */
+    private int getSlotForSection(int scx, int scy, int scz, int ox, int oy, int oz) {
+        int wx = scx << 4, wy = scy << 4, wz = scz << 4;
+        int rx = wx - ox, ry = wy - oy, rz = wz - oz;
+        if (rx < 0 || ry < 0 || rz < 0 || rx >= bufSize || ry >= bufSize || rz >= bufSize) return World.EMPTY;
+        int idx = (rx >> 4) + (ry >> 4) * World.REGION_SIZE + (rz >> 4) * World.REGION_SIZE * World.REGION_SIZE;
+        int slot = world.getIndirectionTable()[idx];
+        return slot == World.EMPTY ? World.EMPTY : slot;
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -467,6 +581,64 @@ public class LightEngine {
         System.out.println("\r  Block light: " + secDone + "/" + totalSecs + " sections done");
 
         return allDirty;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  OCCLUSION BAKER
+    // ══════════════════════════════════════════════════════════════════
+
+    /** 14-directional occlusion sample vectors (matches LightPropagationEngine). */
+    public static final float[][] OCC_DIRS = {
+        {0.0f, 1.0f, 0.0f},
+        {0.707f, 0.707f, 0.0f}, {-0.707f, 0.707f, 0.0f}, {0.0f, 0.707f, 0.707f}, {0.0f, 0.707f, -0.707f},
+        {0.5f, 0.707f, 0.5f}, {-0.5f, 0.707f, 0.5f}, {0.5f, 0.707f, -0.5f}, {-0.5f, 0.707f, -0.5f},
+        {0.866f, 0.5f, 0.0f}, {-0.866f, 0.5f, 0.0f}, {0.0f, 0.5f, 0.866f}, {0.0f, 0.5f, -0.866f},
+        {0.0f, 0.3f, 0.0f}
+    };
+
+    /**
+     * Bakes 14-directional sky occlusion for every voxel in a chunk section.
+     * Stores results in the World's occlusionPool as bitmask shorts.
+     */
+    public void bakeChunkOcclusion(int slot, int cx, int cy, int cz) {
+        short[] occPool = world.getOcclusionPool();
+        int baseIdx = slot << 12;
+        for (int ly = 15; ly >= 0; ly--) {
+            for (int lz = 0; lz < 16; lz++) {
+                for (int lx = 0; lx < 16; lx++) {
+                    int wx = (cx << 4) + lx, wy = (cy << 4) + ly, wz = (cz << 4) + lz;
+                    int idx = baseIdx | (lx | (ly << 4) | (lz << 8));
+                    if (isFullBlock(wx, wy, wz)) { occPool[idx] = 0; continue; }
+                    int m = 0;
+                    for (int d = 0; d < 14; d++) {
+                        if (checkSkyVisibility(wx, wy, wz, d)) m |= (1 << d);
+                    }
+                    occPool[idx] = (short) m;
+                }
+            }
+        }
+    }
+
+    private boolean checkSkyVisibility(int x, int y, int z, int dirIdx) {
+        float[] d = OCC_DIRS[dirIdx];
+        float cx = x + 0.5f, cy = y + 0.5f, cz = z + 0.5f;
+        for (int i = 1; i < 32; i++) {
+            int nx = (int)(cx + d[0] * i), ny = (int)(cy + d[1] * i), nz = (int)(cz + d[2] * i);
+            if (ny >= bufSize) return true;
+            if (isFullBlock(nx, ny, nz)) return false;
+        }
+        return true;
+    }
+
+    /** Returns true if the voxel at (x,y,z) is a full solid block (opaque, no transparency). */
+    private boolean isFullBlock(int x, int y, int z) {
+        int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
+        int rx = x - ox, ry = y - oy, rz = z - oz;
+        if (rx < 0 || ry < 0 || rz < 0 || rx >= bufSize || ry >= bufSize || rz >= bufSize) return false;
+        int slot = world.getIndirectionTable()[(rx >> 4) + (ry >> 4) * World.REGION_SIZE + (rz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
+        if (slot == World.EMPTY) return false;
+        int id = world.getChunkPool()[(slot << 12) | ((rx & 15) | ((ry & 15) << 4) | ((rz & 15) << 8))] & 0xFFFF;
+        return id > 0 && blockDataManager.isFullBlock(id);
     }
 
     // ══════════════════════════════════════════════════════════════════

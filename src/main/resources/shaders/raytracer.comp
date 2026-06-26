@@ -302,7 +302,7 @@ uint getVoxelOcclusion(ivec3 p) {
 }
 
 // Sample RGB lightmap at world position.
-// Returns vec4 where x = skyLight (0-15), yzw = blockLight RGB (0-15 each)
+// Returns vec4 where x = skyLight (0-255), yzw = blockLight RGB (0-255 each)
 // Returns vec4(-1) if outside buffer.
 vec4 sampleLightmap(ivec3 p) {
     ivec3 rel = p - u_WorldOffset;
@@ -312,11 +312,11 @@ vec4 sampleLightmap(ivec3 p) {
     int voxelIdx = (rel.x & 15) | ((rel.y & 15) << 4) | ((rel.z & 15) << 8);
     uint idx = (slot << 12u) | uint(voxelIdx);
     uint packedv = lightPool[idx];
-    // bits 0-3 = sky light, bits 4-7 = block R, bits 8-11 = block G, bits 12-15 = block B
-    float sky = float(packedv & 0xFu);
-    float blockR = float((packedv >> 4u) & 0xFu);
-    float blockG = float((packedv >> 8u) & 0xFu);
-    float blockB = float((packedv >> 12u) & 0xFu);
+    // bits 0-7 = sky light, bits 8-15 = block R, bits 16-23 = block G, bits 24-31 = block B
+    float sky = float(packedv & 0xFFu);
+    float blockR = float((packedv >> 8u) & 0xFFu);
+    float blockG = float((packedv >> 16u) & 0xFFu);
+    float blockB = float((packedv >> 24u) & 0xFFu);
     return vec4(sky, blockR, blockG, blockB);
 }
 
@@ -872,11 +872,11 @@ void main() {
                 lightMap = sampleLightmap(lightSamplePos);
             }
             if (lightMap.x < 0.0) lightMap = vec4(0.0);
-            float skyContrib = lightMap.x / 15.0;
+            float skyContrib = lightMap.x / 255.0;
             // Block light: RGB channels with intensity + color tint
             float blockR = lightMap.y, blockG = lightMap.z, blockB = lightMap.w;
             float blockIntensity = max(max(blockR, blockG), blockB);
-            float blockContrib = max(blockIntensity * 5.0, 1.0) / 15.0;
+            float blockContrib = max(blockIntensity * 5.0, 1.0) / 255.0;
             float totalLightContrib = max(skyContrib, blockContrib);
             // Apply block light tint: color the beam with the RGB light source color
             vec3 blockTint = vec3(1.0);

@@ -126,7 +126,7 @@ float fastShadow(vec3 ro, vec3 rd, float maxDist) {
 }
 
 // Sample Minecraft packed lightmap at a world position.
-// Returns vec2 where x = skyLight (0-15), y = blockLight (0-15)
+// Returns vec2 where x = skyLight (0-255), y = blockLight (0-255, R channel)
 vec2 sampleLightmap(ivec3 p) {
     ivec3 rel = p - u_WorldOffset;
     if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(2048)))) return vec2(-1);
@@ -135,8 +135,8 @@ vec2 sampleLightmap(ivec3 p) {
     int voxelIdx = (rel.x & 15) | ((rel.y & 15) << 4) | ((rel.z & 15) << 8);
     uint idx = (slot << 12u) | uint(voxelIdx);
     uint packedv = lightPool[idx];
-    float sky = float(packedv & 0xFu);
-    float block = float((packedv >> 4u) & 0xFu);
+    float sky = float(packedv & 0xFFu);
+    float block = float((packedv >> 8u) & 0xFFu); // R channel as representative block light
     return vec2(sky, block);
 }
 
@@ -194,7 +194,7 @@ void main() {
     }
     // Default to zero light if both samples landed in empty chunks
     if (lightMap.x < 0.0) lightMap = vec2(0.0);
-    float blockLightContrib = max(lightMap.x, min(lightMap.y * 5.0, 15.0)) / 15.0;
+    float blockLightContrib = max(lightMap.x, min(lightMap.y * 5.0, 255.0)) / 255.0;
     
     // Combine lighting: sun + moon + ambient + minecraft lightmap
     vec3 directLight = sunLight + moonLight + ambientLight + vec3(blockLightContrib);

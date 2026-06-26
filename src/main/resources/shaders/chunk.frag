@@ -78,5 +78,5 @@ void main() {
     outNormal = vec4(normalize(vNormal) * 0.5 + 0.5, reflectivity);
     
     // Light value stored in position alpha
-    outPosition.a = float(vLight & 0x3FFu) / 1023.0; // Store R channel of light as hint
+    outPosition.a = float((vLight >> 8u) & 0xFFu) / 255.0; // Store R channel of light as hint
 }
