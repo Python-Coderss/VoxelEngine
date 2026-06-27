@@ -1,5 +1,6 @@
 package com.voxel;
 
+import com.voxel.camera.CameraController;
 import com.voxel.crafting.CraftingManager;
 import com.voxel.ui.UILayer;
 import com.voxel.ui.UIManager;
@@ -39,10 +40,8 @@ import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
-
 import com.voxel.game.GameContext.CameraMode;
 import com.voxel.game.GameContext.GameMode;
-
 
 import javax.imageio.ImageIO;
 import java.awt.Color;
@@ -75,181 +74,126 @@ import static org.lwjgl.system.MemoryUtil.NULL;
  * Logic is offloaded to a background thread.
  */
 public class Main {
-    private static final int HOTBAR_SIZE = 5;
-    private static final int INVENTORY_SIZE = 20;
-    private static final int SLOT_W = 88;
-    private static final int SLOT_H = 80;
-    private static final int SLOT_TEX_W = 22;
-    private static final int SLOT_TEX_H = 20;
-    private static final int HOTBAR_X = 10;
-    private static final int HOTBAR_Y = 100;
+    public static final int HOTBAR_SIZE = 5;
+    public static final int INVENTORY_SIZE = 20;
+    public static final int SLOT_W = 88;
+    public static final int SLOT_H = 80;
+    public static final int SLOT_TEX_W = 22;
+    public static final int SLOT_TEX_H = 20;
+    public static final int HOTBAR_X = 10;
+    public static final int HOTBAR_Y = 100;
     // Inventory panel: covers 4 columns + crafting grid (2 grid cols + result slot)
-    private static final int INVENTORY_PANEL_WIDTH = 460;
-    private static final int INVENTORY_PANEL_HEIGHT = SLOT_H * HOTBAR_SIZE + 24;
-    private static final float DAY_START_TIME = 720.0f;
-    private static final float PLAYER_HALF_WIDTH = 0.3f;
-    private static final float PLAYER_HEIGHT = 1.8f;
-    private static final float PLAYER_EYE_HEIGHT = 1.6f;
-    private static final float THIRD_PERSON_DISTANCE = 4.0f;
-    private static final float THIRD_PERSON_TARGET_HEIGHT = 1.35f;
-    private static final float CAMERA_COLLISION_STEP = 0.1f;
+    public static final int INVENTORY_PANEL_WIDTH = 460;
+    public static final int INVENTORY_PANEL_HEIGHT = SLOT_H * HOTBAR_SIZE + 24;
+    public static final float DAY_START_TIME = 720.0f;
+    public static final float PLAYER_HALF_WIDTH = 0.3f;
+    public static final float PLAYER_HEIGHT = 1.8f;
+    public static final float PLAYER_EYE_HEIGHT = 1.6f;
+    public static final float THIRD_PERSON_DISTANCE = 4.0f;
+    public static final float THIRD_PERSON_TARGET_HEIGHT = 1.35f;
+    public static final float CAMERA_COLLISION_STEP = 0.1f;
 
-    private long window;
-    private int quadProgram, computeProgram;
-    private int quadVAO, quadVBO, renderTexture;
-    private int indirectionSSBO, chunkPoolSSBO, bitmaskSSBO, occlusionSSBO, pointLightSSBO, lightSSBO;
+    public long window;
+    public int quadProgram, computeProgram;
+    public int quadVAO, quadVBO, renderTexture;
+    public int indirectionSSBO, chunkPoolSSBO, bitmaskSSBO, occlusionSSBO, pointLightSSBO, lightSSBO;
 
     // Cached compute shader uniform locations (avoid glGetUniformLocation per frame)
-    private int locBlockTextures, locEntityTextures, locBlockData, locBlockAABBs, locBlockAABBInfo, locBlockAABBUVs;
-    private volatile boolean needsWorldUpload = false;
-    private volatile boolean needsCursorUpdate = false;
-    private int locBiomeMap, locGrassColormap, locUITexture, locFoliageColormap, locUISource;
-    private int locHeartUVs;
-    private int locCraftingItemCount;
-    private int craftingItemSSBO;
-    private java.util.Iterator<Integer> dirtyUploadIterator;
-    private static final int MAX_DIRTY_UPLOADS_PER_FRAME = 48;
-    private int locQuadPass; // Cached quad shader u_Pass uniform
+    public int locBlockTextures, locEntityTextures, locBlockData, locBlockAABBs, locBlockAABBInfo, locBlockAABBUVs;
+    public volatile boolean needsWorldUpload = false;
+    public volatile boolean needsCursorUpdate = false;
+    public int locBiomeMap, locGrassColormap, locUITexture, locFoliageColormap, locUISource;
+    public int locHeartUVs;
+    public int locCraftingItemCount;
+    public int craftingItemSSBO;
+    public java.util.Iterator<Integer> dirtyUploadIterator;
+    public static final int MAX_DIRTY_UPLOADS_PER_FRAME = 48;
+    public int locQuadPass; // Cached quad shader u_Pass uniform
 
     // ── Depth prepass: hardware-rasterized chunk AABBs for DDA sky-skip ──
-    private int chunkDepthProgram;       // chunk_depth.vert + chunk_depth.frag
-    private int chunkDepthFBO;           // FBO for depth + chunk-origin attachments
-    private int chunkDepthTex;           // GL_DEPTH_COMPONENT24 — rasterized depth
-    private int chunkOriginTex;          // GL_R32UI — packed chunk section coords
-    private int cubeVAO, cubeVBO;        // Unit cube mesh (36 vertices)
-    private int chunkVisibilitySSBO;     // Frustum-culled chunk section list
-    private IntBuffer chunkVisBuffer;    // CPU-side buffer for upload
-    private static final int MAX_VISIBLE_CHUNKS = 8192;
-    private int locVPMatrix;             // u_VP uniform in chunk_depth.vert
-    private int locWorldOffsetDepth;     // u_WorldOffset uniform in chunk_depth.vert
-    private int locDepthTex;             // u_DepthTex uniform in raytracer.comp
-    private int locChunkOriginTex;       // u_ChunkOriginTex uniform in raytracer.comp
+    public int chunkDepthProgram;       // chunk_depth.vert + chunk_depth.frag
+    public int chunkDepthFBO;           // FBO for depth + chunk-origin attachments
+    public int chunkDepthTex;           // GL_DEPTH_COMPONENT24 — rasterized depth
+    public int chunkOriginTex;          // GL_R32UI — packed chunk section coords
+    public int cubeVAO, cubeVBO;        // Unit cube mesh (36 vertices)
+    public int chunkVisibilitySSBO;     // Frustum-culled chunk section list
+    public IntBuffer chunkVisBuffer;    // CPU-side buffer for upload
+    public static final int MAX_VISIBLE_CHUNKS = 8192;
+    public int locVPMatrix;             // u_VP uniform in chunk_depth.vert
+    public int locWorldOffsetDepth;     // u_WorldOffset uniform in chunk_depth.vert
+    public int locDepthTex;             // u_DepthTex uniform in raytracer.comp
+    public int locChunkOriginTex;       // u_ChunkOriginTex uniform in raytracer.comp
 
-    private FloatBuffer persistentPlBuf; // Persistent FloatBuffer for pointLightSSBO (no per-frame alloc)
-    private com.voxel.entity.EntityManager entityManager;
-    private World world;
-    private com.voxel.world.ChunkManager chunkManager;
-    private TextureManager textureManager;
-    private BlockDataManager blockDataManager;
-    private com.voxel.utils.BiomeManager biomeManager;
-    private UIManager uiManager;
-    private final List<UILayer> uiLayers = new ArrayList<>();
-    private Player player;
-    private com.voxel.entity.PlayerEntity playerEntity;
-    private CraftingManager craftingManager;
-    private DimensionManager dimensionManager;
-    private DimensionType activeDimension = DimensionType.OVERWORLD;
-    private RedstoneManager redstoneManager;
+    public FloatBuffer persistentPlBuf; // Persistent FloatBuffer for pointLightSSBO (no per-frame alloc)
+    public com.voxel.entity.EntityManager entityManager;
+    public World world;
+    public com.voxel.world.ChunkManager chunkManager;
+    public TextureManager textureManager;
+    public BlockDataManager blockDataManager;
+    public com.voxel.utils.BiomeManager biomeManager;
+    public Player player;
+    public com.voxel.entity.PlayerEntity playerEntity;
+    public CraftingManager craftingManager;
+    public DimensionManager dimensionManager;
+    public DimensionType activeDimension = DimensionType.OVERWORLD;
+    public RedstoneManager redstoneManager;
 
     // --- Extracted subsystem references ---
-    private GameContext ctx;
-    private ItemDefinitions itemDefinitions;
-    private PlayerInventory playerInventory;
-    private BlockInteraction blockInteraction;
-    private PortalSystem portalSystem;
-    private CommandProcessor commandProcessor;
-    private AtmosphereRenderer atmosphereRenderer;
+    public GameContext ctx;
+    public ItemDefinitions itemDefinitions;
+    public PlayerInventory playerInventory;
+    public BlockInteraction blockInteraction;
+    public PortalSystem portalSystem;
+    public CommandProcessor commandProcessor;
+    public AtmosphereRenderer atmosphereRenderer;
 
-    private int width = 1280, height = 720;
-    private final int CHUNK_SIZE = 16, REGION_SIZE = 128;
+    public com.voxel.camera.CameraController cameraController;
+    public com.voxel.ui.HudUI hud;
 
-    private float lastMouseX = width / 2f, lastMouseY = height / 2f;
-    private boolean firstMouse = true;
-    private float yaw = -90, pitch = 0;
-    private float playerYaw = -90;
+    public int width = 1280, height = 720;
+    public final int CHUNK_SIZE = 16, REGION_SIZE = 128;
 
-    private GameMode gameMode = GameMode.SURVIVAL;
-    private float worldTime = DAY_START_TIME;
+    public float lastMouseX = width / 2f, lastMouseY = height / 2f;
+    public boolean firstMouse = true;
+    public float yaw = -90, pitch = 0;
+    public float playerYaw = -90;
 
-    private boolean inventoryOpen = false;
-    private boolean commandMode = false;
-    private final StringBuilder commandBuffer = new StringBuilder();
-    private String statusMessage = "";
-    private double statusUntil = 0.0;
-    private int statusLineOffset = 0;
-    private int lastMeasuredFps = 0;
+    public GameMode gameMode = GameMode.SURVIVAL;
+    public float worldTime = DAY_START_TIME;
 
-    private boolean leftMouseHeld = false;
-    private boolean leftMousePressedThisFrame = false;
-    private int breakTargetX = Integer.MIN_VALUE;
-    private int breakTargetY = Integer.MIN_VALUE;
-    private int breakTargetZ = Integer.MIN_VALUE;
-    private float breakProgress = 0.0f;
-    private double lastPortalTeleportTime = 0;
+    public boolean inventoryOpen = false;
+    public boolean commandMode = false;
+    public final StringBuilder commandBuffer = new StringBuilder();
+    public String statusMessage = "";
+    public double statusUntil = 0.0;
+    public int statusLineOffset = 0;
+    public int lastMeasuredFps = 0;
 
-    private int uiTextureId = 0;
-    private Vector2i uiTextureSize = new Vector2i(1, 1);
-    private int fontTextureId = 0;
-    private Vector2i fontTextureSize = new Vector2i(1, 1);
-    private UILayer.UIElement crosshairElement;
-    private UILayer.UIElement hotbarActiveElement;
-    private UILayer.UIElement inventoryPanelElement;
-    private UILayer.UIElement carriedItemElement;
-    private final UILayer.UIElement[] slotBackgrounds = new UILayer.UIElement[INVENTORY_SIZE];
-    private final UILayer.UIElement[] slotItemElements = new UILayer.UIElement[INVENTORY_SIZE];
-    private final UILayer.UIElement[] slotCountBars = new UILayer.UIElement[INVENTORY_SIZE];
-    private final UILayer.UIElement[] slotCountDigit1 = new UILayer.UIElement[INVENTORY_SIZE];
-    private final UILayer.UIElement[] slotCountDigit2 = new UILayer.UIElement[INVENTORY_SIZE];
-    private UILayer.UITextElement itemNameElement;
+    public boolean leftMouseHeld = false;
+    public boolean leftMousePressedThisFrame = false;
+    public int breakTargetX = Integer.MIN_VALUE;
+    public int breakTargetY = Integer.MIN_VALUE;
+    public int breakTargetZ = Integer.MIN_VALUE;
+    public float breakProgress = 0.0f;
+    public double lastPortalTeleportTime = 0;
 
-    // Crafting grid (4 input slots in 2x2 + 1 result slot)
-    private static final int CRAFTING_SLOTS = 5;
-    private static final int CRAFTING_RESULT_SLOT = 4;
-    private final UILayer.UIElement[] craftingSlotBackgrounds = new UILayer.UIElement[CRAFTING_SLOTS];
-    private final UILayer.UIElement[] craftingSlotItems = new UILayer.UIElement[CRAFTING_SLOTS];
+    public static final int CRAFTING_SLOTS = 5;
+    public static final int CRAFTING_RESULT_SLOT = 4;
 
-    // MCSM-style 3x3 crafting table grid (10 slots: 9 input + 1 result)
-    private final UILayer.UIElement[] crafting3x3SlotBackgrounds = new UILayer.UIElement[9];
-    private final UILayer.UIElement[] crafting3x3SlotItems = new UILayer.UIElement[9];
-    private UILayer.UIElement craftingTableBg;
+    public Thread logicThread;
+    public volatile boolean running = true;
+    public CameraMode cameraMode = CameraMode.FIRST_PERSON;
 
-    // --- Furnace UI elements ---
-    private UILayer.UIElement furnacePanelBg;
-    private UILayer.UIElement furnaceInputBg, furnaceFuelBg, furnaceOutputBg;
-    private UILayer.UIElement furnaceInputItem, furnaceFuelItem, furnaceOutputItem;
-    private UILayer.UIElement furnaceProgressBar, furnaceFuelBar;
-    private UILayer.UITextElement furnaceFuelText;
+    public volatile float craftingCameraYaw;    // Fixed yaw while using crafting table (volatile: read by GL thread)
+    public volatile float craftingCameraPitch;   // Fixed pitch while using crafting table
+    public boolean craftingCameraInited = false;
 
-    // --- Chest UI elements ---
-    private UILayer.UIElement chestPanelBg;
-    private final UILayer.UIElement[] chestSlotBackgrounds = new UILayer.UIElement[20];
-    private final UILayer.UIElement[] chestSlotItems = new UILayer.UIElement[20];
-    private final UILayer.UIElement[] chestCountBars = new UILayer.UIElement[20];
-    private final UILayer.UIElement[] chestCountDigit1 = new UILayer.UIElement[20];
-    private final UILayer.UIElement[] chestCountDigit2 = new UILayer.UIElement[20];
-
-    private double itemNameDisplayUntil = 0.0;
-    private final UILayer.UIElement[] playerHearts = new UILayer.UIElement[10];
-    private final UILayer.UIElement[] heartBases = new UILayer.UIElement[10];
-    private UILayer.UITextElement commandTextElement;
-    private UILayer.UITextElement statusTextElement;
-
-    private Thread logicThread;
-    private volatile boolean running = true;
-    private CameraMode cameraMode = CameraMode.FIRST_PERSON;
-
-
-    private volatile float craftingCameraYaw;    // Fixed yaw while using crafting table (volatile: read by GL thread)
-    private volatile float craftingCameraPitch;   // Fixed pitch while using crafting table
-    private boolean craftingCameraInited = false;
-
-    private float cameraShake = 0.0f;
-    private float hitStop = 0.0f;
-    private float combatTime = 0.0f;
-    private double lastAttackTime = 0;
-    private double lastRollTime = 0;
-    private boolean inventoryUiDirty = true; // Skip updateInventoryUi when nothing changed
-    private boolean combatMode = false;
-    // State tracking for skipping redundant UI updates
-    private boolean prevInventoryOpenForUi = false;
-    private boolean prevCommandModeForUi = false;
-    private int prevSelectedSlot = -1;
-    private float prevHealth = -1;
-
-    private Vector4f uvHeartFull = new Vector4f(99, 2, 7, 7);
-    private Vector4f uvHeartHalf = new Vector4f(108, 2, 7, 7);
-    private Vector4f uvHeartEmpty = new Vector4f(90, 2, 7, 7);
-    private Vector4f uvHeartBase = new Vector4f(62, 1, 9, 9);
+    public float cameraShake = 0.0f;
+    public float hitStop = 0.0f;
+    public float combatTime = 0.0f;
+    public double lastAttackTime = 0;
+    public double lastRollTime = 0;
+    public boolean combatMode = false;
 
     public void run() {
         init();
@@ -303,7 +247,7 @@ public class Main {
         glfwTerminate();
     }
 
-    private void init() {
+    public void init() {
         GLFWErrorCallback.createPrint(System.err).set();
         if (!glfwInit()) throw new IllegalStateException("Unable to initialize GLFW");
 
@@ -409,6 +353,7 @@ public class Main {
 
         // Create shared game context (world/chunkManager/dimensionManager filled below after init)
         ctx = new GameContext();
+        cameraController = new CameraController(ctx, this);
         ctx.activeDimension = activeDimension;
         ctx.entityManager = entityManager;
         ctx.blockDataManager = blockDataManager;
@@ -442,7 +387,7 @@ public class Main {
         craftingManager = new CraftingManager();
         ctx.craftingManager = craftingManager;
 
-        uiManager = new UIManager(width, height);
+        hud = new com.voxel.ui.HudUI(ctx, this, cameraController, playerInventory, textureManager, itemDefinitions, biomeManager);
         setupUi();
 
         // Initialize world save manager (dev/world folder)
@@ -476,8 +421,6 @@ public class Main {
         playerEntity.dimension = activeDimension;
         entityManager.addEntity(playerEntity);
 
-
-
         // Spawn initial enemies
         spawnInitialEnemies(player);
 
@@ -487,7 +430,7 @@ public class Main {
         setStatus("Mode: survival. Press E for inventory, / for commands. R to respawn.");
     }
 
-    private void cacheUniformLocations() {
+    public void cacheUniformLocations() {
         locBlockTextures = glGetUniformLocation(computeProgram, "u_BlockTextures");
         locEntityTextures = glGetUniformLocation(computeProgram, "u_EntityTextures");
         locBlockData = glGetUniformLocation(computeProgram, "u_BlockData");
@@ -503,8 +446,7 @@ public class Main {
         locCraftingItemCount = glGetUniformLocation(computeProgram, "u_CraftingItemCount");
     }
 
-
-    private void spawnInitialEnemies(Player p) {
+    public void spawnInitialEnemies(Player p) {
         for (int i = 0; i < 3; i++) {
             com.voxel.entity.ZombieEntity zombie = new com.voxel.entity.ZombieEntity(100 + i, new Vector3f(1030 + i * 12, 64, 1030), textureManager, p);
             zombie.dimension = activeDimension;
@@ -514,448 +456,15 @@ public class Main {
         }
     }
 
-    private void setupUi() {
-        UILayer hudLayer = new UILayer();
+    public void setupUi() { hud.setupUi(); }
 
-        crosshairElement = new UILayer.UIElement(
-            new Vector2f(width / 2f - 2, height / 2f - 2),
-            new Vector2f(4, 4),
-            new Vector4f(1, 1, 1, 1)
-        );
-        hudLayer.addElement(crosshairElement);
+    public void tryLoadUiTexture() { hud.tryLoadUiTexture(); }
 
-        inventoryPanelElement = new UILayer.UIElement(
-            new Vector2f(HOTBAR_X - 8, HOTBAR_Y - 12),
-            new Vector2f(INVENTORY_PANEL_WIDTH, INVENTORY_PANEL_HEIGHT),
-            new Vector4f(0, 0, 0, 0.45f)
-        );
-        inventoryPanelElement.visible = false;
-        hudLayer.addElement(inventoryPanelElement);
+    public void tryLoadFontTexture() { hud.tryLoadFontTexture(); }
 
-        tryLoadUiTexture();
-        tryLoadFontTexture();
-        buildInventoryUi(hudLayer);
+    public void buildInventoryUi(UILayer layer) {         hud.buildInventoryUi(layer); }
 
-        uiLayers.add(hudLayer);
-        updateInventoryUi();
-    }
-
-    private void tryLoadUiTexture() {
-        try {
-            java.io.File uiFile = new java.io.File("src/main/resources/ui/ui.png");
-            if (uiFile.exists()) {
-                uiTextureId = UIManager.loadTexture(uiFile.getPath());
-                uiTextureSize = UIManager.getTextureSize(uiTextureId);
-            }
-        } catch (Exception e) {
-            System.err.println("Note: ui.png not found at src/main/resources/ui/");
-        }
-    }
-
-    private void tryLoadFontTexture() {
-        try {
-            java.io.File fontFile = new java.io.File("src/main/resources/assets/minecraft/textures/font/ascii.png");
-            if (fontFile.exists()) {
-                fontTextureId = UIManager.loadTexture(fontFile.getPath());
-                fontTextureSize = UIManager.getTextureSize(fontTextureId);
-            }
-        } catch (Exception e) {
-            System.err.println("Note: ascii.png not found");
-        }
-    }
-
-    private void buildInventoryUi(UILayer layer) {
-        // Half-pixel UV inset to prevent texture atlas bleeding
-        float halfU = 0.5f / uiTextureSize.x;
-        float halfV = 0.5f / uiTextureSize.y;
-        float uScaleInset = (float) (SLOT_TEX_W - 1) / uiTextureSize.x;
-        float vScaleInset = (float) (SLOT_TEX_H - 1) / uiTextureSize.y;
-
-        // Build crafting grid slots (placed to the right of the main inventory)
-        int craftingGridX = HOTBAR_X + 440;
-        int craftingGridY = HOTBAR_Y + 20;
-        for (int index = 0; index < CRAFTING_SLOTS; index++) {
-            boolean isResult = index == CRAFTING_RESULT_SLOT;
-            int row = index / 2;
-            int col = index % 2;
-            float cx = craftingGridX + col * (SLOT_W + 8);
-            float cy = craftingGridY + row * SLOT_H;
-
-            // Result slot is a bit to the right, centered vertically
-            if (isResult) {
-                cx = craftingGridX + 2 * (SLOT_W + 8) + 16;
-                cy = craftingGridY + SLOT_H / 2;
-            }
-
-            UILayer.UIElement background = new UILayer.UIElement(
-                new Vector2f(cx, cy),
-                new Vector2f(SLOT_W, SLOT_H),
-                new Vector4f(isResult ? 1.0f : 0.9f, isResult ? 0.9f : 0.9f, isResult ? 0.8f : 0.9f, 1)
-            );
-            if (uiTextureId != 0) {
-                background.textureId = uiTextureId;
-                background.uvOffset = new Vector2f(halfU, halfV);
-                background.uvScale = new Vector2f(uScaleInset, vScaleInset);
-            }
-            final int slotIndex = index;
-            background.onClick = () -> { playerInventory.handleCraftingSlotClick(slotIndex); inventoryUiDirty = true; };
-            background.visible = false; // Hidden initially, shown with inventory
-            craftingSlotBackgrounds[index] = background;
-            layer.addElement(background);
-
-            UILayer.UIElement itemElement = new UILayer.UIElement(
-                new Vector2f(cx + 24, cy + 16),
-                new Vector2f(40, 40),
-                new Vector4f(0, 0, 0, 0)
-            );
-            itemElement.visible = false;
-            craftingSlotItems[index] = itemElement;
-            layer.addElement(itemElement);
-        }
-
-        // 3x3 Crafting table grid: centered on screen, no slot textures
-        float ctGridW = 3 * (SLOT_W + 8) - 8;
-        float ctGridH = 3 * SLOT_H;
-        int ctX = (int)((width - ctGridW) / 2);
-        int ctY = (int)((height - ctGridH) / 2);
-
-        // Background panel behind the 3x3 grid
-        craftingTableBg = new UILayer.UIElement(
-            new Vector2f(ctX - 10, ctY - 10),
-            new Vector2f(ctGridW + 20, ctGridH + 20),
-            new Vector4f(0.65f, 0.5f, 0.35f, 0.4f)
-        );
-        craftingTableBg.visible = false;
-        layer.addElement(craftingTableBg);
-
-        for (int i = 0; i < 9; i++) {
-            int r = i / 3;
-            int c = i % 3;
-            float cx = ctX + c * (SLOT_W + 8);
-            float cy = ctY + r * SLOT_H;
-
-            UILayer.UIElement bg = new UILayer.UIElement(
-                new Vector2f(cx, cy),
-                new Vector2f(SLOT_W, SLOT_H),
-                new Vector4f(0.9f, 0.9f, 0.9f, 1)
-            );
-            final int slotIndex = i;
-            bg.onClick = () -> { playerInventory.handleCrafting3x3SlotClick(slotIndex); inventoryUiDirty = true; };
-            bg.visible = false;
-            crafting3x3SlotBackgrounds[i] = bg;
-            layer.addElement(bg);
-
-            UILayer.UIElement itemEl = new UILayer.UIElement(
-                new Vector2f(cx + 24, cy + 16),
-                new Vector2f(40, 40),
-                new Vector4f(0, 0, 0, 0)
-            );
-            itemEl.visible = false;
-            crafting3x3SlotItems[i] = itemEl;
-            layer.addElement(itemEl);
-        }
-
-        for (int index = 0; index < INVENTORY_SIZE; index++) {
-            int row = index % HOTBAR_SIZE;
-            int column = index / HOTBAR_SIZE;
-            float x = HOTBAR_X + column * (SLOT_W + 12);
-            float y = HOTBAR_Y + row * SLOT_H;
-
-            UILayer.UIElement background = new UILayer.UIElement(
-                new Vector2f(x, y),
-                new Vector2f(SLOT_W, SLOT_H),
-                new Vector4f(column == 0 ? 1 : 0.95f, column == 0 ? 1 : 0.95f, column == 0 ? 1 : 0.95f, 1)
-            );
-            if (uiTextureId != 0) {
-                background.textureId = uiTextureId;
-                background.uvOffset = new Vector2f(halfU, column == 0 ? row * (float) SLOT_TEX_H / uiTextureSize.y + halfV : halfV);
-                background.uvScale = new Vector2f(uScaleInset, vScaleInset);
-            }
-            final int slotIndex = index;
-            background.onClick = () -> { playerInventory.handleInventorySlotClick(slotIndex); inventoryUiDirty = true; };
-            slotBackgrounds[index] = background;
-            layer.addElement(background);
-
-            UILayer.UIElement itemElement = new UILayer.UIElement(
-                new Vector2f(x + 24, y + 16),
-                new Vector2f(40, 40),
-                new Vector4f(0, 0, 0, 0)
-            );
-            itemElement.visible = false;
-            slotItemElements[index] = itemElement;
-            layer.addElement(itemElement);
-
-            UILayer.UIElement countBar = new UILayer.UIElement(
-                new Vector2f(x + 12, y + SLOT_H - 12),
-                new Vector2f(0, 6),
-                new Vector4f(1, 1, 1, 0.9f)
-            );
-            countBar.visible = false;
-            slotCountBars[index] = countBar;
-            layer.addElement(countBar);
-
-            UILayer.UIElement digit1 = new UILayer.UIElement(
-                new Vector2f(x + SLOT_W - 32, y + SLOT_H - 24),
-                new Vector2f(16, 16),
-                new Vector4f(1, 1, 1, 1)
-            );
-            digit1.visible = false;
-            digit1.textureId = fontTextureId;
-            slotCountDigit1[index] = digit1;
-            layer.addElement(digit1);
-
-            UILayer.UIElement digit2 = new UILayer.UIElement(
-                new Vector2f(x + SLOT_W - 18, y + SLOT_H - 24),
-                new Vector2f(16, 16),
-                new Vector4f(1, 1, 1, 1)
-            );
-            digit2.visible = false;
-            digit2.textureId = fontTextureId;
-            slotCountDigit2[index] = digit2;
-            layer.addElement(digit2);
-        }
-
-        hotbarActiveElement = new UILayer.UIElement(
-            new Vector2f(HOTBAR_X, HOTBAR_Y + playerInventory.getSelectedSlot() * SLOT_H),
-            new Vector2f(SLOT_W, SLOT_H),
-            new Vector4f(1, 1, 1, 1)
-        );
-        if (uiTextureId != 0) {
-            hotbarActiveElement.textureId = uiTextureId;
-            hotbarActiveElement.uvOffset = new Vector2f((22.0f + 0.5f) / uiTextureSize.x, halfV);
-            hotbarActiveElement.uvScale = new Vector2f(uScaleInset, vScaleInset);
-        }
-        layer.addElement(hotbarActiveElement);
-
-        carriedItemElement = new UILayer.UIElement(
-            new Vector2f(0, 0),
-            new Vector2f(28, 28),
-            new Vector4f(0, 0, 0, 0)
-        );
-        carriedItemElement.visible = false;
-        layer.addElement(carriedItemElement);
-
-        itemNameElement = new UILayer.UITextElement(
-            new Vector2f(HOTBAR_X + 100, HOTBAR_Y - 40),
-            "",
-            2.5f,
-            new Vector4f(1, 1, 1, 1),
-            fontTextureId
-        );
-        itemNameElement.visible = false;
-        layer.addElement(itemNameElement);
-
-        for (int i = 0; i < 10; i++) {
-            // Heart base/container rendered behind each heart (add first = render behind)
-            heartBases[i] = new UILayer.UIElement(
-                new Vector2f(HOTBAR_X + i * 30 - 3, HOTBAR_Y - 30 - 3),
-                new Vector2f(27, 27),
-                new Vector4f(1, 1, 1, 1)
-            );
-            heartBases[i].textureId = uiTextureId;
-            heartBases[i].visible = true;
-            layer.addElement(heartBases[i]);
-            
-            // Heart icon on top (centered within the 27x27 base)
-            playerHearts[i] = new UILayer.UIElement(
-                new Vector2f(HOTBAR_X + i * 30, HOTBAR_Y - 30),
-                new Vector2f(21, 21),
-                new Vector4f(1, 1, 1, 1)
-            );
-            playerHearts[i].textureId = uiTextureId;
-            playerHearts[i].visible = true;
-            layer.addElement(playerHearts[i]);
-        }
-
-        // --- Furnace UI: 3 slots (input, fuel, output) + progress bar ---
-        int furnaceX = HOTBAR_X + 20;
-        int furnaceY = HOTBAR_Y - 160;
-        int furnaceSlotW = SLOT_W;
-        int furnaceSlotH = SLOT_H;
-        int furnacePanelW = 4 * furnaceSlotW + 80;
-        int furnacePanelH = 2 * furnaceSlotH + 60;
-
-        furnacePanelBg = new UILayer.UIElement(
-            new Vector2f(furnaceX - 10, furnaceY - 10),
-            new Vector2f(furnacePanelW, furnacePanelH),
-            new Vector4f(0.3f, 0.3f, 0.3f, 0.6f)
-        );
-        furnacePanelBg.visible = false;
-        layer.addElement(furnacePanelBg);
-
-        // Input slot (left)
-        furnaceInputBg = new UILayer.UIElement(
-            new Vector2f(furnaceX, furnaceY + furnaceSlotH / 2),
-            new Vector2f(furnaceSlotW, furnaceSlotH),
-            new Vector4f(0.9f, 0.9f, 0.9f, 1)
-        );
-        furnaceInputBg.visible = false;
-        furnaceInputBg.onClick = () -> { handleFurnaceSlotClick(0); inventoryUiDirty = true; };
-        layer.addElement(furnaceInputBg);
-
-        furnaceInputItem = new UILayer.UIElement(
-            new Vector2f(furnaceX + 24, furnaceY + furnaceSlotH / 2 + 16),
-            new Vector2f(40, 40),
-            new Vector4f(0, 0, 0, 0)
-        );
-        furnaceInputItem.visible = false;
-        layer.addElement(furnaceInputItem);
-
-        // Fuel slot (below input)
-        furnaceFuelBg = new UILayer.UIElement(
-            new Vector2f(furnaceX, furnaceY + furnaceSlotH + furnaceSlotH / 2 + 12),
-            new Vector2f(furnaceSlotW, furnaceSlotH),
-            new Vector4f(0.85f, 0.85f, 0.7f, 1)
-        );
-        furnaceFuelBg.visible = false;
-        furnaceFuelBg.onClick = () -> { handleFurnaceSlotClick(1); inventoryUiDirty = true; };
-        layer.addElement(furnaceFuelBg);
-
-        furnaceFuelItem = new UILayer.UIElement(
-            new Vector2f(furnaceX + 24, furnaceY + furnaceSlotH + furnaceSlotH / 2 + 28),
-            new Vector2f(40, 40),
-            new Vector4f(0, 0, 0, 0)
-        );
-        furnaceFuelItem.visible = false;
-        layer.addElement(furnaceFuelItem);
-
-        // Fuel bar (to the right of fuel slot)
-        furnaceFuelBar = new UILayer.UIElement(
-            new Vector2f(furnaceX + furnaceSlotW + 12, furnaceY + furnaceSlotH + furnaceSlotH / 2 + 24),
-            new Vector2f(0, 20),
-            new Vector4f(1.0f, 0.5f, 0.0f, 0.8f)
-        );
-        furnaceFuelBar.visible = false;
-        layer.addElement(furnaceFuelBar);
-
-        furnaceFuelText = new UILayer.UITextElement(
-            new Vector2f(furnaceX + furnaceSlotW + 12, furnaceY + furnaceSlotH + furnaceSlotH / 2 + 26),
-            "", 1.5f, new Vector4f(1, 1, 1, 1), fontTextureId
-        );
-        furnaceFuelText.visible = false;
-        layer.addElement(furnaceFuelText);
-
-        // Output slot (right of input)
-        int outputX = furnaceX + 2 * furnaceSlotW + 30;
-        furnaceOutputBg = new UILayer.UIElement(
-            new Vector2f(outputX, furnaceY + furnaceSlotH / 2),
-            new Vector2f(furnaceSlotW, furnaceSlotH),
-            new Vector4f(0.9f, 0.8f, 0.7f, 1)
-        );
-        furnaceOutputBg.visible = false;
-        furnaceOutputBg.onClick = () -> { handleFurnaceSlotClick(2); inventoryUiDirty = true; };
-        layer.addElement(furnaceOutputBg);
-
-        furnaceOutputItem = new UILayer.UIElement(
-            new Vector2f(outputX + 24, furnaceY + furnaceSlotH / 2 + 16),
-            new Vector2f(40, 40),
-            new Vector4f(0, 0, 0, 0)
-        );
-        furnaceOutputItem.visible = false;
-        layer.addElement(furnaceOutputItem);
-
-        // Progress arrow between input and output
-        furnaceProgressBar = new UILayer.UIElement(
-            new Vector2f(furnaceX + furnaceSlotW + 12, furnaceY + furnaceSlotH / 2 + furnaceSlotH / 2 - 8),
-            new Vector2f(0, 16),
-            new Vector4f(0.8f, 0.8f, 0.2f, 0.9f)
-        );
-        furnaceProgressBar.visible = false;
-        layer.addElement(furnaceProgressBar);
-
-        // --- Chest UI: 2 rows of 10 slots, placed above the inventory panel ---
-        float chestGridW = 10 * (SLOT_W + 8) - 8;
-        float chestGridH = 2 * SLOT_H;
-        int chestX = HOTBAR_X;
-        int chestY = HOTBAR_Y - (int)chestGridH - 20;
-
-        chestPanelBg = new UILayer.UIElement(
-            new Vector2f(chestX - 8, chestY - 12),
-            new Vector2f(chestGridW + 16, chestGridH + 24),
-            new Vector4f(0.2f, 0.15f, 0.1f, 0.6f)
-        );
-        chestPanelBg.visible = false;
-        layer.addElement(chestPanelBg);
-
-        for (int i = 0; i < 20; i++) {
-            int row = i / 10;
-            int col = i % 10;
-            float cx = chestX + col * (SLOT_W + 8);
-            float cy = chestY + row * SLOT_H;
-
-            UILayer.UIElement bg = new UILayer.UIElement(
-                new Vector2f(cx, cy),
-                new Vector2f(SLOT_W, SLOT_H),
-                new Vector4f(0.85f, 0.7f, 0.55f, 1)
-            );
-            final int slotIdx = i;
-            bg.onClick = () -> { handleChestSlotClick(slotIdx); inventoryUiDirty = true; };
-            bg.visible = false;
-            chestSlotBackgrounds[i] = bg;
-            layer.addElement(bg);
-
-            UILayer.UIElement itemEl = new UILayer.UIElement(
-                new Vector2f(cx + 24, cy + 16),
-                new Vector2f(40, 40),
-                new Vector4f(0, 0, 0, 0)
-            );
-            itemEl.visible = false;
-            chestSlotItems[i] = itemEl;
-            layer.addElement(itemEl);
-
-            UILayer.UIElement countBar = new UILayer.UIElement(
-                new Vector2f(cx + 12, cy + SLOT_H - 12),
-                new Vector2f(0, 6),
-                new Vector4f(1, 1, 1, 0.9f)
-            );
-            countBar.visible = false;
-            chestCountBars[i] = countBar;
-            layer.addElement(countBar);
-
-            UILayer.UIElement digit1 = new UILayer.UIElement(
-                new Vector2f(cx + SLOT_W - 32, cy + SLOT_H - 24),
-                new Vector2f(16, 16),
-                new Vector4f(1, 1, 1, 1)
-            );
-            digit1.visible = false;
-            digit1.textureId = fontTextureId;
-            chestCountDigit1[i] = digit1;
-            layer.addElement(digit1);
-
-            UILayer.UIElement digit2 = new UILayer.UIElement(
-                new Vector2f(cx + SLOT_W - 18, cy + SLOT_H - 24),
-                new Vector2f(16, 16),
-                new Vector4f(1, 1, 1, 1)
-            );
-            digit2.visible = false;
-            digit2.textureId = fontTextureId;
-            chestCountDigit2[i] = digit2;
-            layer.addElement(digit2);
-        }
-
-        commandTextElement = new UILayer.UITextElement(
-            new Vector2f(20, height - 40),
-            "",
-            2.0f,
-            new Vector4f(1, 1, 1, 1),
-            fontTextureId
-        );
-        commandTextElement.visible = false;
-        layer.addElement(commandTextElement);
-
-        statusTextElement = new UILayer.UITextElement(
-            new Vector2f(20, height - 70),
-            "",
-            2.0f,
-            new Vector4f(1, 1, 0.5f, 1),
-            fontTextureId
-        );
-        statusTextElement.charLineLimit = 20;
-        statusTextElement.visible = false;
-        layer.addElement(statusTextElement);
-    }
-
-    private void logicLoop() {
+    public void logicLoop() {
         long lastTime = System.nanoTime();
         final long targetNanos = 16_666_666L;
         while (running) {
@@ -982,7 +491,7 @@ public class Main {
     }
 
     /** Sync game state from GameContext (may have changed via commands/portals) */
-    private void syncGameState() {
+    public void syncGameState() {
         if (gameMode != ctx.gameMode) { gameMode = ctx.gameMode; }
         if (combatMode != ctx.combatMode) { combatMode = ctx.combatMode; }
         if (cameraMode != ctx.cameraMode) { cameraMode = ctx.cameraMode; }
@@ -992,7 +501,7 @@ public class Main {
         }
     }
 
-    private void tick(float dt) {
+    public void tick(float dt) {
         if (!running) return;
         syncGameState();
 
@@ -1066,8 +575,6 @@ public class Main {
         if (playerEntity != null) {
             playerEntity.syncFromPlayer(player, playerYaw, pitch, cameraMode != CameraMode.FIRST_PERSON, dt);
         }
-
-
 
         // --- Crafting cutscene: walk player towards the table ---
         if (ctx.craftingCutsceneActive) {
@@ -1215,11 +722,10 @@ public class Main {
             redstoneManager.tickLamps();
         }
 
-
         chunkManager.update(player.getPosition(), yaw);
     }
 
-    private void handleInput(float dt) {
+    public void handleInput(float dt) {
         if (inventoryOpen || commandMode || player.isDead() || ctx.craftingCutsceneActive) return;
 
         // Compute forward/right vectors early (needed for dodge roll and movement)
@@ -1350,7 +856,7 @@ public class Main {
         }
     }
 
-    private void performCombatAttack(float damage) {
+    public void performCombatAttack(float damage) {
         Vector3f pPos = player.getPosition();
         Vector3f pDir = getLookDirection();
 
@@ -1394,7 +900,7 @@ public class Main {
         }
     }
 
-    private void loop() {
+    public void loop() {
         float lastTime = (float) glfwGetTime();
         int frames = 0;
         float fpsTime = 0;
@@ -1452,11 +958,11 @@ public class Main {
             }
 
             updateInventoryUi();
-            updateWindowTitle();
+            hud.updateWindowTitle();
 
-            uiManager.begin();
-            for (UILayer layer : uiLayers) layer.render(uiManager);
-            uiManager.end();
+            hud.uiManager.begin();
+            for (UILayer layer : hud.uiLayers) layer.render(hud.uiManager);
+            hud.uiManager.end();
 
             Vector3f cameraPos = getActiveCameraPosition();
 
@@ -1534,9 +1040,9 @@ public class Main {
             glProgramUniform1i(computeProgram, 21, destroyBaseLayer < 0 ? -1 : destroyBaseLayer);
 
             // Upload UI UVs
-            glUniform4f(locHeartUVs, uvHeartFull.x, uvHeartFull.y, uvHeartFull.z, uvHeartFull.w);
-            glUniform4f(locHeartUVs + 1, uvHeartHalf.x, uvHeartHalf.y, uvHeartHalf.z, uvHeartHalf.w);
-            glUniform4f(locHeartUVs + 2, uvHeartEmpty.x, uvHeartEmpty.y, uvHeartEmpty.z, uvHeartEmpty.w);
+            glUniform4f(locHeartUVs, hud.uvHeartFull.x, hud.uvHeartFull.y, hud.uvHeartFull.z, hud.uvHeartFull.w);
+            glUniform4f(locHeartUVs + 1, hud.uvHeartHalf.x, hud.uvHeartHalf.y, hud.uvHeartHalf.z, hud.uvHeartHalf.w);
+            glUniform4f(locHeartUVs + 2, hud.uvHeartEmpty.x, hud.uvHeartEmpty.y, hud.uvHeartEmpty.z, hud.uvHeartEmpty.w);
 
             bindTextures();
 
@@ -1546,7 +1052,7 @@ public class Main {
             glUniform1i(glGetUniformLocation(computeProgram, "u_DestroyStages"), 17);
 
             glActiveTexture(GL_TEXTURE15);
-            glBindTexture(GL_TEXTURE_2D, uiTextureId);
+            glBindTexture(GL_TEXTURE_2D, hud.uiTextureId);
             glUniform1i(locUISource, 15);
 
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
@@ -1588,7 +1094,7 @@ public class Main {
         }
     }
 
-    private void handleKeyInput(long win, int key, int scancode, int action, int mods) {
+    public void handleKeyInput(long win, int key, int scancode, int action, int mods) {
         if (action == GLFW_PRESS) {
             if (commandMode) {
                 handleCommandModeKey(key);
@@ -1700,7 +1206,7 @@ public class Main {
         }
     }
 
-    private void handleCommandModeKey(int key) {
+    public void handleCommandModeKey(int key) {
         if (key == GLFW_KEY_ESCAPE) {
             cancelCommandMode();
             return;
@@ -1719,13 +1225,13 @@ public class Main {
         }
     }
 
-    private void handleCharInput(long win, int codepoint) {
+    public void handleCharInput(long win, int codepoint) {
         if (!commandMode) return;
         if (codepoint < 32 || codepoint > 126) return;
         commandBuffer.append((char) codepoint);
     }
 
-    private void handleCursorMoved(long win, double xpos, double ypos) {
+    public void handleCursorMoved(long win, double xpos, double ypos) {
         if (firstMouse) {
             lastMouseX = (float) xpos;
             lastMouseY = (float) ypos;
@@ -1755,7 +1261,7 @@ public class Main {
         ctx.pitch = pitch;
     }
 
-    private void handleMouseButton(long win, int button, int action, int mods) {
+    public void handleMouseButton(long win, int button, int action, int mods) {
         if (button == GLFW_MOUSE_BUTTON_LEFT) {
             if (action == GLFW_PRESS) {
                 leftMouseHeld = true;
@@ -1778,7 +1284,7 @@ public class Main {
             if (cell >= 0) {
                 System.out.println("Crafting: slot click " + cell);
                 playerInventory.handleCrafting3x3SlotClick(cell);
-                inventoryUiDirty = true;
+                hud.inventoryUiDirty = true;
                 return;
             }
             System.out.println("Crafting: cell miss, falling through to UI");
@@ -1786,8 +1292,8 @@ public class Main {
         }
 
         if (inventoryOpen) {
-            for (int i = uiLayers.size() - 1; i >= 0; i--) {
-                if (uiLayers.get(i).handleMouseClick(lastMouseX, lastMouseY)) return;
+            for (int i = hud.uiLayers.size() - 1; i >= 0; i--) {
+                if (hud.uiLayers.get(i).handleMouseClick(lastMouseX, lastMouseY)) return;
             }
             return;
         }
@@ -1803,9 +1309,9 @@ public class Main {
         }
     }
 
-    private void openCommandMode() {
+    public void openCommandMode() {
         if (inventoryOpen) setInventoryOpen(false);
-        inventoryUiDirty = true;
+        hud.inventoryUiDirty = true;
         commandMode = true;
         ctx.commandMode = true;
         ctx.leftMousePressedThisFrame = false; // prevent stale press from inventory
@@ -1813,20 +1319,20 @@ public class Main {
         updateCursorMode();
     }
 
-    private void cancelCommandMode() {
-        inventoryUiDirty = true;
+    public void cancelCommandMode() {
+        hud.inventoryUiDirty = true;
         commandMode = false;
         ctx.commandMode = false;
         commandBuffer.setLength(0);
         updateCursorMode();
     }
 
-    private void toggleInventory() {
-        inventoryUiDirty = true;
+    public void toggleInventory() {
+        hud.inventoryUiDirty = true;
         setInventoryOpen(!inventoryOpen);
     }
 
-    private void toggleCameraMode() {
+    public void toggleCameraMode() {
         CameraMode[] modes = CameraMode.values();
         int currentOrdinal = cameraMode.ordinal();
         int nextOrdinal = (currentOrdinal + 1) % modes.length;
@@ -1839,8 +1345,8 @@ public class Main {
         setStatus("Camera: " + modeName);
     }
 
-    private void setInventoryOpen(boolean open) {
-        inventoryUiDirty = true;
+    public void setInventoryOpen(boolean open) {
+        hud.inventoryUiDirty = true;
         inventoryOpen = open;
         ctx.inventoryOpen = open;
         if (open) {
@@ -1872,46 +1378,13 @@ public class Main {
         updateCursorMode();
     }
 
-    private void updateCursorMode() {
+    public void updateCursorMode() {
         boolean freeCursor = inventoryOpen || commandMode;
         glfwSetInputMode(window, GLFW_CURSOR, freeCursor ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
         if (!freeCursor) firstMouse = true;
     }
 
-    private double lastTitleUpdate = 0.0;
-
-    private void updateWindowTitle() {
-        double now = glfwGetTime();
-        if (now - lastTitleUpdate < 0.25) return;
-        lastTitleUpdate = now;
-
-        StringBuilder title = new StringBuilder("Voxel Engine | FPS: ").append(lastMeasuredFps);
-        title.append(" | ").append(gameMode == GameMode.CREATIVE ? "creative" : "survival");
-        Vector3f pos = player.getPosition();
-        title.append(String.format(Locale.US, " | XYZ: %.2f, %.2f, %.2f", pos.x, pos.y, pos.z));
-
-        // Add current biome at player position
-        int bx = (int) Math.floor(pos.x);
-        int bz = (int) Math.floor(pos.z);
-        com.voxel.biome.Biome biome = biomeManager.getBiomeProvider().getBiome(bx, bz);
-        title.append(" | ").append(biome.name);
-
-        int pcx = (int) Math.floor(pos.x) >> 4;
-        int pcz = (int) Math.floor(pos.z) >> 4;
-        if (!chunkManager.isChunkLoaded(pcx, pcz)) {
-            title.append(" [WAITING FOR CHUNKS]");
-        }
-
-        if (commandMode) {
-            title.append(" | CMD ").append(commandBuffer);
-        } else if (!statusMessage.isEmpty() && glfwGetTime() < statusUntil) {
-            title.append(" | ").append(statusMessage);
-        }
-
-        glfwSetWindowTitle(window, title.toString());
-    }
-
-    private void setStatus(String message) {
+    public void setStatus(String message) {
         statusMessage = message;
         statusUntil = glfwGetTime() + 3.0;
         statusLineOffset = 0;
@@ -1919,7 +1392,7 @@ public class Main {
     }
 
     /** Frustum-cull loaded chunk sections and build packed visibility list for depth prepass. */
-    private int buildVisibleChunkList(Vector3f camPos, float fx, float fy, float fz) {
+    public int buildVisibleChunkList(Vector3f camPos, float fx, float fy, float fz) {
         chunkVisBuffer.clear(); // Reset limit to capacity so absolute puts don't throw
         int count = 0;
         int worldOx = world.getOffsetX(), worldOy = world.getOffsetY(), worldOz = world.getOffsetZ();
@@ -1949,592 +1422,25 @@ public class Main {
         return count;
     }
 
-    private void updateInventoryUi() {
-        // Always update carried item position (drag-and-drop follows mouse every frame)
-        ItemStack carried = playerInventory.getCarriedStack();
-        carriedItemElement.visible = inventoryOpen && carried != null;
-        if (carriedItemElement.visible) {
-            ItemDefinition carriedDef = itemDefinitions.getDefinition(carried.itemId);
-            carriedItemElement.textureId = textureManager.getTextureArrayId();
-            carriedItemElement.textureType = 2;
-            carriedItemElement.layer = carriedDef.iconLayer;
-            carriedItemElement.color.set(1, 1, 1, 0.9f);
-            carriedItemElement.pos.set(lastMouseX - 14, lastMouseY - 14);
-            carriedItemElement.size.set(28, 28);
-        }
-
-
-        // Always update command text (not guarded by inventoryUiDirty - every keystroke matters)
-        commandTextElement.visible = commandMode;
-        if (commandMode) {
-            commandTextElement.text = commandBuffer.toString() + "_";
-        }
-
-        // Skip full UI rebuild when nothing has changed (save ~200 element updates/frame)
-        int selSlot = playerInventory.getSelectedSlot();
-        float hp = player.getHealth();
-        if (!inventoryUiDirty && inventoryOpen == prevInventoryOpenForUi && commandMode == prevCommandModeForUi
-                && selSlot == prevSelectedSlot && Math.abs(hp - prevHealth) < 0.05f) {
-            return;
-        }
-        inventoryUiDirty = false;
-        prevInventoryOpenForUi = inventoryOpen;
-        prevCommandModeForUi = commandMode;
-        prevSelectedSlot = selSlot;
-        prevHealth = hp;
-        double time = glfwGetTime();
-        crosshairElement.visible = !inventoryOpen && !commandMode;
-        inventoryPanelElement.visible = inventoryOpen;
-        hotbarActiveElement.visible = true;
-        hotbarActiveElement.pos.y = HOTBAR_Y + playerInventory.getSelectedSlot() * SLOT_H;
-
-        // Update crafting grid visibility and content
-        // Toggle between 2x2 (inventory), 3x3 (crafting table), furnace, and chest UIs
-        boolean use3x3 = ctx.craftingTableOpen && ctx.activeUI == GameContext.ActiveUI.CRAFTING_TABLE;
-        boolean useFurnace = ctx.furnaceOpen && ctx.activeUI == GameContext.ActiveUI.FURNACE;
-        boolean useChest = ctx.chestOpen && ctx.activeUI == GameContext.ActiveUI.CHEST;
-
-        // --- Furnace UI ---
-        if (useFurnace) {
-            // Hide crafting UIs
-            for (int i = 0; i < CRAFTING_SLOTS; i++) {
-                craftingSlotBackgrounds[i].visible = false;
-                craftingSlotItems[i].visible = false;
-            }
-            craftingTableBg.visible = false;
-            for (int i = 0; i < 9; i++) {
-                crafting3x3SlotBackgrounds[i].visible = false;
-                crafting3x3SlotItems[i].visible = false;
-            }
-            chestPanelBg.visible = false;
-            for (int i = 0; i < 20; i++) {
-                chestSlotBackgrounds[i].visible = false;
-                chestSlotItems[i].visible = false;
-                chestCountBars[i].visible = false;
-                chestCountDigit1[i].visible = false;
-                chestCountDigit2[i].visible = false;
-            }
-
-            FurnaceManager.FurnaceState state = ctx.furnaceManager.getState(ctx.furnaceBlockX, ctx.furnaceBlockY, ctx.furnaceBlockZ);
-
-            furnacePanelBg.visible = inventoryOpen;
-            furnaceInputBg.visible = inventoryOpen;
-            furnaceFuelBg.visible = inventoryOpen;
-            furnaceOutputBg.visible = inventoryOpen;
-            furnaceProgressBar.visible = inventoryOpen;
-            furnaceFuelBar.visible = inventoryOpen;
-            furnaceFuelText.visible = inventoryOpen;
-
-            // Input slot
-            if (inventoryOpen && state.input != null) {
-                ItemDefinition def = itemDefinitions.getDefinition(state.input.itemId);
-                if (def != null) {
-                    furnaceInputItem.visible = true;
-                    furnaceInputItem.textureId = textureManager.getTextureArrayId();
-                    furnaceInputItem.textureType = 2;
-                    furnaceInputItem.layer = def.iconLayer;
-                    furnaceInputItem.color.set(1, 1, 1, 1);
-                } else {
-                    furnaceInputItem.visible = false;
-                }
-            } else {
-                furnaceInputItem.visible = false;
-            }
-
-            // Fuel slot
-            if (inventoryOpen && state.fuel != null) {
-                ItemDefinition def = itemDefinitions.getDefinition(state.fuel.itemId);
-                if (def != null) {
-                    furnaceFuelItem.visible = true;
-                    furnaceFuelItem.textureId = textureManager.getTextureArrayId();
-                    furnaceFuelItem.textureType = 2;
-                    furnaceFuelItem.layer = def.iconLayer;
-                    furnaceFuelItem.color.set(1, 1, 1, 1);
-                } else {
-                    furnaceFuelItem.visible = false;
-                }
-            } else {
-                furnaceFuelItem.visible = false;
-            }
-
-            // Output slot
-            if (inventoryOpen && state.output != null) {
-                ItemDefinition def = itemDefinitions.getDefinition(state.output.itemId);
-                if (def != null) {
-                    furnaceOutputItem.visible = true;
-                    furnaceOutputItem.textureId = textureManager.getTextureArrayId();
-                    furnaceOutputItem.textureType = 2;
-                    furnaceOutputItem.layer = def.iconLayer;
-                    furnaceOutputItem.color.set(1, 1, 1, 1);
-                } else {
-                    furnaceOutputItem.visible = false;
-                }
-            } else {
-                furnaceOutputItem.visible = false;
-            }
-
-            // Progress bar
-            if (inventoryOpen && state.fuelBurnTime > 0 && state.input != null) {
-                float progress = Math.min(1.0f, state.smeltProgress);
-                furnaceProgressBar.size.set(20, (int)(50 * progress));
-                furnaceProgressBar.color.set(0.8f + 0.2f * progress, 0.4f + 0.4f * progress, 0.2f, 0.9f);
-            } else {
-                furnaceProgressBar.size.set(0, 0);
-            }
-
-            // Fuel bar
-            if (inventoryOpen && state.isLit()) {
-                float fuelPct = state.fuelBurnTime / state.maxFuelBurnTime;
-                furnaceFuelBar.size.set(60 * fuelPct, 20);
-                furnaceFuelBar.color.set(1.0f, 0.5f, 0.0f, 0.8f);
-                furnaceFuelText.text = String.format("%.1fs", state.fuelBurnTime);
-            } else {
-                furnaceFuelBar.size.set(0, 0);
-                furnaceFuelText.text = "No fuel";
-            }
-        } else {
-            furnacePanelBg.visible = false;
-            furnaceInputBg.visible = false;
-            furnaceFuelBg.visible = false;
-            furnaceOutputBg.visible = false;
-            furnaceInputItem.visible = false;
-            furnaceFuelItem.visible = false;
-            furnaceOutputItem.visible = false;
-            furnaceProgressBar.visible = false;
-            furnaceFuelBar.visible = false;
-            furnaceFuelText.visible = false;
-        }
-
-        // --- Chest UI ---
-        if (useChest) {
-            // Hide crafting/furnace UIs
-            for (int i = 0; i < CRAFTING_SLOTS; i++) {
-                craftingSlotBackgrounds[i].visible = false;
-                craftingSlotItems[i].visible = false;
-            }
-            craftingTableBg.visible = false;
-            for (int i = 0; i < 9; i++) {
-                crafting3x3SlotBackgrounds[i].visible = false;
-                crafting3x3SlotItems[i].visible = false;
-            }
-            furnacePanelBg.visible = false;
-            furnaceInputBg.visible = false;
-            furnaceFuelBg.visible = false;
-            furnaceOutputBg.visible = false;
-            furnaceInputItem.visible = false;
-            furnaceFuelItem.visible = false;
-            furnaceOutputItem.visible = false;
-            furnaceProgressBar.visible = false;
-            furnaceFuelBar.visible = false;
-            furnaceFuelText.visible = false;
-
-            chestPanelBg.visible = inventoryOpen;
-
-            ItemStack[] chestInv = ctx.chestManager.getInventory(ctx.chestBlockX, ctx.chestBlockY, ctx.chestBlockZ);
-            for (int i = 0; i < 20; i++) {
-                boolean slotVisible = inventoryOpen;
-                chestSlotBackgrounds[i].visible = slotVisible;
-
-                ItemStack stack = (chestInv != null && i < chestInv.length) ? chestInv[i] : null;
-                UILayer.UIElement itemEl = chestSlotItems[i];
-                UILayer.UIElement countBar = chestCountBars[i];
-                UILayer.UIElement digit1 = chestCountDigit1[i];
-                UILayer.UIElement digit2 = chestCountDigit2[i];
-
-                if (!slotVisible || stack == null) {
-                    itemEl.visible = false;
-                    countBar.visible = false;
-                    digit1.visible = false;
-                    digit2.visible = false;
-                    continue;
-                }
-
-                ItemDefinition def = itemDefinitions.getDefinition(stack.itemId);
-                itemEl.visible = true;
-                itemEl.textureId = textureManager.getTextureArrayId();
-                itemEl.textureType = 2;
-                itemEl.layer = def.iconLayer;
-                itemEl.color.set(1, 1, 1, 1);
-                itemEl.size.set(40, 40);
-                itemEl.pos.set(chestSlotBackgrounds[i].pos.x + 24, chestSlotBackgrounds[i].pos.y + 16);
-
-                if (inventoryOpen && chestSlotBackgrounds[i].isPointInside(lastMouseX, lastMouseY)) {
-                    if (def != null) {
-                        itemNameElement.text = def.displayName;
-                        itemNameElement.visible = true;
-                        itemNameElement.color.w = 1.0f;
-                        itemNameDisplayUntil = time + 0.1;
-                    }
-                }
-
-                if (def != null && def.maxStack > 1 && stack.count > 1) {
-                    countBar.visible = true;
-                    countBar.color.set(def.color.x, def.color.y, def.color.z, 0.85f);
-                    countBar.pos.set(chestSlotBackgrounds[i].pos.x + 12, chestSlotBackgrounds[i].pos.y + SLOT_H - 12);
-                    countBar.size.set((SLOT_W - 24) * Math.min(stack.count, def.maxStack) / (float) def.maxStack, 6);
-
-                    if (fontTextureId != 0) {
-                        if (stack.count >= 10) {
-                            digit1.visible = true;
-                            int d1 = stack.count / 10;
-                            int charCode = 48 + d1;
-                            digit1.uvOffset.set((charCode % 16) / 16.0f, (charCode / 16) / 16.0f);
-                            digit1.uvScale.set(1 / 16.0f, 1 / 16.0f);
-                            digit2.visible = true;
-                            int d2 = stack.count % 10;
-                            charCode = 48 + d2;
-                            digit2.uvOffset.set((charCode % 16) / 16.0f, (charCode / 16) / 16.0f);
-                            digit2.uvScale.set(1 / 16.0f, 1 / 16.0f);
-                        } else {
-                            digit1.visible = false;
-                            digit2.visible = true;
-                            int d2 = stack.count;
-                            int charCode = 48 + d2;
-                            digit2.uvOffset.set((charCode % 16) / 16.0f, (charCode / 16) / 16.0f);
-                            digit2.uvScale.set(1 / 16.0f, 1 / 16.0f);
-                        }
-                    } else {
-                        digit1.visible = false;
-                        digit2.visible = false;
-                    }
-                } else {
-                    countBar.visible = false;
-                    digit1.visible = false;
-                    digit2.visible = false;
-                }
-            }
-        } else {
-            chestPanelBg.visible = false;
-            for (int i = 0; i < 20; i++) {
-                chestSlotBackgrounds[i].visible = false;
-                chestSlotItems[i].visible = false;
-                chestCountBars[i].visible = false;
-                chestCountDigit1[i].visible = false;
-                chestCountDigit2[i].visible = false;
-            }
-        }
-
-        // --- 3x3 Crafting table UI ---
-        if (use3x3) {
-            // Hide other UIs
-            for (int i = 0; i < CRAFTING_SLOTS; i++) {
-                craftingSlotBackgrounds[i].visible = false;
-                craftingSlotItems[i].visible = false;
-            }
-            craftingTableBg.visible = false;
-            for (int i = 0; i < 9; i++) {
-                crafting3x3SlotBackgrounds[i].visible = false;
-                crafting3x3SlotItems[i].visible = false;
-            }
-            // Hide furnace/chest during crafting table
-            furnacePanelBg.visible = false;
-            furnaceInputBg.visible = false;
-            furnaceFuelBg.visible = false;
-            furnaceOutputBg.visible = false;
-            furnaceInputItem.visible = false;
-            furnaceFuelItem.visible = false;
-            furnaceOutputItem.visible = false;
-            furnaceProgressBar.visible = false;
-            furnaceFuelBar.visible = false;
-            furnaceFuelText.visible = false;
-            chestPanelBg.visible = false;
-            for (int i = 0; i < 20; i++) {
-                chestSlotBackgrounds[i].visible = false;
-                chestSlotItems[i].visible = false;
-                chestCountBars[i].visible = false;
-                chestCountDigit1[i].visible = false;
-                chestCountDigit2[i].visible = false;
-            }
-        } else if (!useFurnace && !useChest) {
-            // Show 2x2 crafting slots (default inventory mode)
-            craftingTableBg.visible = false;
-            for (int i = 0; i < 9; i++) {
-                crafting3x3SlotBackgrounds[i].visible = false;
-                crafting3x3SlotItems[i].visible = false;
-            }
-            // Hide furnace/chest in default mode
-            furnacePanelBg.visible = false;
-            furnaceInputBg.visible = false;
-            furnaceFuelBg.visible = false;
-            furnaceOutputBg.visible = false;
-            furnaceInputItem.visible = false;
-            furnaceFuelItem.visible = false;
-            furnaceOutputItem.visible = false;
-            furnaceProgressBar.visible = false;
-            furnaceFuelBar.visible = false;
-            furnaceFuelText.visible = false;
-            chestPanelBg.visible = false;
-            for (int i = 0; i < 20; i++) {
-                chestSlotBackgrounds[i].visible = false;
-                chestSlotItems[i].visible = false;
-                chestCountBars[i].visible = false;
-                chestCountDigit1[i].visible = false;
-                chestCountDigit2[i].visible = false;
-            }
-
-            for (int i = 0; i < CRAFTING_SLOTS; i++) {
-                boolean isResult = i == CRAFTING_RESULT_SLOT;
-                boolean slotVisible = inventoryOpen;
-                craftingSlotBackgrounds[i].visible = slotVisible;
-
-                UILayer.UIElement itemElement = craftingSlotItems[i];
-                String itemId = null;
-
-                if (isResult) {
-                    CraftingManager.CraftingRecipe match = ctx.craftingManager.matchRecipe(playerInventory.getCraftingGrid());
-                    if (match != null) {
-                        itemId = match.resultItemId;
-                    }
-                } else {
-                    int gridRow = i / 2;
-                    int gridCol = i % 2;
-                    itemId = playerInventory.getCraftingGrid()[gridRow][gridCol];
-                }
-
-                if (slotVisible && itemId != null) {
-                    ItemDefinition definition = itemDefinitions.getDefinition(itemId);
-                    itemElement.visible = true;
-                    itemElement.textureId = textureManager.getTextureArrayId();
-                    itemElement.textureType = 2; // Array
-                    itemElement.layer = definition.iconLayer;
-                    itemElement.color.set(1, 1, 1, 1);
-                    itemElement.pos.set(craftingSlotBackgrounds[i].pos.x + 24, craftingSlotBackgrounds[i].pos.y + 16);
-                    itemElement.size.set(40, 40);
-                } else {
-                    itemElement.visible = false;
-                }
-            }
-        }
-
-        for (int index = 0; index < INVENTORY_SIZE; index++) {
-            boolean slotVisible = index < HOTBAR_SIZE || inventoryOpen;
-            slotBackgrounds[index].visible = slotVisible;
-
-            ItemStack stack = playerInventory.getSlot(index);
-            UILayer.UIElement itemElement = slotItemElements[index];
-            UILayer.UIElement countBar = slotCountBars[index];
-            UILayer.UIElement digit1 = slotCountDigit1[index];
-            UILayer.UIElement digit2 = slotCountDigit2[index];
-
-            if (!slotVisible || stack == null) {
-                itemElement.visible = false;
-                countBar.visible = false;
-                digit1.visible = false;
-                digit2.visible = false;
-                continue;
-            }
-
-            ItemDefinition definition = itemDefinitions.getDefinition(stack.itemId);
-            itemElement.visible = true;
-            itemElement.textureId = textureManager.getTextureArrayId();
-            itemElement.textureType = 2; // Array
-            itemElement.layer = definition.iconLayer;
-            itemElement.color.set(1, 1, 1, 1);
-            
-            if (definition.kind == ItemDefinitions.ItemKind.TOOL) {
-                itemElement.size.set(40, 40);
-                itemElement.pos.set(slotBackgrounds[index].pos.x + 24, slotBackgrounds[index].pos.y + 14);
-            } else {
-                itemElement.size.set(40, 40);
-                itemElement.pos.set(slotBackgrounds[index].pos.x + 24, slotBackgrounds[index].pos.y + 16);
-            }
-
-            if (inventoryOpen && slotBackgrounds[index].isPointInside(lastMouseX, lastMouseY)) {
-                itemNameElement.text = definition.displayName;
-                itemNameElement.visible = true;
-                itemNameElement.color.w = 1.0f;
-                itemNameDisplayUntil = time + 0.1; // Stay while hovering
-            }
-
-            if (definition.maxStack > 1 && stack.count > 1) {
-                countBar.visible = true;
-                countBar.color.set(definition.color.x, definition.color.y, definition.color.z, 0.85f);
-                countBar.pos.set(slotBackgrounds[index].pos.x + 12, slotBackgrounds[index].pos.y + SLOT_H - 12);
-                countBar.size.set((SLOT_W - 24) * Math.min(stack.count, definition.maxStack) / (float) definition.maxStack, 6);
-
-                if (fontTextureId != 0) {
-                    if (stack.count >= 10) {
-                        digit1.visible = true;
-                        int d1 = stack.count / 10;
-                        int charCode = 48 + d1;
-                        digit1.uvOffset.set((charCode % 16) / 16.0f, (charCode / 16) / 16.0f);
-                        digit1.uvScale.set(1 / 16.0f, 1 / 16.0f);
-                        
-                        digit2.visible = true;
-                        int d2 = stack.count % 10;
-                        charCode = 48 + d2;
-                        digit2.uvOffset.set((charCode % 16) / 16.0f, (charCode / 16) / 16.0f);
-                        digit2.uvScale.set(1 / 16.0f, 1 / 16.0f);
-                    } else {
-                        digit1.visible = false;
-                        digit2.visible = true;
-                        int d2 = stack.count;
-                        int charCode = 48 + d2;
-                        digit2.uvOffset.set((charCode % 16) / 16.0f, (charCode / 16) / 16.0f);
-                        digit2.uvScale.set(1 / 16.0f, 1 / 16.0f);
-                    }
-                } else {
-                    digit1.visible = false;
-                    digit2.visible = false;
-                }
-            } else {
-                countBar.visible = false;
-                digit1.visible = false;
-                digit2.visible = false;
-            }
-        }
-
-        if (itemNameDisplayUntil > time) {
-            itemNameElement.visible = true;
-            float alpha = (float) Math.min(1.0, (itemNameDisplayUntil - time) / 0.5);
-            itemNameElement.color.w = alpha;
-        } else {
-            itemNameElement.visible = false;
-        }
-
-        statusTextElement.visible = !statusMessage.isEmpty() && time < statusUntil;
-        if (statusTextElement.visible) {
-            statusTextElement.text = statusMessage;
-            statusTextElement.lineOffset = statusLineOffset;
-            float alpha = (float) Math.min(1.0, (statusUntil - time) / 0.5);
-            statusTextElement.color.w = alpha;
-        }
-
-        // Update Player Hearts
-        hp = player.getHealth();
-        for (int i = 0; i < 10; i++) {
-            float texW = uiTextureSize.x;
-            float texH = uiTextureSize.y;
-
-            // Heart base/container behind each heart (always visible, 27x27)
-            UILayer.UIElement heartBase = heartBases[i];
-            heartBase.visible = !commandMode;
-            heartBase.pos.set(HOTBAR_X + i * 30 - 3, height - 40 - 3);
-            heartBase.uvOffset.set((uvHeartBase.x + 0.5f) / texW, (uvHeartBase.y + 0.5f) / texH);
-            heartBase.uvScale.set((uvHeartBase.z - 1.0f) / texW, (uvHeartBase.w - 1.0f) / texH);
-
-            // Heart icon on top (only show when not empty — base alone handles the empty look)
-            float heartValue = hp - (i * 2);
-            UILayer.UIElement heart = playerHearts[i];
-            if (heartValue < 1.0f) {
-                // Empty: hide heart icon, base container shows through
-                heart.visible = false;
-            } else {
-                heart.visible = !commandMode;
-                heart.pos.set(HOTBAR_X + i * 30, height - 40);
-
-                Vector4f uv = (heartValue >= 2.0f) ? uvHeartFull : uvHeartHalf;
-                // Inset UV by half a pixel to prevent texture atlas bleeding
-                heart.uvOffset.set((uv.x + 0.5f) / texW, (uv.y + 0.5f) / texH);
-                heart.uvScale.set((uv.z - 1.0f) / texW, (uv.w - 1.0f) / texH);
-            }
-        }
-    }
+    public void updateInventoryUi() { hud.updateInventoryUi(); }
 
     // --- Furnace slot click handler ---
-    private void handleFurnaceSlotClick(int slot) {
-        // slot 0 = input, 1 = fuel, 2 = output
-        FurnaceManager.FurnaceState state = ctx.furnaceManager.getState(ctx.furnaceBlockX, ctx.furnaceBlockY, ctx.furnaceBlockZ);
-        ItemStack carried = playerInventory.getCarriedStack();
-
-        if (slot == 2) {
-            // Output slot: take items out to inventory or carried
-            if (state.output != null) {
-                if (carried == null) {
-                    if (playerInventory.addItem(state.output.itemId, state.output.count)) {
-                        state.output = null;
-                    }
-                } else if (carried.itemId.equals(state.output.itemId) && carried.count + state.output.count <= 64) {
-                    carried.count += state.output.count;
-                    state.output = null;
-                }
-            }
-            return;
-        }
-
-        // Input (0) or fuel (1) slot
-        ItemStack slotStack = (slot == 0) ? state.input : state.fuel;
-
-        if (carried == null && slotStack != null) {
-            // Pick up the item from the slot
-            playerInventory.setCarriedStack(slotStack.copy());
-            if (slot == 0) state.input = null;
-            else state.fuel = null;
-        } else if (carried != null && slotStack == null) {
-            // Place carried item into the slot
-            ItemStack placed = carried.copy();
-            placed.count = 1;
-            if (slot == 0) state.input = placed;
-            else state.fuel = placed;
-            carried.count--;
-            if (carried.count <= 0) playerInventory.setCarriedStack(null);
-        } else if (carried != null && slotStack != null && carried.itemId.equals(slotStack.itemId) && slotStack.count < 64) {
-            // Stack items
-            int transfer = Math.min(carried.count, 64 - slotStack.count);
-            slotStack.count += transfer;
-            carried.count -= transfer;
-            if (carried.count <= 0) playerInventory.setCarriedStack(null);
-        }
-
-        // Save furnace state after modification
-        if (ctx.worldSaveManager != null) {
-            ctx.worldSaveManager.saveFurnaceData(ctx.activeDimension, ctx.furnaceManager);
-        }
-    }
+    public void handleFurnaceSlotClick(int slot) { hud.handleFurnaceSlotClick(slot); }
 
     // --- Chest slot click handler ---
-    private void handleChestSlotClick(int slot) {
-        ItemStack[] chestInv = ctx.chestManager.getInventory(ctx.chestBlockX, ctx.chestBlockY, ctx.chestBlockZ);
-        if (chestInv == null) return;
+    public void handleChestSlotClick(int slot) { hud.handleChestSlotClick(slot); }
 
-        ItemStack slotStack = chestInv[slot];
-        ItemStack carried = playerInventory.getCarriedStack();
-
-        if (carried == null && slotStack != null) {
-            // Pick up from chest
-            playerInventory.setCarriedStack(slotStack.copy());
-            chestInv[slot] = null;
-        } else if (carried != null && slotStack == null) {
-            // Place into chest
-            ItemStack placed = carried.copy();
-            chestInv[slot] = placed;
-            playerInventory.setCarriedStack(null);
-        } else if (carried != null && slotStack != null && carried.itemId.equals(slotStack.itemId) && slotStack.count < 64) {
-            // Stack
-            int transfer = Math.min(carried.count, 64 - slotStack.count);
-            slotStack.count += transfer;
-            carried.count -= transfer;
-            if (carried.count <= 0) playerInventory.setCarriedStack(null);
-        }
-
-        ctx.chestManager.setInventory(ctx.chestBlockX, ctx.chestBlockY, ctx.chestBlockZ, chestInv);
-        if (ctx.worldSaveManager != null) {
-            ctx.worldSaveManager.saveChestData(ctx.activeDimension, ctx.chestManager);
-        }
-    }
-
-    private void showSelectedItemName() {
-        ItemStack stack = playerInventory.getSlot(playerInventory.getSelectedSlot());
-        if (stack != null) {
-            ItemDefinition definition = itemDefinitions.getDefinition(stack.itemId);
-            if (definition != null) {
-                itemNameElement.text = definition.displayName;
-                itemNameDisplayUntil = glfwGetTime() + 3.0;
-            }
-        } else {
-            itemNameDisplayUntil = 0.0;
-        }
-    }
+    public void showSelectedItemName() { hud.showSelectedItemName(); }
 
     // Crafting table texture layout (16x16): 2x2 pixel cells, 1px borders, 4px margins
-    private static final float CT_MARGIN = 4.0f / 16.0f;     // 0.25
-    private static final float CT_CELL = 2.0f / 16.0f;       // 0.125
-    private static final float CT_GAP = 1.0f / 16.0f;        // 0.0625
-    private static final float CT_STEP = CT_CELL + CT_GAP;   // 0.1875
-    private static final float CT_HALF_CELL = CT_CELL / 2.0f; // 0.0625
-    private static final float CRAFTING_ITEM_SCALE = 0.125f; // 1/8 scale — fills one 2x2 pixel cell
+    public static final float CT_MARGIN = 4.0f / 16.0f;     // 0.25
+    public static final float CT_CELL = 2.0f / 16.0f;       // 0.125
+    public static final float CT_GAP = 1.0f / 16.0f;        // 0.0625
+    public static final float CT_STEP = CT_CELL + CT_GAP;   // 0.1875
+    public static final float CT_HALF_CELL = CT_CELL / 2.0f; // 0.0625
+    public static final float CRAFTING_ITEM_SCALE = 0.125f; // 1/8 scale — fills one 2x2 pixel cell
 
-    private void uploadCraftingItems() {
+    public void uploadCraftingItems() {
         String[][] grid = null;
         float bx, bz, by;
 
@@ -2601,7 +1507,7 @@ public class Main {
         glProgramUniform1i(computeProgram, locCraftingItemCount, count);
     }
 
-    private void bindTextures() {
+    public void bindTextures() {
         glActiveTexture(GL_TEXTURE6);
         glBindTexture(GL_TEXTURE_2D_ARRAY, textureManager.getTextureArrayId());
         glUniform1i(locBlockTextures, 6);
@@ -2629,14 +1535,14 @@ public class Main {
         glBindTexture(GL_TEXTURE_2D, biomeManager.getGrassColormapId());
         glUniform1i(locGrassColormap, 9);
         glActiveTexture(GL_TEXTURE10);
-        glBindTexture(GL_TEXTURE_2D, uiManager.getUITexture());
+        glBindTexture(GL_TEXTURE_2D, hud.uiManager.getUITexture());
         glUniform1i(locUITexture, 10);
         glActiveTexture(GL_TEXTURE14);
         glBindTexture(GL_TEXTURE_2D, biomeManager.getFoliageColormapId());
         glUniform1i(locFoliageColormap, 14);
     }
 
-    private void setupResources() {
+    public void setupResources() {
         textureManager = new TextureManager();
         textureManager.loadTextures(
             "src/main/resources/assets/minecraft/textures/blocks",
@@ -2782,7 +1688,7 @@ public class Main {
         blockDataManager.uploadToGPU();
     }
 
-    private void generateCapeTexture() {
+    public void generateCapeTexture() {
         try {
             java.io.File capeFile = new java.io.File("src/main/resources/assets/minecraft/textures/items/cape.png");
             if (!capeFile.exists()) {
@@ -2808,7 +1714,7 @@ public class Main {
         }
     }
 
-    private void setupQuad() {
+    public void setupQuad() {
         float[] vertices = {-1, -1, 1, -1, -1, 1, 1, -1, 1, 1, -1, 1};
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer buffer = stack.mallocFloat(vertices.length).put(vertices);
@@ -2823,14 +1729,14 @@ public class Main {
         }
     }
 
-    private void setupTexture() {
+    public void setupTexture() {
         renderTexture = glCreateTextures(GL_TEXTURE_2D);
         glTextureStorage2D(renderTexture, 1, GL_RGBA8, width, height);
         glTextureParameteri(renderTexture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTextureParameteri(renderTexture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     }
 
-    private void uploadWorldToGpu() {
+    public void uploadWorldToGpu() {
         int poolSize = world.getPoolSizeForAlloc();
         int[] table = world.getIndirectionTable();
         IntBuffer buf = MemoryUtil.memAllocInt(table.length);
@@ -2878,13 +1784,13 @@ public class Main {
     }
 
     // Reusable direct buffers for uploadDirtyChunks (allocated once, reused per frame)
-    private java.nio.IntBuffer reusableVoxelBuf;
-    private java.nio.IntBuffer reusableMaskBuf;
-    private java.nio.ShortBuffer reusableOccBuf;
-    private java.nio.IntBuffer reusableTableBuf;
-    private java.nio.IntBuffer reusableLightBuf;
+    public java.nio.IntBuffer reusableVoxelBuf;
+    public java.nio.IntBuffer reusableMaskBuf;
+    public java.nio.ShortBuffer reusableOccBuf;
+    public java.nio.IntBuffer reusableTableBuf;
+    public java.nio.IntBuffer reusableLightBuf;
 
-    private void uploadDirtyChunks() {
+    public void uploadDirtyChunks() {
         // Light pool upload: check BEFORE the dirty-slots early return.
         // The gen thread sets lightsNeedUpload=true asynchronously after BFS;
         // if we early-return because dirty slots are exhausted, the light pool
@@ -2986,7 +1892,7 @@ public class Main {
         new Main().run();
     }
 
-    private Vector3f getLookDirection() {
+    public Vector3f getLookDirection() {
         return new Vector3f(
             (float) (Math.cos(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch))),
             (float) Math.sin(Math.toRadians(pitch)),
@@ -2994,11 +1900,11 @@ public class Main {
         ).normalize();
     }
 
-    private Vector3f getPlayerEyePosition() {
+    public Vector3f getPlayerEyePosition() {
         return new Vector3f(player.getPosition()).add(0, PLAYER_EYE_HEIGHT, 0);
     }
 
-    private Vector3f getActiveCameraPosition() {
+    public Vector3f getActiveCameraPosition() {
         Vector3f eye = getPlayerEyePosition();
 
         // Cutscene: smoothly lerp camera from start pos to crafting camera target pos
@@ -3035,7 +1941,7 @@ public class Main {
         return resolveCameraCollision(target, desired);
     }
 
-    private Vector3f resolveCameraCollision(Vector3f origin, Vector3f desired) {
+    public Vector3f resolveCameraCollision(Vector3f origin, Vector3f desired) {
         Vector3f delta = new Vector3f(desired).sub(origin);
         float length = delta.length();
         if (length <= 0.0001f) {
@@ -3054,7 +1960,7 @@ public class Main {
         return desired;
     }
 
-    private boolean isSolidCameraSample(Vector3f sample) {
+    public boolean isSolidCameraSample(Vector3f sample) {
         int voxel = world.getVoxel(
             (int) Math.floor(sample.x),
             (int) Math.floor(sample.y),
@@ -3071,7 +1977,7 @@ public class Main {
      * Cell detection matches the texture layout: 2x2 pixel cells, 1px borders, 4px margins.
      * @return slot index (0-8), or -1 if no cell hit
      */
-    private int raycastCraftingCell() {
+    public int raycastCraftingCell() {
         if (!ctx.craftingTableOpen) return -1;
 
         Vector3f pos = getActiveCameraPosition();
@@ -3144,7 +2050,7 @@ public class Main {
         return row * 3 + col;
     }
 
-    private int[] raycastBlock(float maxDist) {
+    public int[] raycastBlock(float maxDist) {
         Vector3f dir = getLookDirection();
         Vector3f pos = getActiveCameraPosition();
         float step = 0.05f;

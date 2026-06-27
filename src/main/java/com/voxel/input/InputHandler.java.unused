@@ -1,0 +1,263 @@
+package com.voxel.input;
+
+import com.voxel.Main;
+import com.voxel.camera.CameraController;
+import com.voxel.game.GameContext;
+import com.voxel.game.GameContext.CameraMode;
+import com.voxel.game.GameContext.GameMode;
+import com.voxel.game.PlayerInventory;
+import org.joml.Vector3f;
+
+import static org.lwjgl.glfw.GLFW.*;
+
+/**
+ * Owns the GLFW input callbacks. All key / char / mouse-button / cursor events
+ * funnel through here, and it mutates GameContext/Main flags accordingly.
+ *
+ * Out-of-scope UI tests are forwarded to HudUI; combat triggers to CombatSystem.
+ */
+public class InputHandler {
+    private final GameContext ctx;
+    private final Main main;
+    private final CameraController camera;
+    private final HudUIStub hud;
+    private final CombatBridge combat;
+
+    public interface HudUIStub {
+        void showSelectedItemName();
+        boolean handleClick(float mouseX, float mouseY);
+        int raycastCraftingCell();
+    }
+
+    public interface CombatBridge {
+        boolean toggleLockOn();
+    }
+
+    public InputHandler(GameContext ctx, Main main, CameraController camera,
+                        HudUIStub hud, CombatBridge combat) {
+        this.ctx = ctx;
+        this.main = main;
+        this.camera = camera;
+        this.hud = hud;
+        this.combat = combat;
+    }
+
+    public void register(long window) {
+        glfwSetKeyCallback(window, this::handleKeyInput);
+        glfwSetCharCallback(window, this::handleCharInput);
+        glfwSetCursorPosCallback(window, this::handleCursorMoved);
+        glfwSetMouseButtonCallback(window, this::handleMouseButton);
+    }
+
+    /** Toggle command mode entry (called on '/' press). */
+    public void openCommandMode() {
+        if (main.inventoryOpen) main.setInventoryOpen(false);
+        main.inventoryUiDirty = true;
+        main.commandMode = true;
+        ctx.commandMode = true;
+        ctx.leftMousePressedThisFrame = false;
+        main.commandBuffer.setLength(0);
+        main.updateCursorMode();
+    }
+
+    public void cancelCommandMode() {
+        main.inventoryUiDirty = true;
+        main.commandMode = false;
+        ctx.commandMode = false;
+        main.commandBuffer.setLength(0);
+        main.updateCursorMode();
+    }
+
+    public void toggleInventory() {
+        main.inventoryUiDirty = true;
+        main.setInventoryOpen(!main.inventoryOpen);
+    }
+
+    public void toggleCameraMode() {
+        CameraMode[] modes = CameraMode.values();
+        int nextOrdinal = (main.cameraMode.ordinal() + 1) % modes.length;
+        CameraMode newMode = modes[nextOrdinal];
+        main.cameraMode = newMode;
+        ctx.cameraMode = main.cameraMode;
+        String modeName = main.cameraMode.name().toLowerCase().replace('_', ' ');
+        main.setStatus("Camera: " + modeName);
+    }
+
+    // ── GLFW callbacks ───────────────────────────────────────────────────────────
+
+    public void handleKeyInput(long win, int key, int scancode, int action, int mods) {
+        if (action == GLFW_PRESS) {
+            if (main.commandMode) {
+                handleCommandModeKey(key);
+                return;
+            }
+
+            if (key == GLFW_KEY_R && main.player.isDead()) {
+                main.player.respawn();
+                main.setStatus("Respawned.");
+                return;
+            }
+
+            if (key == GLFW_KEY_F5) {
+                toggleCameraMode();
+                return;
+            }
+
+            if (key == GLFW_KEY_SLASH) {
+                openCommandMode();
+                return;
+            }
+
+            if (key == GLFW_KEY_E) {
+                toggleInventory();
+                hud.showSelectedItemName();
+                return;
+            }
+
+            if (key == GLFW_KEY_C) {
+                main.combatMode = !main.combatMode;
+                ctx.combatMode = main.combatMode;
+                if (main.combatMode) {
+                    main.cameraMode = CameraMode.THIRD_PERSON_FOLLOW;
+                    ctx.cameraMode = main.cameraMode;
+                    ctx.lockedEntityIndex = -1;
+                }
+                main.setStatus("Combat Mode: " + (main.combatMode ? "ON (Story Mode)" : "OFF"));
+                return;
+            }
+
+            if (key == GLFW_KEY_TAB && main.combatMode) {
+                combat.toggleLockOn();
+                return;
+            }
+
+            if ((key == GLFW_KEY_MINUS || key == GLFW_KEY_KP_SUBTRACT) && !main.statusMessage.isEmpty()) {
+                main.statusLineOffset = Math.max(0, main.statusLineOffset - 1);
+                return;
+            }
+            if ((key == GLFW_KEY_EQUAL || key == GLFW_KEY_KP_ADD) && !main.statusMessage.isEmpty()) {
+                main.statusLineOffset++;
+                return;
+            }
+
+            if (key == GLFW_KEY_ESCAPE) {
+                if (ctx.craftingCutsceneActive) {
+                    ctx.craftingCutsceneActive = false;
+                    main.setStatus("Cancelled");
+                    return;
+                }
+                if (main.inventoryOpen) {
+                    main.setInventoryOpen(false);
+                    hud.showSelectedItemName();
+                    return;
+                }
+                glfwSetWindowShouldClose(win, true);
+                return;
+            }
+
+            if (key >= GLFW_KEY_1 && key < GLFW_KEY_1 + Main.HOTBAR_SIZE) {
+                PlayerInventory inv = main.playerInventory;
+                inv.setSelectedSlot(key - GLFW_KEY_1);
+                hud.showSelectedItemName();
+                return;
+            }
+        }
+
+        if (action == GLFW_RELEASE && key == GLFW_KEY_ESCAPE && main.commandMode) {
+            cancelCommandMode();
+        }
+    }
+
+    public void handleCommandModeKey(int key) {
+        if (key == GLFW_KEY_ESCAPE) { cancelCommandMode(); return; }
+        if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) {
+            String text = main.commandBuffer.toString().trim();
+            main.commandMode = false;
+            ctx.commandMode = false;
+            main.updateCursorMode();
+            main.commandProcessor.execute(text);
+            main.commandBuffer.setLength(0);
+            return;
+        }
+        if (key == GLFW_KEY_BACKSPACE && main.commandBuffer.length() > 0) {
+            main.commandBuffer.deleteCharAt(main.commandBuffer.length() - 1);
+        }
+    }
+
+    public void handleCharInput(long win, int codepoint) {
+        if (!main.commandMode) return;
+        if (codepoint < 32 || codepoint > 126) return;
+        main.commandBuffer.append((char) codepoint);
+    }
+
+    public void handleCursorMoved(long win, double xpos, double ypos) {
+        if (main.firstMouse) {
+            main.lastMouseX = (float) xpos;
+            main.lastMouseY = (float) ypos;
+            main.firstMouse = false;
+        }
+
+        if (main.inventoryOpen || main.commandMode) {
+            main.lastMouseX = (float) xpos;
+            main.lastMouseY = (float) ypos;
+            return;
+        }
+
+        float xoffset = (float) xpos - main.lastMouseX;
+        float yoffset = main.lastMouseY - (float) ypos;
+        main.lastMouseX = (float) xpos;
+        main.lastMouseY = (float) ypos;
+
+        float sensitivity = 0.1f;
+        main.yaw += xoffset * sensitivity;
+        main.pitch += yoffset * sensitivity;
+        if (main.pitch > 89.0f) main.pitch = 89.0f;
+        if (main.pitch < -89.0f) main.pitch = -89.0f;
+
+        ctx.yaw = main.yaw;
+        ctx.pitch = main.pitch;
+    }
+
+    public void handleMouseButton(long win, int button, int action, int mods) {
+        if (button == GLFW_MOUSE_BUTTON_LEFT) {
+            if (action == GLFW_PRESS) {
+                main.leftMouseHeld = true;
+                ctx.leftMouseHeld = true;
+                main.leftMousePressedThisFrame = true;
+                ctx.leftMousePressedThisFrame = true;
+            } else if (action == GLFW_RELEASE) {
+                main.leftMouseHeld = false;
+                ctx.leftMouseHeld = false;
+                if (main.blockInteraction != null) main.blockInteraction.resetMining();
+            }
+        }
+
+        if (action != GLFW_PRESS) return;
+
+        // Crafting table drag-and-drop via 3D raycast first
+        if (ctx.craftingTableOpen && main.inventoryOpen) {
+            int cell = hud.raycastCraftingCell();
+            if (cell >= 0) {
+                main.playerInventory.handleCrafting3x3SlotClick(cell);
+                main.inventoryUiDirty = true;
+                return;
+            }
+            // Fall through to inventory UI click
+        }
+
+        if (main.inventoryOpen) {
+            if (hud.handleClick(main.lastMouseX, main.lastMouseY)) return;
+            return;
+        }
+
+        if (main.commandMode) return;
+
+        if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+            if ((mods & GLFW_MOD_SHIFT) != 0) {
+                if (main.portalSystem != null) main.portalSystem.attemptActivate();
+            } else {
+                if (main.blockInteraction != null) main.blockInteraction.attemptPlaceBlock();
+            }
+        }
+    }
+}
