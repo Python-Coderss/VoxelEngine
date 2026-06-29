@@ -97,6 +97,7 @@ public class Main {
     public int quadProgram, computeProgram;
     public int quadVAO, quadVBO, renderTexture;
     public int indirectionSSBO, chunkPoolSSBO, bitmaskSSBO, occlusionSSBO, pointLightSSBO, lightSSBO;
+    public int sdfSSBO;  // chunk-level SDF for sphere-trace acceleration (binding=10)
 
     // Cached compute shader uniform locations (avoid glGetUniformLocation per frame)
     public int locBlockTextures, locEntityTextures, locBlockData, locBlockAABBs, locBlockAABBInfo, locBlockAABBUVs;
@@ -110,19 +111,14 @@ public class Main {
     public static final int MAX_DIRTY_UPLOADS_PER_FRAME = 48;
     public int locQuadPass; // Cached quad shader u_Pass uniform
 
-    // ── Depth prepass: hardware-rasterized chunk AABBs for DDA sky-skip ──
-    public int chunkDepthProgram;       // chunk_depth.vert + chunk_depth.frag
-    public int chunkDepthFBO;           // FBO for depth + chunk-origin attachments
-    public int chunkDepthTex;           // GL_DEPTH_COMPONENT24 — rasterized depth
-    public int chunkOriginTex;          // GL_R32UI — packed chunk section coords
-    public int cubeVAO, cubeVBO;        // Unit cube mesh (36 vertices)
-    public int chunkVisibilitySSBO;     // Frustum-culled chunk section list
-    public IntBuffer chunkVisBuffer;    // CPU-side buffer for upload
-    public static final int MAX_VISIBLE_CHUNKS = 8192;
-    public int locVPMatrix;             // u_VP uniform in chunk_depth.vert
-    public int locWorldOffsetDepth;     // u_WorldOffset uniform in chunk_depth.vert
-    public int locDepthTex;             // u_DepthTex uniform in raytracer.comp
-    public int locChunkOriginTex;       // u_ChunkOriginTex uniform in raytracer.comp
+    // Reusable direct buffer for SDF SSBO sub-uploads (avoid per-frame alloc).
+    private java.nio.ByteBuffer reusableSdfBuf;
+
+    // ── SDF sky early-out: replaces the rasterized depth prepass ──
+    // The compute shader uses cheap Y/X/Z-plane SDF tests against these bounds
+    // to skip DDA when the ray will not hit any loaded terrain.
+    public int locVPMatrix = -1;             // unused (kept for binary-compat elsewhere if any)
+    public int locWorldOffsetDepth = -1;     // unused
 
     public FloatBuffer persistentPlBuf; // Persistent FloatBuffer for pointLightSSBO (no per-frame alloc)
     public com.voxel.entity.EntityManager entityManager;
@@ -229,14 +225,7 @@ public class Main {
         glDeleteBuffers(pointLightSSBO);
         glDeleteBuffers(lightSSBO);
         glDeleteBuffers(craftingItemSSBO);
-        glDeleteBuffers(chunkVisibilitySSBO);
-        glDeleteVertexArrays(cubeVAO);
-        glDeleteBuffers(cubeVBO);
-        glDeleteProgram(chunkDepthProgram);
-        glDeleteFramebuffers(chunkDepthFBO);
-        glDeleteTextures(chunkDepthTex);
-        glDeleteTextures(chunkOriginTex);
-        if (chunkVisBuffer != null) MemoryUtil.memFree(chunkVisBuffer);
+        glDeleteBuffers(sdfSSBO);
         if (persistentPlBuf != null) MemoryUtil.memFree(persistentPlBuf);
         chunkManager.shutdown();
         RedstoneLogger.shutdown();
@@ -282,64 +271,8 @@ public class Main {
         cacheUniformLocations();
         // Atmosphere uniforms handled by AtmosphereRenderer (no per-frame glGetUniformLocation)
 
-        // ── Depth prepass setup ──
-        chunkDepthProgram = ShaderUtil.createProgram(
-            ShaderUtil.compileShader("src/main/resources/shaders/chunk_depth.vert", GL_VERTEX_SHADER),
-            ShaderUtil.compileShader("src/main/resources/shaders/chunk_depth.frag", GL_FRAGMENT_SHADER)
-        );
-        locVPMatrix = glGetUniformLocation(chunkDepthProgram, "u_VP");
-        locWorldOffsetDepth = glGetUniformLocation(chunkDepthProgram, "u_WorldOffset");
-        locDepthTex = glGetUniformLocation(computeProgram, "u_DepthTex");
-        locChunkOriginTex = glGetUniformLocation(computeProgram, "u_ChunkOriginTex");
-
-        // FBO: depth attachment + GL_R32UI chunk origin attachment
-        chunkDepthFBO = glCreateFramebuffers();
-        chunkDepthTex = glCreateTextures(GL_TEXTURE_2D);
-        glTextureStorage2D(chunkDepthTex, 1, GL_DEPTH_COMPONENT24, width, height);
-        glTextureParameteri(chunkDepthTex, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTextureParameteri(chunkDepthTex, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTextureParameteri(chunkDepthTex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTextureParameteri(chunkDepthTex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glNamedFramebufferTexture(chunkDepthFBO, GL_DEPTH_ATTACHMENT, chunkDepthTex, 0);
-
-        chunkOriginTex = glCreateTextures(GL_TEXTURE_2D);
-        glTextureStorage2D(chunkOriginTex, 1, GL_R32UI, width, height);
-        glTextureParameteri(chunkOriginTex, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTextureParameteri(chunkOriginTex, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glNamedFramebufferTexture(chunkDepthFBO, GL_COLOR_ATTACHMENT0, chunkOriginTex, 0);
-        glNamedFramebufferDrawBuffer(chunkDepthFBO, GL_COLOR_ATTACHMENT0);
-
-        int fboStatus = glCheckNamedFramebufferStatus(chunkDepthFBO, GL_FRAMEBUFFER);
-        if (fboStatus != GL_FRAMEBUFFER_COMPLETE) throw new RuntimeException("Depth prepass FBO incomplete: " + fboStatus);
-
-        // Cube VBO: unit cube (0,0,0) → (1,1,1), triangulated 36 vertices
-        // Corner defs: 0:(0,0,0) 1:(1,0,0) 2:(1,1,0) 3:(0,1,0) 4:(0,0,1) 5:(1,0,1) 6:(1,1,1) 7:(0,1,1)
-        float[] cubeVerts = {
-            // +Z face: 5(1,0,1),6(1,1,1),7(0,1,1), 5,7,4(0,0,1)
-            1,0,1, 1,1,1, 0,1,1, 1,0,1, 0,1,1, 0,0,1,
-            // -Z face: 0(0,0,0),3(0,1,0),2(1,1,0), 0,2,1(1,0,0)
-            0,0,0, 0,1,0, 1,1,0, 0,0,0, 1,1,0, 1,0,0,
-            // +X face: 1(1,0,0),2(1,1,0),6(1,1,1), 1,6,5(1,0,1)
-            1,0,0, 1,1,0, 1,1,1, 1,0,0, 1,1,1, 1,0,1,
-            // -X face: 0(0,0,0),4(0,0,1),7(0,1,1), 0,7,3(0,1,0)
-            0,0,0, 0,0,1, 0,1,1, 0,0,0, 0,1,1, 0,1,0,
-            // +Y face: 3(0,1,0),7(0,1,1),6(1,1,1), 3,6,2(1,1,0)
-            0,1,0, 0,1,1, 1,1,1, 0,1,0, 1,1,1, 1,1,0,
-            // -Y face: 0(0,0,0),1(1,0,0),5(1,0,1), 0,5,4(0,0,1)
-            0,0,0, 1,0,0, 1,0,1, 0,0,0, 1,0,1, 0,0,1
-        };
-        cubeVAO = glCreateVertexArrays();
-        cubeVBO = glCreateBuffers();
-        glNamedBufferStorage(cubeVBO, cubeVerts, 0);
-        glVertexArrayVertexBuffer(cubeVAO, 0, cubeVBO, 0, 3 * Float.BYTES);
-        glEnableVertexArrayAttrib(cubeVAO, 0);
-        glVertexArrayAttribFormat(cubeVAO, 0, 3, GL_FLOAT, false, 0);
-        glVertexArrayAttribBinding(cubeVAO, 0, 0);
-
-        // Chunk visibility SSBO: frustum-culled chunk section list
-        chunkVisibilitySSBO = glCreateBuffers();
-        glNamedBufferStorage(chunkVisibilitySSBO, (long) MAX_VISIBLE_CHUNKS * 4, GL_DYNAMIC_STORAGE_BIT);
-        chunkVisBuffer = MemoryUtil.memAllocInt(MAX_VISIBLE_CHUNKS);
+        // (Rasterized depth prepass removed — replaced by cheaper SDF sky early-out
+        //  in the compute shader, using u_MaxTerrain* uniforms uploaded every frame.)
 
         entityManager = new com.voxel.entity.EntityManager();
         com.voxel.entity.EnemyEntity.setEntityManager(entityManager);
@@ -912,6 +845,9 @@ public class Main {
             fpsTime += dt;
             frames++;
             if (fpsTime >= 1.0f) {
+                // Bug fix: previously wrote to Main.lastMeasuredFps, but HUD reads
+                // ctx.lastMeasuredFps — so the window title always showed 0.
+                ctx.lastMeasuredFps = frames;
                 lastMeasuredFps = frames;
                 frames = 0;
                 fpsTime = 0;
@@ -979,35 +915,7 @@ public class Main {
             if (rl > 0) { rx /= rl; rz /= rl; }
             float ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;
             
-            // ── Depth prepass: hardware-rasterize chunk section AABBs ──
-            // Frustum-cull loaded chunks, draw instanced cubes into FBO
-            int visibleCount = buildVisibleChunkList(cameraPos, fx, fy, fz);
-            glBindFramebuffer(GL_FRAMEBUFFER, chunkDepthFBO);
-            glClearDepth(1.0);
-            glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
-            if (visibleCount > 0) {
-                glNamedBufferSubData(chunkVisibilitySSBO, 0, chunkVisBuffer);
-                glUseProgram(chunkDepthProgram);
-                glUniform3i(locWorldOffsetDepth, world.getOffsetX(), world.getOffsetY(), world.getOffsetZ());
-                float fovRad = (float) Math.toRadians(70.0);
-                float aspect = (float) width / height;
-                Matrix4f proj = new Matrix4f().perspective(fovRad, aspect, 0.1f, 2048.0f);
-                Vector3f lookTarget = new Vector3f(cameraPos.x + fx, cameraPos.y + fy, cameraPos.z + fz);
-                Matrix4f view = new Matrix4f().lookAt(cameraPos, lookTarget, new Vector3f(0, 1, 0));
-                Matrix4f vp = new Matrix4f(proj).mul(view);
-                try (MemoryStack stack = MemoryStack.stackPush()) {
-                    glUniformMatrix4fv(locVPMatrix, false, vp.get(stack.mallocFloat(16)));
-                }
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, chunkVisibilitySSBO);
-                glBindVertexArray(cubeVAO);
-                glEnable(GL_DEPTH_TEST);
-                glDepthFunc(GL_LESS);
-                glDrawArraysInstanced(GL_TRIANGLES, 0, 36, visibleCount);
-                glDisable(GL_DEPTH_TEST);
-            }
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            
-            // Add Camera Shake (after prepass so depth coords are stable)
+            // Camera Shake (was previously after the rasterized depth prepass)
             if (cameraShake > 0.01f) {
                 cameraPos.x += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
                 cameraPos.y += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
@@ -1063,14 +971,21 @@ public class Main {
             entityManager.bind(6, 7);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, craftingItemSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, lightSSBO);
-
-            // Bind depth prepass textures for compute shader (sky early-out)
-            glActiveTexture(GL_TEXTURE18);
-            glBindTexture(GL_TEXTURE_2D, chunkDepthTex);
-            glUniform1i(locDepthTex, 18);
-            glActiveTexture(GL_TEXTURE19);
-            glBindTexture(GL_TEXTURE_2D, chunkOriginTex);
-            glUniform1i(locChunkOriginTex, 19);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, sdfSSBO);
+            // SDF sky early-out uniforms (replaces depth-prepass textures)
+            glProgramUniform1f(computeProgram, 22, chunkManager.getMaxTerrainY());
+            glProgramUniform1f(computeProgram, 23, chunkManager.getMaxTerrainX());
+            glProgramUniform1f(computeProgram, 24, chunkManager.getMaxTerrainZ());
+            glProgramUniform1f(computeProgram, 25, chunkManager.getMinTerrainX());
+            glProgramUniform1f(computeProgram, 26, chunkManager.getMinTerrainZ());
+            // u_BoundsValid: 1 after first terrain bounds update (gen thread sets it);
+            // 0 before any chunk loads → shader falls through to plain DDA.
+            glProgramUniform1i(computeProgram, 27, chunkManager.areBoundsValid() ? 1 : 0);
+            // u_TopSolidY: highest solid voxel Y across all loaded chunks. Lets the
+            // shader early-out sky-ray pixels (camera above AND ray.y > 0) without
+            // falling into the per-chunk sphere-trace loop. Sentinel -1 = no chunks
+            // loaded yet → shader treats it as "no known ceiling".
+            glProgramUniform1i(computeProgram, 28, chunkManager.getTopSolidY());
 
             uploadCraftingItems();
 
@@ -1391,36 +1306,7 @@ public class Main {
         System.out.println(message);
     }
 
-    /** Frustum-cull loaded chunk sections and build packed visibility list for depth prepass. */
-    public int buildVisibleChunkList(Vector3f camPos, float fx, float fy, float fz) {
-        chunkVisBuffer.clear(); // Reset limit to capacity so absolute puts don't throw
-        int count = 0;
-        int worldOx = world.getOffsetX(), worldOy = world.getOffsetY(), worldOz = world.getOffsetZ();
-        float fovRad = (float) Math.toRadians(70.0);
-        float aspect = (float) width / height;
-        Matrix4f proj = new Matrix4f().perspective(fovRad, aspect, 0.1f, 2048.0f);
-        Vector3f lookTarget = new Vector3f(camPos.x + fx, camPos.y + fy, camPos.z + fz);
-        Matrix4f viewM = new Matrix4f().lookAt(camPos, lookTarget, new Vector3f(0, 1, 0));
-        FrustumIntersection frustum = new FrustumIntersection(new Matrix4f(proj).mul(viewM));
-        for (Map.Entry<Long, Integer[]> entry : chunkManager.getLoadedChunks().entrySet()) {
-            long key = entry.getKey();
-            int absCX = (int) (key >> 32), absCZ = (int) key;
-            Integer[] slots = entry.getValue();
-            int relCX = absCX - (worldOx >> 4), relCZ = absCZ - (worldOz >> 4);
-            for (int cy = 0; cy < 16; cy++) {
-                if (slots[cy] == World.EMPTY) continue;
-                if (count >= MAX_VISIBLE_CHUNKS) break;
-                float minX = absCX << 4, minZ = absCZ << 4;
-                float minY = (cy << 4) + worldOy;
-                if (frustum.testAab(minX, minY, minZ, minX + 16, minY + 16, minZ + 16)) {
-                    chunkVisBuffer.put(count++, relCX | (cy << 8) | (relCZ << 16));
-                }
-            }
-            if (count >= MAX_VISIBLE_CHUNKS) break;
-        }
-        chunkVisBuffer.position(0).limit(Math.max(count, 1));
-        return count;
-    }
+    // (buildVisibleChunkList removed — depth prepass is gone.)
 
     public void updateInventoryUi() { hud.updateInventoryUi(); }
 
@@ -1780,6 +1666,11 @@ public class Main {
         lightSSBO = glCreateBuffers();
         glNamedBufferStorage(lightSSBO, (long) poolSize * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * Integer.BYTES, GL_DYNAMIC_STORAGE_BIT);
 
+        // SDF pool SSBO: chunk-level directional SDF, 8 bytes per chunk section
+        // (6 directional distance bytes + 2 padding bytes). Packed as 2 uints/slot.
+        sdfSSBO = glCreateBuffers();
+        glNamedBufferStorage(sdfSSBO, (long) poolSize * 8, GL_DYNAMIC_STORAGE_BIT);
+
         uploadDirtyChunks();
     }
 
@@ -1836,17 +1727,20 @@ public class Main {
         int poolSize = world.getPoolSizeForAlloc();
 
         // Lazy-init reusable buffers sized to current world
+        int sdfBytesPerChunk = 8; // 6 directional SDF bytes + 2 padding per chunk section
         if (reusableVoxelBuf == null || reusableVoxelBuf.capacity() < vpc) {
             if (reusableVoxelBuf != null) MemoryUtil.memFree(reusableVoxelBuf);
             if (reusableMaskBuf != null) MemoryUtil.memFree(reusableMaskBuf);
             if (reusableOccBuf != null) MemoryUtil.memFree(reusableOccBuf);
             if (reusableTableBuf != null) MemoryUtil.memFree(reusableTableBuf);
             if (reusableLightBuf != null) MemoryUtil.memFree(reusableLightBuf);
+            if (reusableSdfBuf != null) MemoryUtil.memFree(reusableSdfBuf);
             reusableVoxelBuf = MemoryUtil.memAllocInt(vpc);
             reusableMaskBuf = MemoryUtil.memAllocInt(128);
             reusableOccBuf = MemoryUtil.memAllocShort(vpc);
             reusableTableBuf = MemoryUtil.memAllocInt(REGION_SIZE * REGION_SIZE * REGION_SIZE);
             reusableLightBuf = MemoryUtil.memAllocInt(vpc);
+            reusableSdfBuf = MemoryUtil.memAlloc(sdfBytesPerChunk);
         }
 
         if (tableDirty) {
@@ -1877,6 +1771,22 @@ public class Main {
             reusableOccBuf.clear();
             reusableOccBuf.put(occs, s * vpc, vpc).flip();
             glNamedBufferSubData(occlusionSSBO, (long) s * vpc * Short.BYTES, reusableOccBuf);
+
+            // Pack directional SDF (8 bytes per slot) into 2 uints and upload.
+            byte[] sdfs = world.getDirSdfPool();
+            int[] tmp = new int[2];
+            int base = s * 8;
+            tmp[0] = ((sdfs[base]     & 0xFF))
+                   | ((sdfs[base + 1] & 0xFF) << 8)
+                   | ((sdfs[base + 2] & 0xFF) << 16)
+                   | ((sdfs[base + 3] & 0xFF) << 24);
+            tmp[1] = ((sdfs[base + 4] & 0xFF))
+                   | ((sdfs[base + 5] & 0xFF) << 8);
+            reusableSdfBuf.clear();
+            java.nio.IntBuffer sdfIntView = reusableSdfBuf.asIntBuffer();
+            sdfIntView.put(tmp);
+            sdfIntView.flip();
+            glNamedBufferSubData(sdfSSBO, (long) s * sdfBytesPerChunk, reusableSdfBuf);
 
             uploaded++;
         }

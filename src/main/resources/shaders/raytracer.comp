@@ -35,6 +35,14 @@ layout(std430, binding = 4) buffer readonly restrict OcclusionPool { uint occlus
 // Block light propagation: Minecraft packed format [sky(0-3)|block(4-7)] per voxel
 layout(std430, binding = 9) buffer readonly restrict LightPool { uint lightPool[]; };
 
+// Chunk-level SDF pool for sphere-trace acceleration.
+// 4096 SDF cells packed 4-per-uint, indexed as sdfPool[(slot << 10) | (cellIdx>>2)].
+// Each uint holds 4 bytes of distance values, value = round(dist_voxels * 8),
+// capped at 255. cellIdx = lx | (ly<<4) | (lz<<8). Distances are relative to
+// the nearest SOLID voxel within the same chunk section — for empty chunks
+// (slot == EMPTY in chunkSlots), the skipChunk() path handles traversal.
+layout(std430, binding = 10) buffer readonly restrict SdfPool { uint sdfPool[]; };
+
 // Block break overlay uniforms
 layout(location = 19) uniform ivec3 u_BreakTargetPos;
 layout(location = 20) uniform float u_BreakProgress;
@@ -75,9 +83,24 @@ uniform sampler2D u_UITexture;
 uniform sampler2D u_UISource;
 uniform sampler2DArray u_DestroyStages;
 
-// Depth prepass textures: hardware-rasterized chunk AABB depth + chunk origin
-uniform sampler2D u_DepthTex;
-uniform usampler2D u_ChunkOriginTex;
+// SDF sky-early-out uniforms (replaces rasterized depth prepass):
+// Cheap plane SDF tests against the loaded terrain's world-space bounds.
+// u_MaxY: top plane; if camera is above AND ray.y > 0, sky pixel (skip DDA).
+// u_MaxX/MinX/MaxZ/MinZ: side planes; slab-method ray-box test.
+// u_BoundsValid: 1 after first chunk load, 0 before (lets SDF gracefully
+//                fall through to DDA when bounds are unknown).
+// u_TopSolidY: actual highest solid voxel Y across all loaded chunks.
+//              When u_BoundsValid=1 AND camPos.y > u_TopSolidY AND rd.y>0,
+//              the ray points into open sky above all loaded terrain →
+//              guaranteed sky pixel, skip ALL DDA/sphere-trace work.
+//              Gen-thread tracks this via ChunkManager.getTopSolidY().
+uniform float u_MaxY;
+uniform float u_MaxX;
+uniform float u_MaxZ;
+uniform float u_MinX;
+uniform float u_MinZ;
+uniform uint u_BoundsValid;
+uniform int u_TopSolidY;
 
 layout(location = 7) uniform vec4 u_HeartUVs[3]; // [0]=Full, [1]=Half, [2]=Empty
 
@@ -290,6 +313,27 @@ bool isBitSolid(uint slot, ivec3 p) {
     return (raw >> 31) != 0u;
 }
 
+// Sample chunk-level directional SDF (in voxel units) for a chunk slot.
+// dirIdx: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z.
+// Layout: 2 packed uints per slot (8 bytes).
+//   uint 0 low 8 = +X, next 8 = -X, next 8 = +Y, top 8 = -Y
+//   uint 1 low 8 = +Z, next 8 = -Z (top 16 unused)
+// Only valid for empty-loaded chunks (slot != EMPTY and chunk has zero solids).
+// Returns 0 (= no directional SDF available) for chunks with any solid; the
+// caller falls back to per-voxel DDA for those.
+float getChunkDirSDF(uint slot, uint dirIdx) {
+    uint pack0 = sdfPool[slot << 1u];
+    uint pack1 = sdfPool[(slot << 1u) | 1u];
+    uint raw;
+    if (dirIdx == 0u)      raw = pack0 & 0xFFu;          // +X
+    else if (dirIdx == 1u) raw = (pack0 >> 8u)  & 0xFFu;  // -X
+    else if (dirIdx == 2u) raw = (pack0 >> 16u) & 0xFFu;  // +Y
+    else if (dirIdx == 3u) raw = (pack0 >> 24u) & 0xFFu;  // -Y
+    else if (dirIdx == 4u) raw = pack1 & 0xFFu;           // +Z
+    else                   raw = (pack1 >> 8u)  & 0xFFu;  // -Z
+    return float(raw) / 8.0; // 0 = no SDF, max 16 voxels (= 31.875 encoded)
+}
+
 uint getVoxelOcclusion(ivec3 p) {
     ivec3 relChunk = (p - u_WorldOffset) >> 4;
     if (any(lessThan(relChunk, ivec3(0))) || any(greaterThanEqual(relChunk, ivec3(128)))) return 0x3FFFu;
@@ -363,7 +407,7 @@ float fastShadow(vec3 ro, vec3 rd, float maxDist) {
     return 1.0;
 }
 
-bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx) { 
+bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx) {
     ivec3 bufMin = u_WorldOffset;
     ivec3 bufMax = u_WorldOffset + ivec3(WORLD_SIZE);
     float tn, tf; if (!intersectAABB(ro, rd, vec3(bufMin), vec3(bufMax), tn, tf)) return false;
@@ -371,12 +415,77 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT
     vec3 dd = abs(1.0 / rd); ivec3 s = ivec3(sign(rd));
     vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
     int side = 0; if (skipFirst) side = advanceDDA(mp, sd, dd, s);
-    for (int i = 0; i < 72; i++) {  // reduced from 128 → 72 for perf
+    // Per-chunk SDF sphere-trace step is gated at SDF>1.5; when close to surface
+    // (SDF<=1.5) or crossing a chunk boundary, fallback to per-voxel DDA.
+    for (int i = 0; i < 256; i++) {  // bumped from 72: sphere-trace skips chunks fast
         if (any(lessThan(mp, bufMin)) || any(greaterThanEqual(mp, bufMax))) break;
+        if (st > tf) break;
         ivec3 rel = mp - u_WorldOffset;
         uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
-        if (slot == EMPTY) { side = skipChunk(mp, sd, dd, s); }
-        else {
+        if (slot == EMPTY) {
+            // Empty chunk: skip whole 16³ section in one DDA step (peer over chunks)
+            // ── Tall-skip optimization (ray points up only): collapse many consecutive
+            //    EMPTY chunks in a single traceWorld iteration. Without this, a sky-look
+            //    ray at ground level iterates ~125 times (one per chunk), each calling
+            //    skipChunk. With this, it iterates only when reaching the first non-EMPTY
+            //    chunk above (or buffer end). Cost when rd.y<=0: none. Cost when rd.y>0
+            //    but immediate next chunk above is non-EMPTY: ~5 ops (single slot read)
+            //    — strictly better than skipChunk's ~30 ops for the no-skip case still.
+            if (rd.y > 0.0) {
+                int curChunkY = rel.y >> 4;
+                int advance = 0;
+                for (int k = 1; k < 128; k++) {
+                    if (curChunkY + k >= 128) break;
+                    uint futureSlot = chunkSlots[(rel.x >> 4) | ((curChunkY + k) << 7) | ((rel.z >> 4) << 14)];
+                    if (futureSlot != EMPTY) break;
+                    advance = k;
+                }
+                if (advance > 0) {
+                    mp.y += advance * 16;
+                    vec3 newP = ro + rd * st;
+                    sd = (s * (vec3(mp) - newP) + (s * 0.5) + 0.5) * dd;
+                    side = 1; // Y-axis crossing — last axis we leapt through
+                    continue;
+                }
+            }
+            side = skipChunk(mp, sd, dd, s);
+        } else {
+            // ── Chunk-level directional SDF sphere-trace acceleration ──
+            // Per-direction chunk SDF says how many voxels the ray can travel
+            // along that axis before crossing into a non-empty chunk or
+            // chunk boundary. For empty-loaded chunks (zero solids), this
+            // allows leaping up to ~16 voxels in the dominant axis direction
+            // in a single iteration — collapsing ~125 outer iters of pure-sky
+            // traversal into ~1.
+            // (Unit note: sd.x/y/z are t-space; convert to voxels via /dd since
+            // dd = 1/|rd|, so sd*/dd = sd*|rd| = voxel distance along that axis.)
+            float absX = abs(rd.x), absY = abs(rd.y), absZ = abs(rd.z);
+            uint domAxis;
+            float domVal;
+            if      (absX >= absY && absX >= absZ) { domAxis = 0u; domVal = rd.x; }
+            else if (absY >= absZ)                { domAxis = 1u; domVal = rd.y; }
+            else                                   { domAxis = 2u; domVal = rd.z; }
+            float maxAbsRd = (domAxis == 0u) ? absX : ((domAxis == 1u) ? absY : absZ);
+            uint dirIdx = domAxis * 2u + (domVal > 0.0 ? 0u : 1u);
+            float chunkSdf = getChunkDirSDF(slot, dirIdx);
+            if (chunkSdf > 1.5) {
+                // Convert t-space dist-to-boundary to voxel units along dom axis:
+                // sd.dom * |rd.dom| = sd.dom / dd.dom (since dd = 1/|rd|).
+                float distToBndDomVox = (domAxis == 0u) ? sd.x / dd.x :
+                                       (domAxis == 1u) ? sd.y / dd.y :
+                                                          sd.z / dd.z;
+                float stepVox = min(chunkSdf * 0.95, distToBndDomVox - 1.0);
+                if (stepVox > 1.0) {
+                    float tStep = stepVox / maxAbsRd;
+                    st += tStep;
+                    vec3 newP = ro + rd * st;
+                    mp = ivec3(floor(newP));
+                    sd = (s * (vec3(mp) - newP) + (s * 0.5) + 0.5) * dd;
+                    side = int(domAxis);
+                    continue;
+                }
+            }
+            // ── Per-voxel DDA fallback (surface hit or small SDF) ──
             ivec3 cc = mp >> 4; uint maskBase = slot << 7;
             for (int j = 0; j < 32; j++) {
                 int bi = (mp.x&15)|((mp.y&15)<<4)|((mp.z&15)<<8);
@@ -385,19 +494,17 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT
                     uint voxelType = rawVoxel & 0xFFFFu;
                     uint wirePower = (rawVoxel >> 16) & 0xFu;
                     uint wireConn = (rawVoxel >> 20) & 0xFu;
-                    
                     if (voxelType != lastVoxel) {
                         ivec4 d1 = texelFetch(u_BlockData, int(voxelType) * 3 + 1);
                         if (((d1.w >> 9) & 1) == 1) {
                             resVoxel = voxelType;
                             resWirePower = wirePower;
                             resWireConn = wireConn;
-                            resSide = side; 
+                            resSide = side;
                             resT = (side == 0 ? sd.x - dd.x : (side == 1 ? sd.y - dd.y : sd.z - dd.z)) + st;
                             resAabbIdx = -1;
                             return true;
                         }
-                        
                         ivec4 info = texelFetch(u_BlockAABBInfo, int(voxelType));
                         int aabbOffset = info.x;
                         int aabbCount = info.y;
@@ -412,7 +519,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT
                         }
                         float exitT = st + min(sd.x, min(sd.y, sd.z));
                         vec3 blockOrigin = floor(vec3(mp));
-                        for (int k = 0; k < min(aabbCount, 6); k++) {  // reduced from 8 → 6 for perf
+                        for (int k = 0; k < min(aabbCount, 6); k++) {
                             vec3 bMin = texelFetch(u_BlockAABBs, aabbOffset + k * 2).xyz + blockOrigin;
                             vec3 bMax = texelFetch(u_BlockAABBs, aabbOffset + k * 2 + 1).xyz + blockOrigin;
                             float aTn, aTf;
@@ -423,18 +530,13 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT
                                     resWireConn = wireConn;
                                     resT = aTn;
                                     resAabbIdx = (aabbOffset / 2) + k;
-                                    // Compute hit side from position within AABB
                                     vec3 hp = ro + rd * aTn;
                                     vec3 center = (bMin + bMax) * 0.5;
                                     vec3 halfSize = (bMax - bMin) * 0.5;
                                     vec3 localP = abs((hp - center) / max(halfSize, vec3(0.0001)));
-                                    if (localP.x >= localP.y && localP.x >= localP.z) {
-                                        resSide = 0;
-                                    } else if (localP.y >= localP.z) {
-                                        resSide = 1;
-                                    } else {
-                                        resSide = 2;
-                                    }
+                                    if (localP.x >= localP.y && localP.x >= localP.z) resSide = 0;
+                                    else if (localP.y >= localP.z) resSide = 1;
+                                    else resSide = 2;
                                     return true;
                                 }
                             }
@@ -609,12 +711,38 @@ void main() {
     vec3 final = vec3(0.0), throu = vec3(1.0), ro = camPos; bool skip = false;
     uint lastTransVoxel = 0xFFFFFFFFu; // Track last translucent block type to skip same-type faces
 
-    // ── Depth prepass: hardware-rasterized chunk AABBs tell us if there's a chunk here ──
-    // Sky pixels (depth >= 1.0) skip ALL DDA — massive win when looking up (~90% of pixels)
-    // For chunk-hit pixels, DDA starts from camera position (avoids Z-fighting at boundaries)
-    float depthVal = texelFetch(u_DepthTex, px, 0).r;
-    if (depthVal >= 1.0) {
-        // No chunk in this direction — pure sky, zero DDA cost
+    // ── SDF sky early-out (replaces rasterized depth prepass) ──
+    // Y-plane SDF: if camera is above u_MaxY AND ray points upward (rd.y > 0),
+    //         the ray will never hit any loaded terrain → pure sky, skip ALL DDA.
+    // X/Z-plane SDFs: if ray exits the terrain box on the leading side without
+    //         entering it, the ray also misses → pure sky early-out.
+    // No rasterized depth prepass required; this is exponentially cheaper for
+    // large open-sky scenes and avoids the FBO draw call entirely.
+    bool skyPixel = false;
+    if (u_BoundsValid == 1u) {
+        // Y-plane SDF (primary sky-ray early-out): camera above the actual highest
+        // solid voxel Y AND ray points up → guaranteed sky pixel. This catches the
+        // common case of looking nearly straight up and breaks out BEFORE the
+        // per-chunk sphere-trace loop, eliminating ~120 traceWorld iterations.
+        // (The pre-existing u_MaxY test was effectively dead — the prior
+        //  updateTerrainBounds() plumbing was never wired up.)
+        if (u_TopSolidY >= 0 && camPos.y > float(u_TopSolidY) && rd.y > 0.0) {
+            skyPixel = true;
+        } else {
+            // Slab-method ray-box intersection against the loaded terrain X/Z box.
+            // If the ray exits the box before entering (or the entire box is behind
+            // the camera), the ray will not hit any loaded terrain → pure sky.
+            vec3 invRd = 1.0 / max(abs(rd), vec3(1e-6)) * sign(rd);
+            float tEnterX = min((u_MinX - camPos.x) * invRd.x, (u_MaxX - camPos.x) * invRd.x);
+            float tEnterZ = min((u_MinZ - camPos.z) * invRd.z, (u_MaxZ - camPos.z) * invRd.z);
+            float tEnter = max(0.0, max(tEnterX, tEnterZ));
+            float tExitX  = max((u_MinX - camPos.x) * invRd.x, (u_MaxX - camPos.x) * invRd.x);
+            float tExitZ  = max((u_MinZ - camPos.z) * invRd.z, (u_MaxZ - camPos.z) * invRd.z);
+            float tExit   = min(tExitX, tExitZ);
+            if (tExit < 0.0 || tEnter > tExit) skyPixel = true;
+        }
+    }
+    if (skyPixel) {
         vec3 sky = GetSky(rd, at);
         vec3 result = ACESFilm(sky);
         if (uiCol.a > 0.0) result = mix(result, uiCol.rgb, uiCol.a);
@@ -887,17 +1015,29 @@ void main() {
             beam += at.ambient * 0.3;
 
             // ── Block break overlay: Minecraft destroy_stage texture on all 6 faces ──
+            // The fix for "only 1 face shows the overlay": use floor(hp - n * 0.5)
+            // instead of floor(hp). On the +X, +Y, +Z faces of a block, the ray-t
+            // endpoint `hp` is exactly on the boundary, so floor() returned the
+            // adjacent block's coord, making the u_BreakTargetPos check fail.
+            // Stepping inward by 0.5 along the normal guarantees we land in the
+            // targeted block regardless of which face was hit.
             if (u_BreakProgress > 0.0 && u_DestroyBaseLayer >= 0) {
-                ivec3 blockCoord = ivec3(floor(hp));
+                ivec3 blockCoord = ivec3(floor(hp - n * 0.5));
                 if (blockCoord.x == u_BreakTargetPos.x && blockCoord.y == u_BreakTargetPos.y && blockCoord.z == u_BreakTargetPos.z) {
-                    // Compute face-relative UV for the overlay (all 6 faces)
+                    // Compute face-relative UV for the overlay (all 6 faces).
+                    // The sample point hp - n * 0.5 is halfway inside the targeted
+                    // block, so fract() gives a stable intra-block UV regardless of face.
+                    vec3 fracHP = fract(hp - n * 0.5);
                     vec2 overlayUv;
                     if (abs(n.x) > 0.5) {
-                        overlayUv = vec2(fract(hp.z), 1.0 - fract(hp.y));
+                        // East/West face: UV from (z, 1-y) — Y is flipped for screen coords
+                        overlayUv = vec2(fracHP.z, 1.0 - fracHP.y);
                     } else if (abs(n.y) > 0.5) {
-                        overlayUv = vec2(fract(hp.x), fract(hp.z));
+                        // Top/Bottom face: UV from (x, z) — no Y flip
+                        overlayUv = vec2(fracHP.x, fracHP.z);
                     } else {
-                        overlayUv = vec2(fract(hp.x), 1.0 - fract(hp.y));
+                        // North/South face: UV from (x, 1-y)
+                        overlayUv = vec2(fracHP.x, 1.0 - fracHP.y);
                     }
                     // Select destroy stage (0-9) based on progress
                     int stage = clamp(int(u_BreakProgress * 10.0), 0, 9);

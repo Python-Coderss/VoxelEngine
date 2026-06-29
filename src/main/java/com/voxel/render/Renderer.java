@@ -11,10 +11,8 @@ import com.voxel.game.GameContext;
 import com.voxel.utils.BiomeManager;
 import com.voxel.utils.TextureManager;
 import org.joml.Matrix4f;
-import org.joml.Vector2f;
 import org.joml.Vector3f;
 
-import java.util.Iterator;
 import java.util.Locale;
 import java.util.Map;
 
@@ -25,19 +23,16 @@ import static org.lwjgl.opengl.GL42.glMemoryBarrier;
 import static org.lwjgl.opengl.GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT;
 import static org.lwjgl.opengl.GL43.*;
 import static org.lwjgl.opengl.GL45.*;
-import static org.lwjgl.system.MemoryUtil.*;
 
 /**
  * Owns the OpenGL render loop, GL handles (programs, FBOs, SSBOs, VAOs/VBOs), shader
- * uniform-location cache, depth-prepass, frustum culling, GPU uploads, and crafting-item
- * texture-array uploads. Previously these lived in Main.java.
+ * uniform-location cache, GPU uploads, and crafting-item texture-array uploads.
  *
  * Kept as a back-pointer to Main for cross-thread coordination flags that Main owns
  * (needsWorldUpload, needsCursorUpdate, etc.) and for accessing Main's window hwnd.
  */
 public class Renderer {
     public static final int MAX_DIRTY_UPLOADS_PER_FRAME = 48;
-    public static final int MAX_VISIBLE_CHUNKS = 8192;
     private static final float FOV_DEGREES = 70.0f;
     private static final float FOV_RAD = (float) Math.toRadians(FOV_DEGREES);
     private static final float NEAR_PLANE = 0.1f;
@@ -55,22 +50,7 @@ public class Renderer {
     public int locCraftingItemCount;
     public int locQuadPass;
 
-    // Depth prepass state
-    public int chunkDepthProgram;
-    public int chunkDepthFBO;
-    public int chunkDepthTex;
-    public int chunkOriginTex;
-    public int cubeVAO, cubeVBO;
-    public int chunkVisibilitySSBO;
-    public java.nio.IntBuffer chunkVisBuffer;
-
-    public int locVPMatrix;
-    public int locWorldOffsetDepth;
-    public int locDepthTex;
-    public int locChunkOriginTex;
-
     public java.nio.FloatBuffer persistentPlBuf;
-    public Iterator<Integer> dirtyUploadIterator;
 
     private final GameContext ctx;
     private final Main main;
@@ -127,8 +107,6 @@ public class Renderer {
         glActiveTexture(GL_TEXTURE8);
         glBindTexture(GL_TEXTURE_2D, biomeManager.getBiomeMapId());
         glUniform1i(locBiomeMap, 8);
-        // Grass colormap slot (9) and foliage colormap slot (14) are bound in Main.loop() —
-        // TextureManager doesn't expose dedicated accessors for those yet.
         glActiveTexture(GL_TEXTURE11);
         glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getAABBTextureId());
         glUniform1i(locBlockAABBs, 11);
@@ -140,37 +118,7 @@ public class Renderer {
         glUniform1i(locBlockAABBUVs, 13);
     }
 
-    /** Frustum-cull loaded chunk sections and pack them for the depth-prepass SSBO. */
-    public int buildVisibleChunkList(Vector3f camPos, float fx, float fy, float fz) {
-        chunkVisBuffer.clear();
-        int count = 0;
-        int worldOx = world.getOffsetX(), worldOy = world.getOffsetY(), worldOz = world.getOffsetZ();
-        float aspect = (float) main.width / main.height;
-        Matrix4f proj = new Matrix4f().perspective(FOV_RAD, aspect, NEAR_PLANE, FAR_PLANE);
-        Vector3f lookTarget = new Vector3f(camPos.x + fx, camPos.y + fy, camPos.z + fz);
-        Matrix4f viewM = new Matrix4f().lookAt(camPos, lookTarget, new Vector3f(0, 1, 0));
-        org.joml.FrustumIntersection frustum = new org.joml.FrustumIntersection(new Matrix4f(proj).mul(viewM));
-        for (Map.Entry<Long, Integer[]> entry : chunkManager.getLoadedChunks().entrySet()) {
-            long key = entry.getKey();
-            int absCX = (int) (key >> 32), absCZ = (int) key;
-            Integer[] slots = entry.getValue();
-            int relCX = absCX - (worldOx >> 4), relCZ = absCZ - (worldOz >> 4);
-            for (int cy = 0; cy < 16; cy++) {
-                if (slots[cy] == World.EMPTY) continue;
-                if (count >= MAX_VISIBLE_CHUNKS) break;
-                float minX = absCX << 4, minZ = absCZ << 4;
-                float minY = (cy << 4) + worldOy;
-                if (frustum.testAab(minX, minY, minZ, minX + 16, minY + 16, minZ + 16)) {
-                    chunkVisBuffer.put(count++, relCX | (cy << 8) | (relCZ << 16));
-                }
-            }
-            if (count >= MAX_VISIBLE_CHUNKS) break;
-        }
-        chunkVisBuffer.position(0).limit(Math.max(count, 1));
-        return count;
-    }
-
-    /** One frame of the render loop. Identifies exactly what Main.loop() did. */
+    /** One frame of the render loop. */
     public void loop() {
         float lastTime = (float) glfwGetTime();
         int frames = 0;
@@ -202,7 +150,7 @@ public class Renderer {
                 biomeManager.uploadBiomeMap();
                 chunkManager.clearBiomeMapDirty();
             }
-            main.hud.updateInventoryUi();  // Main.hud assigned in Main.init()
+            main.hud.updateInventoryUi();
             main.hud.updateWindowTitle();
             main.hud.beginFrame();
 
@@ -218,30 +166,6 @@ public class Renderer {
             float rl = (float) Math.sqrt(rx * rx + rz * rz);
             if (rl > 0) { rx /= rl; rz /= rl; }
             float ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;
-
-            int visibleCount = buildVisibleChunkList(cameraPos, fx, fy, fz);
-            glBindFramebuffer(GL_FRAMEBUFFER, chunkDepthFBO);
-            glClearDepth(1.0);
-            glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
-            if (visibleCount > 0) {
-                glNamedBufferSubData(chunkVisibilitySSBO, 0, chunkVisBuffer);
-                glUseProgram(chunkDepthProgram);
-                glUniform3i(locWorldOffsetDepth, world.getOffsetX(), world.getOffsetY(), world.getOffsetZ());
-                Matrix4f proj = new Matrix4f().perspective(FOV_RAD, (float) main.width / main.height, NEAR_PLANE, FAR_PLANE);
-                Vector3f lookTarget = new Vector3f(cameraPos.x + fx, cameraPos.y + fy, cameraPos.z + fz);
-                Matrix4f view = new Matrix4f().lookAt(cameraPos, lookTarget, new Vector3f(0, 1, 0));
-                Matrix4f vp = new Matrix4f(proj).mul(view);
-                try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
-                    glUniformMatrix4fv(locVPMatrix, false, vp.get(stack.mallocFloat(16)));
-                }
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, chunkVisibilitySSBO);
-                glBindVertexArray(cubeVAO);
-                glEnable(GL_DEPTH_TEST);
-                glDepthFunc(GL_LESS);
-                glDrawArraysInstanced(GL_TRIANGLES, 0, 36, visibleCount);
-                glDisable(GL_DEPTH_TEST);
-            }
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
             if (main.cameraShake > 0.01f) {
                 cameraPos.x += (float)(Math.random() - 0.5) * main.cameraShake * 0.1f;
@@ -259,6 +183,15 @@ public class Renderer {
             atmosphereRenderer.upload(ctx.worldTime, ctx.activeDimension);
             glProgramUniform1i(computeProgram, atmosphereRenderer.locDimensionID(), ctx.activeDimension.id);
             glProgramUniform3i(computeProgram, 6, world.getOffsetX(), world.getOffsetY(), world.getOffsetZ());
+
+            // SDF sky early-out uniforms: max terrain Y bounds allow skipping DDA
+            // when camera is above all loaded terrain and looking up.
+            glProgramUniform1f(computeProgram, 22, chunkManager.getMaxTerrainY());
+            glProgramUniform1f(computeProgram, 23, chunkManager.getMaxTerrainX());
+            glProgramUniform1f(computeProgram, 24, chunkManager.getMaxTerrainZ());
+            glProgramUniform1f(computeProgram, 25, chunkManager.getMinTerrainX());
+            glProgramUniform1f(computeProgram, 26, chunkManager.getMinTerrainZ());
+            glProgramUniform1i(computeProgram, 27, chunkManager.areBoundsValid() ? 1 : 0);
 
             if (ctx.breakTargetX != Integer.MIN_VALUE) {
                 glProgramUniform3i(computeProgram, 19, ctx.breakTargetX, ctx.breakTargetY, ctx.breakTargetZ);
@@ -294,13 +227,6 @@ public class Renderer {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, craftingItemSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, lightSSBO);
 
-            glActiveTexture(GL_TEXTURE18);
-            glBindTexture(GL_TEXTURE_2D, chunkDepthTex);
-            glUniform1i(locDepthTex, 18);
-            glActiveTexture(GL_TEXTURE19);
-            glBindTexture(GL_TEXTURE_2D, chunkOriginTex);
-            glUniform1i(locChunkOriginTex, 19);
-
             uploadCraftingItems();
 
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
@@ -324,7 +250,6 @@ public class Renderer {
 
     /** Upload the 3x3 crafting grid state into the craftingItemSSBO for shader rendering. */
     public void uploadCraftingItems() {
-        // The full body sits in Main.java; delegated to keep behaviour identical.
         main.uploadCraftingItems();
     }
 }
