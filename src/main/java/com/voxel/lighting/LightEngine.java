@@ -67,8 +67,8 @@ public class LightEngine {
 
     /**
      * Generates sky light for an entire chunk column (all 16 sections, y = 0..255).
-     * Computes top-down per (x,z) column: starts at the highest block, sets 15,
-     * then decreases by block opacity as it descends.
+     * Starts from the world ceiling with sky=15 and propagates downward:
+     * air keeps sky=15, block opacity decreases it.
      *
      * @param cx    Absolute chunk X coordinate
      * @param cz    Absolute chunk Z coordinate
@@ -88,12 +88,10 @@ public class LightEngine {
                 int wx = worldBaseX + lx;
                 int wz = worldBaseZ + lz;
 
-                // Find top non-transparent block in this column (within buffer bounds)
-                int topY = findTopBlockY(wx, wz);
-
-                // Propagate sky light downward from topY
+                // Propagate sky light downward from world ceiling.
+                // Air above the highest block keeps full sky=15.
                 int skyLight = MAX_LIGHT;
-                for (int y = Math.min(topY, bufMaxYRel - 1); y >= 0; y--) {
+                for (int y = bufMaxYRel - 1; y >= 0; y--) {
                     int slot = getSlotForWorldPos(wx, y, wz, ox, oy, oz);
                     if (slot == World.EMPTY) continue;
 
@@ -114,22 +112,6 @@ public class LightEngine {
             }
         }
         return dirtySlots;
-    }
-
-    /**
-     * Finds the Y coordinate of the topmost non-transparent block in the column.
-     * Scans downward from the world height limit.
-     */
-    private int findTopBlockY(int wx, int wz) {
-        int bufMaxYRel = world.getOffsetY() + bufSize;
-        for (int y = bufMaxYRel - 1; y >= 0; y--) {
-            int blockId = world.getVoxel(wx, y, wz);
-            if (blockId > 0 && blockDataManager.isFullBlock(blockId)) {
-                return y + 1; // sky light starts above the top block
-            }
-        }
-        // No blocks found — sky reaches the bottom with full brightness
-        return bufMaxYRel - 1;
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -506,6 +488,30 @@ public class LightEngine {
                         if (slot != World.EMPTY) {
                             dirtySlots.addAll(propagateBlockLight(cx + dcx, cy + dcy, cz + dcz, slot));
                         }
+                    }
+                }
+            }
+
+            // ── Regenerate sky light for affected columns ──
+            // clearLightPoolSlot zeroed sky light in all 27 sections; block light
+            // was restored above, but sky light must be regenerated separately.
+            // The 3×3 area in X/Z covers 9 unique chunk columns.
+            java.util.Set<Long> columnsDone = new java.util.HashSet<>();
+            for (int dcx = -1; dcx <= 1; dcx++) {
+                for (int dcz = -1; dcz <= 1; dcz++) {
+                    int colCX = cx + dcx;
+                    int colCZ = cz + dcz;
+                    long colKey = ((long) colCX << 32) | (colCZ & 0xFFFFFFFFL);
+                    if (!columnsDone.add(colKey)) continue;
+
+                    Integer[] colSlots = new Integer[16];
+                    boolean anyLoaded = false;
+                    for (int dcy = 0; dcy < 16; dcy++) {
+                        colSlots[dcy] = getSlotForSection(colCX, dcy, colCZ, ox, oy, oz);
+                        if (colSlots[dcy] != World.EMPTY) anyLoaded = true;
+                    }
+                    if (anyLoaded) {
+                        dirtySlots.addAll(generateSkyLight(colCX, colCZ, colSlots));
                     }
                 }
             }

@@ -7,6 +7,8 @@ import com.voxel.entity.EntityManager;
 import com.voxel.entity.PlayerEntity;
 import com.voxel.utils.BiomeManager;
 import com.voxel.utils.BlockDataManager;
+import com.voxel.utils.BlockRegistry;
+import com.voxel.utils.ShaderBlockRegistry;
 import com.voxel.utils.TextureManager;
 import com.voxel.world.ChunkManager;
 import com.voxel.world.DimensionManager;
@@ -48,6 +50,8 @@ public class GameContext {
     public ItemDefinitions itemDefinitions;
     public PlayerInventory playerInventory;
     public BlockDataManager blockDataManager;
+    public BlockRegistry blockRegistry;
+    public ShaderBlockRegistry shaderBlockRegistry;
     public BiomeManager biomeManager;
     public TextureManager textureManager;
     public CraftingManager craftingManager;

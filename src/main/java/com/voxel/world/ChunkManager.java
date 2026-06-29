@@ -440,24 +440,25 @@ public class ChunkManager {
             // Ascending ring → inner rings first in the sorted list.
             // Ascending abs-angle → forward (angle=0) sorts FIRST in the list.
             // The FIFO push loop (addLast) means first-in-list = first-in-deque.
+            // Sort by cubic spiral: Chebyshev distance (max(|dx|,|dz|)) radiating
+            // outward from player in concentric square shells.
+            // Within each shell, spiral by angle from forward direction.
             chunksToLoad.sort((a, b) -> {
                 int dxA = a[0] - pcx, dzA = a[1] - pcz;
                 int dxB = b[0] - pcx, dzB = b[1] - pcz;
 
-                float alongA = dxA * lookX + dzA * lookZ;
-                float perpA = -dxA * lookZ + dzA * lookX;
-                float alongB = dxB * lookX + dzB * lookZ;
-                float perpB = -dxB * lookZ + dzB * lookX;
+                int shellA = Math.max(Math.abs(dxA), Math.abs(dzA));
+                int shellB = Math.max(Math.abs(dxB), Math.abs(dzB));
 
-                int ringA = Math.max(Math.round(Math.abs(alongA) * 0.5f), Math.round(Math.abs(perpA)));
-                int ringB = Math.max(Math.round(Math.abs(alongB) * 0.5f), Math.round(Math.abs(perpB)));
+                if (shellA != shellB) return Integer.compare(shellA, shellB);
 
-                if (ringA != ringB) return Integer.compare(ringA, ringB);
-
-                // Same ring: forward (small angle) sorts first → pushed first → FIFO front
-                float angleA = (float) Math.abs(Math.atan2(perpA, alongA));
-                float angleB = (float) Math.abs(Math.atan2(perpB, alongB));
-                return Float.compare(angleA, angleB); // ascending: forward=0 first
+                // Same shell: spiral outward by angle from forward
+                float angleA = (float) Math.abs(Math.atan2(dzA, dxA) - Math.atan2(lookZ, lookX));
+                float angleB = (float) Math.abs(Math.atan2(dzB, dxB) - Math.atan2(lookZ, lookX));
+                // Normalize to [0, 2π)
+                if (angleA > Math.PI) angleA = (float)(2.0 * Math.PI - angleA);
+                if (angleB > Math.PI) angleB = (float)(2.0 * Math.PI - angleB);
+                return Float.compare(angleA, angleB);
             });
 
             // Split: 11×11 grid first (LIGHT_GRID_RADIUS=5), then outer.

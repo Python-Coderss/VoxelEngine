@@ -33,25 +33,93 @@ public class CraftingManager {
     private void registerDefaultRecipes() {
         // ===== 2x2 Recipes (inventory crafting) =====
         
-        // Wooden Pickaxe: 3 planks (using stone as placeholder) + 2 sticks
+        // Wood Planks from Oak Log
         addRecipe2x2(new String[][]{
-            {"stone", "stone"},
-            {"stone", null}
-        }, "wood_pickaxe", 1);
-        
-        // Wooden Axe: 3 planks + 2 sticks
-        addRecipe2x2(new String[][]{
-            {"stone", "stone"},
-            {"stone", null}
-        }, "wood_axe", 1);
-        
-        // Wooden Shovel: 1 plank + 2 sticks
-        addRecipe2x2(new String[][]{
-            {"stone", null},
+            {"oak_log", null},
             {null, null}
-        }, "wood_shovel", 1);
+        }, "oak_planks", 4);
+
+        // Stick from planks
+        addRecipe2x2(new String[][]{
+            {"oak_planks", null},
+            {"oak_planks", null}
+        }, "stick", 4);
+
+        // Crafting Table from planks
+        addRecipe2x2(new String[][]{
+            {"oak_planks", "oak_planks"},
+            {"oak_planks", "oak_planks"}
+        }, "crafting_table", 1);
         
-        // Glass from sand: smelt sand -> glass (simplified)
+        // Wooden tools (pickaxe=full top row, axe=top-left L shape, shovel=center column)
+        addRecipe3x3(new String[][]{
+            {"oak_planks", "oak_planks", "oak_planks"},
+            {null, "stick", null},
+            {null, "stick", null}
+        }, "wood_pickaxe", 1);
+        addRecipe3x3(new String[][]{
+            {"oak_planks", "oak_planks", null},
+            {"oak_planks", "stick", null},
+            {null, "stick", null}
+        }, "wood_axe", 1);
+        addRecipe3x3(new String[][]{
+            {"oak_planks", null, null},
+            {"stick", null, null},
+            {"stick", null, null}
+        }, "wood_shovel", 1);
+
+        // Stone tools
+        addRecipe3x3(new String[][]{
+            {"cobblestone", "cobblestone", "cobblestone"},
+            {null, "stick", null},
+            {null, "stick", null}
+        }, "stone_pickaxe", 1);
+        addRecipe3x3(new String[][]{
+            {"cobblestone", "cobblestone", null},
+            {"cobblestone", "stick", null},
+            {null, "stick", null}
+        }, "stone_axe", 1);
+        addRecipe3x3(new String[][]{
+            {"cobblestone", null, null},
+            {"stick", null, null},
+            {"stick", null, null}
+        }, "stone_shovel", 1);
+
+        // Iron tools
+        addRecipe3x3(new String[][]{
+            {"iron_block", "iron_block", "iron_block"},
+            {null, "stick", null},
+            {null, "stick", null}
+        }, "iron_pickaxe", 1);
+        addRecipe3x3(new String[][]{
+            {"iron_block", "iron_block", null},
+            {"iron_block", "stick", null},
+            {null, "stick", null}
+        }, "iron_axe", 1);
+        addRecipe3x3(new String[][]{
+            {"iron_block", null, null},
+            {"stick", null, null},
+            {"stick", null, null}
+        }, "iron_shovel", 1);
+
+        // Diamond tools
+        addRecipe3x3(new String[][]{
+            {"diamond_block", "diamond_block", "diamond_block"},
+            {null, "stick", null},
+            {null, "stick", null}
+        }, "diamond_pickaxe", 1);
+        addRecipe3x3(new String[][]{
+            {"diamond_block", "diamond_block", null},
+            {"diamond_block", "stick", null},
+            {null, "stick", null}
+        }, "diamond_axe", 1);
+        addRecipe3x3(new String[][]{
+            {"diamond_block", null, null},
+            {"stick", null, null},
+            {"stick", null, null}
+        }, "diamond_shovel", 1);
+
+        // Glass from sand
         addRecipe2x2(new String[][]{
             {"sand", "sand"},
             {"sand", "sand"}
@@ -69,42 +137,141 @@ public class CraftingManager {
             {null, null}
         }, "redstone_wire", 9);
 
+        // Brick block from clay (simplified: 4 clay → brick)
+        addRecipe2x2(new String[][]{
+            {"clay", "clay"},
+            {"clay", "clay"}
+        }, "brick", 4);
+
+        // Slabs: 3 blocks in a row → 6 slabs
+        addRecipe3x3(new String[][]{
+            {"oak_planks", "oak_planks", "oak_planks"},
+            {null, null, null},
+            {null, null, null}
+        }, "oak_slab", 6);
+        addRecipe3x3(new String[][]{
+            {"cobblestone", "cobblestone", "cobblestone"},
+            {null, null, null},
+            {null, null, null}
+        }, "cobblestone_slab", 6);
+        addRecipe3x3(new String[][]{
+            {"stone_brick", "stone_brick", "stone_brick"},
+            {null, null, null},
+            {null, null, null}
+        }, "stone_brick_slab", 6);
+        addRecipe3x3(new String[][]{
+            {"brick", "brick", "brick"},
+            {null, null, null},
+            {null, null, null}
+        }, "brick_slab", 6);
+        addRecipe3x3(new String[][]{
+            {"sandstone", "sandstone", "sandstone"},
+            {null, null, null},
+            {null, null, null}
+        }, "sandstone_slab", 6);
+
+        // Torch: stick + coal
+        addRecipe3x3(new String[][]{
+            {"coal_ore", null, null},
+            {"stick", null, null},
+            {null, null, null}
+        }, "torch", 4);
+
         // ===== 3x3 Recipes (crafting table only) =====
         
-        // Crafting Table: 4 planks
+        // Piston
         addRecipe3x3(new String[][]{
-            {"skyroot_planks", "skyroot_planks", null},
-            {"skyroot_planks", "skyroot_planks", null},
-            {null, null, null}
-        }, "crafting_table", 1);
-
-        // Stone Pickaxe: 3 cobble + 2 sticks
-        addRecipe3x3(new String[][]{
-            {"stone", "stone", "stone"},
-            {null, "stick", null},
-            {null, "stick", null}
-        }, "stone_pickaxe", 1);
-
-        // Iron Pickaxe: 3 iron + 2 sticks
-        addRecipe3x3(new String[][]{
-            {"redstone_block", "redstone_block", "redstone_block"},
-            {null, "stick", null},
-            {null, "stick", null}
-        }, "iron_pickaxe", 1);
-
-        // Piston: 3 planks + 4 cobble + 1 iron + 1 redstone
-        addRecipe3x3(new String[][]{
-            {"skyroot_planks", "skyroot_planks", "skyroot_planks"},
-            {"stone", "redstone_block", "stone"},
-            {"stone", "redstone_wire", "stone"}
+            {"oak_planks", "oak_planks", "oak_planks"},
+            {"cobblestone", "iron_block", "cobblestone"},
+            {"cobblestone", "redstone_wire", "cobblestone"}
         }, "piston", 1);
 
-        // Sticky Piston: slime + piston
+        // Sticky Piston
         addRecipe3x3(new String[][]{
             {null, null, null},
             {null, "aerogel", null},
             {null, "piston", null}
         }, "sticky_piston", 1);
+
+        // Stone Brick from cobblestone (2x2)
+        addRecipe2x2(new String[][]{
+            {"cobblestone", "cobblestone"},
+            {"cobblestone", "cobblestone"}
+        }, "stone_brick", 4);
+
+        // Bookshelf: 3 planks + 3 books (simplified: oak_log = book)
+        addRecipe3x3(new String[][]{
+            {"oak_planks", "oak_planks", "oak_planks"},
+            {"oak_log", "oak_log", "oak_log"},
+            {"oak_planks", "oak_planks", "oak_planks"}
+        }, "bookshelf", 1);
+
+        // Iron Block from iron (compact: 9 iron = iron block)
+        addRecipe3x3(new String[][]{
+            {"iron_ore", "iron_ore", "iron_ore"},
+            {"iron_ore", "iron_ore", "iron_ore"},
+            {"iron_ore", "iron_ore", "iron_ore"}
+        }, "iron_block", 1);
+
+        // Gold Block from gold ore
+        addRecipe3x3(new String[][]{
+            {"gold_ore", "gold_ore", "gold_ore"},
+            {"gold_ore", "gold_ore", "gold_ore"},
+            {"gold_ore", "gold_ore", "gold_ore"}
+        }, "gold_block", 1);
+
+        // Diamond Block from diamond ore
+        addRecipe3x3(new String[][]{
+            {"diamond_ore", "diamond_ore", "diamond_ore"},
+            {"diamond_ore", "diamond_ore", "diamond_ore"},
+            {"diamond_ore", "diamond_ore", "diamond_ore"}
+        }, "diamond_block", 1);
+
+        // Lapis Block from lapis ore
+        addRecipe3x3(new String[][]{
+            {"lapis_ore", "lapis_ore", "lapis_ore"},
+            {"lapis_ore", "lapis_ore", "lapis_ore"},
+            {"lapis_ore", "lapis_ore", "lapis_ore"}
+        }, "lapis_block", 1);
+
+        // Emerald Block
+        addRecipe3x3(new String[][]{
+            {"emerald_ore", "emerald_ore", "emerald_ore"},
+            {"emerald_ore", "emerald_ore", "emerald_ore"},
+            {"emerald_ore", "emerald_ore", "emerald_ore"}
+        }, "emerald_block", 1);
+
+        // Stairs (6 blocks → 4 stairs, standard Minecraft ratio)
+        addRecipe3x3(new String[][]{
+            {"oak_planks", null, null},
+            {"oak_planks", "oak_planks", null},
+            {"oak_planks", "oak_planks", "oak_planks"}
+        }, "oak_stairs", 4);
+        addRecipe3x3(new String[][]{
+            {"cobblestone", null, null},
+            {"cobblestone", "cobblestone", null},
+            {"cobblestone", "cobblestone", "cobblestone"}
+        }, "cobblestone_stairs", 4);
+        addRecipe3x3(new String[][]{
+            {"stone_brick", null, null},
+            {"stone_brick", "stone_brick", null},
+            {"stone_brick", "stone_brick", "stone_brick"}
+        }, "stone_brick_stairs", 4);
+        addRecipe3x3(new String[][]{
+            {"brick", null, null},
+            {"brick", "brick", null},
+            {"brick", "brick", "brick"}
+        }, "brick_stairs", 4);
+        addRecipe3x3(new String[][]{
+            {"sandstone", null, null},
+            {"sandstone", "sandstone", null},
+            {"sandstone", "sandstone", "sandstone"}
+        }, "sandstone_stairs", 4);
+        addRecipe3x3(new String[][]{
+            {"nether_brick", null, null},
+            {"nether_brick", "nether_brick", null},
+            {"nether_brick", "nether_brick", "nether_brick"}
+        }, "nether_brick_stairs", 4);
 
         // Skyroot planks from skyroot log
         addRecipe3x3(new String[][]{

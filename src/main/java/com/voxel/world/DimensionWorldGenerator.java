@@ -46,6 +46,13 @@ public class DimensionWorldGenerator extends WorldGenerator {
     private final int spruceLogId;
     private final int snowLayerId;
     private final int iceId;
+    private final int coalOreId;
+    private final int ironOreId;
+    private final int goldOreId;
+    private final int diamondOreId;
+    private final int redstoneOreId;
+    private final int lapisOreId;
+    private final int emeraldOreId;
 
     // Biome system (biomeProvider is inherited from WorldGenerator)
     private final BiomeDecorator biomeDecorator;
@@ -97,6 +104,20 @@ public class DimensionWorldGenerator extends WorldGenerator {
         this.snowLayerId = slId != null ? slId : 0;
         Integer iceIdObj = blockDataManager.findBlockId("ice");
         this.iceId = iceIdObj != null ? iceIdObj : 0;
+        Integer coalOre = blockDataManager.findBlockId("coal_ore");
+        this.coalOreId = coalOre != null ? coalOre : 61;
+        Integer ironOre = blockDataManager.findBlockId("iron_ore");
+        this.ironOreId = ironOre != null ? ironOre : 81;
+        Integer goldOre = blockDataManager.findBlockId("gold_ore");
+        this.goldOreId = goldOre != null ? goldOre : 82;
+        Integer diamondOre = blockDataManager.findBlockId("diamond_ore");
+        this.diamondOreId = diamondOre != null ? diamondOre : 83;
+        Integer redstoneOre = blockDataManager.findBlockId("redstone_ore");
+        this.redstoneOreId = redstoneOre != null ? redstoneOre : 26;
+        Integer lapisOre = blockDataManager.findBlockId("lapis_ore");
+        this.lapisOreId = lapisOre != null ? lapisOre : 85;
+        Integer emeraldOre = blockDataManager.findBlockId("emerald_ore");
+        this.emeraldOreId = emeraldOre != null ? emeraldOre : 84;
     }
 
     @Override
@@ -188,6 +209,42 @@ public class DimensionWorldGenerator extends WorldGenerator {
                 return waterId;
             }
             return 0; // Air
+        }
+
+        // --- Ore generation at deep levels ---
+        if (y < 16) {
+            int oreHash = (x * 31 + z * 73 + y * 137) & 0xFF;
+            // Diamond ore: very rare at y<16
+            if (oreHash < 2) {
+                return diamondOreId;
+            }
+        }
+        if (y < 64) {
+            int oreHash = (x * 17 + z * 53 + y * 101) & 0xFF;
+            // Coal ore: common above y=0
+            if (y > 0 && oreHash < 12) {
+                return coalOreId;
+            }
+            // Iron ore: common below y=64
+            if (oreHash >= 12 && oreHash < 20) {
+                return ironOreId;
+            }
+            // Gold ore: rare below y=32
+            if (y < 32 && oreHash >= 20 && oreHash < 22) {
+                return goldOreId;
+            }
+            // Redstone ore: below y=16
+            if (y < 16 && oreHash >= 22 && oreHash < 26) {
+                return redstoneOreId;
+            }
+            // Lapis ore: below y=32
+            if (y < 32 && oreHash >= 26 && oreHash < 28) {
+                return lapisOreId;
+            }
+            // Emerald ore: very rare in mountains (y 4-32)
+            if (y >= 4 && y < 32 && oreHash == 30 && height > 80) {
+                return emeraldOreId;
+            }
         }
 
         // Get biome for block type determination
