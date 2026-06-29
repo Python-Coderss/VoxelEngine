@@ -1008,6 +1008,11 @@ public class Main {
             glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
+            if (ctx.screenshotRequested) {
+                takeScreenshot();
+                ctx.screenshotRequested = false;
+            }
+
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glViewport(0, 0, width, height);
             glClear(GL_COLOR_BUFFER_BIT);
@@ -1967,6 +1972,42 @@ public class Main {
         glTextureStorage2D(renderTexture, 1, GL_RGBA8, width, height);
         glTextureParameteri(renderTexture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTextureParameteri(renderTexture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+
+    /**
+     * Reads the current compute shader output (renderTexture) back from the GPU
+     * and saves it as a timestamped PNG in the screenshots/ folder.
+     */
+    public void takeScreenshot() {
+        int numPixels = width * height;
+        java.nio.ByteBuffer pixels = MemoryUtil.memAlloc(numPixels * 4);
+        try {
+            glGetTextureImage(renderTexture, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+
+            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    int idx = (y * width + x) * 4;
+                    int r = pixels.get(idx) & 0xFF;
+                    int g = pixels.get(idx + 1) & 0xFF;
+                    int b = pixels.get(idx + 2) & 0xFF;
+                    int a = pixels.get(idx + 3) & 0xFF;
+                    // OpenGL origin is bottom-left; flip to top-left for image
+                    image.setRGB(x, height - 1 - y, (a << 24) | (r << 16) | (g << 8) | b);
+                }
+            }
+
+            File dir = new File("screenshots");
+            if (!dir.exists()) dir.mkdirs();
+
+            File out = new File(dir, "screenshot_" + System.currentTimeMillis() + ".png");
+            ImageIO.write(image, "PNG", out);
+            System.out.println("Screenshot saved: " + out.getPath());
+        } catch (IOException e) {
+            System.err.println("Failed to save screenshot: " + e.getMessage());
+        } finally {
+            MemoryUtil.memFree(pixels);
+        }
     }
 
     public void uploadWorldToGpu() {
