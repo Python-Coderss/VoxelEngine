@@ -94,6 +94,7 @@ public class GameContext {
     public String statusMessage = "";
     public double statusUntil = 0.0;
     public int lastMeasuredFps = 0;
+    public boolean screenshotRequested = false;
 
     // --- Render ---
     public int width = 1280, height = 720;

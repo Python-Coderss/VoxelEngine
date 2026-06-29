@@ -45,6 +45,10 @@ public class CommandProcessor {
             case "help": handleHelp(); break;
             case "list": handleList(parts); break;
             case "camera": handleCamera(parts); break;
+            case "screenshot":
+                ctx.screenshotRequested = true;
+                ctx.setStatus("Screenshot saved to screenshots/");
+                break;
             default: ctx.setStatus("Unknown command: /" + command + ". Type /help for commands."); break;
         }
     }
@@ -134,6 +138,7 @@ public class CommandProcessor {
         sb.append("\n  /dimension <overworld|nether|end|aether> - Switch dimension");
         sb.append("\n  /setuv <full|half|empty> <x> <y> [w] [h] - Adjust heart UVs");
         sb.append("\n  /camera <follow|orbit|fixed> - Set camera shot type");
+        sb.append("\n  /screenshot - Save a screenshot to screenshots/");
         ctx.setStatus(sb.toString());
     }
 
