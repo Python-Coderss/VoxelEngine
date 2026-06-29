@@ -79,13 +79,20 @@ public class BlockInteraction {
 
     private float getMiningSpeed(int blockId) {
         String preferredTool = ctx.blockDataManager.getPreferredTool(blockId);
+        int requiredTier = ctx.blockDataManager.getMiningTier(blockId);
         ItemDefinitions.ItemStack selected = ctx.playerInventory.getSelected();
         ItemDefinitions.ItemDefinition selDef = selected != null ? ctx.itemDefinitions.getDefinition(selected.itemId) : null;
         ItemDefinitions.ToolType activeTool = ItemDefinitions.ToolType.HAND;
         float toolSpeed = 1.0f;
+        int toolTier = 0;
         if (selDef != null && selDef.kind == ItemDefinitions.ItemKind.TOOL) {
             activeTool = selDef.toolType;
             toolSpeed = selDef.miningSpeed;
+            toolTier = selDef.tier;
+        }
+        // Check tier requirement: if tool tier is insufficient, mining is very slow and no drop
+        if (requiredTier > toolTier) {
+            return 0.03f; // Extremely slow - can't effectively mine
         }
         if ("pickaxe".equals(preferredTool)) return activeTool == ItemDefinitions.ToolType.PICKAXE ? toolSpeed : 0.55f;
         if ("shovel".equals(preferredTool))  return activeTool == ItemDefinitions.ToolType.SHOVEL ? toolSpeed : 0.75f;
@@ -135,10 +142,28 @@ public class BlockInteraction {
         }
 
         if (collectDrop) {
+            // Tier check: if the player's tool tier is insufficient, no drop
+            int requiredTier = ctx.blockDataManager.getMiningTier(blockId);
+            ItemDefinitions.ItemStack selected = ctx.playerInventory.getSelected();
+            int toolTier = 0;
+            if (selected != null) {
+                ItemDefinitions.ItemDefinition selDef = ctx.itemDefinitions.getDefinition(selected.itemId);
+                if (selDef != null && selDef.kind == ItemDefinitions.ItemKind.TOOL) {
+                    toolTier = selDef.tier;
+                }
+            }
+            if (requiredTier > toolTier) {
+                ctx.setStatus("Need a better tool to mine this");
+                return; // No drop if tool tier is insufficient
+            }
+
             String dropItem;
             int dropCount = 1;
             if (blockId == 26) { // redstone_ore -> drop 4 redstone dust
                 dropItem = "redstone_wire";
+                dropCount = 4;
+            } else if (blockId == 85) { // lapis_ore -> drop 4 lapis
+                dropItem = "lapis_ore";
                 dropCount = 4;
             } else {
                 dropItem = ctx.itemDefinitions.getBlockItemByBlockId().get(blockId);

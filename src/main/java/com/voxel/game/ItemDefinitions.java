@@ -14,6 +14,13 @@ public class ItemDefinitions {
 
     public enum ToolType { HAND, PICKAXE, SHOVEL, AXE }
 
+    // Tool tier for mining progression: 0=hand, 1=wood, 2=stone, 3=iron, 4=diamond
+    public static final int TIER_HAND = 0;
+    public static final int TIER_WOOD = 1;
+    public static final int TIER_STONE = 2;
+    public static final int TIER_IRON = 3;
+    public static final int TIER_DIAMOND = 4;
+
     public static final class ItemDefinition {
         public final String id;
         public final String displayName;
@@ -24,8 +31,9 @@ public class ItemDefinitions {
         public final float miningSpeed;
         public final int maxStack;
         public final Vector4f color;
+        public final int tier; // 0=hand, 1=wood, 2=stone, 3=iron, 4=diamond
 
-        public ItemDefinition(String id, String displayName, ItemKind kind, int blockId, int iconLayer, ToolType toolType, float miningSpeed, int maxStack, Vector4f color) {
+        public ItemDefinition(String id, String displayName, ItemKind kind, int blockId, int iconLayer, ToolType toolType, float miningSpeed, int maxStack, Vector4f color, int tier) {
             this.id = id;
             this.displayName = displayName;
             this.kind = kind;
@@ -35,6 +43,11 @@ public class ItemDefinitions {
             this.miningSpeed = miningSpeed;
             this.maxStack = maxStack;
             this.color = new Vector4f(color);
+            this.tier = tier;
+        }
+
+        public ItemDefinition(String id, String displayName, ItemKind kind, int blockId, int iconLayer, ToolType toolType, float miningSpeed, int maxStack, Vector4f color) {
+            this(id, displayName, kind, blockId, iconLayer, toolType, miningSpeed, maxStack, color, 0);
         }
     }
 
@@ -184,12 +197,47 @@ public class ItemDefinitions {
         // --- Parachutes ---
         registerTool("cold_parachute", "Cold Parachute", "cold_parachute", ToolType.HAND, 1.0f, new Vector4f(0.7f, 0.85f, 1, 1));
         registerTool("golden_parachute", "Golden Parachute", "golden_parachute", ToolType.HAND, 1.0f, new Vector4f(1, 0.9f, 0.5f, 1));
+        // --- New staple blocks ---
+        registerBlock("brick", "Bricks", 130, "brick");
+        registerBlock("stone_brick", "Stone Bricks", 131, "stonebrick");
+        registerBlock("mossy_cobblestone", "Mossy Cobblestone", 132, "cobblestone_mossy");
+        registerBlock("andesite", "Andesite", 133, "stone_andesite");
+        registerBlock("diorite", "Diorite", 134, "stone_diorite");
+        registerBlock("granite", "Granite", 135, "stone_granite");
+        registerBlock("bookshelf", "Bookshelf", 136, "bookshelf");
+        registerBlock("iron_block", "Iron Block", 137, "iron_block");
+        registerBlock("gold_block", "Gold Block", 138, "gold_block");
+        registerBlock("diamond_block", "Diamond Block", 139, "diamond_block");
+        registerBlock("emerald_block", "Emerald Block", 140, "emerald_block");
+        registerBlock("lapis_block", "Lapis Lazuli Block", 141, "lapis_block");
+        // --- Stair blocks ---
+        registerBlock("oak_stairs", "Oak Stairs", 200, "planks_oak");
+        registerBlock("cobblestone_stairs", "Cobblestone Stairs", 201, "cobblestone");
+        registerBlock("stone_brick_stairs", "Stone Brick Stairs", 202, "stonebrick");
+        registerBlock("brick_stairs", "Brick Stairs", 203, "brick");
+        registerBlock("sandstone_stairs", "Sandstone Stairs", 204, "sandstone_top");
+        registerBlock("nether_brick_stairs", "Nether Brick Stairs", 205, "nether_brick");
+        // --- Slab blocks ---
+        registerBlock("oak_slab", "Oak Slab", 206, "planks_oak");
+        registerBlock("cobblestone_slab", "Cobblestone Slab", 207, "cobblestone");
+        registerBlock("stone_brick_slab", "Stone Brick Slab", 208, "stonebrick");
+        registerBlock("brick_slab", "Brick Slab", 209, "brick");
+        registerBlock("sandstone_slab", "Sandstone Slab", 210, "sandstone_top");
+        // --- Torch ---
+        registerBlock("torch", "Torch", 211, "torch_on");
         // --- Aether tools ---
-        registerTool("wood_pickaxe", "Wood Pickaxe", "wood_pickaxe", ToolType.PICKAXE, 4.5f, new Vector4f(1, 1, 1, 1));
-        registerTool("wood_shovel", "Wood Shovel", "wood_shovel", ToolType.SHOVEL, 4.0f, new Vector4f(1, 1, 1, 1));
-        registerTool("wood_axe", "Wood Axe", "wood_axe", ToolType.AXE, 4.2f, new Vector4f(1, 1, 1, 1));
-        registerTool("stone_pickaxe", "Stone Pickaxe", "stone_pickaxe", ToolType.PICKAXE, 6.0f, new Vector4f(1, 1, 1, 1));
-        registerTool("iron_pickaxe", "Iron Pickaxe", "iron_pickaxe", ToolType.PICKAXE, 8.5f, new Vector4f(1, 1, 1, 1));
+        registerTool("wood_pickaxe", "Wood Pickaxe", "wood_pickaxe", ToolType.PICKAXE, 4.5f, new Vector4f(1, 1, 1, 1), TIER_WOOD);
+        registerTool("wood_shovel", "Wood Shovel", "wood_shovel", ToolType.SHOVEL, 4.0f, new Vector4f(1, 1, 1, 1), TIER_WOOD);
+        registerTool("wood_axe", "Wood Axe", "wood_axe", ToolType.AXE, 4.2f, new Vector4f(1, 1, 1, 1), TIER_WOOD);
+        registerTool("stone_pickaxe", "Stone Pickaxe", "stone_pickaxe", ToolType.PICKAXE, 6.0f, new Vector4f(1, 1, 1, 1), TIER_STONE);
+        registerTool("stone_shovel", "Stone Shovel", "stone_shovel", ToolType.SHOVEL, 5.5f, new Vector4f(1, 1, 1, 1), TIER_STONE);
+        registerTool("stone_axe", "Stone Axe", "stone_axe", ToolType.AXE, 5.8f, new Vector4f(1, 1, 1, 1), TIER_STONE);
+        registerTool("iron_pickaxe", "Iron Pickaxe", "iron_pickaxe", ToolType.PICKAXE, 8.5f, new Vector4f(1, 1, 1, 1), TIER_IRON);
+        registerTool("iron_shovel", "Iron Shovel", "iron_shovel", ToolType.SHOVEL, 7.5f, new Vector4f(1, 1, 1, 1), TIER_IRON);
+        registerTool("iron_axe", "Iron Axe", "iron_axe", ToolType.AXE, 7.8f, new Vector4f(1, 1, 1, 1), TIER_IRON);
+        registerTool("diamond_pickaxe", "Diamond Pickaxe", "diamond_pickaxe", ToolType.PICKAXE, 12.0f, new Vector4f(0.4f, 0.85f, 0.95f, 1), TIER_DIAMOND);
+        registerTool("diamond_shovel", "Diamond Shovel", "diamond_shovel", ToolType.SHOVEL, 10.0f, new Vector4f(0.4f, 0.85f, 0.95f, 1), TIER_DIAMOND);
+        registerTool("diamond_axe", "Diamond Axe", "diamond_axe", ToolType.AXE, 10.5f, new Vector4f(0.4f, 0.85f, 0.95f, 1), TIER_DIAMOND);
         // --- Aliases ---
         registerAlias("pickaxe", "wood_pickaxe");
         registerAlias("shovel", "wood_shovel");
@@ -216,12 +264,16 @@ public class ItemDefinitions {
         registerAlias(displayName.toLowerCase(Locale.ROOT).replace(' ', '_'), itemId);
     }
 
-    private void registerTool(String itemId, String displayName, String textureName, ToolType toolType, float miningSpeed, Vector4f color) {
+    private void registerTool(String itemId, String displayName, String textureName, ToolType toolType, float miningSpeed, Vector4f color, int tier) {
         int iconLayer = textureManager.getTextureIndex(textureName);
-        ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.TOOL, 0, iconLayer, toolType, miningSpeed, 1, color);
+        ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.TOOL, 0, iconLayer, toolType, miningSpeed, 1, color, tier);
         itemRegistry.put(itemId, definition);
         registerAlias(itemId, itemId);
         registerAlias(displayName.toLowerCase(Locale.ROOT).replace(' ', '_'), itemId);
+    }
+
+    private void registerTool(String itemId, String displayName, String textureName, ToolType toolType, float miningSpeed, Vector4f color) {
+        registerTool(itemId, displayName, textureName, toolType, miningSpeed, color, 0);
     }
 
     public void registerAlias(String alias, String itemId) {

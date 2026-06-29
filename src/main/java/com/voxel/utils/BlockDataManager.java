@@ -107,6 +107,7 @@ public class BlockDataManager {
         public String name = "";
         public float hardness = 1.0f;
         public String preferredTool = "hand";
+        public int miningTier = 0; // 0=hand, 1=wood, 2=stone, 3=iron, 4=diamond
 
         // List of AABBs for the block shape (each float[6]:
         // minx,miny,minz,maxx,maxy,maxz in 0-1 range)
@@ -289,7 +290,47 @@ public class BlockDataManager {
 
     private void applyMiningDefaults(String name, BlockData data) {
         String lower = name.toLowerCase();
-        if (lower.contains("stone")) {
+        if (lower.contains("diamond") && lower.contains("ore")) {
+            data.hardness = 3.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 3; // Iron or better required
+        } else if (lower.contains("emerald") && lower.contains("ore")) {
+            data.hardness = 3.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 3; // Iron or better
+        } else if (lower.contains("gold") && lower.contains("ore")) {
+            data.hardness = 3.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 3; // Iron or better
+        } else if (lower.contains("iron") && lower.contains("ore")) {
+            data.hardness = 3.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 2; // Stone or better
+        } else if (lower.contains("obsidian")) {
+            data.hardness = 12.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 4; // Diamond required
+        } else if (lower.contains("diamond_block")) {
+            data.hardness = 5.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 3; // Iron required
+        } else if (lower.contains("iron_block")) {
+            data.hardness = 5.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 2; // Stone required
+        } else if (lower.contains("gold_block")) {
+            data.hardness = 3.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 3; // Iron required
+        } else if (lower.contains("emerald_block")) {
+            data.hardness = 5.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 3; // Iron required
+        } else if (lower.contains("lapis_block")) {
+            data.hardness = 3.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 2; // Stone required
+        } else if (lower.contains("stone")) {
             data.hardness = 1.6f;
             data.preferredTool = "pickaxe";
         } else if (lower.contains("glass")) {
@@ -627,6 +668,16 @@ public class BlockDataManager {
     public String getPreferredTool(int blockId) {
         BlockData data = blockRegistry.get(blockId);
         return data != null ? data.preferredTool : "hand";
+    }
+
+    public int getMiningTier(int blockId) {
+        BlockData data = blockRegistry.get(blockId);
+        return data != null ? data.miningTier : 0;
+    }
+
+    public void setMiningTier(int blockId, int tier) {
+        BlockData data = blockRegistry.get(blockId);
+        if (data != null) data.miningTier = tier;
     }
 
     /** @return true if this block emits light (emissive > 0). */
