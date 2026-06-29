@@ -143,7 +143,10 @@ public class BlockInteraction {
             } else {
                 dropItem = ctx.itemDefinitions.getBlockItemByBlockId().get(blockId);
             }
-            if (dropItem != null) ctx.playerInventory.addItem(dropItem, dropCount);
+            // Drop into the world; player must walk over to pick up.
+            if (dropItem != null && ctx.droppedItemManager != null) {
+                ctx.droppedItemManager.spawn(dropItem, dropCount, x, y, z);
+            }
         }
     }
 

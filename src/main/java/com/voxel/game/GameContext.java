@@ -51,6 +51,8 @@ public class GameContext {
     public BiomeManager biomeManager;
     public TextureManager textureManager;
     public CraftingManager craftingManager;
+    /** Tracks items dropped in the world from block breaks. Hover + auto-pickup. */
+    public DroppedItemManager droppedItemManager;
 
     // --- Player ---
     public Player player;
@@ -211,6 +213,12 @@ public class GameContext {
             worldSaveManager.saveCraftingData(previous, craftingTableManager);
             worldSaveManager.saveFurnaceData(previous, furnaceManager);
             worldSaveManager.saveChestData(previous, chestManager);
+        }
+
+        // Drop in-world drops from the previous dimension — they're per-dimension and would
+        // otherwise continue rendering against the new dimension's chunks.
+        if (previous != null && droppedItemManager != null) {
+            droppedItemManager.clearAll();
         }
 
         dimensionManager.ensureDimension(target, renderDistance);
