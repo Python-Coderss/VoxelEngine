@@ -46,6 +46,20 @@ public class World {
     // 1 short per voxel = 4096 shorts per chunk.
     private final short[] occlusionPool;
 
+    // Directional SDF pool: 8 bytes per chunk section, ONLY used for chunks
+    // with zero solid voxels ("empty-loaded" chunks). Each byte encodes the
+    // distance the ray can travel along a single direction before hitting a
+    // solid voxel, entity AABB, or a non-empty neighbor chunk.
+    //   byte = round(distance_in_voxels * 8), capped at 255 (31.875 voxels).
+    //   16 voxels (full chunk run, no obstacles) is encoded as 128.
+    // Layout: 6 meaningful bytes per slot + 2 unused padding bytes.
+    //   byte 0 = +X, byte 1 = -X, byte 2 = +Y, byte 3 = -Y,
+    //   byte 4 = +Z, byte 5 = -Z, bytes 6-7 unused (zero).
+    // GPU packing: 2 uints per slot (8 bytes), shader reads via bit masks.
+    // Chunks with at least one solid voxel have all bytes == 0; the shader
+    // detects this and falls back to plain per-voxel DDA for those.
+    private final byte[] dirSdfPool;
+
     /** Maximum number of chunks that can be stored in memory. Set at construction. */
     private final int poolSize;
 
@@ -70,6 +84,7 @@ public class World {
         tempLightPool = new byte[poolSize * voxelsPerChunk];
         bitmaskPool = new int[poolSize * (voxelsPerChunk / 32)];
         occlusionPool = new short[poolSize * voxelsPerChunk];
+        dirSdfPool = new byte[poolSize * 8];
     }
 
     /** @return the maximum number of chunks this world supports. */
@@ -188,7 +203,46 @@ public class World {
     public int[] getLightPool() { return lightPool; }
     public short[] getOcclusionPool() { return occlusionPool; }
     public byte[] getTempLightPool() { return tempLightPool; }
+    public byte[] getDirSdfPool() { return dirSdfPool; }
     public int getPoolSizeForAlloc() { return poolSize; }
+
+    /**
+     * Clears the directional SDF pool for a given chunk slot (8 bytes).
+     * After this call the slot's 6 direction distance bytes are zeroed; the
+     * shader interprets all-zero bytes as "no SDF available — use plain DDA".
+     */
+    public void clearDirSdfPoolSlot(int slot) {
+        int offset = slot * 8;
+        dirSdfPool[offset]     = 0;
+        dirSdfPool[offset + 1] = 0;
+        dirSdfPool[offset + 2] = 0;
+        dirSdfPool[offset + 3] = 0;
+        dirSdfPool[offset + 4] = 0;
+        dirSdfPool[offset + 5] = 0;
+    }
+
+    /**
+     * Writes 6 directional distance bytes for a chunk slot. Each byte is the
+     * pre-encoded distance in voxels * 8 (e.g. a full chunk run of 16 voxels
+     * → 128). Padding bytes 6-7 are zeroed.
+     */
+    public void setDirSdfSlot(int slot, byte b0, byte b1, byte b2, byte b3, byte b4, byte b5) {
+        int offset = slot * 8;
+        dirSdfPool[offset]     = b0;
+        dirSdfPool[offset + 1] = b1;
+        dirSdfPool[offset + 2] = b2;
+        dirSdfPool[offset + 3] = b3;
+        dirSdfPool[offset + 4] = b4;
+        dirSdfPool[offset + 5] = b5;
+    }
+
+    /**
+     * Returns the raw voxelPool int for a chunk-slot+local-coord cell.
+     * Used by SDF generation (and any future per-cell inspection tools).
+     */
+    public int getRawVoxelInSlot(int slot, int lx, int ly, int lz) {
+        return chunkPool[(slot << 12) | (lx | (ly << 4) | (lz << 8))];
+    }
 
     /**
      * Assigns a chunk slot to a specific region in the indirection table.

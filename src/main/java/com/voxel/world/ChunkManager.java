@@ -39,6 +39,37 @@ public class ChunkManager {
     // ── Chunk map (ConcurrentHashMap for safe cross-thread reads via isChunkLoaded) ──
     private final Map<Long, Integer[]> loadedChunks = new ConcurrentHashMap<>();
 
+    // ── Terrain world-space bounds, written only by the gen thread.
+    // Used by the compute shader as a cheap SDF for sky early-out:
+    //   u_MaxY = top plane (camera above and ray.y>0 → pure sky)
+    //   X/Z planes are restricted to the player's RENDER-DISTANCE ring so the
+    //   side SDF is meaningful (the full loaded-chunk buffer would always
+    //   swallow most rays).
+    // Layout: [maxY, minY, maxX, minX, maxZ, minZ].
+    private volatile float[] terrainBounds = new float[]{
+        Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY,
+        Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY,
+        Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY
+    };
+    private final java.util.concurrent.atomic.AtomicBoolean boundsValid =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+    /** True after the first terrain bounds update on the gen thread. */
+    public boolean areBoundsValid() { return boundsValid.get(); }
+
+    // ── Cheap sky-ray early-out: track the highest solid voxel Y across all
+    //    loaded chunks. When the camera is ABOVE this value AND the ray points
+    //    up, no amount of climbing will hit terrain → pure sky, skip DDA.
+    //    Volatile int — gen thread writes, main thread reads per frame.
+    //    Sentinel value -1 means "no chunks loaded yet" so the shader can gate
+    //    the test behind u_BoundsValid without false-positive early-exits.
+    private volatile int topSolidY = -1;
+    /** Per-column max solid voxel Y map (chunk key → world Y). Gen thread only writes. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Integer> chunkTopYByCol =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** @return Highest solid voxel Y across all loaded chunks, or -1 if none loaded. */
+    public int getTopSolidY() { return topSolidY; }
+
     // ── Slot pool: simple FILO stack (int[] + counter), single-threaded ──
     private final int[] freeSlotStack;
     private int freeSlotTop;
@@ -603,6 +634,9 @@ public class ChunkManager {
                 dirtySlots.add(s);
             }
             tableDirty.set(true);
+            // Sky-ray early-out: register this chunk's top solid voxel Y.
+            int colMax = computeColumnMaxY(slots);
+            updateTopSolidY(key, colMax);
             // Minecraft-style lighting: posted to dedicated light thread
             if (Math.abs(cx - lastPlayerCX) <= LIGHT_GRID_RADIUS && Math.abs(cz - lastPlayerCZ) <= LIGHT_GRID_RADIUS) {
                 if (is5x5Loaded(cx, cz)) {
@@ -653,8 +687,30 @@ public class ChunkManager {
         for (int cy = 0; cy < chunkHeight; cy++) {
             generator.decorate(cx, cy, cz, slots[cy], world);
         }
+        // Pass 2.5: Chunk-level directional SDF for sphere-trace acceleration.
+        // ONLY for chunks that have zero solid voxels (per user directive).
+        // Chunks with solids use plain per-voxel DDA in the shader (their
+        // dirSdfPool stays at 0, signaling "no SDF available").
+        for (int cy = 0; cy < chunkHeight; cy++) {
+            int slot = slots[cy];
+            if (slot == World.EMPTY) continue;
+            // Check if the chunk has any solids via the bitmask pool.
+            int bmBase = slot << 7;
+            boolean anySolid = false;
+            for (int w = 0; w < 128; w++) {
+                if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
+            }
+            if (!anySolid) {
+                computeChunkDirSDF(slot, cx, cy, cz);
+                dirtySlots.add(slot);
+            }
+        }
         WorldGenLogger.logChunk("GEN_PASS2_DECORATE", cx, -1, cz,
             "all 16 sections (" + (System.currentTimeMillis() - t2) + "ms)");
+        // Sky-ray early-out: register this chunk's top solid voxel Y for u_TopSolidY.
+        // Recomputed here (after SDF build) so tree-block foliage counts toward the max.
+        int colMaxProc = computeColumnMaxY(slots);
+        updateTopSolidY(key, colMaxProc);
 
         // Pass 3: Bake occlusion
         long t3 = System.currentTimeMillis();
@@ -709,7 +765,20 @@ public class ChunkManager {
         for (int cy = 0; cy < chunkHeight; cy++) {
             world.clearChunkSlot(cx, cy, cz);
             world.clearLightPoolSlot(slots[cy]);
+            world.clearDirSdfPoolSlot(slots[cy]);
             freeSlotStack[freeSlotTop++] = slots[cy];
+        }
+        // Sky-ray early-out: deregister this chunk from the column-max map.
+        // Only recompute global max when this chunk actually held it (cheap O(1)
+        // guard; if the removed chunk's Y is below our current top, the max is
+        // unchanged and we skip the O(N) scan over all loaded chunks).
+        Integer removedY = chunkTopYByCol.remove(key);
+        if (removedY != null && removedY >= topSolidY) {
+            int newMax = -1;
+            for (Integer y : chunkTopYByCol.values()) {
+                if (y != null && y > newMax) newMax = y;
+            }
+            topSolidY = newMax;
         }
         int slotHash = java.util.Arrays.hashCode(slots);
         WorldGenLogger.logChunk("UNLOAD_DONE", cx, -1, cz,
@@ -776,6 +845,171 @@ public class ChunkManager {
 
     /** @return the BlockDataManager for light debug queries */
     public BlockDataManager getBlockDataManager() { return blockDataManager; }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  TERRAIN BOUNDS — SDF sky early-out support (gen thread only)
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Updates the loaded terrain world-space bounds with a freshly loaded chunk column.
+     *
+     * X/Z bounds are kept TIGHT around the player's render-distance ring (instead of
+     * the full KEEP_RADIUS buffer) so the side-plane SDF meaningfully culls out-of-frustum
+     * rays. Y is the actual highest solid voxel in the chunk column (computed after
+     * decoration so trees contribute). Volatile float[6] — gen thread only writes.
+     *
+     * @param cx absolute chunk x of loaded column
+     * @param cz absolute chunk z of loaded column
+     * @param columnMaxY highest solid voxel y in the column (after decoration)
+     * @param pcx player's chunk x at load time (for visible-ring filtering)
+     * @param pcz player's chunk z at load time
+     */
+    /** Used at chunk unload to zero the SDF pool slot so a future allocator
+     *  reusing the same slot starts from a clean state. */
+    public void clearSdfForSlot(int slot) {
+        if (slot == World.EMPTY) return;
+        world.clearDirSdfPoolSlot(slot);
+    }
+
+    /**
+     * Computes the highest solid voxel Y in a chunk column (across all 16 sections,
+     * scanning top→bottom to exit early). Runs AFTER voxel data is finalized
+     * (post-decoration or post-disk-load) and before the slot is sent to GPU.
+     *
+     * Cost: ~4096 cell checks in the WORST case (all-air column); typically far
+     * less because we exit as soon as the highest solid is found. Sub-ms per chunk.
+     *
+     * Updates {@link #chunkTopYByCol} and {@link #topSolidY} atomically with the
+     * gen-thread constraint (single writer for both, so plain volatile int suffices).
+     *
+     * @param slots the 16 chunk-section slot indexes for this column
+     * @return the highest solid voxel world Y, or -1 if column is fully air
+     */
+    private int computeColumnMaxY(Integer[] slots) {
+        int best = -1;
+        // Scan top section down so we can break early on the first solid found.
+        for (int cy = chunkHeight - 1; cy >= 0; cy--) {
+            int slot = slots[cy];
+            if (slot == World.EMPTY) continue;
+            int secBaseY = cy << 4;
+            // Within this section, scan ly down so we scan the highest solid first.
+            for (int ly = 15; ly >= 0; ly--) {
+                boolean solid = false;
+                for (int lx = 0; lx < 16 && !solid; lx++) {
+                    for (int lz = 0; lz < 16; lz++) {
+                        if ((world.getRawVoxelInSlot(slot, lx, ly, lz) & 0x80000000) != 0) {
+                            solid = true;
+                            break;
+                        }
+                    }
+                }
+                if (solid) {
+                    best = secBaseY + ly;
+                    break; // Highest ly in topmost non-empty section = column max
+                }
+            }
+            if (best >= 0) break; // Already found the column max, no need to scan lower
+        }
+        return best;
+    }
+
+    /** Record a chunk's column max-Y for the sky-ray early-out uniform.
+     *  Also flips u_BoundsValid true on the first successful registration
+     *  so the shader's gated skyPixel check actually runs. */
+    private void updateTopSolidY(long chunkKey, int columnMaxY) {
+        chunkTopYByCol.put(chunkKey, columnMaxY);
+        if (columnMaxY > topSolidY) topSolidY = columnMaxY;
+        boundsValid.set(true);
+    }
+
+    /**
+     * Computes 6 directional SDF distances (±X, ±Y, ±Z) for an empty-loaded
+     * chunk section (caller must verify zero solids via bitmask scan).
+     * Each direction's value says how many voxels the ray can travel along
+     * that axis before hitting a non-empty neighbor chunk boundary.
+     * (Entities handled analytically by traceAll; we don't bake them in to
+     * avoid stale data after entity movement.)
+     *
+     * Encoded: byte = round(distance_in_voxels * 8), capped at 255.
+     * Full chunk run (16 voxels, no obstacle) → byte = 128.
+     *
+     * Layout written to world.dirSdfPool:
+     *   byte 0 = +X, byte 1 = -X, byte 2 = +Y, byte 3 = -Y,
+     *   byte 4 = +Z, byte 5 = -Z. Bytes 6-7 unused (zero).
+     *
+     * Cost: 6 directions × 256 face cells × ≤16 voxel walks. Sub-ms per chunk.
+     */
+    private void computeChunkDirSDF(int slot, int absCx, int absCy, int absCz) {
+        // For each of 6 directions: lookup the neighbor chunk's slot, then
+        // check whether that neighbor has any solids via bitmask-pool OR.
+        // "Free" neighbor = world's EMPTY sentinel OR a loaded-but-air chunk
+        // (zero solids). Occupied neighbor = loaded chunk with at least one
+        // solid → directional SDF = 8 (1 voxel). Otherwise = 128 (16 voxels).
+        int[] neighborSlots = new int[6];
+        neighborSlots[0] = world.getChunkSlot((absCx + 1) << 4, absCy << 4, absCz << 4);
+        neighborSlots[1] = world.getChunkSlot((absCx - 1) << 4, absCy << 4, absCz << 4);
+        neighborSlots[2] = world.getChunkSlot(absCx << 4, (absCy + 1) << 4, absCz << 4);
+        neighborSlots[3] = world.getChunkSlot(absCx << 4, (absCy - 1) << 4, absCz << 4);
+        neighborSlots[4] = world.getChunkSlot(absCx << 4, absCy << 4, (absCz + 1) << 4);
+        neighborSlots[5] = world.getChunkSlot(absCx << 4, absCy << 4, (absCz - 1) << 4);
+
+        int[] masks = world.getBitmaskPool();
+        byte[] enc = new byte[6];
+        for (int i = 0; i < 6; i++) {
+            int nSlot = neighborSlots[i];
+            boolean neighborFree;
+            if (nSlot == World.EMPTY) {
+                neighborFree = true;
+            } else {
+                // Check 128 bitmask-pool words; any bit set = chunk has solids.
+                neighborFree = true;
+                int bmBase = nSlot << 7;
+                for (int w = 0; w < 128; w++) {
+                    if (masks[bmBase + w] != 0) { neighborFree = false; break; }
+                }
+            }
+            enc[i] = (byte) (neighborFree ? 128 : 8);
+        }
+        world.setDirSdfSlot(slot, enc[0], enc[1], enc[2], enc[3], enc[4], enc[5]);
+    }
+
+    private void updateTerrainBounds(int cx, int cz, int columnMaxY, int pcx, int pcz) {
+        // Visible ring: only chunks within 2x renderDistance (stretched forward) participate
+        // in the side SDF. Using the loading player's chunk as anchor.
+        int vis = renderDistance * 2;
+        int dx = cx - pcx, dz = cz - pcz;
+        if (Math.abs(dx) > vis || Math.abs(dz) > vis) {
+            // Out-of-visible chunk: don't loosen the box but DO update Y (cheap and useful)
+            float[] cur = terrainBounds;
+            terrainBounds = new float[]{cur[0], cur[1], cur[2], cur[3], cur[4], cur[5]};
+            if (columnMaxY > cur[0]) {
+                terrainBounds[0] = columnMaxY;
+            }
+            return;
+        }
+        float maxX = (cx << 4) + 16f;
+        float minX = (cx << 4);
+        float maxZ = (cz << 4) + 16f;
+        float minZ = (cz << 4);
+        float[] cur = terrainBounds;
+        float[] next = new float[]{
+            Math.max(cur[0], columnMaxY),
+            Math.min(cur[1], 0f),
+            Math.max(cur[2], maxX),
+            Math.min(cur[3], minX),
+            Math.max(cur[4], maxZ),
+            Math.min(cur[5], minZ)
+        };
+        terrainBounds = next;
+    }
+
+    /** Convenience getters — single array reads, lock-free. Infinities are returned as 0f. */
+    public float getMaxTerrainY() { float[] b = terrainBounds; return Float.isInfinite(b[0]) ? 0f : b[0]; }
+    public float getMinTerrainY() { float[] b = terrainBounds; return Float.isInfinite(b[1]) ? 0f : b[1]; }
+    public float getMaxTerrainX() { float[] b = terrainBounds; return Float.isInfinite(b[2]) ? 0f : b[2]; }
+    public float getMinTerrainX() { float[] b = terrainBounds; return Float.isInfinite(b[3]) ? 0f : b[3]; }
+    public float getMaxTerrainZ() { float[] b = terrainBounds; return Float.isInfinite(b[4]) ? 0f : b[4]; }
+    public float getMinTerrainZ() { float[] b = terrainBounds; return Float.isInfinite(b[5]) ? 0f : b[5]; }
 
     // ══════════════════════════════════════════════════════════════════
     //  HELPERS
