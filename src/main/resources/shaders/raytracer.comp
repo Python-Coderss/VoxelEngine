@@ -620,13 +620,29 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT, 
         }
     }
 
-    // Crafting items: 3D miniature blocks using scaled block AABBs
+    // Crafting items: 3D miniature blocks using scaled block AABBs.
+    // Two paths based on whether the item is spinning (blockInfo.y != 0):
+    //   - Static (blockInfo.y == 0): standard AABB path. Used by the crafting-grid entries.
+    //   - Spinning (blockInfo.y != 0): OBB path using intersectOrientedBox with a Y-rotation
+    //     matrix. Used by dropped items so they rotate like Minecraft-style entity items.
+    float maxDroppedItemDist = 32.0; // Cheap cull: dropped items only render near the camera.
     for (int i = 0; i < u_CraftingItemCount; i++) {
         int blockId = floatBitsToInt(craftingItems[i].position.w);
         if (blockId <= 0) continue;
         vec3 pos = craftingItems[i].position.xyz;
         float scale = craftingItems[i].blockInfo.x;
         float halfScale = scale * 0.5;
+        float spinAngle = craftingItems[i].blockInfo.y;
+
+        // Cost control: spinning dropped items cost ~10-15 GPU ops per OBB test, and a full
+        // crafting grid has up to 64 dropped items. Skip items outside a reasonable view
+        // distance. Crafting grid items are always nearby (radius ~2 from player at table)
+        // so the distance test only meaningfully affects dropped items.
+        if (spinAngle != 0.0) {
+            vec3 toItem = pos - ro;
+            float distSq = dot(toItem, toItem);
+            if (distSq > maxDroppedItemDist * maxDroppedItemDist) continue;
+        }
 
         ivec4 info = texelFetch(u_BlockAABBInfo, blockId);
         int aabbCount = info.y;
@@ -636,24 +652,41 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT, 
         vec3 hitN = vec3(0, 1, 0);
         bool hit = false;
 
-        if (aabbCount > 0) {
-            for (int k = 0; k < min(aabbCount, 8); k++) {
-                vec3 bMin = texelFetch(u_BlockAABBs, aabbOffset + k * 2).xyz;
-                vec3 bMax = texelFetch(u_BlockAABBs, aabbOffset + k * 2 + 1).xyz;
+        if (spinAngle == 0.0) {
+            // Static AABB path (cheaper, used by crafting-grid items).
+            if (aabbCount > 0) {
+                for (int k = 0; k < min(aabbCount, 8); k++) {
+                    vec3 bMin = texelFetch(u_BlockAABBs, aabbOffset + k * 2).xyz;
+                    vec3 bMax = texelFetch(u_BlockAABBs, aabbOffset + k * 2 + 1).xyz;
+                    vec3 scaledMin = pos + (bMin - 0.5) * scale;
+                    vec3 scaledMax = pos + (bMax - 0.5) * scale;
 
-                // Scale and offset AABB: center block at 0.5, scale 0.5->0
-                vec3 scaledMin = pos + (bMin - 0.5) * scale;
-                vec3 scaledMax = pos + (bMax - 0.5) * scale;
-
+                    float tn, tf;
+                    if (intersectAABB(ro, rd, scaledMin, scaledMax, tn, tf)) {
+                        float hitT = tn > 0.0 ? tn : tf;
+                        if (hitT < minT) {
+                            minT = hitT;
+                            vec3 hp = ro + rd * hitT;
+                            vec3 centerAABB = (scaledMin + scaledMax) * 0.5;
+                            vec3 halfAABB = (scaledMax - scaledMin) * 0.5;
+                            vec3 localP = (hp - centerAABB) / max(halfAABB, vec3(0.0001));
+                            vec3 la = abs(localP);
+                            if (la.x >= la.y && la.x >= la.z) hitN = vec3(sign(localP.x), 0, 0);
+                            else if (la.y >= la.z) hitN = vec3(0, sign(localP.y), 0);
+                            else hitN = vec3(0, 0, sign(localP.z));
+                            hit = true;
+                        }
+                    }
+                }
+            } else {
+                // No AABBs (e.g. water): treat as full block at item scale.
+                vec3 halfSize = vec3(halfScale);
                 float tn, tf;
-                if (intersectAABB(ro, rd, scaledMin, scaledMax, tn, tf)) {
+                if (intersectAABB(ro, rd, pos - halfSize, pos + halfSize, tn, tf)) {
                     float hitT = tn > 0.0 ? tn : tf;
                     if (hitT < minT) {
                         minT = hitT;
-                        vec3 hp = ro + rd * hitT;
-                        vec3 centerAABB = (scaledMin + scaledMax) * 0.5;
-                        vec3 halfAABB = (scaledMax - scaledMin) * 0.5;
-                        vec3 localP = (hp - centerAABB) / max(halfAABB, vec3(0.0001));
+                        vec3 localP = (ro + rd * hitT - pos) / max(halfScale, 0.0001);
                         vec3 la = abs(localP);
                         if (la.x >= la.y && la.x >= la.z) hitN = vec3(sign(localP.x), 0, 0);
                         else if (la.y >= la.z) hitN = vec3(0, sign(localP.y), 0);
@@ -663,19 +696,38 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, uint lastVoxel, out float resT, 
                 }
             }
         } else {
-            // No AABBs (e.g. water): treat as full block at item scale
-            vec3 halfSize = vec3(halfScale);
-            float tn, tf;
-            if (intersectAABB(ro, rd, pos - halfSize, pos + halfSize, tn, tf)) {
-                float hitT = tn > 0.0 ? tn : tf;
-                if (hitT < minT) {
-                    minT = hitT;
-                    vec3 localP = (ro + rd * hitT - pos) / max(halfScale, 0.0001);
-                    vec3 la = abs(localP);
-                    if (la.x >= la.y && la.x >= la.z) hitN = vec3(sign(localP.x), 0, 0);
-                    else if (la.y >= la.z) hitN = vec3(0, sign(localP.y), 0);
-                    else hitN = vec3(0, 0, sign(localP.z));
-                    hit = true;
+            // Spinning OBB path (used by dropped items).
+            // mat3 rotateY spinAngle; reused via closure by intersectOrientedBox.
+            mat3 rot = rotateY(spinAngle);
+            if (aabbCount > 0) {
+                for (int k = 0; k < min(aabbCount, 8); k++) {
+                    vec3 bMin = texelFetch(u_BlockAABBs, aabbOffset + k * 2).xyz;
+                    vec3 bMax = texelFetch(u_BlockAABBs, aabbOffset + k * 2 + 1).xyz;
+                    // Each sub-AABB has its own offset from the block's primary center,
+                    // rotated independently so blocks like crafting tables don't deform.
+                    vec3 subCenter = pos + ((bMin + bMax) * 0.5 - 0.5) * scale;
+                    vec3 subHalfSize = (bMax - bMin) * 0.5 * scale;
+                    float tn;
+                    vec3 hitN_local, hitLocalPos, hitLocalNormal;
+                    if (intersectOrientedBox(ro, rd, subCenter, subHalfSize, rot, tn, hitN_local, hitLocalPos, hitLocalNormal)) {
+                        if (tn < minT) {
+                            minT = tn;
+                            hitN = hitN_local; // world-space normal (already rotated by intersectOrientedBox)
+                            hit = true;
+                        }
+                    }
+                }
+            } else {
+                // Full cube rotated. Use intersectOrientedBox with the per-axis halfSize.
+                vec3 halfSizeVec = vec3(halfScale);
+                float tn;
+                vec3 hitN_local, hitLocalPos, hitLocalNormal;
+                if (intersectOrientedBox(ro, rd, pos, halfSizeVec, rot, tn, hitN_local, hitLocalPos, hitLocalNormal)) {
+                    if (tn < minT) {
+                        minT = tn;
+                        hitN = hitN_local;
+                        hit = true;
+                    }
                 }
             }
         }
@@ -762,7 +814,18 @@ void main() {
             vec3 itemPos = craftingItems[craftingIdx].position.xyz;
             float scale = craftingItems[craftingIdx].blockInfo.x;
             float halfScale = scale * 0.5;
+            float itemSpin = craftingItems[craftingIdx].blockInfo.y;
             vec3 localPos = hp - itemPos;
+            // Transform world-space localPos into the rotated block frame so the texture
+            // appears locked to the geometry as it spins. Inverse of rotateY(theta) is
+            // rotateY(-theta). Also inverse-rotate the world-space hit normal `n` so the
+            // face-index chain below (which keys off axis-aligned components) picks the
+            // correct block-frame face; otherwise non-uniform blocks (logs, crafting_table,
+            // bookshelves) show wrong face textures during rotation.
+            if (itemSpin != 0.0) {
+                localPos = rotateY(-itemSpin) * localPos;
+                n = normalize(rotateY(-itemSpin) * n);
+            }
 
             // Determine face from normal and look up face texture from block data
             ivec4 d0 = texelFetch(u_BlockData, blockId * 3);
@@ -771,7 +834,9 @@ void main() {
             int face = (n.y > 0.9) ? 1 : ((n.y < -0.9) ? 0 : ((n.z < -0.9) ? 2 : ((n.z > 0.9) ? 3 : ((n.x < -0.9) ? 4 : 5))));
             int tex = (face == 0) ? d0.x : (face == 1 ? d0.y : (face == 2 ? d0.z : (face == 3 ? d0.w : (face == 4 ? d1.x : d1.y))));
 
-            // Compute UV from local position on the miniature block face
+            // Compute UV from local position on the miniature block face.
+            // localPos is already in the rotated block frame (above), so it lays out
+            // the texture consistently with the geometry as it spins.
             vec2 uv;
             if (abs(n.y) > 0.5) {
                 // Top/bottom face: pixel-perfect mapping from exact hit position (DDA yields crisp outlines)

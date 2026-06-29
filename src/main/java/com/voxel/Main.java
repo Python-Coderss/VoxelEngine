@@ -311,6 +311,10 @@ public class Main {
         ctx.playerInventory = playerInventory;
         playerInventory.populateStarting();
 
+        // Tracks items dropped in the world (hover + auto-pickup). Initialized after
+        // playerInventory because pickup uses ctx.playerInventory.addItem().
+        ctx.droppedItemManager = new com.voxel.game.DroppedItemManager(ctx);
+
         blockInteraction = new BlockInteraction(ctx);
         portalSystem = new PortalSystem(ctx, blockInteraction);
         commandProcessor = new CommandProcessor(ctx);
@@ -615,6 +619,11 @@ public class Main {
         // Tick furnaces (smelting logic)
         if (ctx.furnaceManager != null && ctx.chunkManager != null) {
             ctx.furnaceManager.tickAll(ctx.chunkManager, dt);
+        }
+
+        // Tick dropped items (bob animation + auto-pickup when player walks over)
+        if (ctx.droppedItemManager != null) {
+            ctx.droppedItemManager.update(dt, player.getPosition());
         }
 
         entityManager.update(dt);
@@ -1326,71 +1335,88 @@ public class Main {
     public static final float CT_HALF_CELL = CT_CELL / 2.0f; // 0.0625
     public static final float CRAFTING_ITEM_SCALE = 0.125f; // 1/8 scale — fills one 2x2 pixel cell
 
-    public void uploadCraftingItems() {
-        String[][] grid = null;
-        float bx, bz, by;
+    /** Reusable hosting for the uploadRenderItems FloatBuffer (avoids per-frame alloc). */
+    private float[] reusableItemDataBuf;
+    private java.nio.FloatBuffer reusableItemNioBuf;
 
-        if (ctx.craftingTableOpen) {
-            // Use player's current crafting grid while UI is open
-            grid = playerInventory.getCraftingGrid3x3();
-            bx = ctx.craftingTableBlockX;
-            bz = ctx.craftingTableBlockZ;
-            by = ctx.craftingTableBlockY + 1.0f + CRAFTING_ITEM_SCALE * 0.5f;
-        } else {
-            // Show items from CraftingTableManager when not crafting
-            if (ctx.craftingTableManager.hasGrid(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ)) {
-                grid = ctx.craftingTableManager.getGrid(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ);
-                bx = ctx.craftingTableBlockX;
-                bz = ctx.craftingTableBlockZ;
-                by = ctx.craftingTableBlockY + 1.0f + CRAFTING_ITEM_SCALE * 0.5f;
-            } else {
-                glProgramUniform1i(computeProgram, locCraftingItemCount, 0);
-                return;
-            }
+    /**
+     * Pack all "3D miniature blocks" rendered in the world into the craftingItemSSBO
+     * (which now also hosts dropped-item entries — see {@link com.voxel.game.DroppedItemManager}).
+     *
+     * Layout per CraftingItem (8 floats):
+     *   [0..2] = position.xyz, [3] = blockId (as int bits), [4] = scale, [5..7] = padding
+     * Order: crafting-grid items first (up to 9), then dropped items (up to MAX_DROPPED_ITEMS).
+     * Total u_CraftingItemCount uniform = craftCount + dropCount.
+     */
+    public void uploadCraftingItems() {
+        int maxCraftItems = 9; // 3x3 grid (existing behaviour)
+        int maxItems = maxCraftItems + com.voxel.game.DroppedItemManager.MAX_ITEMS;
+
+        if (reusableItemDataBuf == null || reusableItemDataBuf.length < maxItems * 8) {
+            if (reusableItemNioBuf != null) MemoryUtil.memFree(reusableItemNioBuf);
+            reusableItemDataBuf = new float[maxItems * 8];
+            reusableItemNioBuf = MemoryUtil.memAllocFloat(maxItems * 8);
         }
 
-        float[] itemData = new float[9 * 8]; // 9 items * 8 floats per CraftingItem (2x vec4)
         int count = 0;
+        int craftCount = 0;
 
-        for (int r = 0; r < 3; r++) {
-            for (int c = 0; c < 3; c++) {
-                String itemId = grid[r][c];
-                if (itemId != null) {
+        // ---- Crafting-grid items (existing behaviour) ----
+        String[][] grid = null;
+        if (ctx.craftingTableOpen) {
+            grid = playerInventory.getCraftingGrid3x3();
+        } else if (ctx.craftingTableManager.hasGrid(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ)) {
+            grid = ctx.craftingTableManager.getGrid(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ);
+        }
+
+        if (grid != null) {
+            float bx = ctx.craftingTableBlockX;
+            float bz = ctx.craftingTableBlockZ;
+            float by = ctx.craftingTableBlockY + 1.0f + CRAFTING_ITEM_SCALE * 0.5f;
+
+            for (int r = 0; r < 3; r++) {
+                for (int c = 0; c < 3; c++) {
+                    String itemId = grid[r][c];
+                    if (itemId == null) continue;
                     ItemDefinitions.ItemDefinition def = itemDefinitions.getDefinition(itemId);
-                    // Only render blocks that have a blockId (skip tools like pickaxes)
-                    if (def != null && def.blockId > 0) {
-                        // Position at the center of the 2x2 pixel cell on the texture
-                        // At yaw=0 (crafting camera), screen right = +Z, screen up = +X
-                        // So columns map to Z (left-right) and rows map to X reversed (top-bottom)
-                        // Item rests on the table surface: center Y = surface + half the item height
-                        float pz = bz + CT_MARGIN + c * CT_STEP + CT_HALF_CELL;
-                        float px = bx + (1.0f - CT_MARGIN) - r * CT_STEP - CT_HALF_CELL;
-                        int idx = count * 8;
-                        // position.xyz, w = blockId (stored as float bits for the shader)
-                        itemData[idx] = px;
-                        itemData[idx + 1] = by;
-                        itemData[idx + 2] = pz;
-                        itemData[idx + 3] = Float.intBitsToFloat(def.blockId);
-                        // blockInfo.x = scale, yzw padding
-                        itemData[idx + 4] = CRAFTING_ITEM_SCALE;
-                        itemData[idx + 5] = 0;
-                        itemData[idx + 6] = 0;
-                        itemData[idx + 7] = 0;
-                        count++;
-                    }
+                    if (def == null || def.blockId <= 0) continue;
+                    float pz = bz + CT_MARGIN + c * CT_STEP + CT_HALF_CELL;
+                    float px = bx + (1.0f - CT_MARGIN) - r * CT_STEP - CT_HALF_CELL;
+                    int idx = count * 8;
+                    reusableItemDataBuf[idx] = px;
+                    reusableItemDataBuf[idx + 1] = by;
+                    reusableItemDataBuf[idx + 2] = pz;
+                    reusableItemDataBuf[idx + 3] = Float.intBitsToFloat(def.blockId);
+                    reusableItemDataBuf[idx + 4] = CRAFTING_ITEM_SCALE;
+                    reusableItemDataBuf[idx + 5] = 0f;
+                    reusableItemDataBuf[idx + 6] = 0f;
+                    reusableItemDataBuf[idx + 7] = 0f;
+                    count++;
                 }
             }
+            craftCount = count;
         }
 
-        if (count > 0) {
-            java.nio.FloatBuffer buf = MemoryUtil.memAllocFloat(count * 8);
-            buf.put(itemData, 0, count * 8);
-            buf.flip();
-            glNamedBufferSubData(craftingItemSSBO, 0, buf);
-            MemoryUtil.memFree(buf);
+        // ---- Dropped items (slice immediately after the crafting-grid entries) ----
+        // Dropped items share the same shader path as crafting items: each entry encodes
+        // (position.xyz, blockId-as-bits, scale). The shader renders whatever entries have
+        // blockId > 0, scaling them independently per entry. We use DROPPED_ITEM_SCALE
+        // (0.25) for dropped items vs CRAFTING_ITEM_SCALE (0.125) for crafting-grid items,
+        // and the per-entry scale field in itemData[idx + 4] picks the right one.
+        int dropCount = 0;
+        if (ctx.droppedItemManager != null) {
+            dropCount = ctx.droppedItemManager.buildUpload(reusableItemDataBuf);
+        }
+        int totalCount = craftCount + dropCount;
+
+        if (totalCount > 0) {
+            reusableItemNioBuf.clear();
+            reusableItemNioBuf.put(reusableItemDataBuf, 0, totalCount * 8);
+            reusableItemNioBuf.flip();
+            glNamedBufferSubData(craftingItemSSBO, 0, reusableItemNioBuf);
         }
 
-        glProgramUniform1i(computeProgram, locCraftingItemCount, count);
+        glProgramUniform1i(computeProgram, locCraftingItemCount, totalCount);
     }
 
     public void bindTextures() {
@@ -1659,9 +1685,11 @@ public class Main {
         pointLightSSBO = glCreateBuffers();
         glNamedBufferStorage(pointLightSSBO, 4096, GL_DYNAMIC_STORAGE_BIT);
 
-        // Crafting item SSBO (max 9 items * 32 bytes each = 288 bytes)
+        // Crafting/dropped-item SSBO: 9 crafting-grid entries + 64 dropped items max
+        // (= 73 entries × 32 bytes = 2336 bytes). Rounded up to 2560 bytes (80 entries)
+        // for clean alignment and a small expansion reserve for future item-rendering uses.
         craftingItemSSBO = glCreateBuffers();
-        glNamedBufferStorage(craftingItemSSBO, 288, GL_DYNAMIC_STORAGE_BIT);
+        glNamedBufferStorage(craftingItemSSBO, (long) 80 * 32, GL_DYNAMIC_STORAGE_BIT);
         // Light pool SSBO (same size as chunk pool: poolSize * 16³ ints)
         lightSSBO = glCreateBuffers();
         glNamedBufferStorage(lightSSBO, (long) poolSize * CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * Integer.BYTES, GL_DYNAMIC_STORAGE_BIT);
