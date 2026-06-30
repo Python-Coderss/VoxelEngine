@@ -779,4 +779,9 @@ public class BlockDataManager {
         if (name == null) return null;
         return nameToId.get(name.toLowerCase());
     }
+
+    /** Returns all registered name→blockId entries for building canonical registries. */
+    public Map<String, Integer> getAllRegisteredNames() {
+        return new HashMap<>(nameToId);
+    }
 }

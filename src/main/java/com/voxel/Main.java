@@ -321,6 +321,11 @@ public class Main {
         itemDefinitions.setup(blockDataManager, textureManager);
         ctx.itemDefinitions = itemDefinitions;
 
+        // Build canonical block/item registry (deduplicates direction/level/model variants)
+        com.voxel.game.CanonicalRegistry canonicalRegistry = new com.voxel.game.CanonicalRegistry();
+        canonicalRegistry.build(blockDataManager, itemDefinitions);
+        ctx.canonicalRegistry = canonicalRegistry;
+
         playerInventory = new PlayerInventory(ctx);
         ctx.playerInventory = playerInventory;
         playerInventory.populateStarting();
