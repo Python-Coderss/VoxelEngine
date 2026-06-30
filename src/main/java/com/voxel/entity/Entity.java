@@ -19,6 +19,7 @@ import java.util.Map;
 public class Entity {
     public int id;
     public Vector3f position;
+    public Vector3f prevRenderPos;  // previous-frame position for interpolation
     public Vector3f rotation; // x=pitch, y=yaw, z=roll
     public List<ModelPart> parts;
     /** The dimension this entity currently belongs to. */
@@ -39,8 +40,18 @@ public class Entity {
     public Entity(int id, Vector3f position) {
         this.id = id;
         this.position = new Vector3f(position);
+        this.prevRenderPos = new Vector3f(position);
         this.parts = new ArrayList<>();
         this.rotation = new Vector3f(0, 0, 0);
+    }
+
+    /** Interpolated position for smooth rendering between logic ticks. */
+    public Vector3f getInterpolatedPosition(float partialTicks) {
+        return new Vector3f(
+            prevRenderPos.x + (position.x - prevRenderPos.x) * partialTicks,
+            prevRenderPos.y + (position.y - prevRenderPos.y) * partialTicks,
+            prevRenderPos.z + (position.z - prevRenderPos.z) * partialTicks
+        );
     }
 
     public void loadModel(String path, com.voxel.utils.TextureManager textureManager) {

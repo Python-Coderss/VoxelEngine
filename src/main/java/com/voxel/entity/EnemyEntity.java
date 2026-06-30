@@ -70,6 +70,8 @@ public class EnemyEntity extends Entity {
         super.update(dt);
         if (isDead) return;
 
+        prevRenderPos.set(position);  // snapshot for interpolation before this frame's movement
+
         attackCooldown = Math.max(0, attackCooldown - dt);
         frustration = Math.max(0, frustration - dt * 0.25f);
 

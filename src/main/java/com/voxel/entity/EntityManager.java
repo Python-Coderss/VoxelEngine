@@ -55,15 +55,27 @@ public class EntityManager {
      * Uploads all entities to GPU (legacy, for backward compatibility).
      */
     public void uploadToGPU() {
-        uploadToGPU(null, null);
+        uploadToGPU(null, null, 0.0f, null);
+    }
+
+    /**
+     * Uploads entities to GPU (legacy, no interpolation).
+     */
+    public void uploadToGPU(DimensionType activeDimension, Vector3f cameraPos) {
+        uploadToGPU(activeDimension, cameraPos, 0.0f, null);
     }
 
     /**
      * Uploads entities to GPU, optionally filtering by dimension.
      * If activeDimension is null, all entities are uploaded.
      * If cameraPos is provided, only entities within 64 blocks are uploaded.
+     * @param partialTicks  render interpolation alpha (0-1)
+     * @param player        the physics Player (for PlayerEntity interpolation bypass)
      */
-    public void uploadToGPU(DimensionType activeDimension, Vector3f cameraPos) {
+    private static final float HIDDEN_Y = -10000.0f;  // PlayerEntity hidden-position sentinel (matches PlayerEntity.HIDDEN_POSITION)
+
+    public void uploadToGPU(DimensionType activeDimension, Vector3f cameraPos,
+                            float partialTicks, com.voxel.Player player) {
         float cullDistSq = cameraPos != null ? 64.0f * 64.0f : Float.MAX_VALUE; // 64-block radius
 
         // First pass: count visible entities
@@ -71,9 +83,12 @@ public class EntityManager {
         for (Entity e : entities) {
             if (activeDimension != null && e.dimension != activeDimension) continue;
             if (cameraPos != null) {
-                float dx = e.position.x - cameraPos.x;
-                float dy = e.position.y - cameraPos.y;
-                float dz = e.position.z - cameraPos.z;
+                // PlayerEntity: use player interpolation unless hidden (first-person mode)
+                boolean peUsePlayer = player != null && e instanceof com.voxel.entity.PlayerEntity && e.position.y > HIDDEN_Y;
+                Vector3f rp = peUsePlayer ? player.getInterpolatedPosition() : e.getInterpolatedPosition(partialTicks);
+                float dx = rp.x - cameraPos.x;
+                float dy = rp.y - cameraPos.y;
+                float dz = rp.z - cameraPos.z;
                 if (dx * dx + dy * dy + dz * dz > cullDistSq) continue;
             }
             visibleCount++;
@@ -84,17 +99,25 @@ public class EntityManager {
 
         for (Entity entity : entities) {
             if (activeDimension != null && entity.dimension != activeDimension) continue;
+            // PlayerEntity: use the physics Player's self-timed interpolated position,
+            // but only when NOT hidden (first-person mode sets y to -10000).
+            Vector3f renderPos;
+            if (player != null && entity instanceof com.voxel.entity.PlayerEntity && entity.position.y > HIDDEN_Y) {
+                renderPos = player.getInterpolatedPosition();
+            } else {
+                renderPos = entity.getInterpolatedPosition(partialTicks);
+            }
             if (cameraPos != null) {
-                float dx = entity.position.x - cameraPos.x;
-                float dy = entity.position.y - cameraPos.y;
-                float dz = entity.position.z - cameraPos.z;
+                float dx = renderPos.x - cameraPos.x;
+                float dy = renderPos.y - cameraPos.y;
+                float dz = renderPos.z - cameraPos.z;
                 if (dx * dx + dy * dy + dz * dz > cullDistSq) continue;
             }
             int partOffset = allParts.size();
             int partCount = entity.parts.size();
 
-            // position
-            entityBuffer.putFloat(entity.position.x).putFloat(entity.position.y).putFloat(entity.position.z);
+            // position (interpolated)
+            entityBuffer.putFloat(renderPos.x).putFloat(renderPos.y).putFloat(renderPos.z);
 
             float health = 1.0f;
             float maxHealth = 1.0f;

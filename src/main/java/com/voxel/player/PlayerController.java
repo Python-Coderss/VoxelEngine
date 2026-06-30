@@ -20,9 +20,12 @@ import static org.lwjgl.glfw.GLFW.*;
  * player.update() and playerEntity.sync() calls previously embedded in Main.tick().
  */
 public class PlayerController {
-    private static final float FLY_MOVE_SPEED = 1.5f;
-    private static final float WALK_MOVE_SPEED = 0.4f;
+    private static final float FLY_MOVE_SPEED = 0.05f;
     private static final float AETHER_PARACHUTE_FALL_THRESHOLD = -8.0f;
+
+    // Sprint double-tap W detection
+    private double lastWPressTime = 0;
+    private boolean wWasPressed = false;
 
     private final GameContext ctx;
     private final Main main;
@@ -69,34 +72,59 @@ public class PlayerController {
             // Reserved: instant attack in Main.handleInput.
         }
 
-        // Movement (WASD)
-        float speed = main.player.isFlying() ? FLY_MOVE_SPEED : WALK_MOVE_SPEED;
+        // Standard WASD: W=forward, A=left, S=backward, D=right
+        float strafe = 0, forward = 0;
+        if (glfwGetKey(main.window, GLFW_KEY_W) == GLFW_PRESS) forward += 1.0f;
+        if (glfwGetKey(main.window, GLFW_KEY_S) == GLFW_PRESS) forward -= 1.0f;
+        if (glfwGetKey(main.window, GLFW_KEY_A) == GLFW_PRESS) strafe += 1.0f;
+        if (glfwGetKey(main.window, GLFW_KEY_D) == GLFW_PRESS) strafe -= 1.0f;
 
-        float dx = 0, dz = 0;
-        if (glfwGetKey(main.window, GLFW_KEY_W) == GLFW_PRESS) { dx += fx; dz += fz; }
-        if (glfwGetKey(main.window, GLFW_KEY_S) == GLFW_PRESS) { dx -= fx; dz -= fz; }
-        if (glfwGetKey(main.window, GLFW_KEY_A) == GLFW_PRESS) { dx -= rx; dz -= rz; }
-        if (glfwGetKey(main.window, GLFW_KEY_D) == GLFW_PRESS) { dx += rx; dz += rz; }
+        // Sprint: Left Control key OR double-tap W while on ground and moving forward
+        boolean ctrlDown = glfwGetKey(main.window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS;
+        boolean wDown = glfwGetKey(main.window, GLFW_KEY_W) == GLFW_PRESS;
+        boolean sprintByCtrl = ctrlDown && !main.player.isFlying() && main.player.isOnGround();
 
-        float mvLen = (float) Math.sqrt(dx * dx + dz * dz);
-        if (mvLen > 0) {
-            dx /= mvLen;
-            dz /= mvLen;
-            if (main.combatMode) {
-                if (Math.abs(dx) > Math.abs(dz)) dz = 0; else dx = 0;
-            }
-            if (main.cameraMode == CameraMode.THIRD_PERSON_FOLLOW) {
-                main.playerYaw = (float) Math.toDegrees(Math.atan2(dz, dx));
+        // Double-tap W: measure gap between release and re-press (<300ms)
+        boolean sprintByDoubleTap = false;
+        if (!wDown && wWasPressed) {
+            lastWPressTime = glfwGetTime();  // record release time
+        }
+        if (wDown && !wWasPressed && forward > 0.1f && !main.player.isFlying() && main.player.isOnGround()) {
+            if (glfwGetTime() - lastWPressTime < 0.3) {
+                sprintByDoubleTap = true;
             }
         }
-        main.player.move(dx * speed, 0, dz * speed, speed * 2.0f);
+        wWasPressed = wDown;
+
+        main.player.setSprinting(sprintByCtrl || sprintByDoubleTap);
+
+        // Normalize for diagonals
+        float mvLen = (float) Math.sqrt(strafe * strafe + forward * forward);
+        if (mvLen > 0) {
+            strafe /= mvLen;
+            forward /= mvLen;
+            if (main.combatMode) {
+                // Axis-aligned restriction
+                if (Math.abs(strafe) > Math.abs(forward)) forward = 0; else strafe = 0;
+            }
+            if (main.cameraMode == CameraMode.THIRD_PERSON_FOLLOW) {
+                // Compute world-space direction matching tick() rotation convention
+                // forward → (cos, sin), left strafe → (-sin, cos)
+                float wx = forward * fx + strafe * fz;
+                float wz = forward * fz - strafe * fx;
+                main.playerYaw = (float) Math.toDegrees(Math.atan2(wz, wx));
+            }
+        }
+        // Pass raw strafe/forward to move() — tick() handles yaw rotation + acceleration
+        // Note: move(dx=strafing, dy, dz=forward, speed) — strafe→dx, forward→dz
+        main.player.move(strafe, 0, forward, 0);
 
         if (glfwGetKey(main.window, GLFW_KEY_SPACE) == GLFW_PRESS) {
-            if (main.player.isFlying()) main.player.move(0, speed, 0, speed * 2.0f);
+            if (main.player.isFlying()) main.player.move(0, FLY_MOVE_SPEED, 0, FLY_MOVE_SPEED);
             else main.player.jump(world, blockDataManager);
         }
         if (glfwGetKey(main.window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-            if (main.player.isFlying()) main.player.move(0, -speed, 0, speed * 2.0f);
+            if (main.player.isFlying()) main.player.move(0, -FLY_MOVE_SPEED, 0, FLY_MOVE_SPEED);
         }
 
         if (main.gameMode == GameMode.CREATIVE) {

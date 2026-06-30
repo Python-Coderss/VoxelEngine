@@ -195,6 +195,13 @@ public class Main {
     public double lastRollTime = 0;
     public boolean combatMode = false;
 
+    // Sprint double-tap W detection
+    private double lastWPressTime = 0;
+    private boolean wWasPressed = false;
+
+    /** Wall-clock nanos of last logic-tick completion (set by logic thread, read by render thread for interpolation). */
+    public volatile long lastLogicTickNanos = System.nanoTime();
+
     public void run() {
         init();
 
@@ -671,6 +678,9 @@ public class Main {
         }
 
         chunkManager.update(player.getPosition(), yaw);
+
+        // Record wall-clock time for render-thread interpolation
+        lastLogicTickNanos = System.nanoTime();
     }
 
     public void handleInput(float dt) {
@@ -688,20 +698,21 @@ public class Main {
             double now = glfwGetTime();
             if (now - lastRollTime > 1.0) {
                 playerEntity.startRoll();
-                // Determine roll direction from WASD input
-                float rollDx = 0, rollDz = 0;
-                if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { rollDx += fx; rollDz += fz; }
-                if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) { rollDx -= fx; rollDz -= fz; }
-                if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) { rollDx -= rx; rollDz -= rz; }
-                if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) { rollDx += rx; rollDz += rz; }
-                float rollLen = (float) Math.sqrt(rollDx * rollDx + rollDz * rollDz);
+                // Determine roll direction from WASD input (raw strafe/forward)
+                float rollStrafe = 0, rollForward = 0;
+                if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) rollForward += 1.0f;
+                if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) rollForward -= 1.0f;
+                if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) rollStrafe += 1.0f;
+                if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) rollStrafe -= 1.0f;
+                float rollLen = (float) Math.sqrt(rollStrafe * rollStrafe + rollForward * rollForward);
                 if (rollLen > 0.01f) {
-                    rollDx /= rollLen;
-                    rollDz /= rollLen;
+                    rollStrafe /= rollLen;
+                    rollForward /= rollLen;
                 } else {
-                    rollDx = fx; rollDz = fz; // Default forward
+                    rollForward = 1.0f; // Default forward
                 }
-                player.move(rollDx * 20, 0.5f, rollDz * 20, 10.0f);
+                // move(dx=strafing, dy, dz=forward, speed) — tick() handles yaw rotation
+                player.move(rollStrafe * 20, 0.5f, rollForward * 20, 10.0f);
                 lastRollTime = now;
                 ctx.invincible = true;
                 ctx.iFrameTimer = 0.5f; // 0.5s of invincibility
@@ -750,52 +761,69 @@ public class Main {
             }
         }
 
-        float speed = player.isFlying() ? 1.5f : 0.4f;
+        // Standard WASD: W=forward, A=left, S=backward, D=right
+        float strafe = 0, forward = 0;
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) forward += 1.0f;
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) forward -= 1.0f;
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) strafe += 1.0f;
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) strafe -= 1.0f;
 
-        float dx = 0, dz = 0;
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-            dx += fx;
-            dz += fz;
-        }
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-            dx -= fx;
-            dz -= fz;
-        }
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-            dx -= rx;
-            dz -= rz;
-        }
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-            dx += rx;
-            dz += rz;
-        }
-
-        float mvLen = (float) Math.sqrt(dx * dx + dz * dz);
+        float mvLen = (float) Math.sqrt(strafe * strafe + forward * forward);
         if (mvLen > 0) {
-            dx /= mvLen;
-            dz /= mvLen;
+            strafe /= mvLen;
+            forward /= mvLen;
 
             if (combatMode) {
                 // Restrict to 1 line of movement (axis-aligned)
-                if (Math.abs(dx) > Math.abs(dz)) {
-                    dz = 0;
+                if (Math.abs(strafe) > Math.abs(forward)) {
+                    forward = 0;
                 } else {
-                    dx = 0;
+                    strafe = 0;
                 }
             }
 
             if (cameraMode == CameraMode.THIRD_PERSON_FOLLOW) {
-                playerYaw = (float) Math.toDegrees(Math.atan2(dz, dx));
+                // Compute world-space direction matching tick() rotation convention
+                // forward → (cos, sin), left strafe → (-sin, cos)
+                float wx = forward * fx + strafe * fz;
+                float wz = forward * fz - strafe * fx;
+                playerYaw = (float) Math.toDegrees(Math.atan2(wz, wx));
             }
         }
-        player.move(dx * speed, 0, dz * speed, speed * 2.0f);
+
+        // Sprint: Left Control key OR double-tap W while on ground and moving forward
+        boolean ctrlDown = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS;
+        boolean wDown = glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS;
+        boolean sprintByCtrl = ctrlDown && !player.isFlying() && player.isOnGround();
+
+        // Double-tap W: measure gap between release and re-press (<300ms)
+        boolean sprintByDoubleTap = false;
+        if (!wDown && wWasPressed) {
+            lastWPressTime = glfwGetTime();  // record release time
+        }
+        if (wDown && !wWasPressed && forward > 0.1f && !player.isFlying() && player.isOnGround()) {
+            if (glfwGetTime() - lastWPressTime < 0.3) {
+                sprintByDoubleTap = true;
+            }
+        }
+        wWasPressed = wDown;
+
+        player.setSprinting(sprintByCtrl || sprintByDoubleTap);
+        // Sneak: Left Shift while on ground
+        if (!player.isFlying()) {
+            boolean shiftDown = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
+            player.setSneaking(shiftDown);
+        }
+
+        // Pass raw strafe/forward — tick() handles yaw rotation + acceleration internally
+        player.move(strafe, 0, forward, 0);
 
         if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
-            if (player.isFlying()) player.move(0, speed, 0, speed * 2.0f);
+            if (player.isFlying()) player.move(0, 0.05f, 0, 0.05f);
             else player.jump(world, blockDataManager);
         }
         if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-            if (player.isFlying()) player.move(0, -speed, 0, speed * 2.0f);
+            if (player.isFlying()) player.move(0, -0.05f, 0, 0.05f);
         }
 
         if (gameMode == GameMode.CREATIVE) {
@@ -915,9 +943,19 @@ public class Main {
             for (UILayer layer : hud.uiLayers) layer.render(hud.uiManager);
             hud.uiManager.end();
 
-            Vector3f cameraPos = getActiveCameraPosition();
+            // --- Compute partial ticks for smooth interpolation between logic ticks ---
+            long nowNanos = System.nanoTime();
+            float elapsedSinceLogic = (nowNanos - lastLogicTickNanos) / 1e9f;
+            float logicPartialTicks = Math.min(1.0f, elapsedSinceLogic / 0.0167f);
 
-            entityManager.uploadToGPU(activeDimension, cameraPos);
+            // Player uses its own 20Hz wall-clock time for interpolation
+            float elapsedSincePlayerTick = (nowNanos - player.getLastTickWallNanos()) / 1e9f;
+            float playerPartialTicks = Math.min(1.0f, elapsedSincePlayerTick / Player.TICK_RATE_SECONDS);
+
+            // Camera uses interpolated player position
+            Vector3f cameraPos = cameraController.getActiveCameraPosition(playerPartialTicks);
+
+            entityManager.uploadToGPU(activeDimension, cameraPos, logicPartialTicks, player);
 
             persistentPlBuf.rewind();
             glNamedBufferSubData(pointLightSSBO, 0, persistentPlBuf);
