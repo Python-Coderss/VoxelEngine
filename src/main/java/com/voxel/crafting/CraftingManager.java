@@ -286,6 +286,45 @@ public class CraftingManager {
             {"holystone", "holystone", null},
             {null, null, null}
         }, "holystone_bricks", 4);
+
+        // Flint and Steel: flint + iron_ingot
+        addRecipe2x2(new String[][]{
+            {"flint", "iron_ingot"},
+            {null, null}
+        }, "flint_and_steel", 1);
+
+        // Bucket: 3 iron ingots in V shape
+        addRecipe3x3(new String[][]{
+            {"iron_ingot", null, "iron_ingot"},
+            {null, "iron_ingot", null},
+            {null, null, null}
+        }, "bucket", 1);
+
+        // Iron Ingot from Iron Ore
+        addRecipe2x2(new String[][]{
+            {"iron_ore", "iron_ore"},
+            {"iron_ore", "iron_ore"}
+        }, "iron_ingot", 1);
+
+        // Flint from Gravel
+        addRecipe2x2(new String[][]{
+            {"gravel", null},
+            {null, null}
+        }, "flint", 1);
+
+        // Furnace: 8 cobblestone in a ring
+        addRecipe3x3(new String[][]{
+            {"cobblestone", "cobblestone", "cobblestone"},
+            {"cobblestone", null, "cobblestone"},
+            {"cobblestone", "cobblestone", "cobblestone"}
+        }, "furnace_off", 1);
+
+        // Chest: 8 planks in a ring
+        addRecipe3x3(new String[][]{
+            {"oak_planks", "oak_planks", "oak_planks"},
+            {"oak_planks", null, "oak_planks"},
+            {"oak_planks", "oak_planks", "oak_planks"}
+        }, "chest", 1);
     }
     
     private void addRecipe2x2(String[][] pattern, String resultItemId, int resultCount) {
