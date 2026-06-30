@@ -106,8 +106,8 @@ public class DroppedItemManager {
     public void spawn(String itemId, int count, int blockX, int blockY, int blockZ) {
         if (itemId == null || count <= 0) return;
         ItemDefinition def = ctx.itemDefinitions != null ? ctx.itemDefinitions.getDefinition(itemId) : null;
-        if (def == null || def.blockId <= 0) {
-            // Items without a block rendering (rare) — skip dropping for now.
+        if (def == null || def.dropBlockId <= 0) {
+            // Items without a drop model — skip dropping for now.
             return;
         }
         // Spawn centered on the broken block (Y at block center, X/Z at column center) —
@@ -128,7 +128,7 @@ public class DroppedItemManager {
         // restY positions the item so bottom face = groundTopY + hover.
         float restY = groundTopY + hover + halfScale;
         // baseY starts at spawn (broken-block center); fallback restY == y means no fall.
-        DroppedItem di = new DroppedItem(itemId, def.blockId, count, x, y, z, phase, spawnTimeNs,
+        DroppedItem di = new DroppedItem(itemId, def.dropBlockId, count, x, y, z, phase, spawnTimeNs,
                                          restY, groundTopY, hover,
                                          blockX, ground.supportBlockY, blockZ, ground.found);
         synchronized (items) {

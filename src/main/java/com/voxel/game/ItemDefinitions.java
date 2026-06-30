@@ -26,6 +26,7 @@ public class ItemDefinitions {
         public final String displayName;
         public final ItemKind kind;
         public final int blockId;
+        public final int dropBlockId; // separate model for dropped items (vertical plane vs horizontal crafting table)
         public final int iconLayer;
         public final ToolType toolType;
         public final float miningSpeed;
@@ -33,11 +34,12 @@ public class ItemDefinitions {
         public final Vector4f color;
         public final int tier; // 0=hand, 1=wood, 2=stone, 3=iron, 4=diamond
 
-        public ItemDefinition(String id, String displayName, ItemKind kind, int blockId, int iconLayer, ToolType toolType, float miningSpeed, int maxStack, Vector4f color, int tier) {
+        public ItemDefinition(String id, String displayName, ItemKind kind, int blockId, int dropBlockId, int iconLayer, ToolType toolType, float miningSpeed, int maxStack, Vector4f color, int tier) {
             this.id = id;
             this.displayName = displayName;
             this.kind = kind;
             this.blockId = blockId;
+            this.dropBlockId = dropBlockId;
             this.iconLayer = iconLayer;
             this.toolType = toolType;
             this.miningSpeed = miningSpeed;
@@ -47,7 +49,7 @@ public class ItemDefinitions {
         }
 
         public ItemDefinition(String id, String displayName, ItemKind kind, int blockId, int iconLayer, ToolType toolType, float miningSpeed, int maxStack, Vector4f color) {
-            this(id, displayName, kind, blockId, iconLayer, toolType, miningSpeed, maxStack, color, 0);
+            this(id, displayName, kind, blockId, blockId, iconLayer, toolType, miningSpeed, maxStack, color, 0);
         }
     }
 
@@ -160,11 +162,14 @@ public class ItemDefinitions {
         // --- Cold/Blue Aercloud remnants ---
         registerBlock("cold_aercloud", "Cold Aercloud", 125, "cold_aercloud");
         registerBlock("golden_aercloud", "Golden Aercloud", 126, "golden_aercloud");
-        // --- Tools ---
-        registerTool("flint_and_steel", "Flint and Steel", "flint_and_steel", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
-        registerTool("bucket", "Bucket", "bucket_empty", ToolType.HAND, 1.0f, new Vector4f(0.7f, 0.7f, 0.7f, 1));
-        registerTool("water_bucket", "Water Bucket", "bucket_water", ToolType.HAND, 1.0f, new Vector4f(0.3f, 0.5f, 1, 1));
-        registerTool("lava_bucket", "Lava Bucket", "bucket_lava", ToolType.HAND, 1.0f, new Vector4f(1, 0.4f, 0.1f, 1));
+        // --- Items with flat models (block IDs 212-218) ---
+        registerItemBlock("flint", "Flint", "flint", 212, 231, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("iron_ingot", "Iron Ingot", "iron_ingot", 213, 232, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("stick", "Stick", "stick", 214, 233, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("flint_and_steel", "Flint and Steel", "flint_and_steel", 215, 234, ToolType.HAND, 1.0f, 1, 0);
+        registerItemBlock("bucket", "Bucket", "bucket_empty", 216, 235, ToolType.HAND, 1.0f, 1, 0);
+        registerItemBlock("water_bucket", "Water Bucket", "bucket_water", 217, 236, ToolType.HAND, 1.0f, 1, 0);
+        registerItemBlock("lava_bucket", "Lava Bucket", "bucket_lava", 218, 237, ToolType.HAND, 1.0f, 1, 0);
         // --- Aether Items ---
         registerBlock("aether_grass", "Aether Grass", 100, "aether_grass_block_top");
         registerBlock("holystone", "Holystone", 101, "holystone");
@@ -194,7 +199,6 @@ public class ItemDefinitions {
         registerBlock("furnace_off", "Furnace", 116, "furnace_front");
         registerBlock("furnace_on", "Furnace", 117, "furnace_front_on");
         registerBlock("chest", "Chest", 118, "chest_front");
-        registerTool("stick", "Stick", "stick", ToolType.HAND, 1.0f, new Vector4f(0.85f, 0.7f, 0.5f, 1));
         // --- Parachutes ---
         registerTool("cold_parachute", "Cold Parachute", "cold_parachute", ToolType.HAND, 1.0f, new Vector4f(0.7f, 0.85f, 1, 1));
         registerTool("golden_parachute", "Golden Parachute", "golden_parachute", ToolType.HAND, 1.0f, new Vector4f(1, 0.9f, 0.5f, 1));
@@ -226,19 +230,19 @@ public class ItemDefinitions {
         registerBlock("sandstone_slab", "Sandstone Slab", 210, "sandstone_top");
         // --- Torch ---
         registerBlock("torch", "Torch", 211, "torch_on");
-        // --- Aether tools ---
-        registerTool("wood_pickaxe", "Wood Pickaxe", "wood_pickaxe", ToolType.PICKAXE, 4.5f, new Vector4f(1, 1, 1, 1), TIER_WOOD);
-        registerTool("wood_shovel", "Wood Shovel", "wood_shovel", ToolType.SHOVEL, 4.0f, new Vector4f(1, 1, 1, 1), TIER_WOOD);
-        registerTool("wood_axe", "Wood Axe", "wood_axe", ToolType.AXE, 4.2f, new Vector4f(1, 1, 1, 1), TIER_WOOD);
-        registerTool("stone_pickaxe", "Stone Pickaxe", "stone_pickaxe", ToolType.PICKAXE, 6.0f, new Vector4f(1, 1, 1, 1), TIER_STONE);
-        registerTool("stone_shovel", "Stone Shovel", "stone_shovel", ToolType.SHOVEL, 5.5f, new Vector4f(1, 1, 1, 1), TIER_STONE);
-        registerTool("stone_axe", "Stone Axe", "stone_axe", ToolType.AXE, 5.8f, new Vector4f(1, 1, 1, 1), TIER_STONE);
-        registerTool("iron_pickaxe", "Iron Pickaxe", "iron_pickaxe", ToolType.PICKAXE, 8.5f, new Vector4f(1, 1, 1, 1), TIER_IRON);
-        registerTool("iron_shovel", "Iron Shovel", "iron_shovel", ToolType.SHOVEL, 7.5f, new Vector4f(1, 1, 1, 1), TIER_IRON);
-        registerTool("iron_axe", "Iron Axe", "iron_axe", ToolType.AXE, 7.8f, new Vector4f(1, 1, 1, 1), TIER_IRON);
-        registerTool("diamond_pickaxe", "Diamond Pickaxe", "diamond_pickaxe", ToolType.PICKAXE, 12.0f, new Vector4f(0.4f, 0.85f, 0.95f, 1), TIER_DIAMOND);
-        registerTool("diamond_shovel", "Diamond Shovel", "diamond_shovel", ToolType.SHOVEL, 10.0f, new Vector4f(0.4f, 0.85f, 0.95f, 1), TIER_DIAMOND);
-        registerTool("diamond_axe", "Diamond Axe", "diamond_axe", ToolType.AXE, 10.5f, new Vector4f(0.4f, 0.85f, 0.95f, 1), TIER_DIAMOND);
+        // --- Tool items with flat models (block IDs 219-230) ---
+        registerItemBlock("wood_pickaxe", "Wood Pickaxe", "wood_pickaxe", 219, 238, ToolType.PICKAXE, 4.5f, 1, TIER_WOOD);
+        registerItemBlock("wood_shovel", "Wood Shovel", "wood_shovel", 220, 239, ToolType.SHOVEL, 4.0f, 1, TIER_WOOD);
+        registerItemBlock("wood_axe", "Wood Axe", "wood_axe", 221, 240, ToolType.AXE, 4.2f, 1, TIER_WOOD);
+        registerItemBlock("stone_pickaxe", "Stone Pickaxe", "stone_pickaxe", 222, 241, ToolType.PICKAXE, 6.0f, 1, TIER_STONE);
+        registerItemBlock("stone_shovel", "Stone Shovel", "stone_shovel", 223, 242, ToolType.SHOVEL, 5.5f, 1, TIER_STONE);
+        registerItemBlock("stone_axe", "Stone Axe", "stone_axe", 224, 243, ToolType.AXE, 5.8f, 1, TIER_STONE);
+        registerItemBlock("iron_pickaxe", "Iron Pickaxe", "iron_pickaxe", 225, 244, ToolType.PICKAXE, 8.5f, 1, TIER_IRON);
+        registerItemBlock("iron_shovel", "Iron Shovel", "iron_shovel", 226, 245, ToolType.SHOVEL, 7.5f, 1, TIER_IRON);
+        registerItemBlock("iron_axe", "Iron Axe", "iron_axe", 227, 246, ToolType.AXE, 7.8f, 1, TIER_IRON);
+        registerItemBlock("diamond_pickaxe", "Diamond Pickaxe", "diamond_pickaxe", 228, 247, ToolType.PICKAXE, 12.0f, 1, TIER_DIAMOND);
+        registerItemBlock("diamond_shovel", "Diamond Shovel", "diamond_shovel", 229, 248, ToolType.SHOVEL, 10.0f, 1, TIER_DIAMOND);
+        registerItemBlock("diamond_axe", "Diamond Axe", "diamond_axe", 230, 249, ToolType.AXE, 10.5f, 1, TIER_DIAMOND);
         // --- Aliases ---
         registerAlias("pickaxe", "wood_pickaxe");
         registerAlias("shovel", "wood_shovel");
@@ -269,9 +273,27 @@ public class ItemDefinitions {
 
     private void registerTool(String itemId, String displayName, String textureName, ToolType toolType, float miningSpeed, Vector4f color, int tier) {
         int iconLayer = textureManager.getTextureIndex(textureName);
-        ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.TOOL, 0, iconLayer, toolType, miningSpeed, 1, color, tier);
+        ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.TOOL, 0, 0, iconLayer, toolType, miningSpeed, 1, color, tier);
         itemRegistry.put(itemId, definition);
         registerAlias(itemId, itemId);
+        registerAlias(displayName.toLowerCase(Locale.ROOT).replace(' ', '_'), itemId);
+    }
+
+    /** Register an item with both a block model (for crafting-table 3D rendering) and tool properties.
+     *  @param blockId   crafting-table model (horizontal flat plane)
+     *  @param dropBlockId  dropped-item model (vertical plane, 3px thick) */
+    private void registerItemBlock(String itemId, String displayName, String textureName, int blockId, int dropBlockId, ToolType toolType, float miningSpeed, int maxStack, int tier) {
+        if (blockItemByBlockId.containsKey(blockId)) {
+            throw new RuntimeException("Item block ID collision! ID " + blockId + " is already registered to '" + blockItemByBlockId.get(blockId) + "'. Attempted to register '" + itemId + "'.");
+        }
+        int iconLayer = textureManager.getTextureIndex(textureName);
+        Color albedo = blockDataManager.getAlbedo(blockId);
+        Vector4f color = new Vector4f(albedo.getRed() / 255.0f, albedo.getGreen() / 255.0f, albedo.getBlue() / 255.0f, 1.0f);
+        ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.BLOCK, blockId, dropBlockId, iconLayer, toolType, miningSpeed, maxStack, color, tier);
+        itemRegistry.put(itemId, definition);
+        blockItemByBlockId.put(blockId, itemId);
+        registerAlias(itemId, itemId);
+        registerAlias(itemId + "_block", itemId);
         registerAlias(displayName.toLowerCase(Locale.ROOT).replace(' ', '_'), itemId);
     }
 
