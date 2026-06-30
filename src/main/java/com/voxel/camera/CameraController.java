@@ -55,6 +55,12 @@ public class CameraController {
         return new Vector3f(pos.x, pos.y + PLAYER_EYE_HEIGHT, pos.z);
     }
 
+    /** Interpolated player eye position for smooth rendering. */
+    public Vector3f getPlayerEyePosition(float partialTicks) {
+        Vector3f pos = ctx.player.getInterpolatedPosition(partialTicks);
+        return new Vector3f(pos.x, pos.y + PLAYER_EYE_HEIGHT, pos.z);
+    }
+
     /**
      * Active camera position depends on game mode:
      *  1. Crafting cutscene (smoothstep lerp)
@@ -63,8 +69,14 @@ public class CameraController {
      *  4. Third-person over-the-shoulder with collision resolution
      */
     public Vector3f getActiveCameraPosition() {
-        Vector3f eye = getPlayerEyePosition();
+        return getActiveCameraPosition(0.0f);
+    }
 
+    /**
+     * Active camera position with interpolation for smooth rendering.
+     * @param partialTicks  render interpolation alpha (0-1)
+     */
+    public Vector3f getActiveCameraPosition(float partialTicks) {
         // Crafting cutscene progress
         if (ctx.craftingCutsceneActive) {
             float t = Math.min(1.0f, ctx.craftingCutsceneTimer / GameContext.CRAFTING_CUTSCENE_DURATION);
@@ -83,13 +95,17 @@ public class CameraController {
             return new Vector3f(ctx.cutsceneCameraTargetPos);
         }
 
-        // First person
-        if (main.cameraMode == CameraMode.FIRST_PERSON) return eye;
+        // First person — interpolated eye position
+        if (main.cameraMode == CameraMode.FIRST_PERSON) {
+            Vector3f eye = ctx.player.getInterpolatedPosition(partialTicks);
+            eye.y += PLAYER_EYE_HEIGHT;
+            return eye;
+        }
 
         // Third person over-the-shoulder
         Vector3f look = getLookDirection();
         Vector3f right = new Vector3f(look).cross(new Vector3f(0, 1, 0)).normalize();
-        Vector3f target = ctx.player.getPosition().add(0, THIRD_PERSON_TARGET_HEIGHT, 0, new Vector3f());
+        Vector3f target = ctx.player.getInterpolatedPosition(partialTicks).add(0, THIRD_PERSON_TARGET_HEIGHT, 0, new Vector3f());
         target.add(right.mul(0.6f, new Vector3f()));
         Vector3f desired = new Vector3f(target).sub(new Vector3f(look).mul(THIRD_PERSON_DISTANCE));
         return resolveCameraCollision(target, desired);
