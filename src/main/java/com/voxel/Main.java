@@ -363,6 +363,10 @@ public class Main {
         redstoneManager = new RedstoneManager(world, chunkManager);
         ctx.redstoneManager = redstoneManager;
 
+        // Initialize fluid manager for water and lava flow
+        ctx.fluidManager = new com.voxel.world.FluidManager(world, chunkManager, blockDataManager, false);
+        chunkManager.setFluidManager(ctx.fluidManager);
+
         // Persistent FloatBuffer for pointLightSSBO zeroing
         persistentPlBuf = MemoryUtil.memAllocFloat(4);
         persistentPlBuf.put(0, Float.intBitsToFloat(0));
@@ -661,20 +665,24 @@ public class Main {
             if (craftingCameraInited) {
                 craftingCameraInited = false;
             }
-        }
-
-        // Sync fields after potential dimension switch from PortalSystem/CommandProcessor
+        }            // Sync fields after potential dimension switch from PortalSystem/CommandProcessor
         if (chunkManager != ctx.chunkManager) {
             chunkManager = ctx.chunkManager;
             world = ctx.world;
             activeDimension = ctx.activeDimension;
             redstoneManager = ctx.redstoneManager;
+            // Fluid manager is recreated on dimension switch by GameContext.switchToDimension
         }
 
         Vector3f pPosForRS = player.getPosition();
         if (redstoneManager != null) {
             redstoneManager.setPlayerPosition(pPosForRS.x, pPosForRS.y, pPosForRS.z);
             redstoneManager.tickLamps();
+        }
+
+        // Tick fluid flow (process up to 64 pending fluid blocks per tick)
+        if (ctx.fluidManager != null) {
+            ctx.fluidManager.tick(64);
         }
 
         chunkManager.update(player.getPosition(), yaw);
@@ -1565,6 +1573,15 @@ public class Main {
         blockRegistry.register("water", 15);
         shaderBlockRegistry.register(15, 15);
         blockDataManager.registerBlock(15, "water", textureManager, "src/main/resources/assets/minecraft/models/block", 150, 100, 255);
+        // ── 15 flowing water levels (150-164), each with its own height model ──
+        // water_0 = source (ID 15, full block), water_1..water_15 = flowing (IDs 150-164)
+        for (int level = 1; level <= 15; level++) {
+            int id = 149 + level; // 150..164
+            String name = "water_" + level;
+            blockRegistry.register(name, id);
+            shaderBlockRegistry.register(id, id);
+            blockDataManager.registerBlock(id, name, textureManager, "src/main/resources/assets/minecraft/models/block", 150, 100, 255);
+        }
         blockRegistry.register("obsidian", 16);
         shaderBlockRegistry.register(16, 16);
         blockDataManager.registerBlock(16, "obsidian", textureManager, "src/main/resources/assets/minecraft/models/block");

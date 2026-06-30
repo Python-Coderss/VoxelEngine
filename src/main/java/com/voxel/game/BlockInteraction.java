@@ -104,6 +104,10 @@ public class BlockInteraction {
         if (!ctx.chunkManager.setVoxel(x, y, z, 0)) return;
         ctx.redstoneManager.onBlockChanged(x, y, z);
         ctx.redstoneManager.notifyNeighbors(x, y, z);
+        // Notify fluid manager: block removed may open space for fluid to flow into
+        if (ctx.fluidManager != null) {
+            ctx.fluidManager.notifyBlockChanged(x, y, z);
+        }
         // Notify dropped items: if any item was resting on this block, it should fall
         if (ctx.droppedItemManager != null) {
             ctx.droppedItemManager.onBlockDestroyed(x, y, z);
@@ -346,6 +350,10 @@ public class BlockInteraction {
 
         ctx.redstoneManager.onBlockChanged(px, py, pz);
         ctx.redstoneManager.notifyNeighbors(px, py, pz);
+        // Notify fluid manager: block placed next to fluids may affect flow
+        if (ctx.fluidManager != null) {
+            ctx.fluidManager.notifyBlockChanged(px, py, pz);
+        }
 
         if (ctx.gameMode == GameMode.SURVIVAL) {
             selected.count--;
