@@ -156,6 +156,9 @@ public class GameContext {
     // --- World Save ---
     public WorldSaveManager worldSaveManager;
 
+    // --- Fluid ---
+    public com.voxel.world.FluidManager fluidManager;
+
     // --- Active UI state (which overlay is shown) ---
     public enum ActiveUI { NONE, INVENTORY, CHEST, FURNACE, CRAFTING_TABLE }
     public ActiveUI activeUI = ActiveUI.NONE;
@@ -233,6 +236,11 @@ public class GameContext {
         chunkManager = dimensionManager.getActiveChunkManager();
         redstoneManager = new RedstoneManager(world, chunkManager);
         com.voxel.world.RedstoneLogger.log("DIMENSION SWITCH: created new RedstoneManager for " + target.name + " (was " + previous.name + ")");
+
+        // Recreate fluid manager for the new dimension
+        fluidManager = new com.voxel.world.FluidManager(world, chunkManager, blockDataManager, target == DimensionType.NETHER);
+        chunkManager.setFluidManager(fluidManager);
+
         if (previous != target) dimensionManager.unloadDimension(previous);
 
         // --- Determine spawn position with coordinate translation ---

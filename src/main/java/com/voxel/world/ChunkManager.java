@@ -289,6 +289,12 @@ public class ChunkManager {
             tableDirty.set(true);
         }
 
+        // Notify fluid manager: block changes may affect fluid flow
+        // (placing blocks blocks flow, breaking lets fluid spread)
+        if (fluidManager != null) {
+            fluidManager.notifyBlockChanged(x, y, z);
+        }
+
         // Post lighting updates to the dedicated light thread unconditionally
         // (block changes always affect light: placing blocks creates shadows, breaking lets light through)
         final int colCx = x >> 4;
@@ -366,6 +372,15 @@ public class ChunkManager {
         lightRunning = false;
         lightThread.interrupt();
         try { lightThread.join(5000); } catch (InterruptedException ignored) {}
+    }
+
+    private com.voxel.world.FluidManager fluidManager;
+
+    /**
+     * Sets the fluid manager for block change notifications.
+     */
+    public void setFluidManager(com.voxel.world.FluidManager fm) {
+        this.fluidManager = fm;
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -638,6 +653,8 @@ public class ChunkManager {
             // Sky-ray early-out: register this chunk's top solid voxel Y.
             int colMax = computeColumnMaxY(slots);
             updateTopSolidY(key, colMax);
+            // Schedule fluid blocks for flow processing (water/lava from disk or gen)
+            scheduleFluidsInColumn(cx, cz, slots);
             // Minecraft-style lighting: posted to dedicated light thread
             if (Math.abs(cx - lastPlayerCX) <= LIGHT_GRID_RADIUS && Math.abs(cz - lastPlayerCZ) <= LIGHT_GRID_RADIUS) {
                 if (is5x5Loaded(cx, cz)) {
@@ -744,6 +761,9 @@ public class ChunkManager {
                 GameLogger.log("LIGHT deferred chunk(" + cx + "," + cz + ") waiting for 5×5 grid");
             }
         }
+        // Schedule fluid blocks for flow processing (water/lava placed during gen)
+        scheduleFluidsInColumn(cx, cz, slots);
+
         WorldGenLogger.logChunk("GEN_DONE", cx, -1, cz,
             "committed, total=" + totalSolid + " solid, " + (System.currentTimeMillis() - t0) + "ms");
     }
@@ -1139,6 +1159,36 @@ public class ChunkManager {
             }
         }
         return solidCount;
+    }
+
+    /**
+     * Scans a freshly loaded/generated chunk column for fluid blocks (water=15/150-164, lava=21)
+     * and schedules them with the FluidManager so they begin flowing.
+     * Called from loadChunk() after disk-load and after procedural generation.
+     */
+    private void scheduleFluidsInColumn(int cx, int cz, Integer[] slots) {
+        if (fluidManager == null) return;
+        int worldX = cx << 4;
+        int worldZ = cz << 4;
+        for (int cy = 0; cy < chunkHeight; cy++) {
+            int slot = slots[cy];
+            if (slot == World.EMPTY) continue;
+            int worldY = cy << 4;
+            for (int ly = 0; ly < 16; ly++) {
+                for (int lx = 0; lx < 16; lx++) {
+                    for (int lz = 0; lz < 16; lz++) {
+                        int raw = world.getRawVoxelInSlot(slot, lx, ly, lz);
+                        int blockId = raw & 0xFFFF;
+                        // Schedule all water variants (15=source, 150-164=flowing) and lava (21)
+                        if (blockId == FluidManager.WATER
+                            || (blockId >= FluidManager.WATER_FLOWING_BASE && blockId <= FluidManager.WATER_FLOWING_MAX)
+                            || blockId == FluidManager.LAVA) {
+                            fluidManager.notifyBlockChanged(worldX + lx, worldY + ly, worldZ + lz);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private long chunkKey(int x, int z) { return ((long) x << 32) | (z & 0xFFFFFFFFL); }
