@@ -298,6 +298,7 @@ public class DimensionWorldGenerator extends WorldGenerator {
     private boolean isCaveCarved(int x, int y, int z) {
         // Caves don't carve above y=128 (overworld)
         if (y > 128) return false;
+        // No lower bound — caves extend down forever (cubic chunks)
 
         // Height-dependent cave density and size
         float heightFactor;
@@ -310,10 +311,14 @@ public class DimensionWorldGenerator extends WorldGenerator {
             // Mid-level caves: moderate
             heightFactor = 0.3f;
             scale = 0.035f;
-        } else {
+        } else if (y > -16) {
             // Deep caves: rarer, narrower
             heightFactor = 0.2f;
             scale = 0.03f;
+        } else {
+            // Very deep caves (below y=-16): even rarer, tight winding tunnels
+            heightFactor = 0.15f;
+            scale = 0.025f;
         }
 
         // Multi-scale cave noise
@@ -346,40 +351,45 @@ public class DimensionWorldGenerator extends WorldGenerator {
      * Uses 3D noise for natural-looking ore distributions.
      */
     private int generateOres(int x, int y, int z, int height) {
-        // Coal ore: common above y=0, veins of ~16 blocks
-        if (y > 0 && y < 128) {
+        // Coal ore: common above y=0, thinner bands below
+        if (y < 128 && y > -32) {
             float coalNoise = detailNoise.noise(x * 0.5f, z * 0.5f, 0.1f) + erosionNoise.noise(y, x, 0.05f);
-            if (coalNoise > 0.65f && coalNoise < 0.75f) return coalOreId;
+            float threshold = y > 0 ? 0.65f : 0.7f; // rarer below y=0
+            if (coalNoise > threshold && coalNoise < threshold + 0.1f) return coalOreId;
         }
 
-        // Iron ore: common below y=64, veins of ~8 blocks
+        // Iron ore: common below y=64, continues indefinitely downward
         if (y < 64) {
             float ironNoise = erosionNoise.noise(x * 0.6f, z * 0.6f, 0.08f) + detailNoise.noise(y, z, 0.04f);
             if (ironNoise > 0.7f && ironNoise < 0.78f) return ironOreId;
         }
 
-        // Gold ore: below y=32, veins of ~6 blocks
+        // Gold ore: below y=32, continues down (rare below y=-16)
         if (y < 32) {
             float goldNoise = continentalNoise.noise(x * 0.7f, z * 0.7f, 0.07f);
-            if (goldNoise > 0.72f && goldNoise < 0.77f) return goldOreId;
+            float threshold = y < -16 ? 0.76f : 0.72f;
+            if (goldNoise > threshold && goldNoise < threshold + 0.05f) return goldOreId;
         }
 
-        // Diamond ore: below y=16, veins of ~4 blocks (very rare)
+        // Diamond ore: below y=16, continues down (very rare below y=-16)
         if (y < 16) {
             float diamondNoise = detailNoise.noise(x * 0.8f + 100, z * 0.8f + 100, 0.06f) + erosionNoise.noise(y * 2, x, 0.03f);
-            if (diamondNoise > 0.75f && diamondNoise < 0.77f) return diamondOreId;
+            float threshold = y < -16 ? 0.78f : 0.75f;
+            if (diamondNoise > threshold && diamondNoise < threshold + 0.02f) return diamondOreId;
         }
 
-        // Redstone ore: below y=16, veins of ~7 blocks
+        // Redstone ore: below y=16, continues down
         if (y < 16) {
             float redstoneNoise = erosionNoise.noise(x * 0.55f, z * 0.55f, 0.09f);
-            if (redstoneNoise > 0.6f && redstoneNoise < 0.67f) return redstoneOreId;
+            float threshold = y < -16 ? 0.7f : 0.6f;
+            if (redstoneNoise > threshold && redstoneNoise < threshold + 0.07f) return redstoneOreId;
         }
 
-        // Lapis lazuli: below y=32, veins of ~6 blocks
+        // Lapis lazuli: below y=32, continues down
         if (y < 32) {
             float lapisNoise = continentalNoise.noise(x * 0.45f + 200, z * 0.45f + 200, 0.07f);
-            if (lapisNoise > 0.73f && lapisNoise < 0.77f) return lapisOreId;
+            float threshold = y < -16 ? 0.77f : 0.73f;
+            if (lapisNoise > threshold && lapisNoise < threshold + 0.04f) return lapisOreId;
         }
 
         // Emerald ore: y 4-32, only in mountain biomes (height > 80), very rare

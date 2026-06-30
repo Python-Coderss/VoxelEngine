@@ -67,7 +67,8 @@ public class Player {
     /** Sprint jump horizontal impulse (EntityLivingBase.jump: sin/cos * 0.2F) */
     private static final float SPRINT_JUMP_IMPULSE = 0.2F;
 
-    /** Creative flight speed (PlayerCapabilities.getFlySpeed: 0.05F) */
+    /** Creative flight speed (PlayerCapabilities.getFlySpeed: 0.05F). Sprinting doubles it.
+     *  Pitch-based component uses 20% of this for subtle assist. */
     private static final float FLY_SPEED = 0.05F;
 
     /** Sneaking eye height adjustment (EntityPlayer.getEyeHeight: -0.08F) */
@@ -223,9 +224,13 @@ public class Player {
             // Diagonal movement normalization (Minecraft: multiply by 0.98 for diagonals)
             float factor = acceleration / d;
 
-            // Sprinting boost
-            if (isSprinting && onGround && !isSneaking) {
-                factor *= (1.0f + SPRINT_BOOST);  // * 1.3
+            // Sprinting boost (Minecraft: 1.3x on ground, 2x when flying)
+            if (isSprinting && !isSneaking) {
+                if (flying) {
+                    factor *= 2.0f;
+                } else if (onGround) {
+                    factor *= (1.0f + SPRINT_BOOST);  // * 1.3
+                }
             }
             // Sneaking speed reduction
             if (isSneaking && onGround) {
@@ -245,9 +250,10 @@ public class Player {
             velocity.z += forward * sin - strafe * cos;
         }
 
-        // Flying vertical movement
+        // Flying vertical movement (Minecraft: jumpMovementFactor = 0.05, sprinting = 0.10)
         if (flying && moveVertical != 0.0f) {
-            velocity.y += moveVertical * FLY_SPEED;
+            float flyFactor = isSprinting ? 2.0f : 1.0f;
+            velocity.y += moveVertical * flyFactor;
         }
 
         // --- Apply friction to horizontal velocity ---
@@ -378,18 +384,21 @@ public class Player {
      * @param speed Per-frame speed multiplier
      */
     public void move(float dx, float dy, float dz, float speed) {
-        if (flying || isSwimming) {
+        // Gentle pitch-based vertical for flight: looking up adds slight upward drift,
+        // looking down adds slight downward drift. Multiplier is 20% of FLY_SPEED so
+        // it's a subtle assist, not dominant.
+        if (flying) {
             float pitchRad = (float) Math.toRadians(pitch);
-            float verticalFactor = -(float) Math.sin(pitchRad);
+            float verticalFactor = (float) Math.sin(pitchRad);
             float horizontalMag = (float) Math.sqrt(dx * dx + dz * dz);
             if (horizontalMag > 0.1f) {
-                moveVertical += verticalFactor * horizontalMag * speed;
+                moveVertical += verticalFactor * horizontalMag * FLY_SPEED * 0.2f;
             }
         }
         // Accumulate strafe/forward for consumption in tick()
         moveStrafing += dx;
         moveForward += dz;
-        moveVertical += dy * speed;
+        moveVertical += dy; // raw vertical, no speed multiplication (tick applies fly speed)
     }
 
     public void jump(World world, BlockDataManager blockDataManager) {

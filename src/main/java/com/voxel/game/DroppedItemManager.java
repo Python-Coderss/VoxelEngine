@@ -56,6 +56,34 @@ public class DroppedItemManager {
         this.ctx = ctx;
     }
 
+    /** Result of a downward ground search for a dropped item. */
+    private static final class GroundResult {
+        final float groundTopY;
+        final int supportBlockY;
+        final boolean found;
+        GroundResult(float groundTopY, int supportBlockY, boolean found) {
+            this.groundTopY = groundTopY;
+            this.supportBlockY = supportBlockY;
+            this.found = found;
+        }
+    }
+
+    /**
+     * Scan downward from {@code startY} in column ({@code colX}, {@code colZ}) for the
+     * first non-air block. Returns its top-face Y, block Y, and found flag.
+     */
+    private GroundResult findGroundBelow(int colX, int colZ, float startY) {
+        if (ctx.world == null) return new GroundResult(startY, Integer.MIN_VALUE, false);
+        for (int dy = 1; dy <= GROUND_SEARCH_DEPTH; dy++) {
+            int probeY = (int)Math.floor(startY) - dy;
+            if (probeY < 0) break;
+            if (ctx.world.getVoxel(colX, probeY, colZ) != 0) {
+                return new GroundResult(probeY + 1.0f, probeY, true);
+            }
+        }
+        return new GroundResult(startY, Integer.MIN_VALUE, false);
+    }
+
     /** Number of drops currently being rendered. */
     public int getItemCount() { return items.size(); }
 
@@ -92,18 +120,8 @@ public class DroppedItemManager {
 
         // Ground search: scan the column directly below the broken block (skip the now-empty
         // broken-block cell itself). The first non-air voxel below is the ground candidate.
-        // Cap at GROUND_SEARCH_DEPTH so we don't fall into unloaded voids; if nothing is
-        // found, the item stays at its spawn height (no fall).
-        float groundTopY = y; // fallback: no ground found, item hovers at spawn
-        if (ctx.world != null) {
-            for (int dy = 1; dy <= GROUND_SEARCH_DEPTH; dy++) {
-                int probeY = blockY - dy;
-                if (ctx.world.getVoxel(blockX, probeY, blockZ) != 0) {
-                    groundTopY = probeY + 1.0f; // top face of the solid voxel we landed on
-                    break;
-                }
-            }
-        }
+        GroundResult ground = findGroundBelow(blockX, blockZ, blockY);
+        float groundTopY = ground.groundTopY; // fallback: no ground found, item hovers at spawn
         float hover = MIN_HOVER_ABOVE_GROUND
                     + rng.nextFloat() * (MAX_HOVER_ABOVE_GROUND - MIN_HOVER_ABOVE_GROUND);
         float halfScale = 0.5f * DROPPED_ITEM_SCALE;
@@ -111,13 +129,49 @@ public class DroppedItemManager {
         float restY = groundTopY + hover + halfScale;
         // baseY starts at spawn (broken-block center); fallback restY == y means no fall.
         DroppedItem di = new DroppedItem(itemId, def.blockId, count, x, y, z, phase, spawnTimeNs,
-                                         restY, groundTopY, hover);
+                                         restY, groundTopY, hover,
+                                         blockX, ground.supportBlockY, blockZ, ground.found);
         synchronized (items) {
             // Pool cap exceeded — fail soft (just don't drop). Future: drop oldest or compress stacks.
             if (items.size() >= MAX_ITEMS) {
                 return;
             }
             items.add(di);
+        }
+    }
+
+    /**
+     * Called when a block is destroyed. Checks all grounded dropped items: if the
+     * destroyed block was supporting an item, the item becomes un-grounded and
+     * searches for new ground beneath its current column. If no ground is found,
+     * the item will fall indefinitely (into a void/chasm).
+     */
+    public void onBlockDestroyed(int x, int y, int z) {
+        synchronized (items) {
+            for (DroppedItem di : items) {
+                if (!di.grounded || !di.hasSupportBlock) continue;
+                if (di.supportBlockX == x && di.supportBlockY == y && di.supportBlockZ == z) {
+                    di.grounded = false;
+                    di.vy = 0f; // start falling from rest
+                    // Re-search for ground beneath the item's current column
+                    int ix = (int)Math.floor(di.baseX);
+                    int iz = (int)Math.floor(di.baseZ);
+                    GroundResult newGround = findGroundBelow(ix, iz, di.baseY);
+                    if (newGround.found) {
+                        di.groundTopY = newGround.groundTopY;
+                        di.supportBlockX = ix;
+                        di.supportBlockY = newGround.supportBlockY;
+                        di.supportBlockZ = iz;
+                        di.hasSupportBlock = true;
+                        float halfScale = 0.5f * DROPPED_ITEM_SCALE;
+                        di.restY = newGround.groundTopY + di.hoverHeight + halfScale;
+                    } else {
+                        di.hasSupportBlock = false;
+                        // No ground found — item falls indefinitely (void/abyss)
+                        di.restY = Float.NEGATIVE_INFINITY;
+                    }
+                }
+            }
         }
     }
 

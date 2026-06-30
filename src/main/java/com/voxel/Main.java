@@ -819,11 +819,26 @@ public class Main {
         player.move(strafe, 0, forward, 0);
 
         if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
-            if (player.isFlying()) player.move(0, 0.05f, 0, 0.05f);
-            else player.jump(world, blockDataManager);
+            if (gameMode == GameMode.CREATIVE) {
+                // Creative: auto-fly, no isFlying gate needed
+                player.setFlying(true);
+                player.move(0, 0.05f, 0, 0);
+            } else if (player.isFlying()) {
+                player.move(0, 0.05f, 0, 0);
+            } else {
+                player.jump(world, blockDataManager);
+            }
         }
         if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-            if (player.isFlying()) player.move(0, -0.05f, 0, 0.05f);
+            if (gameMode == GameMode.CREATIVE) {
+                // Creative: shift = fly down, not sneak
+                player.setFlying(true);
+                player.setSneaking(false);
+                player.move(0, -0.05f, 0, 0);
+            } else if (player.isFlying()) {
+                player.move(0, -0.05f, 0, 0);
+            }
+            // Survival: shift is handled by setSneaking() above
         }
 
         if (gameMode == GameMode.CREATIVE) {
