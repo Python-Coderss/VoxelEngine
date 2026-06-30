@@ -162,8 +162,9 @@ public class ItemDefinitions {
         registerBlock("golden_aercloud", "Golden Aercloud", 126, "golden_aercloud");
         // --- Tools ---
         registerTool("flint_and_steel", "Flint and Steel", "flint_and_steel", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
-        registerTool("water_bucket", "Water Bucket", "bucket_water", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
-        registerTool("eye_of_ender", "Eye of Ender", "ender_eye", ToolType.HAND, 1.0f, new Vector4f(1, 1, 1, 1));
+        registerTool("bucket", "Bucket", "bucket_empty", ToolType.HAND, 1.0f, new Vector4f(0.7f, 0.7f, 0.7f, 1));
+        registerTool("water_bucket", "Water Bucket", "bucket_water", ToolType.HAND, 1.0f, new Vector4f(0.3f, 0.5f, 1, 1));
+        registerTool("lava_bucket", "Lava Bucket", "bucket_lava", ToolType.HAND, 1.0f, new Vector4f(1, 0.4f, 0.1f, 1));
         // --- Aether Items ---
         registerBlock("aether_grass", "Aether Grass", 100, "aether_grass_block_top");
         registerBlock("holystone", "Holystone", 101, "holystone");
@@ -247,6 +248,8 @@ public class ItemDefinitions {
         registerAlias("redstone", "redstone_wire");
         registerAlias("dust", "redstone_wire");
         registerAlias("piston_block", "piston");
+        registerAlias("empty_bucket", "bucket");
+        registerAlias("iron_bucket", "bucket");
     }
 
     private void registerBlock(String itemId, String displayName, int blockId, String textureName) {

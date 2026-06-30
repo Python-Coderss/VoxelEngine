@@ -25,6 +25,10 @@ public class BlockInteraction {
     private static final int BLOCK_FURNACE = 116;
     private static final int BLOCK_FURNACE_ON = 117;
     private static final int BLOCK_CHEST = 118;
+    private static final int BLOCK_WATER = 15;
+    private static final int BLOCK_WATER_FLOWING_MIN = 150;
+    private static final int BLOCK_WATER_FLOWING_MAX = 156;
+    private static final int BLOCK_LAVA = 21;
 
     /** Opens the furnace UI for the given block position. */
     private void openFurnace(int x, int y, int z) {
@@ -58,6 +62,12 @@ public class BlockInteraction {
 
         int blockId = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
         if (blockId == 0) { resetMining(); return; }
+
+        // Water and lava can't be broken — use a bucket instead
+        if (isWaterBlock(blockId) || blockId == BLOCK_LAVA) {
+            resetMining();
+            return;
+        }
 
         if (ctx.gameMode == GameMode.CREATIVE) {
             if (ctx.leftMousePressedThisFrame) {
@@ -321,6 +331,56 @@ public class BlockInteraction {
         if (selected == null) { ctx.setStatus("Selected slot is empty"); return; }
         ItemDefinitions.ItemDefinition def = ctx.itemDefinitions.getDefinition(selected.itemId);
         if (def == null) return;
+
+        // ── Bucket fluid interaction ──
+        if (def.id.equals("bucket")) {
+            // Empty bucket: scoop fluid from the looked-at block
+            int scoopBlock = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
+            if (isWaterBlock(scoopBlock)) {
+                ctx.chunkManager.setVoxel(hit[0], hit[1], hit[2], 0);
+                ctx.fluidManager.notifyBlockChanged(hit[0], hit[1], hit[2]);
+                ctx.playerInventory.replaceSelected("water_bucket");
+                if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
+                ctx.setStatus("Filled water bucket");
+                return;
+            } else if (scoopBlock == BLOCK_LAVA) {
+                ctx.chunkManager.setVoxel(hit[0], hit[1], hit[2], 0);
+                ctx.fluidManager.notifyBlockChanged(hit[0], hit[1], hit[2]);
+                ctx.playerInventory.replaceSelected("lava_bucket");
+                if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
+                ctx.setStatus("Filled lava bucket");
+                return;
+            }
+            // Not a fluid — fall through to normal item handling
+        }
+        if (def.id.equals("water_bucket")) {
+            // Water bucket: place water source at the adjacent block
+            int px = hit[3], py = hit[4], pz = hit[5];
+            int existing = ctx.world.getVoxel(px, py, pz);
+            if (existing != 0) { ctx.setStatus("Cannot place water here"); return; }
+            if (intersectsPlayer(px, py, pz)) return;
+            ctx.chunkManager.setVoxel(px, py, pz, BLOCK_WATER);
+            ctx.fluidManager.notifyBlockChanged(px, py, pz);
+            ctx.playerInventory.replaceSelected("bucket");
+            if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
+            ctx.setStatus("Placed water");
+            return;
+        }
+        if (def.id.equals("lava_bucket")) {
+            // Lava bucket: place lava source at the adjacent block
+            int px = hit[3], py = hit[4], pz = hit[5];
+            int existing = ctx.world.getVoxel(px, py, pz);
+            if (existing != 0) { ctx.setStatus("Cannot place lava here"); return; }
+            if (intersectsPlayer(px, py, pz)) return;
+            ctx.chunkManager.setVoxel(px, py, pz, BLOCK_LAVA);
+            ctx.fluidManager.notifyBlockChanged(px, py, pz);
+            ctx.playerInventory.replaceSelected("bucket");
+            if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
+            ctx.setStatus("Placed lava");
+            return;
+        }
+        // ── End bucket interaction ──
+
         if (def.kind != ItemDefinitions.ItemKind.BLOCK) {
             ctx.setStatus("Select a block item to place");
             return;
@@ -359,6 +419,7 @@ public class BlockInteraction {
             selected.count--;
             if (selected.count <= 0) ctx.playerInventory.setSlot(ctx.playerInventory.getSelectedSlot(), null);
         }
+        if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
     }
 
     public void resetMining() {
@@ -390,6 +451,13 @@ public class BlockInteraction {
             }
         }
         return null;
+    }
+
+    /**
+     * Checks if a block ID is any water variant (source or flowing).
+     */
+    private boolean isWaterBlock(int blockId) {
+        return blockId == BLOCK_WATER || (blockId >= BLOCK_WATER_FLOWING_MIN && blockId <= BLOCK_WATER_FLOWING_MAX);
     }
 
     private boolean intersectsPlayer(int x, int y, int z) {

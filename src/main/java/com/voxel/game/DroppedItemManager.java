@@ -244,6 +244,7 @@ public class DroppedItemManager {
                 return;
             }
             if (ctx.statusConsumer != null) ctx.statusConsumer.accept("Picked up: " + picked.itemId.replace('_', ' '));
+            if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
         }
     }
 

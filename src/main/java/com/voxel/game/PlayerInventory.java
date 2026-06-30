@@ -49,6 +49,31 @@ public class PlayerInventory {
 
     public ItemDefinitions.ItemStack getSelected() { return inventory[selectedSlot]; }
 
+    /**
+     * Replaces the currently selected slot item with a new item (keeping count=1).
+     * Used by bucket interactions (bucket → water_bucket, water_bucket → bucket).
+     */
+    public void replaceSelected(String newItemId) {
+        if (ctx.gameMode == GameContext.GameMode.CREATIVE) return; // Creative: no consumption
+        ItemDefinitions.ItemStack sel = inventory[selectedSlot];
+        if (sel != null) {
+            sel.count--;
+            if (sel.count <= 0) {
+                inventory[selectedSlot] = new ItemDefinitions.ItemStack(newItemId, 1);
+            } else {
+                // Try to add the new item to inventory; if full, drop on ground
+                if (!addItem(newItemId, 1)) {
+                    if (ctx.droppedItemManager != null) {
+                        ctx.droppedItemManager.spawn(newItemId, 1,
+                            (int) ctx.player.getPosition().x,
+                            (int) ctx.player.getPosition().y,
+                            (int) ctx.player.getPosition().z);
+                    }
+                }
+            }
+        }
+    }
+
     // --- Item management ---
     public boolean addItem(String itemId, int count) {
         ItemDefinitions.ItemDefinition def = ctx.itemDefinitions.getDefinition(itemId);
