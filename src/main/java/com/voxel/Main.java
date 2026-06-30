@@ -314,6 +314,7 @@ public class Main {
         ctx.uploadWorldToGpu = () -> { needsWorldUpload = true; };
         ctx.updateCursorMode = this::updateCursorMode;
         ctx.statusConsumer = this::setStatus;
+        ctx.uiDirtyMarker = () -> { hud.inventoryUiDirty = true; };
 
         // Create extracted subsystems
         itemDefinitions = new ItemDefinitions();

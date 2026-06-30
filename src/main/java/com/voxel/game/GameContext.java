@@ -171,6 +171,8 @@ public class GameContext {
     public Runnable uploadWorldToGpu;
     public Runnable updateCursorMode;
     public java.util.function.Consumer<String> statusConsumer;
+    /** Called by subsystems when inventory changes — triggers hotbar rerender. */
+    public Runnable uiDirtyMarker;
 
     // Scale factors relative to Overworld (1.0). Aether: 8 blocks = 1 overworld block. Nether: 8 overworld blocks = 1 nether block.
     private static final float SCALE_AETHER = 8.0f;

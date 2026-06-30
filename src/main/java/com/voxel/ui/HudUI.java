@@ -471,8 +471,8 @@ public class HudUI {
         commandTextElement.visible = false;
         layer.addElement(commandTextElement);
 
-        statusTextElement = new UILayer.UITextElement(new Vector2f(20, main.height - 70), "", 2.0f, new Vector4f(1, 1, 0.5f, 1), fontTextureId);
-        statusTextElement.charLineLimit = 20;
+        statusTextElement = new UILayer.UITextElement(new Vector2f(main.width / 2f - 200, main.height - 50), "", 2.0f, new Vector4f(1, 1, 0.5f, 1), fontTextureId);
+        statusTextElement.charLineLimit = 40;
         statusTextElement.visible = false;
         layer.addElement(statusTextElement);
     }
