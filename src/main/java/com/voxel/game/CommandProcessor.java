@@ -113,9 +113,23 @@ public class CommandProcessor {
 
     private void handleGive(String[] parts) {
         if (parts.length < 2) { ctx.setStatus("Usage: /give <item> [amount]"); return; }
-        String itemId = ctx.itemDefinitions.resolveItemId(parts[1]);
+        // First try the canonical registry (handles deduplicated names like "flint", "water")
+        String itemId = null;
+        ItemDefinitions.ItemDefinition def = null;
+        if (ctx.canonicalRegistry != null) {
+            CanonicalRegistry.CanonicalEntry entry = ctx.canonicalRegistry.resolve(parts[1]);
+            if (entry != null) {
+                // Map the canonical primary block ID back to an item ID
+                itemId = ctx.itemDefinitions.getBlockItemByBlockId().get(entry.primaryBlockId);
+                def = itemId != null ? ctx.itemDefinitions.getDefinition(itemId) : null;
+            }
+        }
+        // Fall back to the old resolution chain
+        if (itemId == null) {
+            itemId = ctx.itemDefinitions.resolveItemId(parts[1]);
+            if (itemId != null) def = ctx.itemDefinitions.getDefinition(itemId);
+        }
         if (itemId == null) { ctx.setStatus("Unknown item: " + parts[1]); return; }
-        ItemDefinitions.ItemDefinition def = ctx.itemDefinitions.getDefinition(itemId);
         int amount = 1;
         if (parts.length >= 3) {
             try { amount = Math.max(1, Integer.parseInt(parts[2])); }

@@ -48,6 +48,8 @@ public class GameContext {
 
     // --- Core managers ---
     public ItemDefinitions itemDefinitions;
+    /** Deduplicated canonical block/item registry — one entry per logical item. */
+    public CanonicalRegistry canonicalRegistry;
     public PlayerInventory playerInventory;
     public BlockDataManager blockDataManager;
     public BlockRegistry blockRegistry;
