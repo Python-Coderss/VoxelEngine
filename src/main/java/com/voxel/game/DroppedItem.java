@@ -46,15 +46,25 @@ public final class DroppedItem {
     public float vy = 0f;
     /** True once the item has settled onto the ground beneath it (parity: lock vy, lock baseY at restY). */
     public boolean grounded = false;
-    /** Y where the item should come to rest after gravity settles it. baseY converges here on landing. */
-    public final float restY;
-    /** Top-face Y of the ground voxel beneath the item (or the original spawn Y if no ground found). */
-    public final float groundTopY;
+    /** Y where the item should come to rest after gravity settles it. baseY converges here on landing.
+     *  Mutable — updated when the supporting block is destroyed and new ground is found. */
+    public float restY;
+    /** Top-face Y of the ground voxel beneath the item (or the original spawn Y if no ground found).
+     *  Mutable — updated when the supporting block is destroyed and new ground is found. */
+    public float groundTopY;
     /** Constant per-item randomized hover distance (item bottom -> ground top). Manager's [MIN, MAX] range. */
     public final float hoverHeight;
+    /** World position of the solid block beneath this item (the supporting block).
+     *  When that block is destroyed, the item should become un-grounded and fall.
+     *  Mutable — updated when the supporting block is destroyed and new ground is found. */
+    public int supportBlockX, supportBlockY, supportBlockZ;
+    /** Whether a supporting block was found during spawn. False if the item spawned
+     *  mid-air with no ground below (e.g., broken block over a void). */
+    public boolean hasSupportBlock;
 
     public DroppedItem(String itemId, int blockId, int count, float x, float y, float z, float bobPhase, long spawnTimeNs,
-                       float restY, float groundTopY, float hoverHeight) {
+                       float restY, float groundTopY, float hoverHeight,
+                       int supportBlockX, int supportBlockY, int supportBlockZ, boolean hasSupportBlock) {
         this.itemId = itemId;
         this.blockId = blockId;
         this.count = count;
@@ -66,5 +76,9 @@ public final class DroppedItem {
         this.restY = restY;
         this.groundTopY = groundTopY;
         this.hoverHeight = hoverHeight;
+        this.supportBlockX = supportBlockX;
+        this.supportBlockY = supportBlockY;
+        this.supportBlockZ = supportBlockZ;
+        this.hasSupportBlock = hasSupportBlock;
     }
 }

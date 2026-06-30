@@ -104,6 +104,10 @@ public class BlockInteraction {
         if (!ctx.chunkManager.setVoxel(x, y, z, 0)) return;
         ctx.redstoneManager.onBlockChanged(x, y, z);
         ctx.redstoneManager.notifyNeighbors(x, y, z);
+        // Notify dropped items: if any item was resting on this block, it should fall
+        if (ctx.droppedItemManager != null) {
+            ctx.droppedItemManager.onBlockDestroyed(x, y, z);
+        }
 
         // If breaking a crafting table, return items in its grid to the player
         if (blockId == 115) {
