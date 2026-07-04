@@ -1,6 +1,7 @@
 package com.voxel;
 
 import com.voxel.utils.BlockDataManager;
+import org.joml.Vector3d;
 import org.joml.Vector3f;
 
 /**
@@ -8,9 +9,9 @@ import org.joml.Vector3f;
  * Uses a fixed 20-tick-per-second internal loop so all constants match Minecraft directly.
  */
 public class Player {
-    private final Vector3f position = new Vector3f();
-    private final Vector3f prevPosition = new Vector3f();
-    private final Vector3f velocity = new Vector3f();
+    private final Vector3d position = new Vector3d();
+    private final Vector3d prevPosition = new Vector3d();
+    private final Vector3d velocity = new Vector3d();
     private final Vector3f size = new Vector3f(0.6f, 1.8f, 0.6f);
 
     // --- Interpolation (render thread uses this to smooth between physics ticks) ---
@@ -91,12 +92,12 @@ public class Player {
     private float maxHealth = 20.0f;
     private boolean isDead = false;
     private float fallDistance = 0.0f;
-    private Vector3f spawnPoint = new Vector3f();
+    private Vector3d spawnPoint = new Vector3d();
 
     private float yaw = -90, pitch = 0;
     private com.voxel.world.DimensionType dimension = com.voxel.world.DimensionType.OVERWORLD;
 
-    public Player(float x, float y, float z) {
+    public Player(double x, double y, double z) {
         position.set(x, y, z);
         prevPosition.set(x, y, z);
         spawnPoint.set(x, y, z);
@@ -296,13 +297,13 @@ public class Player {
         // Only step up if the player WOULD collide at current Y but the space
         // at Y+STEP_HEIGHT is clear. Prevents bouncing on flat ground.
         if (onGround && !isSneaking) {
-            float stepX = velocity.x;
-            float stepZ = velocity.z;
-            float horDist = (float) Math.sqrt(stepX * stepX + stepZ * stepZ);
-            if (horDist > 0.001f
+            double stepX = velocity.x;
+            double stepZ = velocity.z;
+            double horDist = Math.sqrt(stepX * stepX + stepZ * stepZ);
+            if (horDist > 0.001
                     && wouldCollideAtOffset(stepX, 0, stepZ, world, blockDataManager)
                     && !wouldCollideAtOffset(stepX, STEP_HEIGHT, stepZ, world, blockDataManager)) {
-                float origX = position.x, origY = position.y, origZ = position.z;
+                double origX = position.x, origY = position.y, origZ = position.z;
                 position.x += stepX;
                 position.y += STEP_HEIGHT;
                 position.z += stepZ;
@@ -332,7 +333,7 @@ public class Player {
         }
 
         // Y movement
-        float prevYVel = velocity.y;
+        double prevYVel = velocity.y;
         onGround = false;
         position.y += velocity.y;
         if (checkCollision(world, blockDataManager)) {
@@ -350,7 +351,7 @@ public class Player {
     }
 
     /** Tests collision at an offset position (used by step-assist). */
-    private boolean wouldCollideAtOffset(float dx, float dy, float dz, World world, BlockDataManager blockDataManager) {
+    private boolean wouldCollideAtOffset(double dx, double dy, double dz, World world, BlockDataManager blockDataManager) {
         position.x += dx;
         position.y += dy;
         position.z += dz;
@@ -530,7 +531,7 @@ public class Player {
     }
 
     /** Teleport to exact coordinates, resetting velocity, parachute, and interpolation state. */
-    public void teleport(float x, float y, float z) {
+    public void teleport(double x, double y, double z) {
         position.set(x, y, z);
         prevPosition.set(x, y, z);
         velocity.set(0);
@@ -542,20 +543,26 @@ public class Player {
         parachuteSlotIndex = -1;
     }
 
-    public void setSpawnPoint(Vector3f point) { spawnPoint.set(point); }
+    public void setSpawnPoint(Vector3f point) { spawnPoint.set(point.x, point.y, point.z); }
 
     // ════════════════════════════════════════════════════════════════
     //  Getters / Setters
     // ════════════════════════════════════════════════════════════════
 
-    public Vector3f getPosition() { return position; }
+    public Vector3f getPosition() { return new Vector3f((float)position.x, (float)position.y, (float)position.z); }
+
+    /** Double-precision position for physics/collision callers that need exact coords at far distances. */
+    public Vector3d getPositionD() { return position; }
+
+    /** Sets the player position (used by dimension switching / spawn adjustment). */
+    public void setPosition(double x, double y, double z) { position.set(x, y, z); }
 
     /** Interpolated position for smooth rendering between physics ticks. */
     public Vector3f getInterpolatedPosition(float partialTicks) {
         return new Vector3f(
-            prevPosition.x + (position.x - prevPosition.x) * partialTicks,
-            prevPosition.y + (position.y - prevPosition.y) * partialTicks,
-            prevPosition.z + (position.z - prevPosition.z) * partialTicks
+            (float)(prevPosition.x + (position.x - prevPosition.x) * partialTicks),
+            (float)(prevPosition.y + (position.y - prevPosition.y) * partialTicks),
+            (float)(prevPosition.z + (position.z - prevPosition.z) * partialTicks)
         );
     }
 
@@ -573,7 +580,13 @@ public class Player {
     /** Wall-clock nanos of the last completed physics tick (for computing partialTicks). */
     public long getLastTickWallNanos() { return lastTickWallNanos; }
 
-    public Vector3f getVelocity() { return velocity; }
+    public Vector3f getVelocity() { return new Vector3f((float)velocity.x, (float)velocity.y, (float)velocity.z); }
+
+    /** Double-precision velocity for callers that need exact deltas at far distances. */
+    public Vector3d getVelocityD() { return velocity; }
+
+    /** Zeroes velocity (used by dimension switching / respawn). */
+    public void resetVelocity() { velocity.set(0); }
     public float getYaw() { return yaw; }
     public void setYaw(float yaw) { this.yaw = yaw; }
     public float getPitch() { return pitch; }

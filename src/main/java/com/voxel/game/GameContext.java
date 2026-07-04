@@ -272,8 +272,8 @@ public class GameContext {
             spawnY = findSurfaceNear(spawnX, spawnZ, 1, 255, 32);
         }
 
-        player.getPosition().set(spawnX + 0.5f, spawnY, spawnZ + 0.5f);
-        player.getVelocity().set(0);
+        player.setPosition(spawnX + 0.5, spawnY, spawnZ + 0.5);
+        player.resetVelocity();
         player.setDimension(target);
         // Sync playerEntity dimension for entity visibility filtering
         if (playerEntity != null) {
@@ -323,7 +323,8 @@ public class GameContext {
         float currentY = player.getPosition().y;
         // Only adjust if we found a different (real) surface — don't adjust if still fallback
         if (Math.abs(surfaceY - currentY) > 0.5f && surfaceY > 10 && surfaceY < 200) {
-            player.getPosition().y = surfaceY;
+            org.joml.Vector3d d = player.getPositionD();
+            player.setPosition(d.x, surfaceY, d.z);
         }
         pendingSpawnX = Integer.MIN_VALUE;
     }

@@ -80,9 +80,9 @@ public class CommandProcessor {
             return;
         }
         try {
-            float x = Float.parseFloat(parts[1]);
-            float y = Float.parseFloat(parts[2]);
-            float z = Float.parseFloat(parts[3]);
+            double x = Double.parseDouble(parts[1]);
+            double y = Double.parseDouble(parts[2]);
+            double z = Double.parseDouble(parts[3]);
             ctx.player.teleport(x, y, z);
             ctx.setStatus(String.format("Teleported to %.1f, %.1f, %.1f", x, y, z));
         } catch (NumberFormatException e) {

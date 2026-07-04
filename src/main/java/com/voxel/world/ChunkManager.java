@@ -393,8 +393,6 @@ public class ChunkManager {
     private void manageChunks(int pcx, int pcz, float yaw) {
         long t0 = System.currentTimeMillis();
 
-        recenterIfNeeded(pcx, pcz);
-
         float lookX = (float) Math.cos(Math.toRadians(yaw));
         float lookZ = (float) Math.sin(Math.toRadians(yaw));
 
@@ -410,12 +408,9 @@ public class ChunkManager {
                 int cx = pcx + dx;
                 int cz = pcz + dz;
 
-                // Project onto look direction (along) and perpendicular (side)
                 float along = dx * lookX + dz * lookZ;
                 float perp = -dx * lookZ + dz * lookX;
 
-                // Stretched ring: forward distance counts as half
-                // (doubles the effective radius in look direction)
                 int ring = Math.max(
                     Math.round(Math.abs(along) * 0.5f),
                     Math.round(Math.abs(perp)));
@@ -431,14 +426,33 @@ public class ChunkManager {
         }
 
         // Add all chunks within KEEP_RADIUS to the keep set (never unload).
-        // HashSet deduplicates with the visible range above, so we can add unconditionally.
         for (int dx = -KEEP_RADIUS; dx <= KEEP_RADIUS; dx++) {
             for (int dz = -KEEP_RADIUS; dz <= KEEP_RADIUS; dz++) {
                 keep.add(chunkKey(pcx + dx, pcz + dz));
             }
         }
 
+        // ── Unload chunks outside keep set BEFORE recenter ──
+        // Must unload (save) first: recenterIfNeeded clears the indirection table,
+        // and saveChunk reads voxels via world.getVoxel() which depends on it.
         int unloadedCount = 0;
+        List<Long> toUnload = new ArrayList<>();
+        for (Map.Entry<Long, Integer[]> entry : loadedChunks.entrySet()) {
+            if (!keep.contains(entry.getKey())) {
+                toUnload.add(entry.getKey());
+            }
+        }
+        toUnload.sort(Long::compareTo);
+        for (Long key : toUnload) {
+            Integer[] slots = loadedChunks.remove(key);
+            if (slots != null) {
+                unloadChunk(key, slots);
+                tableDirty.set(true);
+                unloadedCount++;
+            }
+        }
+
+        recenterIfNeeded(pcx, pcz);
 
         // ── Hot-swap: clear stale load tasks, keep last 2 as buffer ──
         if (!chunksToLoad.isEmpty()) {
@@ -510,24 +524,7 @@ public class ChunkManager {
             // Lighting is handled per-source on each loadChunk call
         }
 
-        // ── Unload chunks outside keep set (deterministic order) ──
-        List<Long> toUnload = new ArrayList<>();
-        for (Map.Entry<Long, Integer[]> entry : loadedChunks.entrySet()) {
-            if (!keep.contains(entry.getKey())) {
-                toUnload.add(entry.getKey());
-            }
-        }
-        toUnload.sort(Long::compareTo);  // deterministic unload order
-        for (Long key : toUnload) {
-            Integer[] slots = loadedChunks.remove(key);
-            if (slots != null) {
-                unloadChunk(key, slots);
-                tableDirty.set(true);
-                unloadedCount++;
-            }
-        }
-
-        if (unloadedCount > 0 || !chunksToLoad.isEmpty()) {
+        if (!chunksToLoad.isEmpty()) {
             WorldGenLogger.log("MANAGE done: queued=" + chunksToLoad.size()
                 + " unloaded=" + unloadedCount + " loadedNow=" + loadedChunks.size()
                 + " (" + (System.currentTimeMillis() - t0) + "ms)");
@@ -588,9 +585,8 @@ public class ChunkManager {
                 }
                 kept++;
             }
-            // Note: chunks outside the new buffer are NOT unloaded here.
-            // They'll be unloaded by the next manageChunks call (which runs
-            // immediately after recenter in the manageChunks flow).
+            // Note: chunks outside the new buffer are now unloaded first in manageChunks
+            // (before recenter runs), so they are no longer in loadedChunks at this point.
         }
 
         tableDirty.set(true);
@@ -636,16 +632,22 @@ public class ChunkManager {
             world.setChunkSlot(cx, sectionY, cz, slots[sectionY]);
         }
 
+        // Clear recycled chunk-pool slots so stale voxel/bitmask data from
+        // previously unloaded chunks does not leak into the new chunk.
+        // (generateBaseTerrain does this for proc-gen; the disk path was missing it.)
+        for (int cy = 0; cy < chunkHeight; cy++) {
+            world.clearChunkPoolSlot(slots[cy]);
+        }
+
         // Try disk load first
         if (saveManager != null && saveManager.loadChunk(dimension, cx, cz, world)) {
             for (int sectionY = 0; sectionY < chunkHeight; sectionY++) {
                 world.setChunkSlot(cx, sectionY, cz, slots[sectionY]);
             }
-            WorldGenLogger.logChunk("LOAD_DISK", cx, -1, cz, "loaded from disk, clearing stale light pool and baking occlusion");
-            // Clear stale light pool data from recycled slots
+            WorldGenLogger.logChunk("LOAD_DISK", cx, -1, cz, "loaded from disk, baking occlusion");
+            // clearChunkPoolSlot above already zeroed the light pool — just bake occlusion
             for (int cy = 0; cy < chunkHeight; cy++) {
                 int s = slots[cy];
-                world.clearLightPoolSlot(s);
                 mcLightEngine.bakeChunkOcclusion(s, cx, cy, cz);
                 dirtySlots.add(s);
             }
