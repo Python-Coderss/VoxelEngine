@@ -39,6 +39,7 @@ public class CommandProcessor {
                 ctx.player.respawn();
                 ctx.setStatus("Teleported to spawn.");
                 break;
+            case "tp": handleTp(parts); break;
             case "setuv": handleSetUv(parts); break;
             case "dimension":
             case "dim": handleDimension(parts); break;
@@ -71,6 +72,22 @@ public class CommandProcessor {
             return;
         }
         ctx.switchToDimension(target);
+    }
+
+    private void handleTp(String[] parts) {
+        if (parts.length < 4) {
+            ctx.setStatus("Usage: /tp <x> <y> <z>");
+            return;
+        }
+        try {
+            float x = Float.parseFloat(parts[1]);
+            float y = Float.parseFloat(parts[2]);
+            float z = Float.parseFloat(parts[3]);
+            ctx.player.teleport(x, y, z);
+            ctx.setStatus(String.format("Teleported to %.1f, %.1f, %.1f", x, y, z));
+        } catch (NumberFormatException e) {
+            ctx.setStatus("Invalid coordinates. Usage: /tp <x> <y> <z>");
+        }
     }
 
     private void handleSetUv(String[] parts) {
@@ -149,6 +166,7 @@ public class CommandProcessor {
         sb.append("\n  /give <item> [amount] - Give yourself an item");
         sb.append("\n  /slotclear [slot] - Clear inventory slot");
         sb.append("\n  /spawn - Teleport to spawn");
+        sb.append("\n  /tp <x> <y> <z> - Teleport to coordinates");
         sb.append("\n  /dimension <overworld|nether|end|aether> - Switch dimension");
         sb.append("\n  /setuv <full|half|empty> <x> <y> [w] [h] - Adjust heart UVs");
         sb.append("\n  /camera <follow|orbit|fixed> - Set camera shot type");
