@@ -529,6 +529,19 @@ public class Player {
         parachuteSlotIndex = -1;
     }
 
+    /** Teleport to exact coordinates, resetting velocity, parachute, and interpolation state. */
+    public void teleport(float x, float y, float z) {
+        position.set(x, y, z);
+        prevPosition.set(x, y, z);
+        velocity.set(0);
+        fallDistance = 0;
+        tickAccumulator = 0;
+        lastTickWallNanos = System.nanoTime();
+        parachuteDeployed = false;
+        parachuteItemId = null;
+        parachuteSlotIndex = -1;
+    }
+
     public void setSpawnPoint(Vector3f point) { spawnPoint.set(point); }
 
     // ════════════════════════════════════════════════════════════════
