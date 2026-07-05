@@ -8,7 +8,9 @@ import com.voxel.crafting.CraftingManager;
 import com.voxel.entity.EntityManager;
 import com.voxel.game.AtmosphereRenderer;
 import com.voxel.game.GameContext;
+import com.voxel.game.GameContext.CameraMode;
 import com.voxel.utils.BiomeManager;
+import com.voxel.utils.FixedPoint;
 import com.voxel.utils.TextureManager;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -167,14 +169,39 @@ public class Renderer {
             if (rl > 0) { rx /= rl; rz /= rl; }
             float ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;
 
-            if (main.cameraShake > 0.01f) {
-                cameraPos.x += (float)(Math.random() - 0.5) * main.cameraShake * 0.1f;
-                cameraPos.y += (float)(Math.random() - 0.5) * main.cameraShake * 0.1f;
-                cameraPos.z += (float)(Math.random() - 0.5) * main.cameraShake * 0.1f;
-            }
-
             glUseProgram(computeProgram);
-            glProgramUniform3f(computeProgram, 0, cameraPos.x, cameraPos.y, cameraPos.z);
+            // Fixed-point camera: decompose into camBlock (ivec3, exact int) + camFrac (vec3 0-1).
+            // Shader reconstructs: camPos = vec3(camBlock) + camFrac.
+            // In first-person mode, use the player's 64-bit fixed-point position directly
+            // so the shader gets 1/256-block precision at any coordinate (Far Lands safe).
+            // In other modes (third-person, cutscene), decompose the float position.
+            int cbx, cby, cbz;
+            float cfx, cfy, cfz;
+            if (main.cameraMode == CameraMode.FIRST_PERSON) {
+                long px = ctx.player.getFixedX();
+                long py = ctx.player.getFixedY() + FixedPoint.fromFloat(CameraController.PLAYER_EYE_HEIGHT);
+                long pz = ctx.player.getFixedZ();
+                cbx = FixedPoint.camBlock(px);
+                cby = FixedPoint.camBlock(py);
+                cbz = FixedPoint.camBlock(pz);
+                cfx = FixedPoint.camFrac(px);
+                cfy = FixedPoint.camFrac(py);
+                cfz = FixedPoint.camFrac(pz);
+            } else {
+                cbx = (int)Math.floor(cameraPos.x);
+                cby = (int)Math.floor(cameraPos.y);
+                cbz = (int)Math.floor(cameraPos.z);
+                cfx = (float)(cameraPos.x - cbx);
+                cfy = (float)(cameraPos.y - cby);
+                cfz = (float)(cameraPos.z - cbz);
+            }
+            if (main.cameraShake > 0.01f) {
+                cfx += (float)(Math.random() - 0.5) * main.cameraShake * 0.1f;
+                cfy += (float)(Math.random() - 0.5) * main.cameraShake * 0.1f;
+                cfz += (float)(Math.random() - 0.5) * main.cameraShake * 0.1f;
+            }
+            glProgramUniform3f(computeProgram, 0, cfx, cfy, cfz);
+            glProgramUniform3i(computeProgram, 28, cbx, cby, cbz);
             glProgramUniform3f(computeProgram, 1, fx, fy, fz);
             glProgramUniform3f(computeProgram, 2, rx, 0, rz);
             glProgramUniform3f(computeProgram, 3, ux, uy, uz);

@@ -62,7 +62,7 @@ public class EntityManager {
      * Uploads entities to GPU (legacy, no interpolation).
      */
     public void uploadToGPU(DimensionType activeDimension, Vector3f cameraPos) {
-        uploadToGPU(activeDimension, cameraPos, 0.0f, null);
+        uploadToGPU(activeDimension, cameraPos, 0.0f, null, null);
     }
 
     /**
@@ -76,6 +76,17 @@ public class EntityManager {
 
     public void uploadToGPU(DimensionType activeDimension, Vector3f cameraPos,
                             float partialTicks, com.voxel.Player player) {
+        uploadToGPU(activeDimension, cameraPos, partialTicks, player, null);
+    }
+
+    /**
+     * Uploads entities to GPU with a world-space offset subtraction so the shader
+     * receives buffer-relative positions (always in [0,2048] range → full float32
+     * precision at any world coordinate).
+     */
+    public void uploadToGPU(DimensionType activeDimension, Vector3f cameraPos,
+                            float partialTicks, com.voxel.Player player,
+                            Vector3f worldOffset) {
         float cullDistSq = cameraPos != null ? 64.0f * 64.0f : Float.MAX_VALUE; // 64-block radius
 
         // First pass: count visible entities
@@ -116,8 +127,12 @@ public class EntityManager {
             int partOffset = allParts.size();
             int partCount = entity.parts.size();
 
-            // position (interpolated)
-            entityBuffer.putFloat(renderPos.x).putFloat(renderPos.y).putFloat(renderPos.z);
+            // position (interpolated), optionally converted to buffer-relative space
+            float relX = renderPos.x, relY = renderPos.y, relZ = renderPos.z;
+            if (worldOffset != null) {
+                relX -= worldOffset.x; relY -= worldOffset.y; relZ -= worldOffset.z;
+            }
+            entityBuffer.putFloat(relX).putFloat(relY).putFloat(relZ);
 
             float health = 1.0f;
             float maxHealth = 1.0f;

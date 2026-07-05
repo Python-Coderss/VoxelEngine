@@ -31,6 +31,7 @@ import com.voxel.world.RedstoneLogger;
 import com.voxel.world.RedstoneManager;
 import com.voxel.world.WorldGenLogger;
 import com.voxel.GameLogger;
+import com.voxel.utils.FixedPoint;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
 import org.joml.Vector2f;
@@ -115,6 +116,9 @@ public class Main {
 
     // Reusable direct buffer for SDF SSBO sub-uploads (avoid per-frame alloc).
     private java.nio.ByteBuffer reusableSdfBuf;
+
+    // Reusable Vector3f for entity upload worldOffset (avoid per-frame alloc).
+    private final Vector3f reusableWorldOffset = new Vector3f();
 
     // ── SDF sky early-out: replaces the rasterized depth prepass ──
     // The compute shader uses cheap Y/X/Z-plane SDF tests against these bounds
@@ -984,7 +988,12 @@ public class Main {
             // Camera uses interpolated player position
             Vector3f cameraPos = cameraController.getActiveCameraPosition(playerPartialTicks);
 
-            entityManager.uploadToGPU(activeDimension, cameraPos, logicPartialTicks, player);
+            // World buffer origin — used to make all shader positions buffer-relative
+            int wox = world.getOffsetX(), woy = world.getOffsetY(), woz = world.getOffsetZ();
+
+            reusableWorldOffset.set(wox, woy, woz);
+            entityManager.uploadToGPU(activeDimension, cameraPos, logicPartialTicks, player,
+                reusableWorldOffset);
 
             persistentPlBuf.rewind();
             glNamedBufferSubData(pointLightSSBO, 0, persistentPlBuf);
@@ -997,15 +1006,39 @@ public class Main {
             if (rl > 0) { rx /= rl; rz /= rl; }
             float ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;
             
-            // Camera Shake (was previously after the rasterized depth prepass)
-            if (cameraShake > 0.01f) {
-                cameraPos.x += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
-                cameraPos.y += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
-                cameraPos.z += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
-            }
-
             glUseProgram(computeProgram);
-            glProgramUniform3f(computeProgram, 0, cameraPos.x, cameraPos.y, cameraPos.z);
+            // Camera in buffer-relative space: decompose into camBlock (relative to u_WorldOffset,
+            // always in 0-2048 range → full float32 sub-block precision) + camFrac (0-1).
+            // First-person mode uses player's 64-bit fixed-point longs (1/256 resolution).
+            int cbx, cby, cbz;
+            float cfx, cfy, cfz;
+            if (cameraMode == CameraMode.FIRST_PERSON) {
+                // Interpolate in pure fixed-point (no float→long precision loss)
+                long px = FixedPoint.lerp(player.getFixedPrevX(), player.getFixedX(), playerPartialTicks);
+                long py = FixedPoint.lerp(player.getFixedPrevY(), player.getFixedY(), playerPartialTicks)
+                    + FixedPoint.fromFloat(CameraController.PLAYER_EYE_HEIGHT);
+                long pz = FixedPoint.lerp(player.getFixedPrevZ(), player.getFixedZ(), playerPartialTicks);
+                cbx = FixedPoint.camBlock(px) - wox;
+                cby = FixedPoint.camBlock(py) - woy;
+                cbz = FixedPoint.camBlock(pz) - woz;
+                cfx = FixedPoint.camFrac(px);
+                cfy = FixedPoint.camFrac(py);
+                cfz = FixedPoint.camFrac(pz);
+            } else {
+                cbx = (int)Math.floor(cameraPos.x) - wox;
+                cby = (int)Math.floor(cameraPos.y) - woy;
+                cbz = (int)Math.floor(cameraPos.z) - woz;
+                cfx = (float)(cameraPos.x - Math.floor(cameraPos.x));
+                cfy = (float)(cameraPos.y - Math.floor(cameraPos.y));
+                cfz = (float)(cameraPos.z - Math.floor(cameraPos.z));
+            }
+            if (cameraShake > 0.01f) {
+                cfx += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
+                cfy += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
+                cfz += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
+            }
+            glProgramUniform3f(computeProgram, 0, cfx, cfy, cfz);
+            glProgramUniform3i(computeProgram, 29, cbx, cby, cbz);
 
             glProgramUniform3f(computeProgram, 1, fx, fy, fz);
             glProgramUniform3f(computeProgram, 2, rx, 0, rz);
@@ -1054,12 +1087,12 @@ public class Main {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, craftingItemSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, lightSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, sdfSSBO);
-            // SDF sky early-out uniforms (replaces depth-prepass textures)
-            glProgramUniform1f(computeProgram, 22, chunkManager.getMaxTerrainY());
-            glProgramUniform1f(computeProgram, 23, chunkManager.getMaxTerrainX());
-            glProgramUniform1f(computeProgram, 24, chunkManager.getMaxTerrainZ());
-            glProgramUniform1f(computeProgram, 25, chunkManager.getMinTerrainX());
-            glProgramUniform1f(computeProgram, 26, chunkManager.getMinTerrainZ());
+            // Terrain bounds in buffer-relative space (camera is relative to u_WorldOffset)
+            glProgramUniform1f(computeProgram, 22, chunkManager.getMaxTerrainY() - woy);
+            glProgramUniform1f(computeProgram, 23, chunkManager.getMaxTerrainX() - wox);
+            glProgramUniform1f(computeProgram, 24, chunkManager.getMaxTerrainZ() - woz);
+            glProgramUniform1f(computeProgram, 25, chunkManager.getMinTerrainX() - wox);
+            glProgramUniform1f(computeProgram, 26, chunkManager.getMinTerrainZ() - woz);
             // u_BoundsValid: 1 after first terrain bounds update (gen thread sets it);
             // 0 before any chunk loads → shader falls through to plain DDA.
             glProgramUniform1i(computeProgram, 27, chunkManager.areBoundsValid() ? 1 : 0);
@@ -1067,7 +1100,7 @@ public class Main {
             // shader early-out sky-ray pixels (camera above AND ray.y > 0) without
             // falling into the per-chunk sphere-trace loop. Sentinel -1 = no chunks
             // loaded yet → shader treats it as "no known ceiling".
-            glProgramUniform1i(computeProgram, 28, chunkManager.getTopSolidY());
+            glProgramUniform1i(computeProgram, 28, chunkManager.getTopSolidY() - woy);
 
             uploadCraftingItems();
 
@@ -1448,9 +1481,11 @@ public class Main {
         }
 
         if (grid != null) {
-            float bx = ctx.craftingTableBlockX;
-            float bz = ctx.craftingTableBlockZ;
-            float by = ctx.craftingTableBlockY + 1.0f + CRAFTING_ITEM_SCALE * 0.5f;
+            // Buffer-relative positions (camera + entities are also relative to worldOffset)
+            float woxf = (float)world.getOffsetX(), woyf = (float)world.getOffsetY(), wozf = (float)world.getOffsetZ();
+            float bx = ctx.craftingTableBlockX - woxf;
+            float bz = ctx.craftingTableBlockZ - wozf;
+            float by = ctx.craftingTableBlockY - woyf + 1.0f + CRAFTING_ITEM_SCALE * 0.5f;
 
             for (int r = 0; r < 3; r++) {
                 for (int c = 0; c < 3; c++) {
@@ -1483,7 +1518,7 @@ public class Main {
         // and the per-entry scale field in itemData[idx + 4] picks the right one.
         int dropCount = 0;
         if (ctx.droppedItemManager != null) {
-            dropCount = ctx.droppedItemManager.buildUpload(reusableItemDataBuf);
+            dropCount = ctx.droppedItemManager.buildUpload(reusableItemDataBuf, world.getOffsetX(), world.getOffsetY(), world.getOffsetZ());
         }
         int totalCount = craftCount + dropCount;
 

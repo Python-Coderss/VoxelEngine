@@ -262,6 +262,14 @@ public class DroppedItemManager {
      * @return number of valid entries written into {@code out} starting at index 0
      */
     public int buildUpload(float[] out) {
+        return buildUpload(out, 0, 0, 0);
+    }
+
+    /**
+     * Build upload with world-offset subtraction so the shader receives buffer-relative
+     * positions (always in [0,2048] range → full float32 sub-block precision).
+     */
+    public int buildUpload(float[] out, int wox, int woy, int woz) {
         // Atomic snapshot — buildUpload must not see a torn read or live remove().
         // Synchronized with update() to avoid ConcurrentModificationException.
         DroppedItem[] snapshot = snapshotBuf;
@@ -288,9 +296,9 @@ public class DroppedItemManager {
             double rawAngle = elapsedSec * DroppedItem.SPIN_RAD_PER_SEC;
             float spinAngle = (float)(rawAngle - Math.floor(rawAngle / twoPi) * twoPi);
             int idx = i * 8;
-            out[idx] = di.baseX;
-            out[idx + 1] = di.baseY + bobY;
-            out[idx + 2] = di.baseZ;
+            out[idx] = di.baseX - wox;
+            out[idx + 1] = di.baseY + bobY - woy;
+            out[idx + 2] = di.baseZ - woz;
             out[idx + 3] = Float.intBitsToFloat(di.blockId);
             out[idx + 4] = DROPPED_ITEM_SCALE;
             out[idx + 5] = spinAngle;       // blockInfo.y — Y-axis spin (radians). 0 → static.
