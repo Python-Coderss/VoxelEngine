@@ -216,7 +216,7 @@ public class DimensionWorldGenerator extends WorldGenerator {
         }
         height += depthNoiseVal * 8.0f;
 
-        int finalHeight = Math.round(Math.max(1, Math.min(height, 255)));
+        int finalHeight = Math.round(Math.max(1, height));
 
         // Spawn area pool carving
         float dx = x - SPAWN_X;

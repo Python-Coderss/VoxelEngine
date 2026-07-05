@@ -66,7 +66,8 @@ public class AetherGenerator extends WorldGenerator {
 
     @Override
     public int getBlockType(int x, int y, int z, int height) {
-        if (y < 0 || y > 128) return 0;
+        // Cubic chunks: no upper height limit — Aether terrain extends infinitely upward
+        if (y < 0) return 0;
 
         float density = computeAetherDensity(x, y, z);
 
@@ -110,12 +111,17 @@ public class AetherGenerator extends WorldGenerator {
      * coherent terrain that generates correctly per-chunk without cross-chunk artifacts.
      */
     private float computeAetherDensity(int x, int y, int z) {
-        if (y < 0 || y > 128) return -1.0f;
+        // Cubic chunks: no upper height limit — density field repeats in 128-block layers
+        if (y < 0) return -1.0f;
 
-        // Bottom slide: 0 at y=8, reaches 1 at y=40
-        float bottomSlide = Math.min(1.0f, Math.max(0.0f, (y - 8.0f) / 32.0f));
-        // Top slide: 1 at y=56, reaches 0 at y=128
-        float topSlide = Math.min(1.0f, Math.max(0.0f, (128.0f - y) / 72.0f));
+        // Wrap Y into 128-block layer so Aether terrain repeats infinitely upward
+        int layerY = y % 128;
+        if (layerY < 0) layerY += 128;
+
+        // Bottom slide: 0 at y=8, reaches 1 at y=40 (within layer)
+        float bottomSlide = Math.min(1.0f, Math.max(0.0f, (layerY - 8.0f) / 32.0f));
+        // Top slide: 1 at y=56, reaches 0 at y=128 (within layer)
+        float topSlide = Math.min(1.0f, Math.max(0.0f, (128.0f - layerY) / 72.0f));
 
         // Multi-octave 3D noise: matches Aether mod's BlendedNoise settings
         // BlendedNoise.createUnseeded(0.25, 0.25, 80.0, 160.0, 8.0)
@@ -276,7 +282,7 @@ public class AetherGenerator extends WorldGenerator {
             for (int px = bx; px < bx + rx; px++) {
                 for (int py = by; py < by + ry; py++) {
                     for (int pz = bz; pz < bz + rz; pz++) {
-                        if (py < 0 || py > 128) continue;
+                        if (py < 0) continue;
                         if (world.getVoxel(px, py, pz) == 0) {
                             int manhattan = Math.abs(px - bx) + Math.abs(py - by) + Math.abs(pz - bz);
                             if (manhattan < 4 + rng.nextInt(2)) {
@@ -311,7 +317,7 @@ public class AetherGenerator extends WorldGenerator {
             for (int px = bx; px < bx + rx; px++) {
                 for (int py = by; py < by + ry; py++) {
                     for (int pz = bz; pz < bz + rz; pz++) {
-                        if (py < 0 || py > 128) continue;
+                        if (py < 0) continue;
                         if (world.getVoxel(px, py, pz) == 0) {
                             int manhattan = Math.abs(px - bx) + Math.abs(py - by) + Math.abs(pz - bz);
                             if (manhattan < 4 * size + rng.nextInt(2)) {
@@ -392,7 +398,7 @@ public class AetherGenerator extends WorldGenerator {
                         int wx = x + l1;
                         int wy = y - 4 + i3;
                         int wz = z + i2;
-                        if (wy < 0 || wy > 128) continue;
+                        if (wy < 0) continue;
                         
                         boolean isAir = i3 >= 4;
                         if (isAir) {
@@ -413,7 +419,7 @@ public class AetherGenerator extends WorldGenerator {
                         int wx = x + i2;
                         int wy = y - 4 + j4 - 1;
                         int wz = z + j3;
-                        if (wy < 0 || wy > 128) continue;
+                        if (wy < 0) continue;
                         
                         int blockBelow = world.getVoxel(wx, wy, wz);
                         if (isDirt(blockBelow)) {
@@ -446,8 +452,8 @@ public class AetherGenerator extends WorldGenerator {
     private boolean hasSkyLight(World world, int wx, int wy, int wz) {
         // Simple sky light check - if block above is air and y is high enough, assume sky light
         if (wy >= 120) return true; // Above cloud layer = full sky light
-        // Check if there's a clear path to sky (simplified)
-        for (int checkY = wy; checkY <= 128; checkY++) {
+        // Check if there's a clear path to sky (simplified) — cubic chunks: no upper bound
+        for (int checkY = wy; checkY <= wy + 128; checkY++) {
             int blockAtY = world.getVoxel(wx, checkY, wz);
             if (blockAtY != 0 && blockAtY != coldCloudId && blockAtY != blueCloudId && blockAtY != goldenCloudId) {
                 return false;
