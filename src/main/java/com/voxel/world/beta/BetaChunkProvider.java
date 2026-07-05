@@ -165,12 +165,7 @@ public class BetaChunkProvider {
     // modulation must still use the original 17 to keep ground at y≈64.
     private static final double BETA_Y_SAMPLES = 17.0;
 
-    // Y-axis Far Lands: start 8 chunks above y=128 → y=256.
-    // 3D noise Y input is scaled by FARLANDS_Y_SCALE / 8 so that at
-    // y=256 the noise coordinate hits ~12.8M, triggering float32 overflow
-    // in NoiseGeneratorOctaves — same bug that creates X/Z Far Lands.
-    private static final int FARLANDS_START_Y = 256;
-    private static final double FARLANDS_Y_SCALE = 400_000.0;
+
 
     public BetaChunkProvider(long seed,
                               int veStone, int veGrass, int veDirt, int veBedrock,
@@ -366,9 +361,7 @@ public class BetaChunkProvider {
             if (y <= -64) return BETA_BEDROCK;
             return evaluateDensity(x, y, z) ? BETA_STONE : BETA_AIR;
         }
-        if (y >= FARLANDS_START_Y) {
-            return evaluateDensity(x, y, z) ? BETA_STONE : BETA_AIR;
-        }
+        
 
         int lx = x & 15;
         int lz = z & 15;
@@ -379,15 +372,11 @@ public class BetaChunkProvider {
     /**
      * On-the-fly single-point density evaluation using 3D octave noise at
      * actual world coordinates. Used for Y values beyond the cached column
-     * and for Sky Far Lands (y >= 256).
-     * 
-     * The Y coordinate is multiplied by FARLANDS_Y_SCALE so that at y≈256
-     * the noise input reaches ~12.8M, triggering the same float32 precision
-     * loss in NoiseGeneratorOctaves that creates X/Z Far Lands.
+     
      */
     private boolean evaluateDensity(int x, int y, int z) {
         double nx = x / 4.0;
-        double ny = y * FARLANDS_Y_SCALE / 8.0;  // extreme Y scale → float32 overflow
+        double ny = y / 8.0;
         double nz = z / 4.0;
 
         // 3D noise: field_4184_e (octaves=16) and field_4183_f (octaves=16)
