@@ -287,7 +287,7 @@ public class Main {
 
         entityManager = new com.voxel.entity.EntityManager();
         com.voxel.entity.EnemyEntity.setEntityManager(entityManager);
-        player = new Player(1024, 63, 1024); // Spawn above the water pool at y=62
+        player = new Player(1024, 100, 1024); // Spawn above the water pool at y=62
 
         setupQuad();
         setupTexture();

@@ -22,7 +22,7 @@ public class DimensionManager {
         this.blockDataManager = blockDataManager;
         this.saveManager = saveManager;
         this.biomeManager = biomeManager;
-    }
+    } 
 
     /**
      * Creates a new dimension instance (world + chunk manager).
@@ -40,6 +40,8 @@ public class DimensionManager {
         WorldGenerator generator;
         if (type == DimensionType.AETHER) {
             generator = new AetherGenerator(0, blockDataManager);
+        } else if (type == DimensionType.OVERWORLD) {
+            generator = new BetaWorldGenerator(0, blockDataManager);
         } else {
             generator = new DimensionWorldGenerator(type, blockDataManager);
         }
