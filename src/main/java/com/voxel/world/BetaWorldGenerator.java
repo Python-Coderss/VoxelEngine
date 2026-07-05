@@ -1,0 +1,173 @@
+package com.voxel.world;
+
+import com.voxel.World;
+import com.voxel.biome.BiomeProvider;
+import com.voxel.biome.BiomeRegistry;
+import com.voxel.world.beta.BetaChunkProvider;
+import com.voxel.world.beta.BetaBiomeGenBase;
+import java.util.HashSet;
+import java.util.Set;
+
+/**
+ * World generator that uses the Beta 1.7.3 terrain generation algorithm.
+ * 
+ * This generator wraps BetaChunkProvider and plugs into the VoxelEngine's
+ * WorldGenerator interface. It preserves ALL Beta 1.7.3 bugs including
+ * the Far Lands floating-point precision issues.
+ * 
+ * Supports cubic chunks: terrain exists at y=0..127 (Beta surface),
+ * deep stone below y=0, air above y=127.
+ */
+public class BetaWorldGenerator extends WorldGenerator {
+    
+    private final BetaChunkProvider betaProvider;
+    
+    // Cache the last column to avoid regenerating
+    private int lastCX = Integer.MIN_VALUE;
+    private int lastCZ = Integer.MIN_VALUE;
+    
+    // Track which columns have been decorated (seed-once-per-column)
+    private final Set<Long> decoratedColumns = new HashSet<>();
+
+    // Map Beta 1.7.3 biome IDs → VoxelEngine BiomeRegistry IDs
+    private static final int[] BETA_TO_VE_BIOME = new int[13];
+    static {
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.RAINFOREST]       = BiomeRegistry.JUNGLE;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.SWAMPLAND]        = BiomeRegistry.SWAMPLAND;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.SEASONAL_FOREST]  = BiomeRegistry.FOREST;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.FOREST]           = BiomeRegistry.FOREST;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.SAVANNA]          = BiomeRegistry.SAVANNA;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.SHRUBLAND]        = BiomeRegistry.PLAINS;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.TAIGA]            = BiomeRegistry.TAIGA;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.DESERT]           = BiomeRegistry.DESERT;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.PLAINS]           = BiomeRegistry.PLAINS;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.ICE_DESERT]       = BiomeRegistry.ICE_FLATS;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.TUNDRA]           = BiomeRegistry.ICE_FLATS;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.HELL]             = BiomeRegistry.HELL;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.SKY]              = BiomeRegistry.SKY;
+    }
+    
+    public BetaWorldGenerator(long seed, com.voxel.utils.BlockDataManager blockDataManager) {
+        super(seed, blockDataManager);
+        
+        // Look up VoxelEngine block IDs from BlockDataManager (all null-safe)
+        int veStone = findOr(blockDataManager, "stone", 2);
+        int veGrass = findOr(blockDataManager, "grass_block", 1);
+        int veDirt = findOr(blockDataManager, "dirt", veStone);
+        int veBedrock = findOr(blockDataManager, "bedrock", veStone);
+        int veWater = findOr(blockDataManager, "water", 0);
+        int veLava = findOr(blockDataManager, "lava", 0);
+        int veSand = findOr(blockDataManager, "sand", veDirt);
+        int veGravel = findOr(blockDataManager, "gravel", veDirt);
+        int veSandStone = findOr(blockDataManager, "sandstone", veSand);
+        int veIce = findOr(blockDataManager, "ice", 0);
+        int veSnow = findOr(blockDataManager, "snow_layer", 0);
+        int veObsidian = findOr(blockDataManager, "obsidian", veStone);
+        int veLeaves = findOr(blockDataManager, "oak_leaves", 0);
+        int veWood = findOr(blockDataManager, "oak_log", 0);
+        
+        // Decoration block IDs
+        int veDandelion = findOr(blockDataManager, "dandelion", 0);
+        int veRose = findOr(blockDataManager, "rose", 0);
+        int veTallGrass = findOr(blockDataManager, "tallgrass", 0);
+        int veDeadBush = findOr(blockDataManager, "deadbush", 0);
+        int veCactus = findOr(blockDataManager, "cactus", 0);
+        int vePumpkin = findOr(blockDataManager, "pumpkin", 0);
+        int veCoalOre = findOr(blockDataManager, "coal_ore", veStone);
+        int veIronOre = findOr(blockDataManager, "iron_ore", veStone);
+        int veGoldOre = findOr(blockDataManager, "gold_ore", veStone);
+        int veDiamondOre = findOr(blockDataManager, "diamond_ore", veStone);
+        int veRedstoneOre = findOr(blockDataManager, "redstone_ore", veStone);
+        int veLapisOre = findOr(blockDataManager, "lapis_ore", veStone);
+        this.betaProvider = new BetaChunkProvider(
+            seed,
+            veStone, veGrass, veDirt, veBedrock,
+            veWater, veLava, veSand, veGravel,
+            veSandStone, veIce, veSnow, veObsidian,
+            veLeaves, veWood,
+            veDandelion, veRose, veTallGrass, veDeadBush,
+            veCactus, vePumpkin,
+            veCoalOre, veIronOre, veGoldOre,
+            veDiamondOre, veRedstoneOre, veLapisOre
+        );
+
+        // Expose Beta 1.7.3 biomes as a VoxelEngine BiomeProvider
+        this.biomeProvider = new BiomeProvider(seed) {
+            @Override
+            public com.voxel.biome.Biome getBiome(int x, int z) {
+                int betaId = betaProvider.getBetaBiomeId(x, z);
+                int veId = BETA_TO_VE_BIOME[betaId];
+                return BiomeRegistry.getBiome(veId);
+            }
+        };
+    }
+    
+    /** Returns the underlying BetaChunkProvider for direct access. */
+    public BetaChunkProvider getBetaProvider() {
+        return betaProvider;
+    }
+
+    @Override
+    public BiomeProvider getBiomeProvider() {
+        return biomeProvider;
+    }
+    
+    @Override
+    public int getHeight(int x, int z) {
+        int cx = x >> 4;
+        int cz = z >> 4;
+        
+        // Ensure column is generated
+        ensureColumn(cx, cz);
+        
+        return betaProvider.getHeight(x, z);
+    }
+    
+    @Override
+    public int getBlockType(int x, int y, int z, int height) {
+        int cx = x >> 4;
+        int cz = z >> 4;
+        
+        // Ensure column is generated
+        ensureColumn(cx, cz);
+        
+        // Get Beta 1.7.3 block ID
+        int betaId = betaProvider.getBetaBlock(x, z, y);
+        
+        // Map to VoxelEngine block ID
+        return betaProvider.mapToVeBlock(betaId);
+    }
+    
+    /**
+     * Decorate a chunk section with Beta 1.7.3 features (trees, flowers, ores, etc.).
+     * Only runs once per column (cy == 4, roughly sea level).
+     */
+    @Override
+    public void decorate(int cx, int cy, int cz, int slot, World world) {
+        // Only decorate once per column, and only in the surface section range
+        if (cy != 4) return;
+        
+        long colKey = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
+        if (decoratedColumns.contains(colKey)) return;
+        
+        decoratedColumns.add(colKey);
+        betaProvider.populateColumn(world, cx, cz);
+    }
+    
+    /**
+     * Ensure the column for (cx, cz) is generated.
+     * Only regenerates if the column changed.
+     */
+    private void ensureColumn(int cx, int cz) {
+        if (cx != lastCX || cz != lastCZ) {
+            betaProvider.generateColumn(cx, cz);
+            lastCX = cx;
+            lastCZ = cz;
+        }
+    }
+    
+    private static int findOr(com.voxel.utils.BlockDataManager bdm, String name, int fallback) {
+        Integer id = bdm.findBlockId(name);
+        return id != null ? id : fallback;
+    }
+}
