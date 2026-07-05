@@ -31,8 +31,10 @@ public class DimensionManager {
     public void createDimension(DimensionType type, int renderDistance) {
         if (dimensions.containsKey(type)) return;
 
-        // Calculate pool size: (renderDistance*2+1)² * 16 chunks, doubled for safety margin
-        int chunksNeeded = (renderDistance * 2 + 1) * (renderDistance * 2 + 1) * 16;
+        // Calculate pool size: (renderDistance*2+1)² * (renderDistance*4+1) sections, doubled for safety margin
+        int yLoadRadius = renderDistance * 2;
+        int sectionsPerCol = yLoadRadius * 2 + 1;
+        int chunksNeeded = (renderDistance * 2 + 1) * (renderDistance * 2 + 1) * sectionsPerCol;
         int poolSize = Math.max(chunksNeeded * 2, 2048);
 
         System.out.println("Creating dimension: " + type.name + " (pool=" + poolSize + " chunks, ~" + (poolSize * 4096L * 4 / 1024 / 1024) + " MB)");

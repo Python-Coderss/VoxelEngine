@@ -49,8 +49,8 @@ public class LightEngine {
     /** Maximum light value (both sky and block). */
     public static final int MAX_LIGHT = 15;
 
-    /** Height limit for sky light computation. */
-    public static final int WORLD_HEIGHT = 256;
+    /** Height limit for sky light computation (now dynamic via buffer size). */
+    public static final int WORLD_HEIGHT = 2048;
 
     private final int bufSize; // World.REGION_SIZE * World.CHUNK_SIZE (2048)
 
@@ -66,16 +66,16 @@ public class LightEngine {
     // ══════════════════════════════════════════════════════════════════
 
     /**
-     * Generates sky light for an entire chunk column (all 16 sections, y = 0..255).
+     * Generates sky light for an entire chunk column.
      * Starts from the world ceiling with sky=15 and propagates downward:
      * air keeps sky=15, block opacity decreases it.
      *
      * @param cx    Absolute chunk X coordinate
      * @param cz    Absolute chunk Z coordinate
-     * @param slots The 16 pool slots for this chunk column [y=0..15]
+     * @param slots Map of cy → slot for the loaded sections in this column
      * @return Set of dirty slot indices
      */
-    public Set<Integer> generateSkyLight(int cx, int cz, Integer[] slots) {
+    public Set<Integer> generateSkyLight(int cx, int cz, java.util.NavigableMap<Integer, Integer> slots) {
         Set<Integer> dirtySlots = new HashSet<>();
 
         int worldBaseX = cx << 4;
@@ -493,8 +493,6 @@ public class LightEngine {
             }
 
             // ── Regenerate sky light for affected columns ──
-            // clearLightPoolSlot zeroed sky light in all 27 sections; block light
-            // was restored above, but sky light must be regenerated separately.
             // The 3×3 area in X/Z covers 9 unique chunk columns.
             java.util.Set<Long> columnsDone = new java.util.HashSet<>();
             for (int dcx = -1; dcx <= 1; dcx++) {
@@ -504,11 +502,17 @@ public class LightEngine {
                     long colKey = ((long) colCX << 32) | (colCZ & 0xFFFFFFFFL);
                     if (!columnsDone.add(colKey)) continue;
 
-                    Integer[] colSlots = new Integer[16];
+                    java.util.NavigableMap<Integer, Integer> colSlots = new java.util.TreeMap<>();
                     boolean anyLoaded = false;
-                    for (int dcy = 0; dcy < 16; dcy++) {
-                        colSlots[dcy] = getSlotForSection(colCX, dcy, colCZ, ox, oy, oz);
-                        if (colSlots[dcy] != World.EMPTY) anyLoaded = true;
+                    // Scan all possible Y sections in the buffer for this column
+                    int bufMinY = oy >> 4;
+                    int bufMaxY = bufMinY + World.REGION_SIZE;
+                    for (int scy = bufMinY; scy < bufMaxY; scy++) {
+                        int slot = getSlotForSection(colCX, scy, colCZ, ox, oy, oz);
+                        if (slot != World.EMPTY) {
+                            colSlots.put(scy, slot);
+                            anyLoaded = true;
+                        }
                     }
                     if (anyLoaded) {
                         dirtySlots.addAll(generateSkyLight(colCX, colCZ, colSlots));
@@ -540,20 +544,21 @@ public class LightEngine {
      * @param loadedChunks Map of chunkKey -> slots
      * @return Total number of dirty slots
      */
-    public Set<Integer> rebuildAllLighting(java.util.Map<Long, Integer[]> loadedChunks) {
+    public Set<Integer> rebuildAllLighting(java.util.Map<Long, java.util.NavigableMap<Integer, Integer>> loadedChunks) {
         Set<Integer> allDirty = new HashSet<>();
 
         // Phase 1: Clear all light in loaded chunks
-        for (Integer[] slots : loadedChunks.values()) {
-            for (int cy = 0; cy < 16; cy++) {
-                world.clearLightPoolSlot(slots[cy]);
+        for (java.util.NavigableMap<Integer, Integer> slots : loadedChunks.values()) {
+            for (int slot : slots.values()) {
+                world.clearLightPoolSlot(slot);
             }
         }
 
         // Phase 2: Sky light for all columns
         GameLogger.log("LIGHT Sky light generation...");
         int colDone = 0;
-        for (java.util.Map.Entry<Long, Integer[]> entry : loadedChunks.entrySet()) {
+        int totalCols = loadedChunks.size();
+        for (java.util.Map.Entry<Long, java.util.NavigableMap<Integer, Integer>> entry : loadedChunks.entrySet()) {
             long key = entry.getKey();
             int cx = (int) (key >> 32);
             int cz = (int) key;
@@ -561,30 +566,35 @@ public class LightEngine {
             allDirty.addAll(dirty);
             colDone++;
             if (colDone % 50 == 0) {
-                System.out.print("\r  Sky light: " + colDone + "/" + loadedChunks.size() + " columns");
+                System.out.print("\r  Sky light: " + colDone + "/" + totalCols + " columns");
             }
         }
-        System.out.println("\r  Sky light: " + colDone + "/" + loadedChunks.size() + " columns done");
+        System.out.println("\r  Sky light: " + colDone + "/" + totalCols + " columns done");
 
         // Phase 3: Block light for all sections
         GameLogger.log("LIGHT Block light propagation...");
         int secDone = 0;
-        int totalSecs = loadedChunks.size() * 16;
-        for (java.util.Map.Entry<Long, Integer[]> entry : loadedChunks.entrySet()) {
+        int totalSecs = 0;
+        for (java.util.NavigableMap<Integer, Integer> slots : loadedChunks.values()) {
+            totalSecs += slots.size();
+        }
+        for (java.util.Map.Entry<Long, java.util.NavigableMap<Integer, Integer>> entry : loadedChunks.entrySet()) {
             long key = entry.getKey();
             int cx = (int) (key >> 32);
             int cz = (int) key;
-            Integer[] slots = entry.getValue();
-            for (int cy = 0; cy < 16; cy++) {
-                Set<Integer> dirty = propagateBlockLight(cx, cy, cz, slots[cy]);
+            java.util.NavigableMap<Integer, Integer> slots = entry.getValue();
+            for (java.util.Map.Entry<Integer, Integer> se : slots.entrySet()) {
+                Set<Integer> dirty = propagateBlockLight(cx, se.getKey(), cz, se.getValue());
                 allDirty.addAll(dirty);
             }
-            secDone += 16;
-            if (secDone % 800 == 0) {
+            secDone += slots.size();
+            if (secDone % 800 == 0 && totalSecs > 0) {
                 System.out.print("\r  Block light: " + secDone + "/" + totalSecs + " sections");
             }
         }
-        System.out.println("\r  Block light: " + secDone + "/" + totalSecs + " sections done");
+        if (totalSecs > 0) {
+            System.out.println("\r  Block light: " + secDone + "/" + totalSecs + " sections done");
+        }
 
         return allDirty;
     }

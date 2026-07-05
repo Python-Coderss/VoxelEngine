@@ -213,12 +213,6 @@ public class Renderer {
 
             // SDF sky early-out uniforms: max terrain Y bounds allow skipping DDA
             // when camera is above all loaded terrain and looking up.
-            glProgramUniform1f(computeProgram, 22, chunkManager.getMaxTerrainY());
-            glProgramUniform1f(computeProgram, 23, chunkManager.getMaxTerrainX());
-            glProgramUniform1f(computeProgram, 24, chunkManager.getMaxTerrainZ());
-            glProgramUniform1f(computeProgram, 25, chunkManager.getMinTerrainX());
-            glProgramUniform1f(computeProgram, 26, chunkManager.getMinTerrainZ());
-            glProgramUniform1i(computeProgram, 27, chunkManager.areBoundsValid() ? 1 : 0);
 
             if (ctx.breakTargetX != Integer.MIN_VALUE) {
                 glProgramUniform3i(computeProgram, 19, ctx.breakTargetX, ctx.breakTargetY, ctx.breakTargetZ);

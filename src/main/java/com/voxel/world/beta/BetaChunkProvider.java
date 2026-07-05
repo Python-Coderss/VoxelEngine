@@ -572,7 +572,7 @@ public class BetaChunkProvider {
                 byte var16 = (byte) BetaBiomeGenBase.FILLER_BLOCKS[biomeId];
 
                 for (int var17 = 2047; var17 >= 0; --var17) {
-                    int var18 = (var9 * 16 + var8) * 2048 + var17;
+                    int var18 = (var8 * 16 + var9) * 2048 + var17;
                     if (var17 <= 0 + this.rand.nextInt(5)) {
                         var3[var18] = BETA_BEDROCK;
                     } else {
