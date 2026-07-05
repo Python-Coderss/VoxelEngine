@@ -1890,6 +1890,15 @@ public class Main {
         blockRegistry.register("snow_layer", 67);
         shaderBlockRegistry.register(67, 67);
         blockDataManager.registerBlock(67, "snow_layer", textureManager, mcModels);
+        // ── Snow layer levels (like water level models, height 1/8 to 8/8 of block) ──
+        for (int level = 1; level <= 8; level++) {
+            int id = 249 + level; // 250..257
+            String name = "snow_" + level;
+            String modelName = "snow_" + level; // uses snow_1..snow_8.json models
+            blockRegistry.register(name, id);
+            shaderBlockRegistry.register(id, id);
+            blockDataManager.registerBlock(id, modelName, textureManager, mcModels);
+        }
         blockRegistry.register("ice", 68);
         shaderBlockRegistry.register(68, 68);
         blockDataManager.registerBlock(68, "ice", textureManager, mcModels);
@@ -2022,6 +2031,11 @@ public class Main {
         blockRegistry.register("sandstone_slab", 210);
         shaderBlockRegistry.register(210, 210);
         blockDataManager.registerBlock(210, "half_slab_sandstone", textureManager, mcModels);
+
+        // --- Spawner (mob spawner cage) ---
+        blockRegistry.register("spawner", 258);
+        shaderBlockRegistry.register(258, 258);
+        blockDataManager.registerBlock(258, "spawner", textureManager, mcModels);
 
         // --- Torch ---
         blockRegistry.register("torch", 211);
