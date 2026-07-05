@@ -8,12 +8,11 @@ layout(local_size_x = 16, local_size_y = 16) in;
 layout(rgba8, binding = 0) uniform image2D imgOutput;
 
 // Uniforms
-layout(location = 0) uniform vec3 camPos;
+layout(location = 0) uniform vec3 _camFrac;
 layout(location = 1) uniform vec3 camForward;
 layout(location = 2) uniform vec3 camRight;
 layout(location = 3) uniform vec3 camUp;
 layout(location = 4) uniform float u_Time;
-layout(location = 6) uniform ivec3 u_WorldOffset;
 layout(location = 10) uniform int u_DimensionID;
 layout(location = 11) uniform int u_CraftingItemCount;
 
@@ -34,6 +33,13 @@ layout(std430, binding = 4) buffer readonly restrict OcclusionPool { uint occlus
 
 // Block light propagation: Minecraft packed format [sky(0-3)|block(4-7)] per voxel
 layout(std430, binding = 9) buffer readonly restrict LightPool { uint lightPool[]; };
+
+layout(location = 29) uniform ivec3 _camBlock;
+
+// Reconstructed camera position in buffer-relative space (always in [0,2048] range).
+// _camBlock is relative to u_WorldOffset, so vec3(_camBlock) + _camFrac has full
+// float32 sub-block precision at any world coordinate (Far Lands safe).
+vec3 camPos = vec3(_camBlock) + _camFrac;
 
 // Chunk-level SDF pool for sphere-trace acceleration.
 // 4096 SDF cells packed 4-per-uint, indexed as sdfPool[(slot << 10) | (cellIdx>>2)].
@@ -100,7 +106,7 @@ uniform float u_MaxZ;
 uniform float u_MinX;
 uniform float u_MinZ;
 uniform uint u_BoundsValid;
-uniform int u_TopSolidY;
+layout(location = 28) uniform int u_TopSolidY;
 
 layout(location = 7) uniform vec4 u_HeartUVs[3]; // [0]=Full, [1]=Half, [2]=Empty
 
@@ -281,7 +287,7 @@ vec2 entityCuboidAtlasUv(vec3 localPos, vec3 localNormal, vec3 halfSize, PartDat
 // Used by main() to jump DDA to the rasterized chunk entry point
 void getChunkAABB(uint packedv, out vec3 bMin, out vec3 bMax) {
     ivec3 chunkCoord = ivec3(int(packedv & 0xFFu), int((packedv >> 8) & 0xFFu), int((packedv >> 16) & 0xFFu));
-    bMin = vec3(chunkCoord) * 16.0 + vec3(u_WorldOffset);
+    bMin = vec3(chunkCoord) * 16.0;
     bMax = bMin + 16.0;
 }
 
@@ -335,7 +341,7 @@ float getChunkDirSDF(uint slot, uint dirIdx) {
 }
 
 uint getVoxelOcclusion(ivec3 p) {
-    ivec3 relChunk = (p - u_WorldOffset) >> 4;
+    ivec3 relChunk = p >> 4;
     if (any(lessThan(relChunk, ivec3(0))) || any(greaterThanEqual(relChunk, ivec3(128)))) return 0x3FFFu;
     uint slot = chunkSlots[relChunk.x | (relChunk.y << 7) | (relChunk.z << 14)];
     if (slot == EMPTY) return 0x3FFFu;
@@ -348,7 +354,7 @@ uint getVoxelOcclusion(ivec3 p) {
 // ── Ambient Occlusion ──
 // Checks if a world-space voxel contains any solid geometry (contributes to occlusion).
 bool isBlockSolidAO(ivec3 p) {
-    ivec3 rel = p - u_WorldOffset;
+    ivec3 rel = p;
     if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(WORLD_SIZE)))) return false;
     uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
     if (slot == EMPTY) return false;
@@ -411,7 +417,7 @@ float computeAmbientOcclusion(vec3 hp, vec3 n) {
 // Returns vec4 where x = skyLight (0-255), yzw = blockLight RGB (0-255 each)
 // Returns vec4(-1) if outside buffer.
 vec4 sampleLightmap(ivec3 p) {
-    ivec3 rel = p - u_WorldOffset;
+    ivec3 rel = p;
     if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(2048)))) return vec4(-1);
     uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
     if (slot == EMPTY) return vec4(-1);
@@ -427,16 +433,16 @@ vec4 sampleLightmap(ivec3 p) {
 }
 
 float fastShadow(vec3 ro, vec3 rd, float maxDist) {
-    ivec3 bufMin = u_WorldOffset;
-    ivec3 bufMax = u_WorldOffset + ivec3(WORLD_SIZE);
+    ivec3 bufMin = ivec3(0);
+    ivec3 bufMax = ivec3(WORLD_SIZE);
     float tn, tf; if (!intersectAABB(ro, rd, vec3(bufMin), vec3(bufMax), tn, tf)) return 1.0;
     vec3 p = ro + rd * (max(0.0, tn) + 0.05); ivec3 mp = ivec3(floor(p));
     vec3 dd = abs(1.0 / rd); ivec3 s = ivec3(sign(rd));
     vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
     for (int i = 0; i < 16; i++) {  // reduced from 32 → 16
-        if (any(lessThan(mp, bufMin)) || any(greaterThanEqual(mp, bufMax))) break;
+        if (any(lessThan(mp, ivec3(0))) || any(greaterThanEqual(mp, ivec3(WORLD_SIZE)))) break;
         if (min(sd.x, min(sd.y, sd.z)) > maxDist) break;
-        ivec3 rel = mp - u_WorldOffset;
+        ivec3 rel = mp;
         uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
         if (slot == EMPTY) { skipChunk(mp, sd, dd, s); }
         else {
@@ -470,8 +476,8 @@ float fastShadow(vec3 ro, vec3 rd, float maxDist) {
 }
 
 bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx) {
-    ivec3 bufMin = u_WorldOffset;
-    ivec3 bufMax = u_WorldOffset + ivec3(WORLD_SIZE);
+    ivec3 bufMin = ivec3(0);
+    ivec3 bufMax = ivec3(WORLD_SIZE);
     float tn, tf; if (!intersectAABB(ro, rd, vec3(bufMin), vec3(bufMax), tn, tf)) return false;
     float st = max(0.0, tn); vec3 p = ro + rd * st; ivec3 mp = ivec3(floor(p));
     vec3 dd = abs(1.0 / rd); ivec3 s = ivec3(sign(rd));
@@ -482,7 +488,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float 
     for (int i = 0; i < 256; i++) {  // bumped from 72: sphere-trace skips chunks fast
         if (any(lessThan(mp, bufMin)) || any(greaterThanEqual(mp, bufMax))) break;
         if (st > tf) break;
-        ivec3 rel = mp - u_WorldOffset;
+        ivec3 rel = mp;
         uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
         if (slot == EMPTY) {
             // Empty chunk: skip whole 16³ section in one DDA step (peer over chunks)
@@ -1114,7 +1120,7 @@ void main() {
             { int ti = (d1.w >> 22) & 3;
               int tintFaceMask = (d1.w >> 24) & 0x3F;
               if (ti > 0 && ((tintFaceMask >> face) & 1) == 1 && texSample.a > 0.5) {
-                vec2 bp = texture(u_BiomeMap, (hp.xz - vec2(u_WorldOffset.xz)) / 2048.0).rg;
+                vec2 bp = texture(u_BiomeMap, hp.xz / 2048.0).rg;
                 vec2 cmUV = vec2(1.0-bp.x, 1.0-bp.y);
                 if (ti == 1) alb *= texture(u_GrassColormap, cmUV).rgb;
                 else alb *= texture(u_FoliageColormap, cmUV).rgb;

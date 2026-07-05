@@ -1,25 +1,29 @@
 package com.voxel;
 
 import com.voxel.utils.BlockDataManager;
+import com.voxel.utils.FixedPoint;
 import org.joml.Vector3d;
 import org.joml.Vector3f;
 
 /**
  * Represents the player with AABB collision and exact Minecraft 1.12.2 physics.
- * Uses a fixed 20-tick-per-second internal loop so all constants match Minecraft directly.
+ * Uses 64-bit fixed-point position (8 fractional bits, 1/256 resolution) to avoid
+ * floating-point precision loss at extreme coordinates (Far Lands, ~13M blocks).
+ * Velocity remains as double since it stays small and needs float-multiply precision.
  */
 public class Player {
-    private final Vector3d position = new Vector3d();
-    private final Vector3d prevPosition = new Vector3d();
+    // Fixed-point position (8 fractional bits: 1/256 = 0.0039 resolution)
+    private long posX, posY, posZ;
+    private long prevPosX, prevPosY, prevPosZ;
+    
+    // Velocity remains double (small values, no large-coordinate precision issues)
     private final Vector3d velocity = new Vector3d();
     private final Vector3f size = new Vector3f(0.6f, 1.8f, 0.6f);
 
-    // --- Interpolation (render thread uses this to smooth between physics ticks) ---
     private volatile long lastTickWallNanos = System.nanoTime();
 
-    // --- Tick accumulator for fixed 20 Hz physics ---
     private float tickAccumulator = 0.0f;
-    private static final float TICK_RATE = 0.05f; // 1/20 second
+    private static final float TICK_RATE = 0.05f;
     public static final float TICK_RATE_SECONDS = 0.05f;
 
     private boolean onGround = false;
@@ -31,87 +35,55 @@ public class Player {
     private String parachuteItemId = null;
     private int parachuteSlotIndex = -1;
 
-    // --- Per-frame input accumulation (consumed each tick) ---
     private float moveStrafing = 0.0f;
     private float moveForward = 0.0f;
     private float moveVertical = 0.0f;
     private boolean jumpRequested = false;
 
-    // ════════════════════════════════════════════════════════════════
-    //  Exact Minecraft 1.12.2 constants (from miners source)
-    // ════════════════════════════════════════════════════════════════
-
-    /** Per-tick gravity (EntityLivingBase.travel: motionY -= 0.08D) */
+    // Exact Minecraft 1.12.2 constants
     private static final double GRAVITY = 0.08D;
-
-    /** Jump upward motion (EntityLivingBase.getJumpUpwardsMotion: 0.42F) */
     private static final float JUMP_VELOCITY = 0.42F;
-
-    /** Base friction multiplier per tick (EntityLivingBase.travel: 0.91F) */
     private static final float BASE_FRICTION = 0.91F;
-
-    /** Default block slipperiness (Block.getSlipperiness default: 0.6F) */
     private static final float DEFAULT_SLIPPERINESS = 0.6F;
-
-    /** Ice slipperiness (Blocks.ICE: 0.98F) */
     private static final float ICE_SLIPPERINESS = 0.98F;
-
-    /** Movement speed attribute (EntityPlayer: 0.10000000149011612D) */
     private static final float MOVE_SPEED = 0.1F;
-
-    /** Air movement factor (EntityLivingBase.jumpMovementFactor: 0.02F) */
     private static final float AIR_MOVE_FACTOR = 0.02F;
-
-    /** Sprint speed boost modifier (EntityLivingBase: 0.30000001192092896D) */
     private static final float SPRINT_BOOST = 0.3F;
-
-    /** Sprint jump horizontal impulse (EntityLivingBase.jump: sin/cos * 0.2F) */
     private static final float SPRINT_JUMP_IMPULSE = 0.2F;
-
-    /** Creative flight speed (PlayerCapabilities.getFlySpeed: 0.05F). Sprinting doubles it.
-     *  Pitch-based component uses 20% of this for subtle assist. */
     private static final float FLY_SPEED = 0.05F;
-
-    /** Sneaking eye height adjustment (EntityPlayer.getEyeHeight: -0.08F) */
     private static final float SNEAK_HEIGHT = 1.65F;
-
-    /** Step height for auto-step (EntityLivingBase.stepHeight: 0.6F) */
     private static final float STEP_HEIGHT = 0.6F;
-
-    /** Water slow-down multiplier (EntityLivingBase.getWaterSlowDown: 0.8F) */
     private static final float WATER_SLOWDOWN = 0.8F;
-
-    /** Ladder max speed clamp (EntityLivingBase.travel ladder section: 0.15F) */
     private static final float LADDER_MAX_SPEED = 0.15F;
-
-    /** Slipperiness-to-acceleration constant (EntityLivingBase.travel: 0.16277136F) */
     private static final float SLIP_CONSTANT = 0.16277136F;
 
-    // --- Health / death / spawn ---
+    // Health / death / spawn
     private float health = 20.0f;
     private float maxHealth = 20.0f;
     private boolean isDead = false;
     private float fallDistance = 0.0f;
-    private Vector3d spawnPoint = new Vector3d();
+    private long spawnX, spawnY, spawnZ;
 
     private float yaw = -90, pitch = 0;
     private com.voxel.world.DimensionType dimension = com.voxel.world.DimensionType.OVERWORLD;
 
     public Player(double x, double y, double z) {
-        position.set(x, y, z);
-        prevPosition.set(x, y, z);
-        spawnPoint.set(x, y, z);
+        posX = FixedPoint.fromDouble(x);
+        posY = FixedPoint.fromDouble(y);
+        posZ = FixedPoint.fromDouble(z);
+        prevPosX = posX;
+        prevPosY = posY;
+        prevPosZ = posZ;
+        spawnX = posX;
+        spawnY = posY;
+        spawnZ = posZ;
     }
 
-    /**
-     * Main update: accumulate dt and run physics at exactly 20 ticks/second.
-     */
     public void update(float dt, World world, BlockDataManager blockDataManager) {
         if (isDead) return;
 
         isSwimming = checkInLiquid(world, blockDataManager);
 
-        // Aether / parachute / aercloud mechanics are still dt-based
         int feetBlock = checkBlockAtFeet(world);
         int waistBlock = checkBlockAtWaist(world);
         String feetName = blockDataManager.getName(feetBlock);
@@ -120,14 +92,13 @@ public class Player {
         boolean inBlueAercloud = feetName.contains("blue_aercloud") || waistName.contains("blue_aercloud");
         boolean onQuicksoil = feetName.contains("quicksoil") || checkBlockBelow(world, blockDataManager).contains("quicksoil");
 
-        // Accumulate time and run fixed-rate ticks
         tickAccumulator += dt;
-
-        // Cap accumulator to prevent spiral of death (max ~2 seconds of ticks)
         if (tickAccumulator > 2.0f) tickAccumulator = 2.0f;
 
         while (tickAccumulator >= TICK_RATE) {
-            prevPosition.set(position);  // snapshot for interpolation
+            prevPosX = posX;
+            prevPosY = posY;
+            prevPosZ = posZ;
             tick(TICK_RATE, world, blockDataManager,
                  inColdAercloud, inBlueAercloud, onQuicksoil);
             tickAccumulator -= TICK_RATE;
@@ -135,19 +106,15 @@ public class Player {
         }
     }
 
-    /**
-     * One physics tick at the fixed 20 Hz rate.
-     * Uses exact Minecraft constants directly — no dt scaling needed.
-     */
     private void tick(float tickDt, World world, BlockDataManager blockDataManager,
                        boolean inColdAercloud, boolean inBlueAercloud, boolean onQuicksoil) {
-        // --- Gravity (special mechanics override) ---
+        // Gravity
         if (!flying) {
             if (inBlueAercloud && !parachuteDeployed && velocity.y <= 0) {
                 velocity.y = 12.0f;
                 fallDistance = 0;
             } else if (parachuteDeployed) {
-                velocity.y -= 2.5f * tickDt;  // dt-scaled for parachute smoothness
+                velocity.y -= 2.5f * tickDt;
                 if (velocity.y < -3.0f) velocity.y = -3.0f;
                 fallDistance = 0;
             } else if (inColdAercloud) {
@@ -155,10 +122,10 @@ public class Player {
                 if (velocity.y < -1.0f) velocity.y = -1.0f;
                 fallDistance = 0;
             } else if (isSwimming) {
-                velocity.y -= 0.02D;  // Minecraft lava/water slow gravity
+                velocity.y -= 0.02D;
                 fallDistance = 0;
             } else {
-                velocity.y -= GRAVITY;  // Exact: 0.08 per tick
+                velocity.y -= GRAVITY;
                 if (velocity.y < 0) {
                     fallDistance += (float)(-velocity.y);
                 }
@@ -167,39 +134,37 @@ public class Player {
             fallDistance = 0;
         }
 
-        // --- Jump (processed once per tick) ---
+        // Jump
         if (jumpRequested) {
             jumpRequested = false;
             if (onGround) {
-                velocity.y = JUMP_VELOCITY;  // Exact: 0.42
+                velocity.y = JUMP_VELOCITY;
                 onGround = false;
                 if (isSprinting) {
                     float yawRad = (float) Math.toRadians(yaw);
-                    velocity.x += Math.cos(yawRad) * SPRINT_JUMP_IMPULSE;   // 0.2
+                    velocity.x += Math.cos(yawRad) * SPRINT_JUMP_IMPULSE;
                     velocity.z += Math.sin(yawRad) * SPRINT_JUMP_IMPULSE;
                 }
             } else if (isSwimming) {
-                // Water edge boost: launch out near blocks (original mechanic, scaled to 20 tps)
                 if (isAtWaterEdge(world, blockDataManager)) {
-                    velocity.y = 0.70F; // ~14.0 * 0.05 — huge vertical boost to escape the pool
+                    velocity.y = 0.70F;
                 } else {
-                    velocity.y += 0.025F; // Swim up (~0.5 * 0.05)
-                    if (velocity.y > 0.20F) velocity.y = 0.20F; // Cap (~4.0 * 0.05)
+                    velocity.y += 0.025F;
+                    if (velocity.y > 0.20F) velocity.y = 0.20F;
                 }
             }
         }
 
-        // --- Compute friction and acceleration (Minecraft travel() logic) ---
+        // Friction and acceleration
         float friction;
         float acceleration;
 
         if (isSwimming) {
-            friction = WATER_SLOWDOWN;  // 0.8
+            friction = WATER_SLOWDOWN;
             acceleration = 0.02F;
         } else if (onGround && onQuicksoil) {
-            friction = 0.4F * BASE_FRICTION;  // 0.4 * 0.91
-            float f6 = friction;
-            float f7 = SLIP_CONSTANT / (f6 * f6 * f6);
+            friction = 0.4F * BASE_FRICTION;
+            float f7 = SLIP_CONSTANT / (friction * friction * friction);
             acceleration = MOVE_SPEED * f7;
         } else if (onGround) {
             float slipperiness = getBlockSlipperiness(world, blockDataManager);
@@ -207,57 +172,47 @@ public class Player {
             float f7 = SLIP_CONSTANT / (friction * friction * friction);
             acceleration = MOVE_SPEED * f7;
         } else {
-            friction = BASE_FRICTION;  // 0.91 (air)
-            acceleration = AIR_MOVE_FACTOR;  // 0.02
+            friction = BASE_FRICTION;
+            acceleration = AIR_MOVE_FACTOR;
             if (isSprinting) {
-                acceleration += AIR_MOVE_FACTOR * SPRINT_BOOST;  // 0.02 + 0.02*0.3 = 0.026
+                acceleration += AIR_MOVE_FACTOR * SPRINT_BOOST;
             }
         }
 
-        // --- Apply horizontal movement impulse (Minecraft moveRelative equivalent) ---
+        // Horizontal movement
         float strafe = moveStrafing;
         float forward = moveForward;
 
         if (strafe != 0.0f || forward != 0.0f) {
             float d = (float) Math.sqrt(strafe * strafe + forward * forward);
             if (d < 1.0f) d = 1.0f;
-
-            // Diagonal movement normalization (Minecraft: multiply by 0.98 for diagonals)
             float factor = acceleration / d;
-
-            // Sprinting boost (Minecraft: 1.3x on ground, 2x when flying)
             if (isSprinting && !isSneaking) {
                 if (flying) {
                     factor *= 2.0f;
                 } else if (onGround) {
-                    factor *= (1.0f + SPRINT_BOOST);  // * 1.3
+                    factor *= (1.0f + SPRINT_BOOST);
                 }
             }
-            // Sneaking speed reduction
             if (isSneaking && onGround) {
                 factor *= 0.3f;
             }
-
             strafe *= factor;
             forward *= factor;
 
             float yawRad = (float) Math.toRadians(yaw);
             float sin = (float) Math.sin(yawRad);
             float cos = (float) Math.cos(yawRad);
-
-            // VoxelEngine yaw convention: camera forward = (cos, sin)
-            // forward key → (cos, sin), left strafe → (-sin, cos)
             velocity.x += forward * cos + strafe * sin;
             velocity.z += forward * sin - strafe * cos;
         }
 
-        // Flying vertical movement (Minecraft: jumpMovementFactor = 0.05, sprinting = 0.10)
         if (flying && moveVertical != 0.0f) {
             float flyFactor = isSprinting ? 2.0f : 1.0f;
             velocity.y += moveVertical * flyFactor;
         }
 
-        // --- Apply friction to horizontal velocity ---
+        // Apply friction
         float frictionFactor;
         if (isSwimming) {
             frictionFactor = WATER_SLOWDOWN;
@@ -274,68 +229,63 @@ public class Player {
             velocity.y *= frictionFactor;
         }
 
-        // Clamp tiny velocities to zero (Minecraft behavior)
         if (Math.abs(velocity.x) < 0.003D) velocity.x = 0;
         if (Math.abs(velocity.y) < 0.003D) velocity.y = 0;
         if (Math.abs(velocity.z) < 0.003D) velocity.z = 0;
 
-        // --- Move and collide (position += velocity, no dt scaling) ---
+        // Move and collide — position += velocity in fixed-point
         moveAndCollide(world, blockDataManager);
 
-        // Reset per-tick input accumulators (they're re-set by caller each frame)
         moveStrafing = 0.0f;
         moveForward = 0.0f;
         moveVertical = 0.0f;
     }
 
     /**
-     * Minecraft-style move with per-tick velocity (no dt involved).
-     * Each tick: position += velocity, detect collision, resolve.
+     * Move with per-tick velocity. Position updates use fixed-point arithmetic
+     * to avoid double precision loss at large coordinates.
      */
     private void moveAndCollide(World world, BlockDataManager blockDataManager) {
-        // --- Step-assist (exact Minecraft stepHeight: 0.6) ---
-        // Only step up if the player WOULD collide at current Y but the space
-        // at Y+STEP_HEIGHT is clear. Prevents bouncing on flat ground.
+        long stepVelX = FixedPoint.fromDouble(velocity.x);
+        long stepVelZ = FixedPoint.fromDouble(velocity.z);
+
+        // Step-assist
         if (onGround && !isSneaking) {
-            double stepX = velocity.x;
-            double stepZ = velocity.z;
-            double horDist = Math.sqrt(stepX * stepX + stepZ * stepZ);
+            double horDist = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
             if (horDist > 0.001
-                    && wouldCollideAtOffset(stepX, 0, stepZ, world, blockDataManager)
-                    && !wouldCollideAtOffset(stepX, STEP_HEIGHT, stepZ, world, blockDataManager)) {
-                double origX = position.x, origY = position.y, origZ = position.z;
-                position.x += stepX;
-                position.y += STEP_HEIGHT;
-                position.z += stepZ;
+                    && wouldCollideAtOffset(velocity.x, 0, velocity.z, world, blockDataManager)
+                    && !wouldCollideAtOffset(velocity.x, STEP_HEIGHT, velocity.z, world, blockDataManager)) {
+                long origX = posX, origY = posY, origZ = posZ;
+                posX += stepVelX;
+                posY += FixedPoint.fromDouble(STEP_HEIGHT);
+                posZ += stepVelZ;
                 if (!checkCollision(world, blockDataManager)) {
-                    velocity.x -= stepX;
-                    velocity.z -= stepZ;
-                } else {
-                    position.x = origX;
-                    position.y = origY;
-                    position.z = origZ;
+                    posX = origX;
+                    posY = origY;
+                    posZ = origZ;
                 }
             }
         }
 
         // X movement
-        position.x += velocity.x;
+        posX += stepVelX;
         if (checkCollision(world, blockDataManager)) {
-            position.x -= velocity.x;
+            posX -= stepVelX;
             velocity.x = 0;
         }
 
         // Z movement
-        position.z += velocity.z;
+        posZ += stepVelZ;
         if (checkCollision(world, blockDataManager)) {
-            position.z -= velocity.z;
+            posZ -= stepVelZ;
             velocity.z = 0;
         }
 
         // Y movement
         double prevYVel = velocity.y;
         onGround = false;
-        position.y += velocity.y;
+        long stepVelY = FixedPoint.fromDouble(velocity.y);
+        posY += stepVelY;
         if (checkCollision(world, blockDataManager)) {
             if (prevYVel < 0) {
                 onGround = true;
@@ -345,20 +295,19 @@ public class Player {
                     fallDistance = 0;
                 }
             }
-            position.y -= velocity.y;
+            posY -= stepVelY;
             velocity.y = 0;
         }
     }
 
-    /** Tests collision at an offset position (used by step-assist). */
     private boolean wouldCollideAtOffset(double dx, double dy, double dz, World world, BlockDataManager blockDataManager) {
-        position.x += dx;
-        position.y += dy;
-        position.z += dz;
+        posX += FixedPoint.fromDouble(dx);
+        posY += FixedPoint.fromDouble(dy);
+        posZ += FixedPoint.fromDouble(dz);
         boolean result = checkCollision(world, blockDataManager);
-        position.x -= dx;
-        position.y -= dy;
-        position.z -= dz;
+        posX -= FixedPoint.fromDouble(dx);
+        posY -= FixedPoint.fromDouble(dy);
+        posZ -= FixedPoint.fromDouble(dz);
         return result;
     }
 
@@ -371,23 +320,10 @@ public class Player {
     }
 
     // ════════════════════════════════════════════════════════════════
-    //  Public movement API (called each frame by input handler)
-    //  Sets per-tick strafe/forward/vertical values consumed by tick()
+    //  Public movement API
     // ════════════════════════════════════════════════════════════════
 
-    /**
-     * Applies movement impulse for this frame. Values are accumulated
-     * and consumed at 20 Hz by the tick loop.
-     *
-     * @param dx    Forward/backward component (already normalized by caller)
-     * @param dy    Vertical component (flying up/down)
-     * @param dz    Strafe component (already normalized by caller)
-     * @param speed Per-frame speed multiplier
-     */
     public void move(float dx, float dy, float dz, float speed) {
-        // Gentle pitch-based vertical for flight: looking up adds slight upward drift,
-        // looking down adds slight downward drift. Multiplier is 20% of FLY_SPEED so
-        // it's a subtle assist, not dominant.
         if (flying) {
             float pitchRad = (float) Math.toRadians(pitch);
             float verticalFactor = (float) Math.sin(pitchRad);
@@ -396,10 +332,9 @@ public class Player {
                 moveVertical += verticalFactor * horizontalMag * FLY_SPEED * 0.2f;
             }
         }
-        // Accumulate strafe/forward for consumption in tick()
         moveStrafing += dx;
         moveForward += dz;
-        moveVertical += dy; // raw vertical, no speed multiplication (tick applies fly speed)
+        moveVertical += dy;
     }
 
     public void jump(World world, BlockDataManager blockDataManager) {
@@ -419,21 +354,21 @@ public class Player {
     }
 
     // ════════════════════════════════════════════════════════════════
-    //  Block queries
+    //  Block queries (use fixed-point shifts instead of Math.floor)
     // ════════════════════════════════════════════════════════════════
 
     private boolean checkInLiquid(World world, BlockDataManager blockDataManager) {
-        int x = (int) Math.floor(position.x);
-        int y = (int) Math.floor(position.y + 0.5f);
-        int z = (int) Math.floor(position.z);
+        int x = FixedPoint.blockX(posX);
+        int y = FixedPoint.blockX(posY + FixedPoint.fromDouble(0.5));
+        int z = FixedPoint.blockX(posZ);
         int voxel = world.getVoxel(x, y, z);
         return voxel > 0 && blockDataManager.isLiquid(voxel);
     }
 
     private float getBlockSlipperiness(World world, BlockDataManager blockDataManager) {
-        int bx = (int) Math.floor(position.x);
-        int by = (int) Math.floor(position.y - 0.1f);
-        int bz = (int) Math.floor(position.z);
+        int bx = FixedPoint.blockX(posX);
+        int by = FixedPoint.blockX(posY - FixedPoint.fromDouble(0.1));
+        int bz = FixedPoint.blockX(posZ);
         int voxel = world.getVoxel(bx, by, bz);
         if (voxel <= 0) return DEFAULT_SLIPPERINESS;
         String name = blockDataManager.getName(voxel);
@@ -443,31 +378,25 @@ public class Player {
 
     private int checkBlockAtFeet(World world) {
         return world.getVoxel(
-            (int) Math.floor(position.x),
-            (int) Math.floor(position.y),
-            (int) Math.floor(position.z));
+            FixedPoint.blockX(posX), FixedPoint.blockX(posY), FixedPoint.blockX(posZ));
     }
 
     private int checkBlockAtWaist(World world) {
         return world.getVoxel(
-            (int) Math.floor(position.x),
-            (int) Math.floor(position.y + 0.9f),
-            (int) Math.floor(position.z));
+            FixedPoint.blockX(posX), FixedPoint.blockX(posY + FixedPoint.fromDouble(0.9)), FixedPoint.blockX(posZ));
     }
 
     private String checkBlockBelow(World world, BlockDataManager blockDataManager) {
         int voxel = world.getVoxel(
-            (int) Math.floor(position.x),
-            (int) Math.floor(position.y - 0.1f),
-            (int) Math.floor(position.z));
+            FixedPoint.blockX(posX), FixedPoint.blockX(posY - FixedPoint.fromDouble(0.1)), FixedPoint.blockX(posZ));
         return blockDataManager.getName(voxel);
     }
 
     private boolean isAtWaterEdge(World world, BlockDataManager blockDataManager) {
         if (!isSwimming) return false;
-        int feetY = (int) Math.floor(position.y);
-        int px = (int) Math.floor(position.x);
-        int pz = (int) Math.floor(position.z);
+        int feetY = FixedPoint.blockX(posY);
+        int px = FixedPoint.blockX(posX);
+        int pz = FixedPoint.blockX(posZ);
         int[][] offsets = {{-1,0}, {1,0}, {0,-1}, {0,1}};
         for (int checkY = feetY; checkY <= feetY + 1; checkY++) {
             for (int[] off : offsets) {
@@ -479,12 +408,16 @@ public class Player {
     }
 
     private boolean checkCollision(World world, BlockDataManager blockDataManager) {
-        int minX = (int) Math.floor(position.x - size.x / 2);
-        int maxX = (int) Math.floor(position.x + size.x / 2);
-        int minY = (int) Math.floor(position.y);
-        int maxY = (int) Math.floor(position.y + size.y);
-        int minZ = (int) Math.floor(position.z - size.z / 2);
-        int maxZ = (int) Math.floor(position.z + size.z / 2);
+        // Pure fixed-point AABB collision — no double/float conversions.
+        long halfW = FixedPoint.fromFloat(size.x * 0.5f);
+        long halfD = FixedPoint.fromFloat(size.z * 0.5f);
+        long heightFP = FixedPoint.fromFloat(size.y);
+        int minX = FixedPoint.blockX(posX - halfW);
+        int maxX = FixedPoint.blockX(posX + halfW);
+        int minY = FixedPoint.blockX(posY);
+        int maxY = FixedPoint.blockX(posY + heightFP);
+        int minZ = FixedPoint.blockX(posZ - halfD);
+        int maxZ = FixedPoint.blockX(posZ + halfD);
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 for (int z = minZ; z <= maxZ; z++) {
@@ -517,8 +450,12 @@ public class Player {
     }
 
     public void respawn() {
-        position.set(spawnPoint);
-        prevPosition.set(spawnPoint);
+        posX = spawnX;
+        posY = spawnY;
+        posZ = spawnZ;
+        prevPosX = spawnX;
+        prevPosY = spawnY;
+        prevPosZ = spawnZ;
         velocity.set(0);
         health = maxHealth;
         isDead = false;
@@ -530,10 +467,13 @@ public class Player {
         parachuteSlotIndex = -1;
     }
 
-    /** Teleport to exact coordinates, resetting velocity, parachute, and interpolation state. */
     public void teleport(double x, double y, double z) {
-        position.set(x, y, z);
-        prevPosition.set(x, y, z);
+        posX = FixedPoint.fromDouble(x);
+        posY = FixedPoint.fromDouble(y);
+        posZ = FixedPoint.fromDouble(z);
+        prevPosX = posX;
+        prevPosY = posY;
+        prevPosZ = posZ;
         velocity.set(0);
         fallDistance = 0;
         tickAccumulator = 0;
@@ -543,33 +483,48 @@ public class Player {
         parachuteSlotIndex = -1;
     }
 
-    public void setSpawnPoint(Vector3f point) { spawnPoint.set(point.x, point.y, point.z); }
+    public void setSpawnPoint(Vector3f point) {
+        spawnX = FixedPoint.fromFloat(point.x);
+        spawnY = FixedPoint.fromFloat(point.y);
+        spawnZ = FixedPoint.fromFloat(point.z);
+    }
 
     // ════════════════════════════════════════════════════════════════
-    //  Getters / Setters
+    //  Getters / Setters — public API returns Vector3f (compatible)
     // ════════════════════════════════════════════════════════════════
 
-    public Vector3f getPosition() { return new Vector3f((float)position.x, (float)position.y, (float)position.z); }
+    public Vector3f getPosition() {
+        return new Vector3f(FixedPoint.toFloat(posX), FixedPoint.toFloat(posY), FixedPoint.toFloat(posZ));
+    }
 
-    /** Double-precision position for physics/collision callers that need exact coords at far distances. */
-    public Vector3d getPositionD() { return position; }
+    public Vector3d getPositionD() {
+        return new Vector3d(FixedPoint.toDouble(posX), FixedPoint.toDouble(posY), FixedPoint.toDouble(posZ));
+    }
 
-    /** Sets the player position (used by dimension switching / spawn adjustment). */
-    public void setPosition(double x, double y, double z) { position.set(x, y, z); }
+    public void setPosition(double x, double y, double z) {
+        posX = FixedPoint.fromDouble(x);
+        posY = FixedPoint.fromDouble(y);
+        posZ = FixedPoint.fromDouble(z);
+    }
 
-    /** Interpolated position for smooth rendering between physics ticks. */
+    /** Raw fixed-point X coordinate (for callers that need maximum precision). */
+    public long getFixedX() { return posX; }
+    public long getFixedY() { return posY; }
+    public long getFixedZ() { return posZ; }
+
+    /** Raw fixed-point access for velocity-critical paths. */
+    public long getFixedPrevX() { return prevPosX; }
+    public long getFixedPrevY() { return prevPosY; }
+    public long getFixedPrevZ() { return prevPosZ; }
+
     public Vector3f getInterpolatedPosition(float partialTicks) {
         return new Vector3f(
-            (float)(prevPosition.x + (position.x - prevPosition.x) * partialTicks),
-            (float)(prevPosition.y + (position.y - prevPosition.y) * partialTicks),
-            (float)(prevPosition.z + (position.z - prevPosition.z) * partialTicks)
+            FixedPoint.lerpToFloat(prevPosX, posX, partialTicks),
+            FixedPoint.lerpToFloat(prevPosY, posY, partialTicks),
+            FixedPoint.lerpToFloat(prevPosZ, posZ, partialTicks)
         );
     }
 
-    /**
-     * Interpolated position using wall-clock time since last physics tick.
-     * Self-contained — used by EntityManager for PlayerEntity rendering.
-     */
     public Vector3f getInterpolatedPosition() {
         float pt = (System.nanoTime() - lastTickWallNanos) / 1e9f / TICK_RATE_SECONDS;
         if (pt < 0f) pt = 0f;
@@ -577,15 +532,14 @@ public class Player {
         return getInterpolatedPosition(pt);
     }
 
-    /** Wall-clock nanos of the last completed physics tick (for computing partialTicks). */
     public long getLastTickWallNanos() { return lastTickWallNanos; }
 
-    public Vector3f getVelocity() { return new Vector3f((float)velocity.x, (float)velocity.y, (float)velocity.z); }
+    public Vector3f getVelocity() {
+        return new Vector3f((float) velocity.x, (float) velocity.y, (float) velocity.z);
+    }
 
-    /** Double-precision velocity for callers that need exact deltas at far distances. */
     public Vector3d getVelocityD() { return velocity; }
 
-    /** Zeroes velocity (used by dimension switching / respawn). */
     public void resetVelocity() { velocity.set(0); }
     public float getYaw() { return yaw; }
     public void setYaw(float yaw) { this.yaw = yaw; }

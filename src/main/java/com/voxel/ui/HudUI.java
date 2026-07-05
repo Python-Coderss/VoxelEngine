@@ -14,6 +14,7 @@ import com.voxel.game.ItemDefinitions.ItemDefinition;
 import com.voxel.game.ItemDefinitions.ItemStack;
 import com.voxel.game.PlayerInventory;
 import com.voxel.utils.BiomeManager;
+import com.voxel.utils.FixedPoint;
 import com.voxel.utils.TextureManager;
 import org.joml.Vector2f;
 import org.joml.Vector2i;
@@ -1081,14 +1082,17 @@ public class HudUI {
         StringBuilder title = new StringBuilder("Voxel Engine | FPS: ").append(ctx.lastMeasuredFps);
         title.append(" | ").append(ctx.gameMode == GameContext.GameMode.CREATIVE ? "creative" : "survival");
         com.voxel.Player p = main.player;
-        Vector3f pos = p.getPosition();
-        title.append(String.format(Locale.US, " | XYZ: %.2f, %.2f, %.2f", pos.x, pos.y, pos.z));
-        int bx = (int) Math.floor(pos.x);
-        int bz = (int) Math.floor(pos.z);
+        long pfx = p.getFixedX(), pfy = p.getFixedY(), pfz = p.getFixedZ();
+        title.append(String.format(Locale.US, " | XYZ: %d.%02d, %d.%02d, %d.%02d",
+            FixedPoint.camBlock(pfx), (int)(FixedPoint.camFrac(pfx) * 100 + 0.5f),
+            FixedPoint.camBlock(pfy), (int)(FixedPoint.camFrac(pfy) * 100 + 0.5f),
+            FixedPoint.camBlock(pfz), (int)(FixedPoint.camFrac(pfz) * 100 + 0.5f)));
+        int bx = FixedPoint.camBlock(pfx);
+        int bz = FixedPoint.camBlock(pfz);
         com.voxel.biome.Biome biome = biomeManager.getBiomeProvider().getBiome(bx, bz);
         title.append(" | ").append(biome.name);
-        int pcx = (int) Math.floor(pos.x) >> 4;
-        int pcz = (int) Math.floor(pos.z) >> 4;
+        int pcx = FixedPoint.camBlock(pfx) >> 4;
+        int pcz = FixedPoint.camBlock(pfz) >> 4;
         if (!ctx.chunkManager.isChunkLoaded(pcx, pcz)) title.append(" [WAITING FOR CHUNKS]");
         if (main.commandMode) {
             title.append(" | CMD ").append(main.commandBuffer);
