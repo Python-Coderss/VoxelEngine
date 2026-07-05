@@ -120,11 +120,7 @@ public class Main {
     // Reusable Vector3f for entity upload worldOffset (avoid per-frame alloc).
     private final Vector3f reusableWorldOffset = new Vector3f();
 
-    // ── SDF sky early-out: replaces the rasterized depth prepass ──
-    // The compute shader uses cheap Y/X/Z-plane SDF tests against these bounds
-    // to skip DDA when the ray will not hit any loaded terrain.
-    public int locVPMatrix = -1;             // unused (kept for binary-compat elsewhere if any)
-    public int locWorldOffsetDepth = -1;     // unused
+
 
     public FloatBuffer persistentPlBuf; // Persistent FloatBuffer for pointLightSSBO (no per-frame alloc)
     public com.voxel.entity.EntityManager entityManager;
@@ -286,8 +282,7 @@ public class Main {
         cacheUniformLocations();
         // Atmosphere uniforms handled by AtmosphereRenderer (no per-frame glGetUniformLocation)
 
-        // (Rasterized depth prepass removed — replaced by cheaper SDF sky early-out
-        //  in the compute shader, using u_MaxTerrain* uniforms uploaded every frame.)
+
 
         entityManager = new com.voxel.entity.EntityManager();
         com.voxel.entity.EnemyEntity.setEntityManager(entityManager);
@@ -1087,20 +1082,7 @@ public class Main {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, craftingItemSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, lightSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, sdfSSBO);
-            // Terrain bounds in buffer-relative space (camera is relative to u_WorldOffset)
-            glProgramUniform1f(computeProgram, 22, chunkManager.getMaxTerrainY() - woy);
-            glProgramUniform1f(computeProgram, 23, chunkManager.getMaxTerrainX() - wox);
-            glProgramUniform1f(computeProgram, 24, chunkManager.getMaxTerrainZ() - woz);
-            glProgramUniform1f(computeProgram, 25, chunkManager.getMinTerrainX() - wox);
-            glProgramUniform1f(computeProgram, 26, chunkManager.getMinTerrainZ() - woz);
-            // u_BoundsValid: 1 after first terrain bounds update (gen thread sets it);
-            // 0 before any chunk loads → shader falls through to plain DDA.
-            glProgramUniform1i(computeProgram, 27, chunkManager.areBoundsValid() ? 1 : 0);
-            // u_TopSolidY: highest solid voxel Y across all loaded chunks. Lets the
-            // shader early-out sky-ray pixels (camera above AND ray.y > 0) without
-            // falling into the per-chunk sphere-trace loop. Sentinel -1 = no chunks
-            // loaded yet → shader treats it as "no known ceiling".
-            glProgramUniform1i(computeProgram, 28, chunkManager.getTopSolidY() - woy);
+
 
             uploadCraftingItems();
 

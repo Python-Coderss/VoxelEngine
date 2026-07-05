@@ -89,24 +89,7 @@ uniform sampler2D u_UITexture;
 uniform sampler2D u_UISource;
 uniform sampler2DArray u_DestroyStages;
 
-// SDF sky-early-out uniforms (replaces rasterized depth prepass):
-// Cheap plane SDF tests against the loaded terrain's world-space bounds.
-// u_MaxY: top plane; if camera is above AND ray.y > 0, sky pixel (skip DDA).
-// u_MaxX/MinX/MaxZ/MinZ: side planes; slab-method ray-box test.
-// u_BoundsValid: 1 after first chunk load, 0 before (lets SDF gracefully
-//                fall through to DDA when bounds are unknown).
-// u_TopSolidY: actual highest solid voxel Y across all loaded chunks.
-//              When u_BoundsValid=1 AND camPos.y > u_TopSolidY AND rd.y>0,
-//              the ray points into open sky above all loaded terrain →
-//              guaranteed sky pixel, skip ALL DDA/sphere-trace work.
-//              Gen-thread tracks this via ChunkManager.getTopSolidY().
-uniform float u_MaxY;
-uniform float u_MaxX;
-uniform float u_MaxZ;
-uniform float u_MinX;
-uniform float u_MinZ;
-uniform uint u_BoundsValid;
-layout(location = 28) uniform int u_TopSolidY;
+
 
 layout(location = 7) uniform vec4 u_HeartUVs[3]; // [0]=Full, [1]=Half, [2]=Empty
 
@@ -835,44 +818,7 @@ void main() {
     vec3 final = vec3(0.0), throu = vec3(1.0), ro = camPos; bool skip = false;
     uint lastMediumTag = 0xFFFFFFFFu; // Track last translucent medium tag to skip same-medium faces
 
-    // ── SDF sky early-out (replaces rasterized depth prepass) ──
-    // Y-plane SDF: if camera is above u_MaxY AND ray points upward (rd.y > 0),
-    //         the ray will never hit any loaded terrain → pure sky, skip ALL DDA.
-    // X/Z-plane SDFs: if ray exits the terrain box on the leading side without
-    //         entering it, the ray also misses → pure sky early-out.
-    // No rasterized depth prepass required; this is exponentially cheaper for
-    // large open-sky scenes and avoids the FBO draw call entirely.
-    bool skyPixel = false;
-    if (u_BoundsValid == 1u) {
-        // Y-plane SDF (primary sky-ray early-out): camera above the actual highest
-        // solid voxel Y AND ray points up → guaranteed sky pixel. This catches the
-        // common case of looking nearly straight up and breaks out BEFORE the
-        // per-chunk sphere-trace loop, eliminating ~120 traceWorld iterations.
-        // (The pre-existing u_MaxY test was effectively dead — the prior
-        //  updateTerrainBounds() plumbing was never wired up.)
-        if (u_TopSolidY >= 0 && camPos.y > float(u_TopSolidY) && rd.y > 0.0) {
-            skyPixel = true;
-        } else {
-            // Slab-method ray-box intersection against the loaded terrain X/Z box.
-            // If the ray exits the box before entering (or the entire box is behind
-            // the camera), the ray will not hit any loaded terrain → pure sky.
-            vec3 invRd = 1.0 / max(abs(rd), vec3(1e-6)) * sign(rd);
-            float tEnterX = min((u_MinX - camPos.x) * invRd.x, (u_MaxX - camPos.x) * invRd.x);
-            float tEnterZ = min((u_MinZ - camPos.z) * invRd.z, (u_MaxZ - camPos.z) * invRd.z);
-            float tEnter = max(0.0, max(tEnterX, tEnterZ));
-            float tExitX  = max((u_MinX - camPos.x) * invRd.x, (u_MaxX - camPos.x) * invRd.x);
-            float tExitZ  = max((u_MinZ - camPos.z) * invRd.z, (u_MaxZ - camPos.z) * invRd.z);
-            float tExit   = min(tExitX, tExitZ);
-            if (tExit < 0.0 || tEnter > tExit) skyPixel = true;
-        }
-    }
-    if (skyPixel) {
-        vec3 sky = GetSky(rd, at);
-        vec3 result = ACESFilm(sky);
-        if (uiCol.a > 0.0) result = mix(result, uiCol.rgb, uiCol.a);
-        imageStore(imgOutput, px, vec4(pow(result, vec3(1.0/2.2)), 1.0));
-        return;
-    }
+
 
     for (int b = 0; b < 2; b++) {  // reduced from 4 → 2 bounces for perf
         float t; vec3 n; uint voxel, eTex, wirePower, wireConn; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx;

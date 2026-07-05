@@ -34,41 +34,15 @@ public class ChunkManager {
     private final BiomeManager biomeManager;
     private final DimensionType dimension;
     private final int renderDistance;
-    private final int chunkHeight = 16;
+    // Y-load range: number of sections above/below player to keep loaded
+    private final int yLoadRadius;
 
     // ── Chunk map (ConcurrentHashMap for safe cross-thread reads via isChunkLoaded) ──
-    private final Map<Long, Integer[]> loadedChunks = new ConcurrentHashMap<>();
+    // Column sections: column key (cx,cz) → NavigableMap<cy, slot>
+    // Each column can have any set of cy sections loaded, not a fixed count.
+    private final Map<Long, NavigableMap<Integer, Integer>> loadedChunks = new ConcurrentHashMap<>();
 
-    // ── Terrain world-space bounds, written only by the gen thread.
-    // Used by the compute shader as a cheap SDF for sky early-out:
-    //   u_MaxY = top plane (camera above and ray.y>0 → pure sky)
-    //   X/Z planes are restricted to the player's RENDER-DISTANCE ring so the
-    //   side SDF is meaningful (the full loaded-chunk buffer would always
-    //   swallow most rays).
-    // Layout: [maxY, minY, maxX, minX, maxZ, minZ].
-    private volatile float[] terrainBounds = new float[]{
-        Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY,
-        Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY,
-        Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY
-    };
-    private final java.util.concurrent.atomic.AtomicBoolean boundsValid =
-        new java.util.concurrent.atomic.AtomicBoolean(false);
-    /** True after the first terrain bounds update on the gen thread. */
-    public boolean areBoundsValid() { return boundsValid.get(); }
 
-    // ── Cheap sky-ray early-out: track the highest solid voxel Y across all
-    //    loaded chunks. When the camera is ABOVE this value AND the ray points
-    //    up, no amount of climbing will hit terrain → pure sky, skip DDA.
-    //    Volatile int — gen thread writes, main thread reads per frame.
-    //    Sentinel value -1 means "no chunks loaded yet" so the shader can gate
-    //    the test behind u_BoundsValid without false-positive early-exits.
-    private volatile int topSolidY = -1;
-    /** Per-column max solid voxel Y map (chunk key → world Y). Gen thread only writes. */
-    private final java.util.concurrent.ConcurrentHashMap<Long, Integer> chunkTopYByCol =
-        new java.util.concurrent.ConcurrentHashMap<>();
-
-    /** @return Highest solid voxel Y across all loaded chunks, or -1 if none loaded. */
-    public int getTopSolidY() { return topSolidY; }
 
     // ── Slot pool: simple FILO stack (int[] + counter), single-threaded ──
     private final int[] freeSlotStack;
@@ -103,7 +77,10 @@ public class ChunkManager {
     private final Set<Long> pendingLighting = new HashSet<>();
 
     // ── Per-column section load tracking (gen thread only) ──
-    private final Map<Long, java.util.BitSet> columnSectionsLoaded = new HashMap<>();
+    // Track which sections of a column are currently being generated.
+    // A column has an entry here while its first section is being generated;
+    // it's removed when the column's load cycle is complete.
+    private final Map<Long, Set<Integer>> columnSectionsLoaded = new HashMap<>();
     private static final int LIGHT_GRID_RADIUS = 5; // 11×11 player zone: which chunks to light
     private static final int BFS_WAIT_RADIUS = 2;   // 5×5 BFS wait zone: 24 neighbors must be loaded before BFS runs
 
@@ -123,6 +100,8 @@ public class ChunkManager {
         this.blockDataManager = blockDataManager;
         this.dimension = dimension;
         this.renderDistance = renderDistance;
+        // Y load range: match the XZ render distance in section units
+        this.yLoadRadius = renderDistance * 2;
 
         int poolSize = world.getPoolSizeForAlloc();
         this.freeSlotStack = new int[poolSize];
@@ -194,7 +173,7 @@ public class ChunkManager {
      * @param expectedSlots The slot array the task should operate on, or null if dynamic
      * @param work The lighting work to perform
      */
-    private void postLightTask(long chunkKey, Integer[] expectedSlots, Runnable work) {
+    private void postLightTask(long chunkKey, NavigableMap<Integer, Integer> expectedSlots, Runnable work) {
         lightQueue.addLast(() -> {
             if (cancelledLightTasks.remove(chunkKey)) return; // cancelled by unload
             // Verify slots haven't changed (chunk wasn't unloaded and reloaded)
@@ -309,7 +288,7 @@ public class ChunkManager {
         long colKey = chunkKey(colCx, colCz);
         postLightTask(colKey, () -> {
             Set<Integer> aff = mcLightEngine.onBlockChanged(x, y, z, fOldBlockId);
-            Integer[] colSlots = loadedChunks.get(colKey);
+            NavigableMap<Integer, Integer> colSlots = loadedChunks.get(colKey);
             if (colSlots != null) {
                 aff.addAll(mcLightEngine.generateSkyLight(colCx, colCz, colSlots));
             }
@@ -341,7 +320,7 @@ public class ChunkManager {
         long colKey2 = chunkKey(colCx2, colCz2);
         postLightTask(colKey2, () -> {
             Set<Integer> aff = mcLightEngine.onBlockChanged(x, y, z, fOldBlockId2);
-            Integer[] colSlots = loadedChunks.get(colKey2);
+            NavigableMap<Integer, Integer> colSlots = loadedChunks.get(colKey2);
             if (colSlots != null) {
                 aff.addAll(mcLightEngine.generateSkyLight(colCx2, colCz2, colSlots));
             }
@@ -362,7 +341,7 @@ public class ChunkManager {
     public void markBiomeMapDirty() { biomeMapDirty.set(true); }
     public boolean needsLightUpload() { return lightsNeedUpload; }
     public void clearLightUpload() { lightsNeedUpload = false; }
-    public Map<Long, Integer[]> getLoadedChunks() { return loadedChunks; }
+    public Map<Long, NavigableMap<Integer, Integer>> getLoadedChunks() { return loadedChunks; }
 
     // volatile guard: true while any thread (gen or light) is modifying light pool
     private final AtomicInteger lightingActiveCount = new AtomicInteger(0);
@@ -399,12 +378,8 @@ public class ChunkManager {
     private void manageChunks(int pcx, int pcy, int pcz, float yaw) {
         long t0 = System.currentTimeMillis();
 
-        // ── EMERGENCY: if player's own chunk is unloaded, sync-generate it NOW ──
-        long playerKey = chunkKey(pcx, pcz);
-        if (!loadedChunks.containsKey(playerKey)) {
-            WorldGenLogger.log("EMERGENCY load player chunk (" + pcx + "," + pcz + ")");
-            generateFullColumnSync(pcx, pcz);
-        }
+        // ── 3×3×3 grid: ensure all 27 chunks around player are loaded synchronously ──
+        ensure3x3x3Loaded(pcx, pcy, pcz);
 
         // Maximum distance: 2× forward, 1× sideways/back
         int maxDist = renderDistance * 2;
@@ -426,6 +401,14 @@ public class ChunkManager {
                 keep.add(key);
                 if (!loadedChunks.containsKey(key)) {
                     chunksToLoad.add(new int[]{cx, cz});
+                } else {
+                    // Column is in loadedChunks but may be PARTIALLY loaded
+                    // (sections lost when queue was cleared mid-load by a new manageChunks call).
+                    // Re-queue to load the missing sections.
+                    Set<Integer> loaded = columnSectionsLoaded.get(key);
+                    if (loaded != null && !loaded.isEmpty()) {
+                        chunksToLoad.add(new int[]{cx, cz});
+                    }
                 }
             }
         }
@@ -442,14 +425,14 @@ public class ChunkManager {
         // and saveChunk reads voxels via world.getVoxel() which depends on it.
         int unloadedCount = 0;
         List<Long> toUnload = new ArrayList<>();
-        for (Map.Entry<Long, Integer[]> entry : loadedChunks.entrySet()) {
+        for (Map.Entry<Long, NavigableMap<Integer, Integer>> entry : loadedChunks.entrySet()) {
             if (!keep.contains(entry.getKey())) {
                 toUnload.add(entry.getKey());
             }
         }
         toUnload.sort(Long::compareTo);
         for (Long key : toUnload) {
-            Integer[] slots = loadedChunks.remove(key);
+            NavigableMap<Integer, Integer> slots = loadedChunks.remove(key);
             if (slots != null) {
                 unloadChunk(key, slots);
                 tableDirty.set(true);
@@ -457,9 +440,13 @@ public class ChunkManager {
             }
         }
 
-        recenterIfNeeded(pcx, pcz);
+        recenterIfNeeded(pcx, pcy, pcz);
 
-        // ── Queue full columns in 2D XZ-spiral order (nearest first) ──
+        // ── Compute current Y-range ──
+        int yMin = pcy - yLoadRadius;
+        int yMax = pcy + yLoadRadius;
+
+        // ── Queue new columns in 2D XZ-spiral order (nearest first) ──
         if (!chunksToLoad.isEmpty()) {
             // Keep the last 2 tasks so the gen thread never idles between swaps.
             Runnable keep1 = taskQueue.pollLast();
@@ -469,7 +456,6 @@ public class ChunkManager {
             if (keep1 != null) taskQueue.addFirst(keep1);
 
             // Sort missing columns by 2D Chebyshev distance from player (XZ only).
-            // Within same distance, sort by angle from look direction for a spiral feel.
             float lookX = (float) Math.cos(Math.toRadians(yaw));
             float lookZ = (float) Math.sin(Math.toRadians(yaw));
             chunksToLoad.sort((a, b) -> {
@@ -478,7 +464,6 @@ public class ChunkManager {
                 int distA = Math.max(Math.abs(dxA), Math.abs(dzA));
                 int distB = Math.max(Math.abs(dxB), Math.abs(dzB));
                 if (distA != distB) return Integer.compare(distA, distB);
-                // Same ring: sort by angle from look direction
                 float angleA = (float) Math.abs(Math.atan2(dzA, dxA) - Math.atan2(lookZ, lookX));
                 float angleB = (float) Math.abs(Math.atan2(dzB, dxB) - Math.atan2(lookZ, lookX));
                 if (angleA > Math.PI) angleA = (float) (2.0 * Math.PI - angleA);
@@ -488,21 +473,21 @@ public class ChunkManager {
 
             // Build Y-section order: nearest to player Y first, radiating outward
             List<Integer> yOrder = new ArrayList<>();
-            for (int cy = 0; cy < chunkHeight; cy++) yOrder.add(cy);
+            for (int cy = yMin; cy <= yMax; cy++) yOrder.add(cy);
             yOrder.sort((a, b) -> Integer.compare(Math.abs(a - pcy), Math.abs(b - pcy)));
 
-            WorldGenLogger.log("MANAGE player(" + pcx + "," + pcy + "," + pcz + ") queueing "
-                + chunksToLoad.size() + " columns in XZ-spiral, "
-                + (chunksToLoad.size() * chunkHeight) + " sections, loaded="
-                + loadedChunks.size());
-
-            // Queue: for each column (nearest first), queue all 16 sections
-            // in Y-spiral order. This produces visible concentric rings of
-            // fully-loaded columns radiating outward.
+            // Queue: for each column (nearest first), queue all Y-range sections
+            // in Y-spiral order.
             for (int[] col : chunksToLoad) {
                 int cx = col[0], cz = col[1];
+                long key = chunkKey(cx, cz);
+                NavigableMap<Integer, Integer> colSlots = loadedChunks.get(key);
+                Set<Integer> loading = columnSectionsLoaded.get(key);
                 for (int cy : yOrder) {
-                    taskQueue.addLast(() -> loadOneSection(cx, cy, cz));
+                    if ((colSlots != null && colSlots.containsKey(cy)) ||
+                        (loading != null && loading.contains(cy))) continue;
+                    final int fcy = cy;
+                    taskQueue.addLast(() -> loadOneSection(cx, fcy, cz));
                 }
             }
 
@@ -510,9 +495,30 @@ public class ChunkManager {
             taskQueue.addLast(this::flushPendingLighting);
         }
 
-        if (!chunksToLoad.isEmpty()) {
-            WorldGenLogger.log("MANAGE done: sections=" + (chunksToLoad.size() * chunkHeight)
-                + " unloaded=" + unloadedCount + " columnsNow=" + loadedChunks.size()
+        // ── Expand existing columns: queue missing Y sections when player moves vertically ──
+        // Must run AFTER queue clear (above) so tasks are not lost.
+        int expandedCount = 0;
+        for (Map.Entry<Long, NavigableMap<Integer, Integer>> entry : loadedChunks.entrySet()) {
+            NavigableMap<Integer, Integer> colSlots = entry.getValue();
+            for (int cy = yMin; cy <= yMax; cy++) {
+                if (!colSlots.containsKey(cy)) {
+                    long key = entry.getKey();
+                    int cx = unpackX(key);
+                    int cz = unpackZ(key);
+                    Set<Integer> loading = columnSectionsLoaded.get(key);
+                    if (loading != null && loading.contains(cy)) continue;
+                    final int fcy = cy;
+                    taskQueue.addLast(() -> loadOneSection(cx, fcy, cz));
+                    expandedCount++;
+                }
+            }
+        }
+
+        if (!chunksToLoad.isEmpty() || expandedCount > 0) {
+            int totalSections = chunksToLoad.size() * (yMax - yMin + 1) + expandedCount;
+            WorldGenLogger.log("MANAGE player(" + pcx + "," + pcy + "," + pcz + ") queueing "
+                + chunksToLoad.size() + " columns + " + expandedCount + " Y-expansions, "
+                + totalSections + " sections total, loaded=" + loadedChunks.size()
                 + " (" + (System.currentTimeMillis() - t0) + "ms)");
         }
     }
@@ -521,26 +527,30 @@ public class ChunkManager {
     //  RECENTER — runs only on the gen thread, zero races
     // ══════════════════════════════════════════════════════════════════
 
-    private void recenterIfNeeded(int pcx, int pcz) {
+    private void recenterIfNeeded(int pcx, int pcy, int pcz) {
         int bufMinX = world.getOffsetX() >> 4;
+        int bufMinY = world.getOffsetY() >> 4;
         int bufMinZ = world.getOffsetZ() >> 4;
         int bufMaxX = bufMinX + World.REGION_SIZE;
+        int bufMaxY = bufMinY + World.REGION_SIZE;
         int bufMaxZ = bufMinZ + World.REGION_SIZE;
 
         if (pcx >= bufMinX + RECENTER_MARGIN_CHUNKS && pcx < bufMaxX - RECENTER_MARGIN_CHUNKS &&
+            pcy >= bufMinY + RECENTER_MARGIN_CHUNKS && pcy < bufMaxY - RECENTER_MARGIN_CHUNKS &&
             pcz >= bufMinZ + RECENTER_MARGIN_CHUNKS && pcz < bufMaxZ - RECENTER_MARGIN_CHUNKS) {
             return;
         }
 
         int newOffsetX = (pcx - BUFFER_HALF_CHUNKS) << 4;
+        int newOffsetY = (pcy - BUFFER_HALF_CHUNKS) << 4;
         int newOffsetZ = (pcz - BUFFER_HALF_CHUNKS) << 4;
 
         // Capture old biome offsets before recentering
         int oldBiomeX = lastBiomeOffsetX;
         int oldBiomeZ = lastBiomeOffsetZ;
 
-        WorldGenLogger.log("RECENTER oldOffset(" + world.getOffsetX() + "," + world.getOffsetZ()
-            + ") -> newOffset(" + newOffsetX + "," + newOffsetZ
+        WorldGenLogger.log("RECENTER oldOffset(" + world.getOffsetX() + "," + world.getOffsetY() + "," + world.getOffsetZ()
+            + ") -> newOffset(" + newOffsetX + "," + newOffsetY + "," + newOffsetZ
             + ") loadedChunks=" + loadedChunks.size());
 
         // Slide the biome map on the gen thread alongside recenter
@@ -552,12 +562,12 @@ public class ChunkManager {
         }
 
         // Clear the indirection table
-        world.setOrigin(newOffsetX, 0, newOffsetZ);
+        world.setOrigin(newOffsetX, newOffsetY, newOffsetZ);
 
         int kept = 0;
 
         // Re-register every chunk — no snapshot, no races, single thread.
-        for (Map.Entry<Long, Integer[]> entry : loadedChunks.entrySet()) {
+        for (Map.Entry<Long, NavigableMap<Integer, Integer>> entry : loadedChunks.entrySet()) {
             long key = entry.getKey();
             int absCX = unpackX(key);
             int absCZ = unpackZ(key);
@@ -565,20 +575,18 @@ public class ChunkManager {
             int relCZ = absCZ - (newOffsetZ >> 4);
 
             if (relCX >= 0 && relCX < World.REGION_SIZE && relCZ >= 0 && relCZ < World.REGION_SIZE) {
-                Integer[] slots = entry.getValue();
-                for (int cy = 0; cy < chunkHeight; cy++) {
-                    world.setChunkSlot(absCX, cy, absCZ, slots[cy]);
+                NavigableMap<Integer, Integer> slots = entry.getValue();
+                for (Map.Entry<Integer, Integer> se : slots.entrySet()) {
+                    world.setChunkSlot(absCX, se.getKey(), absCZ, se.getValue());
                 }
                 kept++;
             }
-            // Note: chunks outside the new buffer are now unloaded first in manageChunks
-            // (before recenter runs), so they are no longer in loadedChunks at this point.
         }
 
         tableDirty.set(true);
         WorldGenLogger.log("RECENTER done: kept=" + kept
-            + " offset(" + newOffsetX + "," + newOffsetZ + ")");
-        System.out.println("Recentered buffer: offset now (" + newOffsetX + ", 0, " + newOffsetZ + ")");
+            + " offset(" + newOffsetX + "," + newOffsetY + "," + newOffsetZ + ")");
+        System.out.println("Recentered buffer: offset now (" + newOffsetX + ", " + newOffsetY + ", " + newOffsetZ + ")");
     }
 
 
@@ -586,7 +594,7 @@ public class ChunkManager {
     //  CHUNK UNLOAD — runs only on the gen thread
     // ══════════════════════════════════════════════════════════════════
 
-    private void unloadChunk(long key, Integer[] slots) {
+    private void unloadChunk(long key, NavigableMap<Integer, Integer> slots) {
         int cx = unpackX(key);
         int cz = unpackZ(key);
         WorldGenLogger.logChunk("UNLOAD", cx, -1, cz, "saving and freeing slots");
@@ -598,27 +606,17 @@ public class ChunkManager {
         if (saveManager != null) {
             saveManager.saveChunk(dimension, cx, cz, world);
         }
-        for (int cy = 0; cy < chunkHeight; cy++) {
+        int freed = 0;
+        for (int cy : slots.keySet()) {
+            int slot = slots.get(cy);
             world.clearChunkSlot(cx, cy, cz);
-            world.clearLightPoolSlot(slots[cy]);
-            world.clearDirSdfPoolSlot(slots[cy]);
-            freeSlotStack[freeSlotTop++] = slots[cy];
+            world.clearLightPoolSlot(slot);
+            world.clearDirSdfPoolSlot(slot);
+            freeSlotStack[freeSlotTop++] = slot;
+            freed++;
         }
-        // Sky-ray early-out: deregister this chunk from the column-max map.
-        // Only recompute global max when this chunk actually held it (cheap O(1)
-        // guard; if the removed chunk's Y is below our current top, the max is
-        // unchanged and we skip the O(N) scan over all loaded chunks).
-        Integer removedY = chunkTopYByCol.remove(key);
-        if (removedY != null && removedY >= topSolidY) {
-            int newMax = -1;
-            for (Integer y : chunkTopYByCol.values()) {
-                if (y != null && y > newMax) newMax = y;
-            }
-            topSolidY = newMax;
-        }
-        int slotHash = java.util.Arrays.hashCode(slots);
         WorldGenLogger.logChunk("UNLOAD_DONE", cx, -1, cz,
-            "freed " + chunkHeight + " slots hash=" + Integer.toHexString(slotHash));
+            "freed " + freed + " slots");
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -707,56 +705,7 @@ public class ChunkManager {
         world.clearDirSdfPoolSlot(slot);
     }
 
-    /**
-     * Computes the highest solid voxel Y in a chunk column (across all 16 sections,
-     * scanning top→bottom to exit early). Runs AFTER voxel data is finalized
-     * (post-decoration or post-disk-load) and before the slot is sent to GPU.
-     *
-     * Cost: ~4096 cell checks in the WORST case (all-air column); typically far
-     * less because we exit as soon as the highest solid is found. Sub-ms per chunk.
-     *
-     * Updates {@link #chunkTopYByCol} and {@link #topSolidY} atomically with the
-     * gen-thread constraint (single writer for both, so plain volatile int suffices).
-     *
-     * @param slots the 16 chunk-section slot indexes for this column
-     * @return the highest solid voxel world Y, or -1 if column is fully air
-     */
-    private int computeColumnMaxY(Integer[] slots) {
-        int best = -1;
-        // Scan top section down so we can break early on the first solid found.
-        for (int cy = chunkHeight - 1; cy >= 0; cy--) {
-            int slot = slots[cy];
-            if (slot == World.EMPTY) continue;
-            int secBaseY = cy << 4;
-            // Within this section, scan ly down so we scan the highest solid first.
-            for (int ly = 15; ly >= 0; ly--) {
-                boolean solid = false;
-                for (int lx = 0; lx < 16 && !solid; lx++) {
-                    for (int lz = 0; lz < 16; lz++) {
-                        if ((world.getRawVoxelInSlot(slot, lx, ly, lz) & 0x80000000) != 0) {
-                            solid = true;
-                            break;
-                        }
-                    }
-                }
-                if (solid) {
-                    best = secBaseY + ly;
-                    break; // Highest ly in topmost non-empty section = column max
-                }
-            }
-            if (best >= 0) break; // Already found the column max, no need to scan lower
-        }
-        return best;
-    }
 
-    /** Record a chunk's column max-Y for the sky-ray early-out uniform.
-     *  Also flips u_BoundsValid true on the first successful registration
-     *  so the shader's gated skyPixel check actually runs. */
-    private void updateTopSolidY(long chunkKey, int columnMaxY) {
-        chunkTopYByCol.put(chunkKey, columnMaxY);
-        if (columnMaxY > topSolidY) topSolidY = columnMaxY;
-        boundsValid.set(true);
-    }
 
     /**
      * Computes 6 directional SDF distances (±X, ±Y, ±Z) for an empty-loaded
@@ -809,43 +758,7 @@ public class ChunkManager {
         world.setDirSdfSlot(slot, enc[0], enc[1], enc[2], enc[3], enc[4], enc[5]);
     }
 
-    private void updateTerrainBounds(int cx, int cz, int columnMaxY, int pcx, int pcz) {
-        // Visible ring: only chunks within 2x renderDistance (stretched forward) participate
-        // in the side SDF. Using the loading player's chunk as anchor.
-        int vis = renderDistance * 2;
-        int dx = cx - pcx, dz = cz - pcz;
-        if (Math.abs(dx) > vis || Math.abs(dz) > vis) {
-            // Out-of-visible chunk: don't loosen the box but DO update Y (cheap and useful)
-            float[] cur = terrainBounds;
-            terrainBounds = new float[]{cur[0], cur[1], cur[2], cur[3], cur[4], cur[5]};
-            if (columnMaxY > cur[0]) {
-                terrainBounds[0] = columnMaxY;
-            }
-            return;
-        }
-        float maxX = (cx << 4) + 16f;
-        float minX = (cx << 4);
-        float maxZ = (cz << 4) + 16f;
-        float minZ = (cz << 4);
-        float[] cur = terrainBounds;
-        float[] next = new float[]{
-            Math.max(cur[0], columnMaxY),
-            Math.min(cur[1], 0f),
-            Math.max(cur[2], maxX),
-            Math.min(cur[3], minX),
-            Math.max(cur[4], maxZ),
-            Math.min(cur[5], minZ)
-        };
-        terrainBounds = next;
-    }
 
-    /** Convenience getters — single array reads, lock-free. Infinities are returned as 0f. */
-    public float getMaxTerrainY() { float[] b = terrainBounds; return Float.isInfinite(b[0]) ? 0f : b[0]; }
-    public float getMinTerrainY() { float[] b = terrainBounds; return Float.isInfinite(b[1]) ? 0f : b[1]; }
-    public float getMaxTerrainX() { float[] b = terrainBounds; return Float.isInfinite(b[2]) ? 0f : b[2]; }
-    public float getMinTerrainX() { float[] b = terrainBounds; return Float.isInfinite(b[3]) ? 0f : b[3]; }
-    public float getMaxTerrainZ() { float[] b = terrainBounds; return Float.isInfinite(b[4]) ? 0f : b[4]; }
-    public float getMinTerrainZ() { float[] b = terrainBounds; return Float.isInfinite(b[5]) ? 0f : b[5]; }
 
     // ══════════════════════════════════════════════════════════════════
     //  HELPERS
@@ -906,13 +819,13 @@ public class ChunkManager {
                 continue;
             }
             if (!pendingLighting.remove(nk)) continue;
-            Integer[] nslots = loadedChunks.get(nk);
+            NavigableMap<Integer, Integer> nslots = loadedChunks.get(nk);
             if (nslots == null) continue;
             if (is5x5Loaded(cx, cz)) {
                 postLightTask(nk, nslots, () -> {
                     dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, nslots));
-                    for (int cy = 0; cy < chunkHeight; cy++) {
-                        dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, cy, cz, nslots[cy]));
+                    for (Map.Entry<Integer, Integer> se : nslots.entrySet()) {
+                        dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, se.getKey(), cz, se.getValue()));
                     }
                     lightsNeedUpload = true;
                     tableDirty.set(true);
@@ -935,13 +848,13 @@ public class ChunkManager {
                 Long nk = chunkKey(nx, nz);
                 if (pendingLighting.contains(nk) && is5x5Loaded(nx, nz)) {
                     pendingLighting.remove(nk);
-                    Integer[] nslots = loadedChunks.get(nk);
+                    NavigableMap<Integer, Integer> nslots = loadedChunks.get(nk);
                     if (nslots != null) {
                         int finalNx = nx, finalNz = nz; // capture for lambda
                         postLightTask(nk, nslots, () -> {
                             dirtySlots.addAll(mcLightEngine.generateSkyLight(finalNx, finalNz, nslots));
-                            for (int cy = 0; cy < chunkHeight; cy++) {
-                                dirtySlots.addAll(mcLightEngine.propagateBlockLight(finalNx, cy, finalNz, nslots[cy]));
+                            for (Map.Entry<Integer, Integer> se : nslots.entrySet()) {
+                                dirtySlots.addAll(mcLightEngine.propagateBlockLight(finalNx, se.getKey(), finalNz, se.getValue()));
                             }
                             lightsNeedUpload = true;
                             tableDirty.set(true);
@@ -957,15 +870,130 @@ public class ChunkManager {
     // ══════════════════════════════════════════════════════════════════
 
     /**
-     * Emergency sync-load of the player's column: generates all 16 sections
-     * inline before any queued work. Called when manageChunks detects the
-     * player is standing in an unloaded chunk.
+     * Sync-loads a 3×3×3 chunk grid (27 chunks) centered on (pcx, pcy, pcz).
+     * Runs synchronously on the gen thread before any queued work, guaranteeing
+     * the player's immediate surroundings are always present.
+     *
+     * For each of the 9 XZ columns:
+     *   - If the column is not in loadedChunks, creates it and generates
+     *     sections (pcy-1, pcy, pcy+1).
+     *   - If the column exists but is missing any of these 3 Y sections,
+     *     loads them inline (same logic as loadOneSection but synchronous).
+     */
+    private void ensure3x3x3Loaded(int pcx, int pcy, int pcz) {
+        int sectionsLoaded = 0;
+        int columnsCreated = 0;
+
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                int cx = pcx + dx;
+                int cz = pcz + dz;
+                long colKey = chunkKey(cx, cz);
+
+                NavigableMap<Integer, Integer> slots = loadedChunks.get(colKey);
+
+                if (slots == null) {
+                    // Column not loaded at all — sync create it
+                    if (freeSlotTop < 2) evictFarthestColumn(cx, cz);
+                    if (freeSlotTop < 1) continue;
+
+                    slots = new TreeMap<>();
+                    loadedChunks.put(colKey, slots);
+                    cancelledLightTasks.remove(colKey);
+                    columnsCreated++;
+
+                    // Try disk load
+                    boolean fromDisk = saveManager != null && saveManager.loadChunk(dimension, cx, cz, world);
+
+                    for (int cy = pcy - 1; cy <= pcy + 1; cy++) {
+                        if (freeSlotTop < 1) break;
+                        int slot = allocateSlot();
+                        slots.put(cy, slot);
+                        world.clearChunkPoolSlot(slot);
+                        world.setChunkSlot(cx, cy, cz, slot);
+
+                        if (!fromDisk) {
+                            generateBaseTerrain(cx, cy, cz, slot);
+                            generator.decorate(cx, cy, cz, slot, world);
+
+                            int bmBase = slot << 7;
+                            boolean anySolid = false;
+                            for (int w = 0; w < 128; w++) {
+                                if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
+                            }
+                            if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
+                        }
+                        mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
+                        dirtySlots.add(slot);
+                        sectionsLoaded++;
+                    }
+
+                    tableDirty.set(true);
+                    scheduleFluidsInColumn(cx, cz, slots);
+                    scheduleColumnLighting(cx, cz, colKey, slots);
+                } else {
+                    // Column exists — load any missing Y sections in the 3×3 range
+                    for (int cy = pcy - 1; cy <= pcy + 1; cy++) {
+                        if (slots.containsKey(cy)) continue;
+                        if (freeSlotTop < 1) { evictFarthestColumn(cx, cz); }
+                        if (freeSlotTop < 1) break;
+
+                        int slot = allocateSlot();
+                        slots.put(cy, slot);
+                        world.clearChunkPoolSlot(slot);
+                        world.setChunkSlot(cx, cy, cz, slot);
+                        generateBaseTerrain(cx, cy, cz, slot);
+                        generator.decorate(cx, cy, cz, slot, world);
+
+                        int bmBase = slot << 7;
+                        boolean anySolid = false;
+                        for (int w = 0; w < 128; w++) {
+                            if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
+                        }
+                        if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
+                        mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
+                        dirtySlots.add(slot);
+                        tableDirty.set(true);
+                        sectionsLoaded++;
+                    }
+                }
+            }
+        }
+
+        if (columnsCreated > 0 || sectionsLoaded > 0) {
+            WorldGenLogger.log("3x3x3 grid: created " + columnsCreated + " columns, loaded " + sectionsLoaded + " sections at (" + pcx + "," + pcy + "," + pcz + ")");
+        }
+    }
+
+    /**
+     * Evict the column farthest from (cx, cz) to free up slot space.
+     */
+    private void evictFarthestColumn(int cx, int cz) {
+        List<Long> byDist = new ArrayList<>(loadedChunks.keySet());
+        byDist.sort((a, b) -> {
+            int da = Math.max(Math.abs(unpackX(a) - cx), Math.abs(unpackZ(a) - cz));
+            int db = Math.max(Math.abs(unpackX(b) - cx), Math.abs(unpackZ(b) - cz));
+            return Integer.compare(db, da); // farthest first
+        });
+        while (freeSlotTop < 2 && !byDist.isEmpty()) {
+            Long victim = byDist.remove(0);
+            NavigableMap<Integer, Integer> vSlots = loadedChunks.remove(victim);
+            if (vSlots != null) {
+                unloadChunk(victim, vSlots);
+                tableDirty.set(true);
+            }
+        }
+    }
+
+    /**
+     * Emergency sync-load of the player's column: generates all Y-range sections
+     * inline before any queued work. Called by the old EMERGENCY path
+     * (now replaced by ensure3x3x3Loaded).
      */
     private void generateFullColumnSync(int cx, int cz) {
         long colKey = chunkKey(cx, cz);
         if (loadedChunks.containsKey(colKey)) return;
-
-        if (freeSlotTop < chunkHeight) {
+        if (freeSlotTop < 1) {
             // No room — unload the farthest chunks to make space
             WorldGenLogger.log("EMERGENCY: no free slots, forcing unload for player chunk");
             List<Long> byDist = new ArrayList<>(loadedChunks.keySet());
@@ -974,9 +1002,9 @@ public class ChunkManager {
                 int db = Math.max(Math.abs(unpackX(b) - cx), Math.abs(unpackZ(b) - cz));
                 return Integer.compare(db, da); // farthest first
             });
-            while (freeSlotTop < chunkHeight && !byDist.isEmpty()) {
+            while (freeSlotTop < 1 && !byDist.isEmpty()) {
                 Long victim = byDist.remove(0);
-                Integer[] vSlots = loadedChunks.remove(victim);
+                NavigableMap<Integer, Integer> vSlots = loadedChunks.remove(victim);
                 if (vSlots != null) {
                     unloadChunk(victim, vSlots);
                     tableDirty.set(true);
@@ -989,153 +1017,141 @@ public class ChunkManager {
     }
 
     /**
-     * Generate all 16 sections of one column inline (sync, no queue).
-     * Used by the emergency path and as a building block for queued loading.
+     * Generate the player's column inline (sync, no queue).
+     * Generates sections in the Y-range around the current player CY.
+     * Used by the emergency path in manageChunks.
      */
     private void generateOneColumn(int cx, int cz) {
         long colKey = chunkKey(cx, cz);
 
-        Integer[] slots = new Integer[chunkHeight];
-        for (int scy = 0; scy < chunkHeight; scy++) {
-            slots[scy] = freeSlotStack[--freeSlotTop];
-        }
+        NavigableMap<Integer, Integer> slots = new TreeMap<>();
         loadedChunks.put(colKey, slots);
         cancelledLightTasks.remove(colKey);
 
-        for (int scy = 0; scy < chunkHeight; scy++) {
-            world.clearChunkPoolSlot(slots[scy]);
-        }
+        int yMin = lastPlayerCY - yLoadRadius;
+        int yMax = lastPlayerCY + yLoadRadius;
 
         // Try disk load first
-        if (saveManager != null && saveManager.loadChunk(dimension, cx, cz, world)) {
-            for (int scy = 0; scy < chunkHeight; scy++) {
-                world.setChunkSlot(cx, scy, cz, slots[scy]);
-                mcLightEngine.bakeChunkOcclusion(slots[scy], cx, scy, cz);
-                dirtySlots.add(slots[scy]);
-            }
-        } else {
-            // Procedural generation
-            for (int scy = 0; scy < chunkHeight; scy++) {
-                world.setChunkSlot(cx, scy, cz, slots[scy]);
-                world.clearChunkPoolSlot(slots[scy]);
-                generateBaseTerrain(cx, scy, cz, slots[scy]);
-                generator.decorate(cx, scy, cz, slots[scy], world);
+        boolean fromDisk = saveManager != null && saveManager.loadChunk(dimension, cx, cz, world);
 
-                int slot = slots[scy];
+        for (int cy = yMin; cy <= yMax; cy++) {
+            int slot = allocateSlot();
+            slots.put(cy, slot);
+            world.clearChunkPoolSlot(slot);
+
+            if (fromDisk) {
+                world.setChunkSlot(cx, cy, cz, slot);
+                mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
+                dirtySlots.add(slot);
+            } else {
+                world.setChunkSlot(cx, cy, cz, slot);
+                world.clearChunkPoolSlot(slot);
+                generateBaseTerrain(cx, cy, cz, slot);
+                generator.decorate(cx, cy, cz, slot, world);
+
                 int bmBase = slot << 7;
                 boolean anySolid = false;
                 for (int w = 0; w < 128; w++) {
                     if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
                 }
-                if (!anySolid) { computeChunkDirSDF(slot, cx, scy, cz); dirtySlots.add(slot); }
-                mcLightEngine.bakeChunkOcclusion(slots[scy], cx, scy, cz);
-                dirtySlots.add(slots[scy]);
+                if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
+                mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
+                dirtySlots.add(slot);
             }
         }
 
         tableDirty.set(true);
-        int colMax = computeColumnMaxY(slots);
-        updateTopSolidY(colKey, colMax);
         scheduleFluidsInColumn(cx, cz, slots);
         scheduleColumnLighting(cx, cz, colKey, slots);
+    }
 
-        // Mark all sections done so loadOneSection skips this column
-        java.util.BitSet done = new java.util.BitSet(chunkHeight);
-        done.set(0, chunkHeight);
-        columnSectionsLoaded.put(colKey, done);
+    /** Allocate a single slot from the free pool. */
+    private int allocateSlot() {
+        return freeSlotStack[--freeSlotTop];
     }
 
     /**
-     * Load a single 16³ section. First section of a column allocates slots
-     * and tries disk load; subsequent sections generate procedurally.
-     * Lighting, fluids, and top-solid-Y tracking fire when all 16 sections
-     * of the column are loaded.
+     * Load a single 16³ section at the given (cx, cy, cz).
+     * The column's NavigableMap is created lazily on first access.
+     * Each section allocates one pool slot independently.
      */
     private void loadOneSection(int cx, int cy, int cz) {
         long colKey = chunkKey(cx, cz);
-        Integer[] slots = loadedChunks.get(colKey);
+        NavigableMap<Integer, Integer> slots = loadedChunks.get(colKey);
 
         if (slots == null) {
-            // First section of this column: allocate all 16 slots
-            if (freeSlotTop < chunkHeight) return;
-            slots = new Integer[chunkHeight];
-            for (int scy = 0; scy < chunkHeight; scy++) {
-                slots[scy] = freeSlotStack[--freeSlotTop];
-            }
+            // First section of this column: create the column, try disk load
+            if (freeSlotTop < 1) return;
+            slots = new TreeMap<>();
             loadedChunks.put(colKey, slots);
             cancelledLightTasks.remove(colKey);
-            for (int scy = 0; scy < chunkHeight; scy++) {
-                world.clearChunkPoolSlot(slots[scy]);
-            }
+            columnSectionsLoaded.put(colKey, new HashSet<>());
 
-            // Try disk load — if successful, all sections are instantly done
+            // Try disk load — if successful, all Y-range sections are instantly done
             if (saveManager != null && saveManager.loadChunk(dimension, cx, cz, world)) {
-                for (int scy = 0; scy < chunkHeight; scy++) {
-                    world.setChunkSlot(cx, scy, cz, slots[scy]);
-                    mcLightEngine.bakeChunkOcclusion(slots[scy], cx, scy, cz);
-                    dirtySlots.add(slots[scy]);
+                int yMin = lastPlayerCY - yLoadRadius;
+                int yMax = lastPlayerCY + yLoadRadius;
+                for (int scy = yMin; scy <= yMax; scy++) {
+                    int slot = allocateSlot();
+                    slots.put(scy, slot);
+                    world.setChunkSlot(cx, scy, cz, slot);
+                    mcLightEngine.bakeChunkOcclusion(slot, cx, scy, cz);
+                    dirtySlots.add(slot);
                 }
                 tableDirty.set(true);
-                int colMax = computeColumnMaxY(slots);
-                updateTopSolidY(colKey, colMax);
                 scheduleFluidsInColumn(cx, cz, slots);
                 scheduleColumnLighting(cx, cz, colKey, slots);
-                // Mark all sections loaded so subsequent loadOneSection calls skip this column
-                java.util.BitSet done = new java.util.BitSet(chunkHeight);
-                done.set(0, chunkHeight);
-                columnSectionsLoaded.put(colKey, done);
+                columnSectionsLoaded.remove(colKey);
                 return;
             }
 
             // Start procedural-gen tracking
-            columnSectionsLoaded.put(colKey, new java.util.BitSet(chunkHeight));
+            // Mark cy as being generated (in the loading set), NOT yet loaded
         }
 
-        java.util.BitSet loadedSections = columnSectionsLoaded.get(colKey);
-        if (loadedSections != null && loadedSections.get(cy)) return; // already loaded
+        // Allocate a slot for this specific section (not already loaded)
+        Set<Integer> loading = columnSectionsLoaded.get(colKey);
+        if (slots.containsKey(cy)) return; // already loaded
+        if (loading != null && loading.contains(cy)) return; // being loaded by another task
+        if (freeSlotTop < 1) return;
 
-        // Register in indirection table and generate this single section
-        world.setChunkSlot(cx, cy, cz, slots[cy]);
-        world.clearChunkPoolSlot(slots[cy]);
-        generateBaseTerrain(cx, cy, cz, slots[cy]);
-        generator.decorate(cx, cy, cz, slots[cy], world);
+        int slot = allocateSlot();
+        slots.put(cy, slot);
+        if (loading != null) loading.add(cy);
+
+        world.clearChunkPoolSlot(slot);
+        world.setChunkSlot(cx, cy, cz, slot);
+        generateBaseTerrain(cx, cy, cz, slot);
+        generator.decorate(cx, cy, cz, slot, world);
 
         // Directional SDF for empty chunks
-        int slot = slots[cy];
-        if (slot != World.EMPTY) {
-            int bmBase = slot << 7;
-            boolean anySolid = false;
-            for (int w = 0; w < 128; w++) {
-                if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
-            }
-            if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
+        int bmBase = slot << 7;
+        boolean anySolid = false;
+        for (int w = 0; w < 128; w++) {
+            if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
         }
+        if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
 
         // Bake occlusion and mark dirty
-        mcLightEngine.bakeChunkOcclusion(slots[cy], cx, cy, cz);
-        dirtySlots.add(slots[cy]);
+        mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
+        dirtySlots.add(slot);
         tableDirty.set(true);
 
-        if (loadedSections != null) {
-            loadedSections.set(cy);
-            if (loadedSections.cardinality() == chunkHeight) {
-                // All 16 sections loaded — finalize the column
+        if (loading != null) {
+            loading.remove(cy);
+            if (loading.isEmpty()) {
                 columnSectionsLoaded.remove(colKey);
-                int colMax = computeColumnMaxY(slots);
-                updateTopSolidY(colKey, colMax);
-                scheduleFluidsInColumn(cx, cz, slots);
-                scheduleColumnLighting(cx, cz, colKey, slots);
             }
         }
     }
 
-    private void scheduleColumnLighting(int cx, int cz, long key, Integer[] slots) {
+    private void scheduleColumnLighting(int cx, int cz, long key, NavigableMap<Integer, Integer> slots) {
         if (Math.abs(cx - lastPlayerCX) <= LIGHT_GRID_RADIUS && Math.abs(cz - lastPlayerCZ) <= LIGHT_GRID_RADIUS) {
             if (is5x5Loaded(cx, cz)) {
                 postLightTask(key, slots, () -> {
                     dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, slots));
-                    for (int scy = 0; scy < chunkHeight; scy++) {
-                        dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, scy, cz, slots[scy]));
+                    for (Map.Entry<Integer, Integer> se : slots.entrySet()) {
+                        dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, se.getKey(), cz, se.getValue()));
                     }
                     lightsNeedUpload = true;
                     tableDirty.set(true);
@@ -1157,7 +1173,9 @@ public class ChunkManager {
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
                 int height = generator.getHeight(worldX + lx, worldZ + lz);
-                if (height < worldY && worldY > 64) continue;
+                // Cubic chunks: terrain can exist at ANY Y level (far lands, void extension).
+                // Only skip if the surface is entirely below this section.
+                if (height < worldY) continue;
                 for (int ly = 0; ly < 16; ly++) {
                     int y = worldY + ly;
                     int type = generator.getBlockType(worldX + lx, y, worldZ + lz, height);
@@ -1176,12 +1194,13 @@ public class ChunkManager {
      * and schedules them with the FluidManager so they begin flowing.
      * Called from loadChunk() after disk-load and after procedural generation.
      */
-    private void scheduleFluidsInColumn(int cx, int cz, Integer[] slots) {
+    private void scheduleFluidsInColumn(int cx, int cz, NavigableMap<Integer, Integer> slots) {
         if (fluidManager == null) return;
         int worldX = cx << 4;
         int worldZ = cz << 4;
-        for (int cy = 0; cy < chunkHeight; cy++) {
-            int slot = slots[cy];
+        for (Map.Entry<Integer, Integer> se : slots.entrySet()) {
+            int cy = se.getKey();
+            int slot = se.getValue();
             if (slot == World.EMPTY) continue;
             int worldY = cy << 4;
             for (int ly = 0; ly < 16; ly++) {
@@ -1189,7 +1208,6 @@ public class ChunkManager {
                     for (int lz = 0; lz < 16; lz++) {
                         int raw = world.getRawVoxelInSlot(slot, lx, ly, lz);
                         int blockId = raw & 0xFFFF;
-                        // Schedule all water variants (15=source, 150-164=flowing) and lava (21)
                         if (blockId == FluidManager.WATER
                             || (blockId >= FluidManager.WATER_FLOWING_BASE && blockId <= FluidManager.WATER_FLOWING_MAX)
                             || blockId == FluidManager.LAVA) {
