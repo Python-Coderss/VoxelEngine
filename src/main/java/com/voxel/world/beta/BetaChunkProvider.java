@@ -11,9 +11,9 @@ import java.util.Random;
  * preserving ALL bugs including the Far Lands floating-point precision issues.
  * 
  * Key differences from the original:
- * - Supports cubic chunks (generates per 16³ section, Y can go below 0 and above 127)
+ * - Supports cubic chunks (generates per 16³ section, Y can go below 0 and above 511)
  * - Uses VoxelEngine block IDs (mapped from Beta 1.7.3 IDs)
- * - Generates terrain for y=0..127 (Beta surface), air above, deep stone below
+ * - Generates terrain for y=0..511 (extended Beta), air above, deep stone below
  * 
  * Preserved bugs:
  * - Far Lands at extreme X/Z coordinates (floating-point precision in octave noise)
@@ -92,6 +92,14 @@ public class BetaChunkProvider {
     private final int veDiamondOre;
     private final int veRedstoneOre;
     private final int veLapisOre;
+    // Additional Beta 1.7.3 decoration block IDs
+    private final int veSugarCane;
+    private final int veClay;
+    private final int veCobblestone;
+    private final int veMossyCobble;
+    private final int veChest;
+    private final int veSpawner;
+    private final int[] veSnowLevels;
 
     // Beta 1.7.3 constants (preserved exactly)
     private static final byte BETA_AIR = 0;
@@ -135,7 +143,7 @@ public class BetaChunkProvider {
     private BetaMapGenCaves caveGen = new BetaMapGenCaves();
 
     // Column-level byte array cache (for cave carving and surface replacement)
-    // This is a byte[32768] array matching Beta 1.7.3 format: index = x<<11|z<<7|y
+    // 16 * 512 * 16 = 524288, index = (lx<<13)|(lz<<9)|y
     private byte[] columnBlocks;
     private int columnCX = Integer.MIN_VALUE;
     private int columnCZ = Integer.MIN_VALUE;
@@ -152,6 +160,18 @@ public class BetaChunkProvider {
     // Sea level (Beta 1.7.3 hardcoded value)
     private static final int SEA_LEVEL = 64;
 
+    // Original Beta 1.7.3 Y sample count (var6=17 for 128-block columns).
+    // The column is now 2048 blocks (var6=257), but terrain center and height
+    // modulation must still use the original 17 to keep ground at y≈64.
+    private static final double BETA_Y_SAMPLES = 17.0;
+
+    // Y-axis Far Lands: start 8 chunks above y=128 → y=256.
+    // 3D noise Y input is scaled by FARLANDS_Y_SCALE / 8 so that at
+    // y=256 the noise coordinate hits ~12.8M, triggering float32 overflow
+    // in NoiseGeneratorOctaves — same bug that creates X/Z Far Lands.
+    private static final int FARLANDS_START_Y = 256;
+    private static final double FARLANDS_Y_SCALE = 400_000.0;
+
     public BetaChunkProvider(long seed,
                               int veStone, int veGrass, int veDirt, int veBedrock,
                               int veWaterStill, int veLavaStill, int veSand, int veGravel,
@@ -160,7 +180,9 @@ public class BetaChunkProvider {
                               int veDandelion, int veRose, int veTallGrass, int veDeadBush,
                               int veCactus, int vePumpkin,
                               int veCoalOre, int veIronOre, int veGoldOre,
-                              int veDiamondOre, int veRedstoneOre, int veLapisOre) {
+                              int veDiamondOre, int veRedstoneOre, int veLapisOre,
+                              int veSugarCane, int veClay, int veCobblestone, int veMossyCobble,
+                              int veChest, int veSpawner, int[] veSnowLevels) {
         this.worldSeed = seed;
         this.rand = new Random(seed);
 
@@ -201,6 +223,13 @@ public class BetaChunkProvider {
         this.veDiamondOre = veDiamondOre;
         this.veRedstoneOre = veRedstoneOre;
         this.veLapisOre = veLapisOre;
+        this.veSugarCane = veSugarCane;
+        this.veClay = veClay;
+        this.veCobblestone = veCobblestone;
+        this.veMossyCobble = veMossyCobble;
+        this.veChest = veChest;
+        this.veSpawner = veSpawner;
+        this.veSnowLevels = veSnowLevels;
 
         // Store Beta 1.7.3 block IDs (for internal byte array operations)
         this.betaStone = BETA_STONE;
@@ -231,7 +260,7 @@ public class BetaChunkProvider {
         columnCX = cx;
         columnCZ = cz;
         if (columnBlocks == null) {
-            columnBlocks = new byte[32768]; // 16 * 128 * 16
+            columnBlocks = new byte[524288]; // 16 * 512 * 16
         } else {
             java.util.Arrays.fill(columnBlocks, (byte) 0);
         }
@@ -258,7 +287,7 @@ public class BetaChunkProvider {
         Long key = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
         byte[] overlay = decorationOverlay.get(key);
         if (overlay != null) {
-            for (int i = 0; i < 32768; i++) {
+            for (int i = 0; i < 524288; i++) {
                 if (overlay[i] != 0) {
                     columnBlocks[i] = overlay[i];
                 }
@@ -273,7 +302,7 @@ public class BetaChunkProvider {
      * Used during decoration to access neighbor columns for cross-column tree leaves.
      */
     private byte[] generateColumnCopy(int cx, int cz) {
-        byte[] blocks = new byte[32768];
+        byte[] blocks = new byte[524288];
         
         // Temporarily save the main column state
         int savedCX = this.columnCX;
@@ -330,20 +359,55 @@ public class BetaChunkProvider {
             generateColumn(cx, cz);
         }
 
-        // Handle cubic chunk Y ranges
+        // On-the-fly density evaluation for Y beyond column range.
+        // At extreme Y (~12.5M), float32 precision loss in noise generators
+        // creates Y-axis Far Lands automatically.
         if (y < 0) {
-            // Deep below Beta world: solid stone with bedrock at very bottom
             if (y <= -64) return BETA_BEDROCK;
-            return BETA_STONE;
+            return evaluateDensity(x, y, z) ? BETA_STONE : BETA_AIR;
         }
-        if (y >= 128) {
-            return BETA_AIR; // Above Beta world height
+        if (y >= FARLANDS_START_Y) {
+            return evaluateDensity(x, y, z) ? BETA_STONE : BETA_AIR;
         }
 
         int lx = x & 15;
         int lz = z & 15;
-        int idx = (lx << 11) | (lz << 7) | y;
+        int idx = (lx << 15) | (lz << 11) | y;
         return columnBlocks[idx] & 0xFF;
+    }
+
+    /**
+     * On-the-fly single-point density evaluation using 3D octave noise at
+     * actual world coordinates. Used for Y values beyond the cached column
+     * and for Sky Far Lands (y >= 256).
+     * 
+     * The Y coordinate is multiplied by FARLANDS_Y_SCALE so that at y≈256
+     * the noise input reaches ~12.8M, triggering the same float32 precision
+     * loss in NoiseGeneratorOctaves that creates X/Z Far Lands.
+     */
+    private boolean evaluateDensity(int x, int y, int z) {
+        double nx = x / 4.0;
+        double ny = y * FARLANDS_Y_SCALE / 8.0;  // extreme Y scale → float32 overflow
+        double nz = z / 4.0;
+
+        // 3D noise: field_4184_e (octaves=16) and field_4183_f (octaves=16)
+        // Compute both at this single point using 1x1x1 generateNoiseOctaves grids
+        double[] tmp1 = new double[1];
+        double[] tmp2 = new double[1];
+        double[] tmp3 = new double[1];
+
+        double noise1 = field_912_k.generateNoiseOctaves(tmp1, nx, ny, nz, 1, 1, 1, 684.412, 684.412, 684.412)[0];
+        double noise2 = field_911_l.generateNoiseOctaves(tmp2, nx, ny, nz, 1, 1, 1, 684.412, 684.412, 684.412)[0];
+        double noise3 = field_910_m.generateNoiseOctaves(tmp3, nx, ny, nz, 1, 1, 1, 684.412/80.0, 684.412/160.0, 684.412/80.0)[0];
+
+        double sel = (noise3 / 10.0 + 1.0) / 2.0;
+        if (sel < 0.0) sel = 0.0;
+        if (sel > 1.0) sel = 1.0;
+
+        double density = noise1 / 512.0 * (1.0 - sel) + noise2 / 512.0 * sel;
+
+        // Density > 0 → stone (matching generateTerrain threshold)
+        return density > 0.0;
     }
 
     /**
@@ -398,8 +462,8 @@ public class BetaChunkProvider {
         int lx = x & 15;
         int lz = z & 15;
         
-        for (int y = 127; y >= 0; y--) {
-            int idx = (lx << 11) | (lz << 7) | y;
+        for (int y = 2047; y >= 0; y--) {
+            int idx = (lx << 15) | (lz << 11) | y;
             if (columnBlocks[idx] != 0) {
                 return y;
             }
@@ -415,13 +479,13 @@ public class BetaChunkProvider {
         byte var6 = 4;
         byte var7 = 64; // sea level
         int var8 = var6 + 1;
-        byte var9 = 17;
+        int var9 = 257;
         int var10 = var6 + 1;
         this.field_4180_q = this.func_4061_a(this.field_4180_q, var1 * var6, 0, var2 * var6, var8, var9, var10);
 
         for (int var11 = 0; var11 < var6; ++var11) {
             for (int var12 = 0; var12 < var6; ++var12) {
-                for (int var13 = 0; var13 < 16; ++var13) {
+                for (int var13 = 0; var13 < 256; ++var13) {
                     double var14 = 0.125D;
                     double var16 = this.field_4180_q[((var11 + 0) * var10 + var12 + 0) * var9 + var13 + 0];
                     double var18 = this.field_4180_q[((var11 + 0) * var10 + var12 + 1) * var9 + var13 + 0];
@@ -440,8 +504,8 @@ public class BetaChunkProvider {
                         double var41 = (var22 - var18) * var33;
 
                         for (int var43 = 0; var43 < 4; ++var43) {
-                            int var44 = var43 + var11 * 4 << 11 | 0 + var12 * 4 << 7 | var13 * 8 + var32;
-                            short var45 = 128;
+                            int var44 = var43 + var11 * 4 << 15 | 0 + var12 * 4 << 11 | var13 * 8 + var32;
+                            short var45 = 2048;
                             double var46 = 0.25D;
                             double var48 = var35;
                             double var50 = (var37 - var35) * var46;
@@ -507,8 +571,8 @@ public class BetaChunkProvider {
                 byte var15 = (byte) BetaBiomeGenBase.TOP_BLOCKS[biomeId];
                 byte var16 = (byte) BetaBiomeGenBase.FILLER_BLOCKS[biomeId];
 
-                for (int var17 = 127; var17 >= 0; --var17) {
-                    int var18 = (var9 * 16 + var8) * 128 + var17;
+                for (int var17 = 2047; var17 >= 0; --var17) {
+                    int var18 = (var9 * 16 + var8) * 2048 + var17;
                     if (var17 <= 0 + this.rand.nextInt(5)) {
                         var3[var18] = BETA_BEDROCK;
                     } else {
@@ -626,8 +690,10 @@ public class BetaChunkProvider {
                 if (var27 < 0.0D) var27 = 0.0D;
 
                 var27 += 0.5D;
-                var29 = var29 * (double) var6 / 16.0D;
-                double var31 = (double) var6 / 2.0D + var29 * 4.0D;
+                // Terrain center and scale use original Beta 17 Y-samples,
+                // not the extended column's var6 (257), so ground stays at y≈64.
+                var29 = var29 * BETA_Y_SAMPLES / 16.0D;
+                double var31 = BETA_Y_SAMPLES / 2.0D + var29 * 4.0D;
                 ++var15;
 
                 for (int var33 = 0; var33 < var6; ++var33) {
@@ -647,10 +713,6 @@ public class BetaChunkProvider {
                     }
 
                     var34 -= var36;
-                    if (var33 > var6 - 4) {
-                        double var44 = (double) ((float) (var33 - (var6 - 4)) / 3.0F);
-                        var34 = var34 * (1.0D - var44) + -10.0D * var44;
-                    }
 
                     var1[var14] = var34;
                     ++var14;
@@ -704,21 +766,21 @@ public class BetaChunkProvider {
         // Dirt patches
         for (int i = 0; i < 20; ++i) {
             int x = var4 + this.rand.nextInt(16);
-            int y = this.rand.nextInt(128);
+            int y = this.rand.nextInt(512);
             int z = var5 + this.rand.nextInt(16);
             genOreVein(world, x, y, z, veDirt, 32);
         }
         // Gravel patches
         for (int i = 0; i < 10; ++i) {
             int x = var4 + this.rand.nextInt(16);
-            int y = this.rand.nextInt(128);
+            int y = this.rand.nextInt(512);
             int z = var5 + this.rand.nextInt(16);
             genOreVein(world, x, y, z, veGravel, 32);
         }
         // Coal ore
         for (int i = 0; i < 20; ++i) {
             int x = var4 + this.rand.nextInt(16);
-            int y = this.rand.nextInt(128);
+            int y = this.rand.nextInt(512);
             int z = var5 + this.rand.nextInt(16);
             genOreVein(world, x, y, z, veCoalOre, 16);
         }
@@ -788,7 +850,7 @@ public class BetaChunkProvider {
             int tx = var4 + this.rand.nextInt(16) + 8;
             int tz = var5 + this.rand.nextInt(16) + 8;
             int ty = worldGetTopY(tx, tz);
-            if (ty > 0 && ty < 128) {
+            if (ty > 0 && ty < 2048) {
                 placeTree(world, tx, ty + 1, tz, biomeId);
             }
         }
@@ -806,7 +868,7 @@ public class BetaChunkProvider {
         }
         for (int i = 0; i < flowerCount; ++i) {
             int fx = var4 + this.rand.nextInt(16) + 8;
-            int fy = this.rand.nextInt(128);
+            int fy = this.rand.nextInt(512);
             int fz = var5 + this.rand.nextInt(16) + 8;
             if (world.getVoxel(fx, fy, fz) == veGrass || world.getVoxel(fx, fy, fz) == veDirt) {
                 if (world.getVoxel(fx, fy + 1, fz) == 0) {
@@ -826,7 +888,7 @@ public class BetaChunkProvider {
         }
         for (int i = 0; i < grassCount; ++i) {
             int gx = var4 + this.rand.nextInt(16) + 8;
-            int gy = this.rand.nextInt(128);
+            int gy = this.rand.nextInt(512);
             int gz = var5 + this.rand.nextInt(16) + 8;
             if (world.getVoxel(gx, gy, gz) == veGrass || world.getVoxel(gx, gy, gz) == veDirt) {
                 if (world.getVoxel(gx, gy + 1, gz) == 0) {
@@ -838,7 +900,7 @@ public class BetaChunkProvider {
         // --- Red flower (Beta 1.7.3 exact: 50% chance)
         if (this.rand.nextInt(2) == 0) {
             int rx = var4 + this.rand.nextInt(16) + 8;
-            int ry = this.rand.nextInt(128);
+            int ry = this.rand.nextInt(512);
             int rz = var5 + this.rand.nextInt(16) + 8;
             if (world.getVoxel(rx, ry, rz) == veGrass || world.getVoxel(rx, ry, rz) == veDirt) {
                 if (world.getVoxel(rx, ry + 1, rz) == 0) {
@@ -847,11 +909,37 @@ public class BetaChunkProvider {
             }
         }
 
+        // === Water lakes (Beta 1.7.3: 50 attempts, all heights, 8-block radius) ===
+        for (int i = 0; i < 50; ++i) {
+            int wx = var4 + this.rand.nextInt(16);
+            int wy = this.rand.nextInt(120) + 4;
+            int wz = var5 + this.rand.nextInt(16);
+            generateLake(world, wx, wy, wz, veWaterStill);
+        }
+        // === Lava lakes (Beta 1.7.3: 50 attempts, below y=10, 8-block radius) ===
+        for (int i = 0; i < 50; ++i) {
+            int lx = var4 + this.rand.nextInt(16);
+            int ly = this.rand.nextInt(this.rand.nextInt(10) + 8);
+            int lz = var5 + this.rand.nextInt(16);
+            generateLake(world, lx, ly, lz, veLavaStill);
+        }
+        // === Beaches (Beta 1.7.3: sand strip along water edges) ===
+        generateBeaches(world, cx, cz);
+        // === Clay patches (Beta 1.7.3: underwater sand/gravel → clay) ===
+        generateClay(world, cx, cz);
+        // === Dungeons (rare, underground-only cobblestone rooms) ===
+        for (int i = 0; i < 1; ++i) {
+            int dx = var4 + this.rand.nextInt(16);
+            int dy = this.rand.nextInt(30) + 6;
+            int dz = var5 + this.rand.nextInt(16);
+            generateDungeon(world, dx, dy, dz);
+        }
+
         // --- Dead bushes (desert only, Beta 1.7.3 exact)
         if (biomeId == BetaBiomeGenBase.DESERT) {
             for (int i = 0; i < 2; ++i) {
                 int dx = var4 + this.rand.nextInt(16) + 8;
-                int dy = this.rand.nextInt(128);
+                int dy = this.rand.nextInt(512);
                 int dz = var5 + this.rand.nextInt(16) + 8;
                 if (world.getVoxel(dx, dy, dz) == veSand) {
                     if (world.getVoxel(dx, dy + 1, dz) == 0) {
@@ -860,6 +948,37 @@ public class BetaChunkProvider {
                 }
             }
         }
+
+        // === Pumpkins (Beta 1.7.3: scattered patches, 64 attempts) ===
+        for (int i = 0; i < 64; ++i) {
+            int px = var4 + this.rand.nextInt(16) + 8;
+            int py = this.rand.nextInt(512);
+            int pz = var5 + this.rand.nextInt(16) + 8;
+            generatePumpkinPatch(world, px, py, pz);
+        }
+        // === Cactus (Beta 1.7.3: desert only, up to 3 blocks, 10 attempts) ===
+        if (biomeId == BetaBiomeGenBase.DESERT) {
+            for (int i = 0; i < 10; ++i) {
+                int cx2 = var4 + this.rand.nextInt(16) + 8;
+                int cz2 = var5 + this.rand.nextInt(16) + 8;
+                int topY = worldGetTopY(cx2, cz2);
+                if (topY > 0 && topY < 512) {
+                    generateCactusPatch(world, cx2, topY + 1, cz2);
+                }
+            }
+        }
+        // === Sugar cane (Beta 1.7.3: near water, 20 attempts in deserts, 1 elsewhere) ===
+        int sugarAttempts = (biomeId == BetaBiomeGenBase.DESERT) ? 20 : 1;
+        for (int i = 0; i < sugarAttempts; ++i) {
+            int sx = var4 + this.rand.nextInt(16) + 8;
+            int sz = var5 + this.rand.nextInt(16) + 8;
+            int topY = worldGetTopY(sx, sz);
+            if (topY > 0 && topY < 512) {
+                generateSugarCanePatch(world, sx, topY + 1, sz);
+            }
+        }
+        // === Snow layers (Beta 1.7.3: snow on top blocks in cold biomes, LAST) ===
+        generateSnow(world, cx, cz);
 
         // Flush all neighbor columns to the World and save decoration overlay
         for (Map.Entry<Long, byte[]> entry : neighborBlocks.entrySet()) {
@@ -871,12 +990,12 @@ public class BetaChunkProvider {
             int bz = ncz * 16;
 
             // Create sparse decoration overlay — only non-terrain blocks
-            byte[] overlay = new byte[32768];
+            byte[] overlay = new byte[524288];
             boolean hasDecoration = false;
             for (int lx = 0; lx < 16; lx++) {
                 for (int lz = 0; lz < 16; lz++) {
-                    for (int y = 0; y < 128; y++) {
-                        int idx = (lx << 11) | (lz << 7) | y;
+                    for (int y = 0; y < 2048; y++) {
+                        int idx = (lx << 15) | (lz << 11) | y;
                         byte betaId = nb[idx];
                         if (betaId != 0) {
                             int veId = mapToVeBlock(betaId & 0xFF);
@@ -934,7 +1053,7 @@ public class BetaChunkProvider {
                 // Clamp Y to Beta range
                 if (px < 0 || px >= 256) continue; // reasonable world bounds
                 for (int py = minY; py <= maxY; ++py) {
-                    if (py < 0 || py >= 128) continue;
+                    if (py < 0 || py >= 2048) continue;
                     double dyDist = ((double) py + 0.5D - cy2) / (radiusY / 2.0D);
                     if (dxDist * dxDist + dyDist * dyDist >= 1.0D) continue;
                     for (int pz = minZ; pz <= maxZ; ++pz) {
@@ -947,7 +1066,7 @@ public class BetaChunkProvider {
                             byte[] blocks = getColumnBlocks(colCx, colCz);
                             int lx = px & 15;
                             int lz = pz & 15;
-                            int idx = (lx << 11) | (lz << 7) | py;
+                            int idx = (lx << 15) | (lz << 11) | py;
                             if ((blocks[idx] & 0xFF) == BETA_STONE) {
                                 blocks[idx] = BETA_STONE; // keep as stone in columnBlocks for now
                                 world.setVoxel(px, py, pz, blockId);
@@ -966,8 +1085,8 @@ public class BetaChunkProvider {
         byte[] blocks = getColumnBlocks(cx, cz);
         int lx = x & 15;
         int lz = z & 15;
-        for (int y = 127; y > 0; y--) {
-            int idx = (lx << 11) | (lz << 7) | y;
+        for (int y = 2047; y > 0; y--) {
+            int idx = (lx << 15) | (lz << 11) | y;
             if (blocks[idx] != 0) return y;
         }
         return 0;
@@ -998,14 +1117,14 @@ public class BetaChunkProvider {
      * overwrite decoration blocks (like tree leaves extending across column boundaries).
      */
     private void setVoxelColumnAware(com.voxel.World world, int x, int y, int z, int veId, int betaId) {
-        if (y < 0 || y >= 128) return;
+        if (y < 0 || y >= 2048) return;
         world.setVoxel(x, y, z, veId);
         int colCx = x >> 4;
         int colCz = z >> 4;
         byte[] blocks = getColumnBlocks(colCx, colCz);
         int lx = x & 15;
         int lz = z & 15;
-        int idx = (lx << 11) | (lz << 7) | y;
+        int idx = (lx << 15) | (lz << 11) | y;
         blocks[idx] = (byte) betaId;
     }
 
@@ -1033,8 +1152,8 @@ public class BetaChunkProvider {
         int lx = x & 15;
         int lz = z & 15;
         for (int dy = 0; dy < height + 2; dy++) {
-            if (y + dy >= 128) return;
-            int idx = (lx << 11) | (lz << 7) | (y + dy);
+            if (y + dy >= 2048) return;
+            int idx = (lx << 15) | (lz << 11) | (y + dy);
             if (trunkBlocks[idx] != 0 && dy < height) {
                 return; // blocked
             }
@@ -1042,7 +1161,7 @@ public class BetaChunkProvider {
 
         // Trunk
         for (int dy = 0; dy < height; dy++) {
-            int idx = (lx << 11) | (lz << 7) | (y + dy);
+            int idx = (lx << 15) | (lz << 11) | (y + dy);
             trunkBlocks[idx] = BETA_WOOD;
             world.setVoxel(x, y + dy, z, veWood);
         }
@@ -1055,7 +1174,7 @@ public class BetaChunkProvider {
         for (int dy = leafStart; dy <= height; dy++) {
             int radius = (dy == leafStart || dy == height) ? 1 : 2;
             if (isBig && dy >= leafStart + 1 && dy < height) radius = 2 + (dy - leafStart - 1);
-            if (y + dy >= 128) continue;
+            if (y + dy >= 2048) continue;
             for (int dx = -radius; dx <= radius; dx++) {
                 for (int dz = -radius; dz <= radius; dz++) {
                     if (Math.abs(dx) == radius && Math.abs(dz) == radius && this.rand.nextInt(2) == 0)
@@ -1069,7 +1188,7 @@ public class BetaChunkProvider {
                     byte[] leafBlocks = getColumnBlocks(leafColCx, leafColCz);
                     int llx = wx & 15;
                     int llz = wz & 15;
-                    int leafIdx = (llx << 11) | (llz << 7) | ly;
+                    int leafIdx = (llx << 15) | (llz << 11) | ly;
                     if (leafBlocks[leafIdx] == 0) {
                         leafBlocks[leafIdx] = BETA_LEAVES;
                         world.setVoxel(wx, ly, wz, veLeaves);
@@ -1081,7 +1200,7 @@ public class BetaChunkProvider {
         // Extra leaves on top for big trees
         if (isBig) {
             int topY = y + height;
-            if (topY < 128) {
+            if (topY < 512) {
                 for (int dx = -1; dx <= 1; dx++) {
                     for (int dz = -1; dz <= 1; dz++) {
                         if (Math.abs(dx) + Math.abs(dz) <= 1) {
@@ -1092,7 +1211,7 @@ public class BetaChunkProvider {
                             byte[] leafBlocks = getColumnBlocks(leafColCx, leafColCz);
                             int llx = wx & 15;
                             int llz = wz & 15;
-                            int leafIdx = (llx << 11) | (llz << 7) | topY;
+                            int leafIdx = (llx << 15) | (llz << 11) | topY;
                             if (leafBlocks[leafIdx] == 0) {
                                 leafBlocks[leafIdx] = BETA_LEAVES;
                                 world.setVoxel(wx, topY, wz, veLeaves);
@@ -1122,6 +1241,422 @@ public class BetaChunkProvider {
     /** Returns the Beta 1.7.3 biome ID at world coordinates (x, z). */
     public int getBetaBiomeId(int x, int z) {
         return worldChunkManager.getBiomeGenAt(x, z);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  BETA 1.7.3 LAKE GENERATION
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Generate a small lake (water or lava) by carving random offset spheres.
+     * Beta 1.7.3 exact: 4 spheres of radius ~4-6, filling with blockId.
+     */
+    private void generateLake(com.voxel.World world, int cx, int cy, int cz, int blockId) {
+        // Lava lakes require minimum depth
+        if (blockId == veLavaStill && cy < 5) return;
+
+        int radius = 4 + this.rand.nextInt(4);
+        
+        // Check if area is mostly stone (don't carve into surface)
+        int solidCount = 0;
+        int airCount = 0;
+        for (int x = cx - radius; x <= cx + radius; x++) {
+            for (int y = cy - 3; y <= cy + 3; y++) {
+                for (int z = cz - radius; z <= cz + radius; z++) {
+                    if (y < 0 || y >= 2048) continue;
+                    int v = world.getVoxel(x, y, z);
+                    if (v == 0) airCount++;
+                    else solidCount++;
+                }
+            }
+        }
+        if (airCount > solidCount / 4) return; // Too much air exposure, skip
+
+        // Carve spheres: carve air in upper portion, fill bottom with liquid.
+        // This produces open pools with a liquid surface, matching Beta 1.7.3 behavior.
+        for (int s = 0; s < 4; s++) {
+            int ox = cx + this.rand.nextInt(radius) - radius / 2;
+            int oy = cy + this.rand.nextInt(3);
+            int oz = cz + this.rand.nextInt(radius) - radius / 2;
+            int r = 2 + this.rand.nextInt(3);
+
+            for (int x = ox - r; x <= ox + r; x++) {
+                for (int y = oy - r; y <= oy + r; y++) {
+                    for (int z = oz - r; z <= oz + r; z++) {
+                        if (y < 0 || y >= 2048) continue;
+                        int dx = x - ox, dy = y - oy, dz = z - oz;
+                        if (dx * dx + dy * dy + dz * dz <= r * r) {
+                            int existing = world.getVoxel(x, y, z);
+                            if (existing == 0 || existing == blockId) continue;
+                            // Upper portion of sphere → carve air; lower → fill with liquid
+                            if (y > oy) {
+                                world.setVoxel(x, y, z, 0); // carve air cavity
+                            } else {
+                                world.setVoxel(x, y, z, blockId); // fill with water/lava
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  BETA 1.7.3 BEACH GENERATION
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Place sand strips along water edges (Beta 1.7.3 beach algorithm).
+     * Scans each column: if top block is near water surface, replace surface with sand.
+     */
+    private void generateBeaches(com.voxel.World world, int cx, int cz) {
+        int bx = cx * 16;
+        int bz = cz * 16;
+
+        for (int lx = 0; lx < 16; lx++) {
+            for (int lz = 0; lz < 16; lz++) {
+                int wx = bx + lx;
+                int wz = bz + lz;
+
+                int topY = 0;
+                byte topBeta = 0;
+                // Find top solid block
+                for (int y = 2047; y >= 60; y--) {
+                    int v = world.getVoxel(wx, y, wz);
+                    if (v != 0 && v != veWaterStill && v != veIce) {
+                        topY = y;
+                        topBeta = betaForVe(v);
+                        break;
+                    }
+                }
+                if (topY == 0) continue;
+
+                // Check if there's water adjacent horizontally (beach condition)
+                boolean nearWater = false;
+                for (int dx = -8; dx <= 8; dx += 2) {
+                    for (int dz = -8; dz <= 8; dz += 2) {
+                        if (dx == 0 && dz == 0) continue;
+                        for (int dy = -2; dy <= 2; dy++) {
+                            int ny = topY + dy;
+                            if (ny < 0 || ny >= 2048) continue;
+                            int nv = world.getVoxel(wx + dx, ny, wz + dz);
+                            if (nv == veWaterStill) { nearWater = true; break; }
+                        }
+                        if (nearWater) break;
+                    }
+                    if (nearWater) break;
+                }
+
+                if (nearWater && (topBeta == BETA_GRASS || topBeta == BETA_DIRT)) {
+                    world.setVoxel(wx, topY, wz, veSand);
+                    // Replace a few blocks below too
+                    for (int dy = 1; dy <= 3 && (topY - dy) >= 60; dy++) {
+                        int below = world.getVoxel(wx, topY - dy, wz);
+                        if (below == veDirt || below == veGrass) {
+                            world.setVoxel(wx, topY - dy, wz, veSand);
+                        } else break;
+                    }
+                }
+            }
+        }
+    }
+
+    /** Quick reverse-lookup: VoxelEngine ID → Beta block ID for surface checks. */
+    /** Check if a block ID is a snow layer level variant (snow_1..snow_8 = IDs 240-247). */
+    private boolean isSnowLevel(int veId) {
+        for (int level = 1; level <= 8; level++) {
+            if (veSnowLevels[level] == veId) return true;
+        }
+        return veId == veSnow; // also match the base snow_layer ID
+    }
+
+    private byte betaForVe(int veId) {
+        if (veId == veStone) return BETA_STONE;
+        if (veId == veGrass) return BETA_GRASS;
+        if (veId == veDirt) return BETA_DIRT;
+        if (veId == veSand) return BETA_SAND;
+        if (veId == veGravel) return BETA_GRAVEL;
+        if (veId == veWaterStill) return BETA_WATER_STILL;
+        if (veId == veIce) return BETA_ICE;
+        return 0;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  BETA 1.7.3 CLAY GENERATION
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Replace small underwater sand/gravel patches with clay (Beta 1.7.3).
+     */
+    private void generateClay(com.voxel.World world, int cx, int cz) {
+        int bx = cx * 16;
+        int bz = cz * 16;
+
+        for (int i = 0; i < 4; i++) {
+            int wx = bx + this.rand.nextInt(16);
+            int wz = bz + this.rand.nextInt(16);
+
+            // Find sand or gravel underwater
+            for (int y = 55; y <= 64; y++) {
+                int v = world.getVoxel(wx, y, wz);
+                if ((v == veSand || v == veGravel) && world.getVoxel(wx, y + 1, wz) == veWaterStill) {
+                    // Place small clay patch
+                    for (int dx = -1; dx <= 1; dx++) {
+                        for (int dz = -1; dz <= 1; dz++) {
+                            if (this.rand.nextInt(3) == 0) continue;
+                            int tv = world.getVoxel(wx + dx, y, wz + dz);
+                            if (tv == veSand || tv == veGravel) {
+                                world.setVoxel(wx + dx, y, wz + dz, veClay);
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  BETA 1.7.3 DUNGEON GENERATION
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Generate a dungeon room (cobblestone box with spawner + chests).
+     * Beta 1.7.3 algorithm: validate 5x5x5 or 7x7x5 volume, build walls/floors,
+     * place mob spawner in center, 1-2 chests on walls.
+     */
+    private void generateDungeon(com.voxel.World world, int cx, int cy, int cz) {
+        int width = 5 + this.rand.nextInt(4);  // 5, 6, 7, or 8
+        int height = 4;
+        int half = width / 2;
+
+        // Validate: need solid walls (stone) around the cavity
+        int airInside = 0;
+        int solidAround = 0;
+        for (int x = cx - half - 1; x <= cx + half + 1; x++) {
+            for (int y = cy - 1; y <= cy + height; y++) {
+                for (int z = cz - half - 1; z <= cz + half + 1; z++) {
+                    if (y < 0 || y >= 2048) return;
+                    int v = world.getVoxel(x, y, z);
+                    boolean isWall = (x == cx - half - 1 || x == cx + half + 1
+                                   || z == cz - half - 1 || z == cz + half + 1
+                                   || y == cy - 1 || y == cy + height);
+                    boolean isInside = (x >= cx - half && x <= cx + half
+                                     && z >= cz - half && z <= cz + half
+                                     && y >= cy && y <= cy + height - 1);
+                    if (isInside && v == 0) airInside++;
+                    else if (isWall && v != 0) solidAround++;
+                }
+            }
+        }
+        // Need mostly solid walls and a cavity
+        if (airInside < (width * width * height) / 4 || solidAround < 20) return;
+
+        // Build cobblestone box
+        for (int x = cx - half - 1; x <= cx + half + 1; x++) {
+            for (int y = cy - 1; y <= cy + height; y++) {
+                for (int z = cz - half - 1; z <= cz + half + 1; z++) {
+                    if (y < 0 || y >= 2048) continue;
+                    boolean isWall = (x == cx - half - 1 || x == cx + half + 1
+                                   || z == cz - half - 1 || z == cz + half + 1
+                                   || y == cy - 1 || y == cy + height);
+                    boolean isInside = (x >= cx - half && x <= cx + half
+                                     && z >= cz - half && z <= cz + half
+                                     && y >= cy && y <= cy + height - 1);
+                    if (isInside) {
+                        world.setVoxel(x, y, z, 0); // Clear interior
+                    } else if (isWall) {
+                        int block = (this.rand.nextInt(4) == 0) ? veMossyCobble : veCobblestone;
+                        world.setVoxel(x, y, z, block);
+                    }
+                }
+            }
+        }
+
+        // Place mob spawner centered on the floor
+        world.setVoxel(cx, cy, cz, veSpawner);
+
+        // Place 1-2 chests on floor near walls
+        int chestCount = 1 + this.rand.nextInt(2);
+        for (int i = 0; i < chestCount; i++) {
+            int chestX = cx + (this.rand.nextInt(width) - half);
+            int chestZ = cz + (this.rand.nextInt(width) - half);
+            // Push to wall
+            if (Math.abs(chestX - cx) < Math.abs(chestZ - cz)) {
+                chestX = cx + (chestX > cx ? half : -half);
+            } else {
+                chestZ = cz + (chestZ > cz ? half : -half);
+            }
+            if (world.getVoxel(chestX, cy + 1, chestZ) == 0) {
+                world.setVoxel(chestX, cy, chestZ, veChest);
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  BETA 1.7.3 PUMPKIN GENERATION
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Place a pumpkin patch (1-4 pumpkins in small cluster).
+     * Only on grass blocks with air above.
+     */
+    private void generatePumpkinPatch(com.voxel.World world, int x, int y, int z) {
+        // Find ground level
+        for (int dy = y; dy > 0; dy--) {
+            if (world.getVoxel(x, dy, z) != 0) {
+                y = dy + 1;
+                break;
+            }
+        }
+        if (y <= 0 || y >= 2048) return;
+        if (world.getVoxel(x, y - 1, z) != veGrass) return;
+        if (world.getVoxel(x, y, z) != 0) return;
+
+        // Place main pumpkin
+        setVoxelColumnAware(world, x, y, z, vePumpkin, BETA_PUMPKIN);
+
+        // Small cluster around
+        int cluster = 1 + this.rand.nextInt(3);
+        for (int i = 0; i < cluster; i++) {
+            int px = x + this.rand.nextInt(5) - 2;
+            int pz = z + this.rand.nextInt(5) - 2;
+            if (px == x && pz == z) continue;
+            int py = y;
+            // Find ground at neighbor
+            for (int dy = py; dy > 0; dy--) {
+                if (world.getVoxel(px, dy, pz) != 0) {
+                    py = dy + 1;
+                    break;
+                }
+            }
+            if (py <= 0 || py >= 2048) continue;
+            if (world.getVoxel(px, py - 1, pz) == veGrass && world.getVoxel(px, py, pz) == 0) {
+                setVoxelColumnAware(world, px, py, pz, vePumpkin, BETA_PUMPKIN);
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  BETA 1.7.3 CACTUS GENERATION
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Place cactus up to 3 blocks tall on sand in deserts.
+     * Fails if horizontally adjacent to any solid block.
+     */
+    private void generateCactusPatch(com.voxel.World world, int x, int y, int z) {
+        if (y <= 0 || y >= 2048) return;
+        if (world.getVoxel(x, y - 1, z) != veSand) return;
+
+        int height = 1 + this.rand.nextInt(3);
+
+        // Check horizontal clearance (no solid blocks adjacent)
+        for (int h = 0; h < height; h++) {
+            if (y + h >= 512) break;
+            if (world.getVoxel(x, y + h, z) != 0) return; // blocked above
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    if ((dx == 0 && dz == 0) || Math.abs(dx) + Math.abs(dz) != 1) continue;
+                    if (world.getVoxel(x + dx, y + h, z + dz) != 0) return;
+                }
+            }
+        }
+
+        // Place cactus pillar
+        for (int h = 0; h < height; h++) {
+            setVoxelColumnAware(world, x, y + h, z, veCactus, BETA_CACTUS);
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  BETA 1.7.3 SUGAR CANE GENERATION
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Place sugar cane up to 4 blocks tall near water.
+     * Must be on grass/dirt/sand with water adjacent horizontally.
+     */
+    private void generateSugarCanePatch(com.voxel.World world, int x, int y, int z) {
+        if (y <= 0 || y + 4 >= 512) return;
+        int ground = world.getVoxel(x, y - 1, z);
+        if (ground != veGrass && ground != veDirt && ground != veSand) return;
+
+        // Check for adjacent water
+        boolean nearWater = false;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (Math.abs(dx) + Math.abs(dz) != 1) continue;
+                int nv = world.getVoxel(x + dx, y - 1, z + dz);
+                if (nv == veWaterStill) { nearWater = true; break; }
+            }
+            if (nearWater) break;
+        }
+        if (!nearWater) return;
+
+        int height = 2 + this.rand.nextInt(3); // 2-4 tall
+        for (int h = 0; h < height; h++) {
+            if (world.getVoxel(x, y + h, z) != 0) break;
+            setVoxelColumnAware(world, x, y + h, z, veSugarCane, (byte) 0);
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  BETA 1.7.3 SNOW GENERATION (level-based, like water models)
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Place snow layers on exposed blocks in cold biomes.
+     * Uses level-based snow block IDs (snow_1..snow_8) like water level models.
+     * Snow accumulates more at higher elevations.
+     */
+    private void generateSnow(com.voxel.World world, int cx, int cz) {
+        // Only run in snowy biomes
+        if (biomesForGeneration == null) return;
+        int bx = cx * 16;
+        int bz = cz * 16;
+
+        for (int lx = 0; lx < 16; lx++) {
+            for (int lz = 0; lz < 16; lz++) {
+                int biomeId = biomesForGeneration[lx + lz * 16];
+                if (biomeId != BetaBiomeGenBase.TAIGA
+                    && biomeId != BetaBiomeGenBase.TUNDRA
+                    && biomeId != BetaBiomeGenBase.ICE_DESERT) continue;
+
+                int wx = bx + lx;
+                int wz = bz + lz;
+
+                // Find top solid block (only place snow on full solid blocks)
+                for (int y = 2047; y >= 50; y--) {
+                    int v = world.getVoxel(wx, y, wz);
+                    if (v == 0 || v == veWaterStill || v == veIce) continue;
+                    // Skip non-solid/transparent blocks (leaves, plants, snow layers, etc.)
+                    if (v == veLeaves || v == veTallGrass || v == veDandelion
+                        || v == veRose || v == veDeadBush || v == veSugarCane || v == veCactus
+                        || v == vePumpkin) continue;
+                    if (isSnowLevel(v)) continue;
+
+                    int aboveY = y + 1;
+                    if (aboveY >= 512) break;
+                    // Only place on top of solid blocks with air above (or existing snow)
+                    int above = world.getVoxel(wx, aboveY, wz);
+                    if (above != 0 && !isSnowLevel(above)) break;
+
+                    // Snow level based on Y elevation (higher = deeper snow)
+                    int level;
+                    if (y > 90) level = 1 + this.rand.nextInt(1);           // 1
+                    else if (y > 75) level = 1 + this.rand.nextInt(2);      // 1-2
+                    else level = 1 + this.rand.nextInt(1);                  // 1
+                    level = Math.min(level, 8);
+
+                    int snowId = veSnowLevels[level];
+                    if (snowId > 0) {
+                        setVoxelColumnAware(world, wx, aboveY, wz, snowId, (byte) 0);
+                    }
+                    break; // Only top layer gets snow
+                }
+            }
+        }
     }
 
     public long getWorldSeed() { return worldSeed; }

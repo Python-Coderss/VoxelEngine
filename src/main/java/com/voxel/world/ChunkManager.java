@@ -86,7 +86,7 @@ public class ChunkManager {
     private final Thread genThread;
     private volatile boolean running = true;
 
-    private int lastPlayerCX = -1000, lastPlayerCZ = -1000;
+    private int lastPlayerCX = -1000, lastPlayerCZ = -1000, lastPlayerCY = -1000;
     private float lastYaw = 0;
 
     // ── Lighting ──
@@ -101,6 +101,9 @@ public class ChunkManager {
 
     // ── Deferred lighting: chunks waiting for 5×5 grid to load before light runs ──
     private final Set<Long> pendingLighting = new HashSet<>();
+
+    // ── Per-column section load tracking (gen thread only) ──
+    private final Map<Long, java.util.BitSet> columnSectionsLoaded = new HashMap<>();
     private static final int LIGHT_GRID_RADIUS = 5; // 11×11 player zone: which chunks to light
     private static final int BFS_WAIT_RADIUS = 2;   // 5×5 BFS wait zone: 24 neighbors must be loaded before BFS runs
 
@@ -221,17 +224,20 @@ public class ChunkManager {
      */
     public void update(Vector3f playerPos, float yaw) {
         int pcx = (int) Math.floor(playerPos.x) >> 4;
+        int pcy = (int) Math.floor(playerPos.y) >> 4;
         int pcz = (int) Math.floor(playerPos.z) >> 4;
 
-        if (pcx != lastPlayerCX || pcz != lastPlayerCZ) {
+        // Trigger on any chunk-coordinate change: X, Y, Z, or teleport
+        if (pcx != lastPlayerCX || pcy != lastPlayerCY || pcz != lastPlayerCZ) {
             lastPlayerCX = pcx;
+            lastPlayerCY = pcy;
             lastPlayerCZ = pcz;
             lastYaw = yaw;
 
             // Push to front of queue — manage preempts stale load tasks
-            int pcxFinal = pcx, pczFinal = pcz;
+            int pcxFinal = pcx, pcyFinal = pcy, pczFinal = pcz;
             float yawFinal = yaw;
-            taskQueue.addFirst(() -> manageChunks(pcxFinal, pczFinal, yawFinal));
+            taskQueue.addFirst(() -> manageChunks(pcxFinal, pcyFinal, pczFinal, yawFinal));
         }
     }
 
@@ -390,11 +396,15 @@ public class ChunkManager {
     // Chunks within this radius of the player are never unloaded (persistent cache).
     private static final int KEEP_RADIUS = 32;
 
-    private void manageChunks(int pcx, int pcz, float yaw) {
+    private void manageChunks(int pcx, int pcy, int pcz, float yaw) {
         long t0 = System.currentTimeMillis();
 
-        float lookX = (float) Math.cos(Math.toRadians(yaw));
-        float lookZ = (float) Math.sin(Math.toRadians(yaw));
+        // ── EMERGENCY: if player's own chunk is unloaded, sync-generate it NOW ──
+        long playerKey = chunkKey(pcx, pcz);
+        if (!loadedChunks.containsKey(playerKey)) {
+            WorldGenLogger.log("EMERGENCY load player chunk (" + pcx + "," + pcz + ")");
+            generateFullColumnSync(pcx, pcz);
+        }
 
         // Maximum distance: 2× forward, 1× sideways/back
         int maxDist = renderDistance * 2;
@@ -408,12 +418,7 @@ public class ChunkManager {
                 int cx = pcx + dx;
                 int cz = pcz + dz;
 
-                float along = dx * lookX + dz * lookZ;
-                float perp = -dx * lookZ + dz * lookX;
-
-                int ring = Math.max(
-                    Math.round(Math.abs(along) * 0.5f),
-                    Math.round(Math.abs(perp)));
+                int ring = Math.max(Math.abs(dx), Math.abs(dz));
 
                 if (ring > renderDistance) continue;
 
@@ -454,79 +459,60 @@ public class ChunkManager {
 
         recenterIfNeeded(pcx, pcz);
 
-        // ── Hot-swap: clear stale load tasks, keep last 2 as buffer ──
+        // ── Queue full columns in 2D XZ-spiral order (nearest first) ──
         if (!chunksToLoad.isEmpty()) {
             // Keep the last 2 tasks so the gen thread never idles between swaps.
-            // Poll from the back (most recently added stale tasks).
             Runnable keep1 = taskQueue.pollLast();
             Runnable keep2 = taskQueue.pollLast();
             taskQueue.clear();
-            // Re-add kept tasks to the front (they run immediately after manageChunks)
             if (keep2 != null) taskQueue.addFirst(keep2);
             if (keep1 != null) taskQueue.addFirst(keep1);
 
-            // Sort by: ring ascending, then abs(angle from forward) ascending.
-            // Ascending ring → inner rings first in the sorted list.
-            // Ascending abs-angle → forward (angle=0) sorts FIRST in the list.
-            // The FIFO push loop (addLast) means first-in-list = first-in-deque.
-            // Sort by cubic spiral: Chebyshev distance (max(|dx|,|dz|)) radiating
-            // outward from player in concentric square shells.
-            // Within each shell, spiral by angle from forward direction.
+            // Sort missing columns by 2D Chebyshev distance from player (XZ only).
+            // Within same distance, sort by angle from look direction for a spiral feel.
+            float lookX = (float) Math.cos(Math.toRadians(yaw));
+            float lookZ = (float) Math.sin(Math.toRadians(yaw));
             chunksToLoad.sort((a, b) -> {
                 int dxA = a[0] - pcx, dzA = a[1] - pcz;
                 int dxB = b[0] - pcx, dzB = b[1] - pcz;
-
-                int shellA = Math.max(Math.abs(dxA), Math.abs(dzA));
-                int shellB = Math.max(Math.abs(dxB), Math.abs(dzB));
-
-                if (shellA != shellB) return Integer.compare(shellA, shellB);
-
-                // Same shell: spiral outward by angle from forward
+                int distA = Math.max(Math.abs(dxA), Math.abs(dzA));
+                int distB = Math.max(Math.abs(dxB), Math.abs(dzB));
+                if (distA != distB) return Integer.compare(distA, distB);
+                // Same ring: sort by angle from look direction
                 float angleA = (float) Math.abs(Math.atan2(dzA, dxA) - Math.atan2(lookZ, lookX));
                 float angleB = (float) Math.abs(Math.atan2(dzB, dxB) - Math.atan2(lookZ, lookX));
-                // Normalize to [0, 2π)
-                if (angleA > Math.PI) angleA = (float)(2.0 * Math.PI - angleA);
-                if (angleB > Math.PI) angleB = (float)(2.0 * Math.PI - angleB);
+                if (angleA > Math.PI) angleA = (float) (2.0 * Math.PI - angleA);
+                if (angleB > Math.PI) angleB = (float) (2.0 * Math.PI - angleB);
                 return Float.compare(angleA, angleB);
             });
 
-            // Split: 11×11 grid first (LIGHT_GRID_RADIUS=5), then outer.
-            // The 11×11 must load first so lighting BFS can propagate across chunk borders.
-            List<int[]> inner = new ArrayList<>();
-            List<int[]> outer = new ArrayList<>();
-            for (int[] pos : chunksToLoad) {
-                int dx = pos[0] - pcx, dz = pos[1] - pcz;
-                if (Math.abs(dx) <= LIGHT_GRID_RADIUS && Math.abs(dz) <= LIGHT_GRID_RADIUS) {
-                    inner.add(pos);
-                } else {
-                    outer.add(pos);
+            // Build Y-section order: nearest to player Y first, radiating outward
+            List<Integer> yOrder = new ArrayList<>();
+            for (int cy = 0; cy < chunkHeight; cy++) yOrder.add(cy);
+            yOrder.sort((a, b) -> Integer.compare(Math.abs(a - pcy), Math.abs(b - pcy)));
+
+            WorldGenLogger.log("MANAGE player(" + pcx + "," + pcy + "," + pcz + ") queueing "
+                + chunksToLoad.size() + " columns in XZ-spiral, "
+                + (chunksToLoad.size() * chunkHeight) + " sections, loaded="
+                + loadedChunks.size());
+
+            // Queue: for each column (nearest first), queue all 16 sections
+            // in Y-spiral order. This produces visible concentric rings of
+            // fully-loaded columns radiating outward.
+            for (int[] col : chunksToLoad) {
+                int cx = col[0], cz = col[1];
+                for (int cy : yOrder) {
+                    taskQueue.addLast(() -> loadOneSection(cx, cy, cz));
                 }
             }
 
-            WorldGenLogger.log("MANAGE playerChunk(" + pcx + "," + pcz + ") queueing "
-                + inner.size() + " inner + " + outer.size() + " outer (loaded=" + loadedChunks.size() + ")");
-
-            // Load inner 11×11 grid first, then outer
-            for (int[] pos : inner) {
-                int cx = pos[0], cz = pos[1];
-                taskQueue.addLast(() -> loadChunk(cx, cz));
-            }
-            for (int[] pos : outer) {
-                int cx = pos[0], cz = pos[1];
-                taskQueue.addLast(() -> loadChunk(cx, cz));
-            }
-
-            // Queue a flush task: after all chunks load, run pending lighting unconditionally.
-            // The 5×5 cascade cannot complete on its own because edge chunks' 5×5 grids
-            // extend into newly loaded outer territory which itself gets deferred — infinite chain.
+            // Queue a flush task: after all sections load, run pending lighting
             taskQueue.addLast(this::flushPendingLighting);
-
-            // Lighting is handled per-source on each loadChunk call
         }
 
         if (!chunksToLoad.isEmpty()) {
-            WorldGenLogger.log("MANAGE done: queued=" + chunksToLoad.size()
-                + " unloaded=" + unloadedCount + " loadedNow=" + loadedChunks.size()
+            WorldGenLogger.log("MANAGE done: sections=" + (chunksToLoad.size() * chunkHeight)
+                + " unloaded=" + unloadedCount + " columnsNow=" + loadedChunks.size()
                 + " (" + (System.currentTimeMillis() - t0) + "ms)");
         }
     }
@@ -595,180 +581,6 @@ public class ChunkManager {
         System.out.println("Recentered buffer: offset now (" + newOffsetX + ", 0, " + newOffsetZ + ")");
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    //  CHUNK LOADING — runs only on the gen thread
-    // ══════════════════════════════════════════════════════════════════
-
-    private void loadChunk(int cx, int cz) {
-        long t0 = System.currentTimeMillis();
-        long key = chunkKey(cx, cz);
-        WorldGenLogger.logChunk("LOAD_START", cx, -1, cz, "dim=" + dimension.name);
-
-        // Already loaded? (can happen if a previous manage+load beat us)
-        if (loadedChunks.containsKey(key)) {
-            WorldGenLogger.logChunk("LOAD_DUP", cx, -1, cz, "already loaded, skipping");
-            return;
-        }
-
-        if (freeSlotTop < chunkHeight) {
-            WorldGenLogger.logChunk("LOAD_NOSLOTS", cx, -1, cz, "freeSlots=" + freeSlotTop + " < " + chunkHeight);
-            return;
-        }
-
-        // Allocate 16 slots from the FILO stack
-        Integer[] slots = new Integer[chunkHeight];
-        for (int cy = 0; cy < chunkHeight; cy++) {
-            slots[cy] = freeSlotStack[--freeSlotTop]; // FILO pop
-        }
-        int slotHash = java.util.Arrays.hashCode(slots);
-        WorldGenLogger.logChunk("LOAD_ALLOC", cx, -1, cz,
-            "slots=[" + slots[0] + ".." + slots[15] + "] hash=" + Integer.toHexString(slotHash));
-
-        // Register in loadedChunks and indirection table
-        loadedChunks.put(key, slots);
-        // Clear any stale cancellation from a previous unload of this chunk position
-        cancelledLightTasks.remove(key);
-        for (int sectionY = 0; sectionY < chunkHeight; sectionY++) {
-            world.setChunkSlot(cx, sectionY, cz, slots[sectionY]);
-        }
-
-        // Clear recycled chunk-pool slots so stale voxel/bitmask data from
-        // previously unloaded chunks does not leak into the new chunk.
-        // (generateBaseTerrain does this for proc-gen; the disk path was missing it.)
-        for (int cy = 0; cy < chunkHeight; cy++) {
-            world.clearChunkPoolSlot(slots[cy]);
-        }
-
-        // Try disk load first
-        if (saveManager != null && saveManager.loadChunk(dimension, cx, cz, world)) {
-            for (int sectionY = 0; sectionY < chunkHeight; sectionY++) {
-                world.setChunkSlot(cx, sectionY, cz, slots[sectionY]);
-            }
-            WorldGenLogger.logChunk("LOAD_DISK", cx, -1, cz, "loaded from disk, baking occlusion");
-            // clearChunkPoolSlot above already zeroed the light pool — just bake occlusion
-            for (int cy = 0; cy < chunkHeight; cy++) {
-                int s = slots[cy];
-                mcLightEngine.bakeChunkOcclusion(s, cx, cy, cz);
-                dirtySlots.add(s);
-            }
-            tableDirty.set(true);
-            // Sky-ray early-out: register this chunk's top solid voxel Y.
-            int colMax = computeColumnMaxY(slots);
-            updateTopSolidY(key, colMax);
-            // Schedule fluid blocks for flow processing (water/lava from disk or gen)
-            scheduleFluidsInColumn(cx, cz, slots);
-            // Minecraft-style lighting: posted to dedicated light thread
-            if (Math.abs(cx - lastPlayerCX) <= LIGHT_GRID_RADIUS && Math.abs(cz - lastPlayerCZ) <= LIGHT_GRID_RADIUS) {
-                if (is5x5Loaded(cx, cz)) {
-                    postLightTask(key, slots, () -> {
-                        dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, slots));
-                        for (int cy = 0; cy < chunkHeight; cy++) {
-                            dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, cy, cz, slots[cy]));
-                        }
-                        lightsNeedUpload = true;
-                        tableDirty.set(true);
-                        runPendingLightingIn5x5(cx, cz);
-                    });
-                } else {
-                    pendingLighting.add(chunkKey(cx, cz));
-                    GameLogger.log("LIGHT deferred chunk(" + cx + "," + cz + ") waiting for 5×5 grid");
-                }
-            }
-            WorldGenLogger.logChunk("LOAD_DONE_DISK", cx, -1, cz, (System.currentTimeMillis() - t0) + "ms");
-            return;
-        }
-
-        // ═══════════════════════════════════════════════════════════════
-        //  PROCEDURAL GENERATION — sequential passes for the column
-        // ═══════════════════════════════════════════════════════════════
-        WorldGenLogger.logChunk("GEN_START", cx, -1, cz, "procedural generation beginning");
-
-        // Defensive re-register (no-op in single-thread mode, kept to guard
-        // against future changes that might clear the table off-thread).
-        for (int sectionY = 0; sectionY < chunkHeight; sectionY++) {
-            world.setChunkSlot(cx, sectionY, cz, slots[sectionY]);
-        }
-
-        // Pass 1: Base terrain
-        long t1 = System.currentTimeMillis();
-        int totalSolid = 0;
-        for (int cy = 0; cy < chunkHeight; cy++) {
-            totalSolid += generateBaseTerrain(cx, cy, cz, slots[cy]);
-        }
-        WorldGenLogger.logChunk("GEN_PASS1_BASE", cx, -1, cz,
-            "all 16 sections, " + totalSolid + " solid voxels (" + (System.currentTimeMillis() - t1) + "ms)");
-
-        // Pass 2: Decoration
-        long t2 = System.currentTimeMillis();
-        // Defensive re-register (no-op in single-thread mode).
-        for (int sectionY = 0; sectionY < chunkHeight; sectionY++) {
-            world.setChunkSlot(cx, sectionY, cz, slots[sectionY]);
-        }
-        for (int cy = 0; cy < chunkHeight; cy++) {
-            generator.decorate(cx, cy, cz, slots[cy], world);
-        }
-        // Pass 2.5: Chunk-level directional SDF for sphere-trace acceleration.
-        // ONLY for chunks that have zero solid voxels (per user directive).
-        // Chunks with solids use plain per-voxel DDA in the shader (their
-        // dirSdfPool stays at 0, signaling "no SDF available").
-        for (int cy = 0; cy < chunkHeight; cy++) {
-            int slot = slots[cy];
-            if (slot == World.EMPTY) continue;
-            // Check if the chunk has any solids via the bitmask pool.
-            int bmBase = slot << 7;
-            boolean anySolid = false;
-            for (int w = 0; w < 128; w++) {
-                if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
-            }
-            if (!anySolid) {
-                computeChunkDirSDF(slot, cx, cy, cz);
-                dirtySlots.add(slot);
-            }
-        }
-        WorldGenLogger.logChunk("GEN_PASS2_DECORATE", cx, -1, cz,
-            "all 16 sections (" + (System.currentTimeMillis() - t2) + "ms)");
-        // Sky-ray early-out: register this chunk's top solid voxel Y for u_TopSolidY.
-        // Recomputed here (after SDF build) so tree-block foliage counts toward the max.
-        int colMaxProc = computeColumnMaxY(slots);
-        updateTopSolidY(key, colMaxProc);
-
-        // Pass 3: Bake occlusion
-        long t3 = System.currentTimeMillis();
-        for (int cy = 0; cy < chunkHeight; cy++) {
-            mcLightEngine.bakeChunkOcclusion(slots[cy], cx, cy, cz);
-            dirtySlots.add(slots[cy]);
-        }
-        WorldGenLogger.logChunk("GEN_PASS3_BAKE", cx, -1, cz,
-            "occlusion baked (" + (System.currentTimeMillis() - t3) + "ms)");
-
-        // Pass 4: Commit + Minecraft-style lighting
-        for (int sectionY = 0; sectionY < chunkHeight; sectionY++) {
-            world.setChunkSlot(cx, sectionY, cz, slots[sectionY]);
-        }
-        tableDirty.set(true);
-        // Lighting only within 11×11 grid around player; posted to dedicated light thread
-        if (Math.abs(cx - lastPlayerCX) <= LIGHT_GRID_RADIUS && Math.abs(cz - lastPlayerCZ) <= LIGHT_GRID_RADIUS) {
-            if (is5x5Loaded(cx, cz)) {
-                postLightTask(key, slots, () -> {
-                    dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, slots));
-                    for (int cy = 0; cy < chunkHeight; cy++) {
-                        dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, cy, cz, slots[cy]));
-                    }
-                    lightsNeedUpload = true;
-                    tableDirty.set(true);
-                    runPendingLightingIn5x5(cx, cz);
-                });
-            } else {
-                pendingLighting.add(chunkKey(cx, cz));
-                GameLogger.log("LIGHT deferred chunk(" + cx + "," + cz + ") waiting for 5×5 grid");
-            }
-        }
-        // Schedule fluid blocks for flow processing (water/lava placed during gen)
-        scheduleFluidsInColumn(cx, cz, slots);
-
-        WorldGenLogger.logChunk("GEN_DONE", cx, -1, cz,
-            "committed, total=" + totalSolid + " solid, " + (System.currentTimeMillis() - t0) + "ms");
-    }
 
     // ══════════════════════════════════════════════════════════════════
     //  CHUNK UNLOAD — runs only on the gen thread
@@ -781,6 +593,7 @@ public class ChunkManager {
 
         // Cancel any pending light tasks for this chunk BEFORE freeing slots
         cancelledLightTasks.add(key);
+        columnSectionsLoaded.remove(key);
 
         if (saveManager != null) {
             saveManager.saveChunk(dimension, cx, cz, world);
@@ -1135,6 +948,201 @@ public class ChunkManager {
                         });
                     }
                 }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  PER-SECTION LOADING — one 16³ section at a time, spiral-ordered
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Emergency sync-load of the player's column: generates all 16 sections
+     * inline before any queued work. Called when manageChunks detects the
+     * player is standing in an unloaded chunk.
+     */
+    private void generateFullColumnSync(int cx, int cz) {
+        long colKey = chunkKey(cx, cz);
+        if (loadedChunks.containsKey(colKey)) return;
+
+        if (freeSlotTop < chunkHeight) {
+            // No room — unload the farthest chunks to make space
+            WorldGenLogger.log("EMERGENCY: no free slots, forcing unload for player chunk");
+            List<Long> byDist = new ArrayList<>(loadedChunks.keySet());
+            byDist.sort((a, b) -> {
+                int da = Math.max(Math.abs(unpackX(a) - cx), Math.abs(unpackZ(a) - cz));
+                int db = Math.max(Math.abs(unpackX(b) - cx), Math.abs(unpackZ(b) - cz));
+                return Integer.compare(db, da); // farthest first
+            });
+            while (freeSlotTop < chunkHeight && !byDist.isEmpty()) {
+                Long victim = byDist.remove(0);
+                Integer[] vSlots = loadedChunks.remove(victim);
+                if (vSlots != null) {
+                    unloadChunk(victim, vSlots);
+                    tableDirty.set(true);
+                }
+            }
+        }
+
+        generateOneColumn(cx, cz);
+        tableDirty.set(true);
+    }
+
+    /**
+     * Generate all 16 sections of one column inline (sync, no queue).
+     * Used by the emergency path and as a building block for queued loading.
+     */
+    private void generateOneColumn(int cx, int cz) {
+        long colKey = chunkKey(cx, cz);
+
+        Integer[] slots = new Integer[chunkHeight];
+        for (int scy = 0; scy < chunkHeight; scy++) {
+            slots[scy] = freeSlotStack[--freeSlotTop];
+        }
+        loadedChunks.put(colKey, slots);
+        cancelledLightTasks.remove(colKey);
+
+        for (int scy = 0; scy < chunkHeight; scy++) {
+            world.clearChunkPoolSlot(slots[scy]);
+        }
+
+        // Try disk load first
+        if (saveManager != null && saveManager.loadChunk(dimension, cx, cz, world)) {
+            for (int scy = 0; scy < chunkHeight; scy++) {
+                world.setChunkSlot(cx, scy, cz, slots[scy]);
+                mcLightEngine.bakeChunkOcclusion(slots[scy], cx, scy, cz);
+                dirtySlots.add(slots[scy]);
+            }
+        } else {
+            // Procedural generation
+            for (int scy = 0; scy < chunkHeight; scy++) {
+                world.setChunkSlot(cx, scy, cz, slots[scy]);
+                world.clearChunkPoolSlot(slots[scy]);
+                generateBaseTerrain(cx, scy, cz, slots[scy]);
+                generator.decorate(cx, scy, cz, slots[scy], world);
+
+                int slot = slots[scy];
+                int bmBase = slot << 7;
+                boolean anySolid = false;
+                for (int w = 0; w < 128; w++) {
+                    if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
+                }
+                if (!anySolid) { computeChunkDirSDF(slot, cx, scy, cz); dirtySlots.add(slot); }
+                mcLightEngine.bakeChunkOcclusion(slots[scy], cx, scy, cz);
+                dirtySlots.add(slots[scy]);
+            }
+        }
+
+        tableDirty.set(true);
+        int colMax = computeColumnMaxY(slots);
+        updateTopSolidY(colKey, colMax);
+        scheduleFluidsInColumn(cx, cz, slots);
+        scheduleColumnLighting(cx, cz, colKey, slots);
+
+        // Mark all sections done so loadOneSection skips this column
+        java.util.BitSet done = new java.util.BitSet(chunkHeight);
+        done.set(0, chunkHeight);
+        columnSectionsLoaded.put(colKey, done);
+    }
+
+    /**
+     * Load a single 16³ section. First section of a column allocates slots
+     * and tries disk load; subsequent sections generate procedurally.
+     * Lighting, fluids, and top-solid-Y tracking fire when all 16 sections
+     * of the column are loaded.
+     */
+    private void loadOneSection(int cx, int cy, int cz) {
+        long colKey = chunkKey(cx, cz);
+        Integer[] slots = loadedChunks.get(colKey);
+
+        if (slots == null) {
+            // First section of this column: allocate all 16 slots
+            if (freeSlotTop < chunkHeight) return;
+            slots = new Integer[chunkHeight];
+            for (int scy = 0; scy < chunkHeight; scy++) {
+                slots[scy] = freeSlotStack[--freeSlotTop];
+            }
+            loadedChunks.put(colKey, slots);
+            cancelledLightTasks.remove(colKey);
+            for (int scy = 0; scy < chunkHeight; scy++) {
+                world.clearChunkPoolSlot(slots[scy]);
+            }
+
+            // Try disk load — if successful, all sections are instantly done
+            if (saveManager != null && saveManager.loadChunk(dimension, cx, cz, world)) {
+                for (int scy = 0; scy < chunkHeight; scy++) {
+                    world.setChunkSlot(cx, scy, cz, slots[scy]);
+                    mcLightEngine.bakeChunkOcclusion(slots[scy], cx, scy, cz);
+                    dirtySlots.add(slots[scy]);
+                }
+                tableDirty.set(true);
+                int colMax = computeColumnMaxY(slots);
+                updateTopSolidY(colKey, colMax);
+                scheduleFluidsInColumn(cx, cz, slots);
+                scheduleColumnLighting(cx, cz, colKey, slots);
+                // Mark all sections loaded so subsequent loadOneSection calls skip this column
+                java.util.BitSet done = new java.util.BitSet(chunkHeight);
+                done.set(0, chunkHeight);
+                columnSectionsLoaded.put(colKey, done);
+                return;
+            }
+
+            // Start procedural-gen tracking
+            columnSectionsLoaded.put(colKey, new java.util.BitSet(chunkHeight));
+        }
+
+        java.util.BitSet loadedSections = columnSectionsLoaded.get(colKey);
+        if (loadedSections != null && loadedSections.get(cy)) return; // already loaded
+
+        // Register in indirection table and generate this single section
+        world.setChunkSlot(cx, cy, cz, slots[cy]);
+        world.clearChunkPoolSlot(slots[cy]);
+        generateBaseTerrain(cx, cy, cz, slots[cy]);
+        generator.decorate(cx, cy, cz, slots[cy], world);
+
+        // Directional SDF for empty chunks
+        int slot = slots[cy];
+        if (slot != World.EMPTY) {
+            int bmBase = slot << 7;
+            boolean anySolid = false;
+            for (int w = 0; w < 128; w++) {
+                if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
+            }
+            if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
+        }
+
+        // Bake occlusion and mark dirty
+        mcLightEngine.bakeChunkOcclusion(slots[cy], cx, cy, cz);
+        dirtySlots.add(slots[cy]);
+        tableDirty.set(true);
+
+        if (loadedSections != null) {
+            loadedSections.set(cy);
+            if (loadedSections.cardinality() == chunkHeight) {
+                // All 16 sections loaded — finalize the column
+                columnSectionsLoaded.remove(colKey);
+                int colMax = computeColumnMaxY(slots);
+                updateTopSolidY(colKey, colMax);
+                scheduleFluidsInColumn(cx, cz, slots);
+                scheduleColumnLighting(cx, cz, colKey, slots);
+            }
+        }
+    }
+
+    private void scheduleColumnLighting(int cx, int cz, long key, Integer[] slots) {
+        if (Math.abs(cx - lastPlayerCX) <= LIGHT_GRID_RADIUS && Math.abs(cz - lastPlayerCZ) <= LIGHT_GRID_RADIUS) {
+            if (is5x5Loaded(cx, cz)) {
+                postLightTask(key, slots, () -> {
+                    dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, slots));
+                    for (int scy = 0; scy < chunkHeight; scy++) {
+                        dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, scy, cz, slots[scy]));
+                    }
+                    lightsNeedUpload = true;
+                    tableDirty.set(true);
+                    runPendingLightingIn5x5(cx, cz);
+                });
+            } else {
+                pendingLighting.add(chunkKey(cx, cz));
             }
         }
     }

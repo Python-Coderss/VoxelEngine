@@ -73,12 +73,24 @@ public class BetaWorldGenerator extends WorldGenerator {
         int veDeadBush = findOr(blockDataManager, "deadbush", 0);
         int veCactus = findOr(blockDataManager, "cactus", 0);
         int vePumpkin = findOr(blockDataManager, "pumpkin", 0);
+        int veSugarCane = findOr(blockDataManager, "reeds", 0);
+        int veClay = findOr(blockDataManager, "clay", veDirt);
         int veCoalOre = findOr(blockDataManager, "coal_ore", veStone);
         int veIronOre = findOr(blockDataManager, "iron_ore", veStone);
         int veGoldOre = findOr(blockDataManager, "gold_ore", veStone);
         int veDiamondOre = findOr(blockDataManager, "diamond_ore", veStone);
         int veRedstoneOre = findOr(blockDataManager, "redstone_ore", veStone);
         int veLapisOre = findOr(blockDataManager, "lapis_ore", veStone);
+        int veCobblestone = findOr(blockDataManager, "cobblestone", veStone);
+        int veMossyCobble = findOr(blockDataManager, "mossy_cobblestone", veCobblestone);
+        int veChest = findOr(blockDataManager, "chest", 0);
+        int veSpawner = findOr(blockDataManager, "spawner", veStone);
+        // Snow layer levels (snow_1..snow_8) for height-based snow placement
+        int[] veSnowLevels = new int[9];
+        veSnowLevels[0] = 0; // no snow at level 0
+        for (int level = 1; level <= 8; level++) {
+            veSnowLevels[level] = findOr(blockDataManager, "snow_" + level, veSnow);
+        }
         this.betaProvider = new BetaChunkProvider(
             seed,
             veStone, veGrass, veDirt, veBedrock,
@@ -88,7 +100,9 @@ public class BetaWorldGenerator extends WorldGenerator {
             veDandelion, veRose, veTallGrass, veDeadBush,
             veCactus, vePumpkin,
             veCoalOre, veIronOre, veGoldOre,
-            veDiamondOre, veRedstoneOre, veLapisOre
+            veDiamondOre, veRedstoneOre, veLapisOre,
+            veSugarCane, veClay, veCobblestone, veMossyCobble,
+            veChest, veSpawner, veSnowLevels
         );
 
         // Expose Beta 1.7.3 biomes as a VoxelEngine BiomeProvider
