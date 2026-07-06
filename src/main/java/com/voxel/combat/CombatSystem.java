@@ -74,7 +74,7 @@ public class CombatSystem {
             if (locked instanceof EnemyEntity) {
                 EnemyEntity enemy = (EnemyEntity) locked;
                 if (!enemy.isDead()) {
-                    Vector3f toTarget = new Vector3f(enemy.position).sub(main.player.getPosition());
+                    Vector3f toTarget = new Vector3f(enemy.getPosition()).sub(main.player.getPosition());
                     float targetYaw = (float) Math.toDegrees(Math.atan2(toTarget.x, toTarget.z));
                     float diff = ((targetYaw - main.playerYaw) + 180) % 360 - 180;
                     main.playerYaw += diff * Math.min(1.0f, dt * 8.0f);
@@ -179,7 +179,7 @@ public class CombatSystem {
             EnemyEntity enemy = (EnemyEntity) e;
             if (enemy.isDead()) continue;
 
-            Vector3f toEnemy = new Vector3f(enemy.position).sub(pPos);
+            Vector3f toEnemy = new Vector3f(enemy.getPosition()).sub(pPos);
             float dist = toEnemy.length();
 
             float minDot = main.combatMode ? 0.35f : 0.45f;
@@ -193,7 +193,7 @@ public class CombatSystem {
                     enemy.takeDamage(damage, knockback);
                     main.cameraShake = 0.8f + damage * 0.08f;
                     ctx.damageNumbers.add(new GameContext.DamageNumber(
-                        enemy.position.x, enemy.position.y + 2.0f, enemy.position.z,
+                        enemy.getPosX(), enemy.getPosY() + 2.0f, enemy.getPosZ(),
                         damage
                     ));
                     enemy.hitFlashTime = 0.3f;
@@ -223,7 +223,7 @@ public class CombatSystem {
             if (!(e instanceof EnemyEntity)) continue;
             EnemyEntity enemy = (EnemyEntity) e;
             if (enemy.isDead()) continue;
-            float dist = pPos.distance(enemy.position);
+            float dist = pPos.distance(enemy.getPosition());
             if (dist < nearestDist) {
                 nearestDist = dist;
                 nearestIdx = i;

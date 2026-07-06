@@ -1,6 +1,7 @@
 package com.voxel.entity;
 
 import com.voxel.Player;
+import com.voxel.utils.FixedPoint;
 import org.joml.Vector3f;
 
 /**
@@ -8,7 +9,7 @@ import org.joml.Vector3f;
  * Enhanced with Story Mode style animations (Rolling, Combat).
  */
 public class PlayerEntity extends Entity {
-    private static final Vector3f HIDDEN_POSITION = new Vector3f(-10000.0f, -10000.0f, -10000.0f);
+    private static final float HIDDEN_Y = -10000.0f;  // PlayerEntity hidden-position sentinel
     private ModelPart head;
     private ModelPart leftArm, rightArm;
     private ModelPart leftLeg, rightLeg;
@@ -50,11 +51,13 @@ public class PlayerEntity extends Entity {
 
     public void syncFromPlayer(Player player, float yaw, float pitch, boolean visible, float dt) {
         if (!visible) {
-            position.set(HIDDEN_POSITION);
+            posX = FixedPoint.fromFloat(player.getPosition().x);
+            posY = FixedPoint.fromFloat(HIDDEN_Y);
+            posZ = FixedPoint.fromFloat(player.getPosition().z);
             return;
         }
 
-        position.set(player.getPosition());
+        setPosition(player.getPosition());
 
         // --- Cinematic Story Mode Animation ---
         Vector3f vel = player.getVelocity();
@@ -77,7 +80,7 @@ public class PlayerEntity extends Entity {
                 // Spin 360 degrees
                 rotation.x = (float) (rollAnimTime * Math.PI * 2.0);
                 // Add a small hop
-                position.y += (float) Math.sin(rollAnimTime * Math.PI) * 0.4f;
+                posY += FixedPoint.fromFloat((float) Math.sin(rollAnimTime * Math.PI) * 0.4f);
             }
         }
 
@@ -143,7 +146,7 @@ public class PlayerEntity extends Entity {
 
             // 2. Body Bob (Y-oscillation) - Apply relative to base position
             float bob = (float) Math.abs(Math.sin(walkAnimTime * 10.0f)) * 0.2f;
-            position.y += bob;
+            posY += FixedPoint.fromFloat(bob);
 
             // 3. Body Tilt (Leaning)
             rotation.z = (float) Math.sin(walkAnimTime * 10.0f) * 0.08f;

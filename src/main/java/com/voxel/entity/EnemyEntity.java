@@ -2,6 +2,7 @@ package com.voxel.entity;
 
 import com.voxel.Player;
 import com.voxel.World;
+import com.voxel.utils.FixedPoint;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
 import org.joml.Vector3i;
@@ -70,22 +71,21 @@ public class EnemyEntity extends Entity {
         super.update(dt);
         if (isDead) return;
 
-        prevRenderPos.set(position);  // snapshot for interpolation before this frame's movement
+        snapshotPrev();  // fixed-point snapshot for interpolation before this frame's movement
 
         attackCooldown = Math.max(0, attackCooldown - dt);
         frustration = Math.max(0, frustration - dt * 0.25f);
 
-        Vector3f velocity = new Vector3f(position).sub(prevPosition);
+        Vector3f velocity = new Vector3f(getPosition()).sub(prevPosition);
         float speed = velocity.length() / Math.max(dt, 0.00001f);
-        prevPosition.set(position);
+        prevPosition.set(getPosition());
 
         animTime += dt * Math.max(0.9f, speed);
 
         float walkIntensity = Math.min(1.0f, speed * 0.24f);
 
         float bob = (float) Math.sin(animTime * 7.0f) * 0.092f * walkIntensity;
-        position.y -= lastBob;
-        position.y += bob;
+        posY += FixedPoint.fromFloat(bob - lastBob);
         lastBob = bob;
 
         rotation.z = (float) Math.sin(animTime * 6.2f) * 4.8f * walkIntensity;
@@ -96,11 +96,11 @@ public class EnemyEntity extends Entity {
     public void updateAI(Vector3f playerPos, Vector3f playerVelocity, float dt) {
         if (isDead || world == null) return;
 
-        float distance = position.distance(playerPos);
+        float distance = getPosition().distance(playerPos);
 
         if (DEBUG_AI) {
             System.out.printf("[AI] Entity(%.1f, %.1f, %.1f) | Player(%.1f, %.1f, %.1f) | Dist: %.2f | State: %s%n",
-                    position.x, position.y, position.z,
+                    getPosX(), getPosY(), getPosZ(),
                     playerPos.x, playerPos.y, playerPos.z,
                     distance, state);
         }
@@ -171,7 +171,7 @@ public class EnemyEntity extends Entity {
         }
 
         if (shouldRepath) {
-            path = findPath(this.position, predictedPlayerPos);
+            path = findPath(getPosition(), predictedPlayerPos);
             pathIndex = 0;
             lastPathfindTime = now;
 
@@ -194,10 +194,9 @@ public class EnemyEntity extends Entity {
         }
     }
 
-    private void attackPlayer(Vector3f playerPos, float dt) {
-        if (DEBUG_AI) System.out.println("[AI] ATTACKING");
+    private void attackPlayer(Vector3f playerPos, float dt) {            if (DEBUG_AI) System.out.println("[AI] ATTACKING");
 
-        Vector3f toPlayer = new Vector3f(playerPos).sub(position);
+            Vector3f toPlayer = new Vector3f(playerPos).sub(getPosition());
         float dist = toPlayer.length();
 
         if (dist > 0.01f) {
@@ -248,7 +247,7 @@ public class EnemyEntity extends Entity {
     // ====================== MOVEMENT ======================
 
     protected void moveToward(Vector3f target, float dt, float speed) {
-        Vector3f dir = new Vector3f(target).sub(position);
+        Vector3f dir = new Vector3f(target).sub(getPosition());
         // Allow some vertical direction, but collision will keep us grounded
         float len = dir.length();
 
@@ -280,36 +279,37 @@ public class EnemyEntity extends Entity {
         moveToward(targetPos, dt, 2.45f);
 
         // Distance check in 2D (XZ) is often more reliable for pathing
-        float distSq = new Vector2f(position.x - targetPos.x, position.z - targetPos.z).lengthSquared();
-        if (distSq < 0.36f && Math.abs(position.y - targetPos.y) < 1.1f) {
+        float distSq = new Vector2f(getPosX() - targetPos.x, getPosZ() - targetPos.z).lengthSquared();
+        if (distSq < 0.36f && Math.abs(getPosY() - targetPos.y) < 1.1f) {
             if (DEBUG_AI) System.out.println("[PATH] Reached node " + pathIndex);
             pathIndex++;
         }
     }
 
     private void tryMove(float dx, float dy, float dz) {
+        float cx = getPosX(), cy = getPosY(), cz = getPosZ();
         if (DEBUG_AI) {
             System.out.printf("[TRY MOVE] dx=%.3f, dy=%.3f, dz=%.3f | Current(%.2f,%.2f,%.2f)%n",
-                    dx, dy, dz, position.x, position.y, position.z);
+                    dx, dy, dz, cx, cy, cz);
         }
 
         // 1. Try full move
-        if (canOccupy(position.x + dx, position.y + dy, position.z + dz) && !isCollidingWithOtherEntities(position.x + dx, position.y + dy, position.z + dz)) {
-            position.add(dx, dy, dz);
+        if (canOccupy(cx + dx, cy + dy, cz + dz) && !isCollidingWithOtherEntities(cx + dx, cy + dy, cz + dz)) {
+            addPosition(dx, dy, dz);
             if (DEBUG_AI) System.out.println("[TRY MOVE] Full move SUCCESS");
             return;
         }
 
         // 2. Auto-step UP
-        if (canOccupy(position.x + dx, position.y + 1.0f, position.z + dz) && !isCollidingWithOtherEntities(position.x + dx, position.y + 1.0f, position.z + dz)) {
-            position.add(dx, 1.0f, dz);
+        if (canOccupy(cx + dx, cy + 1.0f, cz + dz) && !isCollidingWithOtherEntities(cx + dx, cy + 1.0f, cz + dz)) {
+            addPosition(dx, 1.0f, dz);
             if (DEBUG_AI) System.out.println("[TRY MOVE] Auto-step UP success");
             return;
         }
 
         // 3. Auto-step DOWN
-        if (canOccupy(position.x + dx, position.y - 1.0f, position.z + dz) && !isCollidingWithOtherEntities(position.x + dx, position.y - 1.0f, position.z + dz)) {
-            position.add(dx, -1.0f, dz);
+        if (canOccupy(cx + dx, cy - 1.0f, cz + dz) && !isCollidingWithOtherEntities(cx + dx, cy - 1.0f, cz + dz)) {
+            addPosition(dx, -1.0f, dz);
             if (DEBUG_AI) System.out.println("[TRY MOVE] Auto-step DOWN success");
             return;
         }
@@ -317,14 +317,14 @@ public class EnemyEntity extends Entity {
         if (DEBUG_AI) System.out.println("[TRY MOVE] Collision detected - trying X/Z separately");
 
         // 4. Try X only
-        if (canOccupy(position.x + dx, position.y, position.z) && !isCollidingWithOtherEntities(position.x + dx, position.y, position.z)) {
-            position.x += dx;
+        if (canOccupy(cx + dx, cy, cz) && !isCollidingWithOtherEntities(cx + dx, cy, cz)) {
+            posX += FixedPoint.fromFloat(dx);
             if (DEBUG_AI) System.out.println("[TRY MOVE] X move accepted");
         }
 
         // 5. Try Z only
-        if (canOccupy(position.x, position.y, position.z + dz) && !isCollidingWithOtherEntities(position.x, position.y, position.z + dz)) {
-            position.z += dz;
+        if (canOccupy(cx, cy, cz + dz) && !isCollidingWithOtherEntities(cx, cy, cz + dz)) {
+            posZ += FixedPoint.fromFloat(dz);
             if (DEBUG_AI) System.out.println("[TRY MOVE] Z move accepted");
         }
     }
@@ -334,11 +334,11 @@ public class EnemyEntity extends Entity {
         Vector3f target = new Vector3f(x, y, z);
         for (int i = 0; i < entityManager.getEntityCount(); i++) {
             Entity other = entityManager.getEntity(i);
-            if (other == null || other == this || other.position == null) continue;
+            if (other == null || other == this) continue;
             // Ignore dead enemies
             if (other instanceof EnemyEntity && ((EnemyEntity)other).isDead()) continue;
             
-            float distSq = target.distanceSquared(other.position);
+            float distSq = target.distanceSquared(other.getPosition());
             if (distSq < 0.36f) return true; // Collision radius of 0.6 blocks
         }
         return false;
@@ -462,7 +462,7 @@ public class EnemyEntity extends Entity {
         if (isDead) return;
 
         health -= amount;
-        position.add(knockback);
+        addPosition(knockback.x, knockback.y, knockback.z);
         hitFlashTime = 0.35f;
         frustration += 3.0f;
 

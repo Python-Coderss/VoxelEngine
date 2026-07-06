@@ -72,7 +72,8 @@ public class EntityManager {
      * @param partialTicks  render interpolation alpha (0-1)
      * @param player        the physics Player (for PlayerEntity interpolation bypass)
      */
-    private static final float HIDDEN_Y = -10000.0f;  // PlayerEntity hidden-position sentinel (matches PlayerEntity.HIDDEN_POSITION)
+    private static final float HIDDEN_Y = -10000.0f;  // PlayerEntity hidden-position sentinel
+    private static final long HIDDEN_Y_FP = com.voxel.utils.FixedPoint.fromFloat(HIDDEN_Y);
 
     public void uploadToGPU(DimensionType activeDimension, Vector3f cameraPos,
                             float partialTicks, com.voxel.Player player) {
@@ -95,7 +96,7 @@ public class EntityManager {
             if (activeDimension != null && e.dimension != activeDimension) continue;
             if (cameraPos != null) {
                 // PlayerEntity: use player interpolation unless hidden (first-person mode)
-                boolean peUsePlayer = player != null && e instanceof com.voxel.entity.PlayerEntity && e.position.y > HIDDEN_Y;
+                boolean peUsePlayer = player != null && e instanceof com.voxel.entity.PlayerEntity && e.getFixedY() > HIDDEN_Y_FP;
                 Vector3f rp = peUsePlayer ? player.getInterpolatedPosition() : e.getInterpolatedPosition(partialTicks);
                 float dx = rp.x - cameraPos.x;
                 float dy = rp.y - cameraPos.y;
@@ -113,7 +114,7 @@ public class EntityManager {
             // PlayerEntity: use the physics Player's self-timed interpolated position,
             // but only when NOT hidden (first-person mode sets y to -10000).
             Vector3f renderPos;
-            if (player != null && entity instanceof com.voxel.entity.PlayerEntity && entity.position.y > HIDDEN_Y) {
+            if (player != null && entity instanceof com.voxel.entity.PlayerEntity && entity.getFixedY() > HIDDEN_Y_FP) {
                 renderPos = player.getInterpolatedPosition();
             } else {
                 renderPos = entity.getInterpolatedPosition(partialTicks);
