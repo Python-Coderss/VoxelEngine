@@ -4,6 +4,7 @@ import com.voxel.World;
 import com.voxel.utils.BlockDataManager;
 import com.voxel.utils.Direction;
 import com.voxel.GameLogger;
+import com.voxel.world.WorldGenLogger;
 
 import java.util.Set;
 import java.util.HashSet;
@@ -83,6 +84,7 @@ public class LightEngine {
         int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
         int bufMaxYRel = oy + bufSize;
 
+        int changedVoxels = 0;
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
                 int wx = worldBaseX + lx;
@@ -102,6 +104,7 @@ public class LightEngine {
                     if (currentSky != skyLight) {
                         world.setSkyLight(slot, lx, ly, lz, skyLight * 17);
                         dirtySlots.add(slot);
+                        changedVoxels++;
                     }
 
                     if (skyLight <= 0) break;
@@ -111,6 +114,9 @@ public class LightEngine {
                 }
             }
         }
+
+        WorldGenLogger.logChunk("LIGHT_SKY", cx, -1, cz,
+            "dirty=" + dirtySlots.size() + " changedVoxels=" + changedVoxels);
         return dirtySlots;
     }
 
@@ -154,10 +160,14 @@ public class LightEngine {
         boolean isEmpty() { return size == 0; }
     }
 
-    /** Scalar BFS node: packs x|y|z|intensity into one long. */
+    /**
+     * Scalar BFS node: packs buffer-RELATIVE x|y|z|intensity into one long.
+     * Relative coords are in [0, 2047], fitting in 11 bits each.
+     * Using relative coords ensures correctness at extreme world positions (Far Lands).
+     */
     // Bit layout: z(11 bits, 0-10) | y(11 bits, 11-21) | x(11 bits, 22-32) | intensity(4 bits, 33-36)
-    private static long packNodeScalar(int x, int y, int z, int intensity) {
-        return ((long)(x & 0x7FF) << 22) | ((long)(y & 0x7FF) << 11) | ((long)(z & 0x7FF))
+    private static long packNodeScalar(int rx, int ry, int rz, int intensity) {
+        return ((long)(rx & 0x7FF) << 22) | ((long)(ry & 0x7FF) << 11) | ((long)(rz & 0x7FF))
             | ((long)(intensity & 0xF) << 33);
     }
     private static int nodeX(long p) { return (int)((p >>> 22) & 0x7FF); }
@@ -184,31 +194,36 @@ public class LightEngine {
      * Flood-fill BFS: propagates scalar intensity (0-15) from a seeded queue
      * into the temp byte field (stored as 0-255 = intensity × 17).
      *
-     * @param queue Pre-seeded with source nodes via packNodeScalar
+     * All coordinates in the queue are BUFFER-RELATIVE (0..bufSize-1).
+     * This avoids 11-bit overflow at extreme world positions (Far Lands).
+     *
+     * @param queue Pre-seeded with source nodes via packNodeScalar (relative coords)
      * @param ox,oy,oz Buffer origin (pre-computed for perf)
      * @param dirtySlots Set to fill with affected slot indices
      */
     private void floodFillScalar(LongQueue queue, int ox, int oy, int oz, Set<Integer> dirtySlots) {
         int maxRel = bufSize - 1;
         Direction[] dirs = Direction.values();
-        int[] mainPool = world.getLightPool();
 
         while (!queue.isEmpty()) {
             long node = queue.poll();
-            int nx0 = nodeX(node), ny0 = nodeY(node), nz0 = nodeZ(node);
+            // Unpack buffer-relative coordinates
+            int rnx0 = nodeX(node), rny0 = nodeY(node), rnz0 = nodeZ(node);
             int cur = nodeIntensityScalar(node);
 
             for (Direction dir : dirs) {
-                int nx = nx0 + dir.x;
-                int ny = ny0 + dir.y;
-                int nz = nz0 + dir.z;
+                int rnx = rnx0 + dir.x;
+                int rny = rny0 + dir.y;
+                int rnz = rnz0 + dir.z;
 
-                int rnx = nx - ox, rny = ny - oy, rnz = nz - oz;
+                // Direct bounds check on relative coords
                 if (rnx < 0 || rny < 0 || rnz < 0 || rnx > maxRel || rny > maxRel || rnz > maxRel) continue;
 
                 int nSlot = world.getIndirectionTable()[(rnx >> 4) + (rny >> 4) * World.REGION_SIZE + (rnz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
                 if (nSlot == World.EMPTY) continue;
 
+                // Convert to absolute for world.getVoxel() lookup
+                int nx = rnx + ox, ny = rny + oy, nz = rnz + oz;
                 int opacity = getBlockOpacity(world.getVoxel(nx, ny, nz));
                 int step = Math.max(1, opacity);
                 int next = Math.max(0, cur - step);
@@ -222,7 +237,8 @@ public class LightEngine {
                     tempField[nidx] = (byte) next255;
                     dirtySlots.add(nSlot);
                     if (next > 1) {
-                        queue.add(packNodeScalar(nx, ny, nz, next));
+                        // Pack relative coords so they stay within 11-bit range
+                        queue.add(packNodeScalar(rnx, rny, rnz, next));
                     }
                 }
             }
@@ -331,9 +347,14 @@ public class LightEngine {
         dirtySlots.add(slot);
 
         LongQueue queue = new LongQueue(256);
-        queue.add(packNodeScalar(x, y, z, intensity));
+        // Convert to buffer-relative for packing (avoids 11-bit overflow at extreme coords)
+        int rx = x - ox, ry = y - oy, rz = z - oz;
+        queue.add(packNodeScalar(rx, ry, rz, intensity));
 
         floodFillScalar(queue, ox, oy, oz, dirtySlots);
+
+        WorldGenLogger.logPos("LIGHT_SINGLE_SRC", x, y, z,
+            "intensity=" + intensity + " dirty=" + dirtySlots.size());
         return dirtySlots;
     }
 
@@ -394,10 +415,14 @@ public class LightEngine {
             int lightColor = typeKey & 0xFFFFFF;
             int blockId = entry.getValue().get(0)[4]; // representative blockId for tint
 
+            WorldGenLogger.logChunk("LIGHT_BLOCK", cx, cy, cz,
+                "sources=" + entry.getValue().size() + " emissive=" + emissive
+                + " color=#" + Integer.toHexString(lightColor));
+
             // Clear temp field for this slot
             clearTempFieldSlot(slot);
 
-            // Seed all sources of this type
+            // Seed all sources of this type (use buffer-relative coords for packing)
             LongQueue queue = new LongQueue(256);
             Set<Integer> typeDirty = new HashSet<>();
             for (int[] src : entry.getValue()) {
@@ -412,7 +437,9 @@ public class LightEngine {
                     tempField[sidx] = (byte) intensity255;
                     typeDirty.add(slot);
                 }
-                queue.add(packNodeScalar(sx, sy, sz, intensity));
+                // Convert to buffer-relative for BFS (avoids 11-bit overflow at extreme coords)
+                int rsx = sx - ox, rsy = sy - oy, rsz = sz - oz;
+                queue.add(packNodeScalar(rsx, rsy, rsz, intensity));
             }
 
             // Flood-fill
@@ -445,6 +472,10 @@ public class LightEngine {
         int newBlockId = world.getVoxel(x, y, z);
         int oldEmissive = blockDataManager.getEmissive(oldBlockId);
         int newEmissive = blockDataManager.getEmissive(newBlockId);
+
+        WorldGenLogger.logPos("LIGHT_CHANGE", x, y, z,
+            "old=" + oldBlockId + "(" + blockDataManager.getName(oldBlockId) + ") emiss=" + oldEmissive
+            + " new=" + newBlockId + "(" + blockDataManager.getName(newBlockId) + ") emiss=" + newEmissive);
 
         if (oldEmissive > 0 || newEmissive > 0) {
             // ── Light source changed: single-source add/subtract ──
