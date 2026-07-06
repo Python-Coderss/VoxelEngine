@@ -8,8 +8,8 @@ import java.util.Random;
  * Beta 1.7.3 terrain generator adapted for cubic chunks with infinite Y.
  * 
  * Uses cubic 16³ section caching — one byte[4096] per cy (Y section index)
- * stored in a HashMap. Sections are generated on-demand so the column can
- * extend to any Y. No more 2048-block column ceiling.
+ * stored in a HashMap. Sections are batch-generated via one func_4061_a
+ * call per generation event, matching the speed of the old column cache.
  */
 public class BetaChunkProvider {
     private Random rand;
@@ -90,32 +90,26 @@ public class BetaChunkProvider {
     private BetaMapGenCaves caveGen = new BetaMapGenCaves();
 
     // ── Cubic section cache: HashMap<cy, byte[4096]> ──
-    // Each section is 16×16×16 = 4096 bytes, indexed as lx | (ly << 4) | (lz << 8).
-    // cy = y >> 4 (any int, infinite Y). Sections are generated on-demand.
     private HashMap<Integer, byte[]> columnSections;
     private int columnCX = Integer.MIN_VALUE;
     private int columnCZ = Integer.MIN_VALUE;
     private boolean columnGenerated = false;
-    private int maxSectionCY = -1; // highest cy with a section in this column
+    private int maxSectionCY = -1;
 
     // During decoration, neighbor columns use the same section-based storage
     private final Map<Long, HashMap<Integer, byte[]>> neighborBlocks = new HashMap<>();
     private final Map<Long, HashMap<Integer, byte[]>> decorationOverlay = new HashMap<>();
 
-    private byte[] caveTempArray = new byte[32768]; // reused temp for Beta-format cave carving
+    private byte[] caveTempArray = new byte[32768];
 
     private static final int SEA_LEVEL = 64;
     private static final double BETA_Y_SAMPLES = 17.0;
-    private static final int INITIAL_MAX_Y = 2048; // generateTerrain covers y=0..2047 initially
-
-    // ── Section helpers ──
 
     /** Index into a 16³ section: lx|(ly<<4)|(lz<<8) */
     private static int sectionIdx(int lx, int ly, int lz) {
         return lx | (ly << 4) | (lz << 8);
     }
 
-    /** Get or create the byte[4096] for the given Y-section index. */
     private byte[] getOrCreateSection(int cy) {
         byte[] sec = columnSections.get(cy);
         if (sec == null) {
@@ -126,15 +120,13 @@ public class BetaChunkProvider {
         return sec;
     }
 
-    /** Get block from a section map, returning 0 if section or block absent. */
-    private static byte getSectionBlock(HashMap<Integer, byte[]> sections, int lx, int ly, int lz) {
+    static byte getSectionBlock(HashMap<Integer, byte[]> sections, int lx, int ly, int lz) {
         int cy = ly >> 4;
         byte[] sec = sections.get(cy);
         return sec != null ? sec[sectionIdx(lx, ly & 15, lz)] : 0;
     }
 
-    /** Set block in a section map, creating the section if needed. */
-    private static void setSectionBlock(HashMap<Integer, byte[]> sections, int lx, int ly, int lz, byte val) {
+    static void setSectionBlock(HashMap<Integer, byte[]> sections, int lx, int ly, int lz, byte val) {
         if (val == 0) {
             int cy = ly >> 4;
             byte[] sec = sections.get(cy);
@@ -150,7 +142,6 @@ public class BetaChunkProvider {
         sec[sectionIdx(lx, ly & 15, lz)] = val;
     }
 
-    // ── Convenience for main column ──
     private byte getMainBlock(int lx, int lz, int y) {
         int cy = y >> 4;
         byte[] sec = columnSections.get(cy);
@@ -243,15 +234,12 @@ public class BetaChunkProvider {
         this.generateTerrain(cx, cz, columnSections, this.biomesForGeneration, this.temperatures);
         this.replaceBlocksForBiome(cx, cz, columnSections, this.biomesForGeneration);
 
-        // Cave carving: build Beta-format temp array from sections, carve, copy back
         carveCavesFromSections(worldSeed, cx, cz, columnSections);
 
-        // Find the highest CY that actually has a section
         for (int cy : columnSections.keySet()) {
             if (cy > maxSectionCY) maxSectionCY = cy;
         }
 
-        // Apply decoration overlay
         Long key = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
         HashMap<Integer, byte[]> overlay = decorationOverlay.get(key);
         if (overlay != null) {
@@ -268,10 +256,8 @@ public class BetaChunkProvider {
         columnGenerated = true;
     }
 
-    /** Build a Beta-format byte[32768] from sections y=0..127, carve, write back. */
     private void carveCavesFromSections(long worldSeed, int cx, int cz, HashMap<Integer, byte[]> sections) {
         java.util.Arrays.fill(caveTempArray, (byte) 0);
-        // Sections cy=0..7 cover y=0..127
         for (int cy = 0; cy < 8; cy++) {
             byte[] sec = sections.get(cy);
             if (sec == null) continue;
@@ -283,7 +269,6 @@ public class BetaChunkProvider {
             }
         }
         caveGen.func_867_a(worldSeed, cx, cz, caveTempArray);
-        // Write back
         for (int cy = 0; cy < 8; cy++) {
             boolean any = false;
             byte[] sec = sections.get(cy);
@@ -348,59 +333,165 @@ public class BetaChunkProvider {
         int lx = x & 15, lz = z & 15, ly = y & 15, cy = y >> 4;
         byte[] sec = columnSections.get(cy);
         if (sec == null) {
-            // Section not yet generated — generate it on-demand
-            generateSection(cy);
+            // Section not yet generated — batch generate it via the full pipeline.
+            // generateSectionRange handles this single-section case efficiently
+            // (one func_4061_a call for just 3 Y samples).
+            generateSectionRange(cy, cy + 1);
             sec = columnSections.get(cy);
             if (sec == null) return 0;
         }
         return sec[sectionIdx(lx, ly, lz)] & 0xFF;
     }
 
-    /** Generate a single 16³ section at cy using the full density pipeline. */
-    private void generateSection(int cy) {
-        int minY = cy << 4;
-        int maxY = minY + 16;
-        // Align to 8-block boundaries for the density grid
+    // ══════════════════════════════════════════════════════════════════
+    //  getHeight — with batch extension matching column-cache speed
+    // ══════════════════════════════════════════════════════════════════
+
+    public int getHeight(int x, int z) {
+        int cx = x >> 4, cz = z >> 4;
+        if (!columnGenerated || columnCX != cx || columnCZ != cz) generateColumn(cx, cz);
+        int lx = x & 15, lz = z & 15;
+
+        // If the highest known section is at 127 (y=2047 at Far Lands),
+        // binary-search the terrain top with cheap evaluateDensity, then
+        // batch-generate all extended sections in ONE func_4061_a call.
+        // This matches the old column-cache speed: 1 noise pass per column.
+        if (maxSectionCY == 127) {
+            int probeCY = maxSectionCY + 1;
+            int probeY = probeCY << 4;
+            
+            // Quick check: is there stone at all above our current max?
+            if (evaluateDensity(x, probeY, z)) {
+                // Terrain continues upward. Binary search for the top
+                // using evaluateDensity (cheap, no modulation but accurate
+                // enough for probing at Far Lands).
+                int loCY = probeCY;
+                int hiCY = probeCY + 1;
+                // Exponentially bound upward
+                while (evaluateDensity(x, hiCY << 4, z) && hiCY - loCY < 512) {
+                    hiCY <<= 1;
+                    if (hiCY > loCY + 2048) { hiCY = loCY + 2048; break; }
+                }
+                // Binary search between loCY and hiCY
+                while (loCY < hiCY) {
+                    int midCY = (loCY + hiCY + 1) >>> 1;
+                    if (evaluateDensity(x, midCY << 4, z)) {
+                        loCY = midCY;
+                    } else {
+                        hiCY = midCY - 1;
+                    }
+                }
+                // Add 8-section margin (128 blocks) so evaluateDensity's minor
+                // inaccuracies at specific XZ positions don't clip terrain.
+                int topCY = loCY + 8;
+                
+                // Batch generate ALL sections from 128 to topCY in ONE call
+                generateSectionRange(128, topCY + 1);
+            }
+        }
+
+        // Scan from the highest section downward
+        for (int cy = maxSectionCY; cy >= 0; cy--) {
+            byte[] sec = columnSections.get(cy);
+            if (sec == null) continue;
+            for (int ly = 15; ly >= 0; ly--) {
+                if (sec[sectionIdx(lx, ly, lz)] != 0) {
+                    return (cy << 4) | ly;
+                }
+            }
+        }
+        for (int y = -1; y >= -64; y--) {
+            if (evaluateDensity(x, y, z)) return y;
+        }
+        return 0;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  BATCH SECTION GENERATION — one func_4061_a call = column-cache speed
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Generate all sections in [fromCY, toCY) in one func_4061_a call.
+     * Uses the full Beta pipeline: noise + temperature modulation +
+     * trilinear interpolation + water/ice fill. At Far Lands where
+     * all density is positive, the short-circuit skip fills stone
+     * instantly without per-block checks.
+     */
+    private void generateSectionRange(int fromCY, int toCY) {
+        if (fromCY >= toCY) return;
+        int minY = fromCY << 4;
+        int maxY = toCY << 4;
         int yStart = minY / 8;
         int yEnd = (maxY - 1) / 8 + 1;
         int ySamples = yEnd - yStart + 1;
 
         byte var6 = 4;
-        int var8 = var6 + 1;
-        int var9 = ySamples;
-        int var10 = var6 + 1;
+        int var8 = var6 + 1;      // 5
+        int var9 = ySamples;       // Y sample count
+        int var10 = var6 + 1;      // 5
 
         double[] densityField = new double[var8 * var9 * var10];
         densityField = func_4061_a(densityField, columnCX * var6, yStart, columnCZ * var6, var8, var9, var10);
+        interpolateDensityToSections(densityField, var8, var9, var10, yStart);
+    }
 
-        byte var7 = 64;
+    /** Trilinar interpolate a density field into the section cache. */
+    private void interpolateDensityToSections(double[] densityField,
+                                               int var8, int var9, int var10, int yStart) {
+        byte var6 = 4;
+        byte var7 = 64;  // sea level for water fill
         int sampleCount = var9 - 1;
-        HashMap<Integer, byte[]> slices = columnSections;
 
         for (int var11 = 0; var11 < var6; ++var11) {
             for (int var12 = 0; var12 < var6; ++var12) {
                 for (int var13 = 0; var13 < sampleCount; ++var13) {
+                    double v16 = densityField[((var11) * var10 + var12) * var9 + var13];
+                    double v18 = densityField[((var11) * var10 + var12 + 1) * var9 + var13];
+                    double v20 = densityField[((var11 + 1) * var10 + var12) * var9 + var13];
+                    double v22 = densityField[((var11 + 1) * var10 + var12 + 1) * var9 + var13];
+
+                    // ── Short-circuit: if all 8 corners are > 0, the entire
+                    //     4×8×4 sub-volume is solid stone. Skip the inner loops.
+                    double v16p = densityField[((var11) * var10 + var12) * var9 + var13 + 1];
+                    double v18p = densityField[((var11) * var10 + var12 + 1) * var9 + var13 + 1];
+                    double v20p = densityField[((var11 + 1) * var10 + var12) * var9 + var13 + 1];
+                    double v22p = densityField[((var11 + 1) * var10 + var12 + 1) * var9 + var13 + 1];
+
+                    boolean allSolid = (v16 > 0) && (v18 > 0) && (v20 > 0) && (v22 > 0)
+                                    && (v16p > 0) && (v18p > 0) && (v20p > 0) && (v22p > 0);
+
+                    if (allSolid) {
+                        // Everything in this 4×8×4 sub-volume is stone.
+                        // Fill all 16 Y levels for all 4×4 XZ cells instantly.
+                        int yBase = yStart * 8 + var13 * 8;
+                        for (int var43 = 0; var43 < 4; ++var43) {
+                            int lx = var43 + var11 * 4;
+                            for (int var52 = 0; var52 < 4; ++var52) {
+                                int lz = var52 + var12 * 4;
+                                for (int var32 = 0; var32 < 8; ++var32) {
+                                    setMainBlock(lx, lz, yBase + var32, BETA_STONE);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    // ── Slow path: full per-block interpolation ──
                     double var14 = 0.125D;
-                    double var16 = densityField[((var11) * var10 + var12) * var9 + var13];
-                    double var18 = densityField[((var11) * var10 + var12 + 1) * var9 + var13];
-                    double var20 = densityField[((var11 + 1) * var10 + var12) * var9 + var13];
-                    double var22 = densityField[((var11 + 1) * var10 + var12 + 1) * var9 + var13];
-                    double var24 = (densityField[((var11) * var10 + var12) * var9 + var13 + 1] - var16) * var14;
-                    double var26 = (densityField[((var11) * var10 + var12 + 1) * var9 + var13 + 1] - var18) * var14;
-                    double var28 = (densityField[((var11 + 1) * var10 + var12) * var9 + var13 + 1] - var20) * var14;
-                    double var30 = (densityField[((var11 + 1) * var10 + var12 + 1) * var9 + var13 + 1] - var22) * var14;
+                    double var24 = (v16p - v16) * var14;
+                    double var26 = (v18p - v18) * var14;
+                    double var28 = (v20p - v20) * var14;
+                    double var30 = (v22p - v22) * var14;
 
                     for (int var32 = 0; var32 < 8; ++var32) {
                         double var33 = 0.25D;
-                        double var35 = var16, var37 = var18;
-                        double var39 = (var20 - var16) * var33;
-                        double var41 = (var22 - var18) * var33;
+                        double var35 = v16, var37 = v18;
+                        double var39 = (v20 - v16) * var33;
+                        double var41 = (v22 - v18) * var33;
 
                         for (int var43 = 0; var43 < 4; ++var43) {
                             int lx = var43 + var11 * 4;
-                            int lz = 0 + var12 * 4;
                             int y = yStart * 8 + var13 * 8 + var32;
-                            if (y < minY || y >= maxY) continue;
                             double var46 = 0.25D;
                             double var48 = var35;
                             double var50 = (var37 - var35) * var46;
@@ -412,12 +503,12 @@ public class BetaChunkProvider {
                                     var55 = (var53 < 0.5D && y >= var7 - 1) ? BETA_ICE : BETA_WATER_STILL;
                                 }
                                 if (var48 > 0.0D) var55 = BETA_STONE;
-                                setMainBlock(lx, lz + var52, y, (byte) var55);
+                                setMainBlock(lx, var52 + var12 * 4, y, (byte) var55);
                                 var48 += var50;
                             }
                             var35 += var39; var37 += var41;
                         }
-                        var16 += var24; var18 += var26; var20 += var28; var22 += var30;
+                        v16 += var24; v18 += var26; v20 += var28; v22 += var30;
                     }
                 }
             }
@@ -466,57 +557,6 @@ public class BetaChunkProvider {
         }
     }
 
-    public int getHeight(int x, int z) {
-        int cx = x >> 4, cz = z >> 4;
-        if (!columnGenerated || columnCX != cx || columnCZ != cz) generateColumn(cx, cz);
-        int lx = x & 15, lz = z & 15;
-
-        // Extend upward: keep probing sections above the highest known one
-        // to trigger on-demand generation via generateSection(). Extend until
-        // we hit air (density drops to 0, no section created) so the first
-        // getHeight call generates ALL needed sections; the remaining 255
-        // calls in generateBaseTerrain hit the cache with zero extensions.
-        // Dependencies: setMainBlock(val=0) does NOT create HashMap entries —
-        // this is how we detect air. Do not change that behavior.
-        if (maxSectionCY >= 0) {
-            int initialMaxCY = maxSectionCY;
-            while (true) {
-                int probeCY = maxSectionCY + 1;
-                int probeY = (probeCY << 4) + 8;
-                int beforeProbeCY = maxSectionCY;
-                getBetaBlock(x, z, probeY);
-                // No new section created → density dropped to 0, terrain ended
-                if (maxSectionCY <= beforeProbeCY) break;
-                // Verify the new section actually has a block at this XZ column
-                byte[] sec = columnSections.get(maxSectionCY);
-                boolean hasSolid = false;
-                if (sec != null) {
-                    for (int ly = 0; ly < 16; ly++) {
-                        if (sec[sectionIdx(lx, ly, lz)] != 0) { hasSolid = true; break; }
-                    }
-                }
-                if (!hasSolid) break;
-                // Safety cap: don't extend more than 1024 sections (16K blocks)
-                if (maxSectionCY - initialMaxCY > 1024) break;
-            }
-        }
-
-        // Scan from the highest section downward
-        for (int cy = maxSectionCY; cy >= 0; cy--) {
-            byte[] sec = columnSections.get(cy);
-            if (sec == null) continue;
-            for (int ly = 15; ly >= 0; ly--) {
-                if (sec[sectionIdx(lx, ly, lz)] != 0) {
-                    return (cy << 4) | ly;
-                }
-            }
-        }
-        for (int y = -1; y >= -64; y--) {
-            if (evaluateDensity(x, y, z)) return y;
-        }
-        return 0;
-    }
-
     // ══════════════════════════════════════════════════════════════════
     //  TERRAIN GENERATION (exact Beta 1.7.3, writes to sections)
     // ══════════════════════════════════════════════════════════════════
@@ -530,19 +570,44 @@ public class BetaChunkProvider {
         for (int var11 = 0; var11 < var6; ++var11) {
             for (int var12 = 0; var12 < var6; ++var12) {
                 for (int var13 = 0; var13 < 256; ++var13) {
+                    double v16 = this.field_4180_q[((var11) * var10 + var12) * var9 + var13];
+                    double v18 = this.field_4180_q[((var11) * var10 + var12 + 1) * var9 + var13];
+                    double v20 = this.field_4180_q[((var11 + 1) * var10 + var12) * var9 + var13];
+                    double v22 = this.field_4180_q[((var11 + 1) * var10 + var12 + 1) * var9 + var13];
+
+                    // Short-circuit: if all 8 corners > 0, everything here is stone
+                    double v16p = this.field_4180_q[((var11) * var10 + var12) * var9 + var13 + 1];
+                    double v18p = this.field_4180_q[((var11) * var10 + var12 + 1) * var9 + var13 + 1];
+                    double v20p = this.field_4180_q[((var11 + 1) * var10 + var12) * var9 + var13 + 1];
+                    double v22p = this.field_4180_q[((var11 + 1) * var10 + var12 + 1) * var9 + var13 + 1];
+
+                    boolean allSolid = (v16 > 0) && (v18 > 0) && (v20 > 0) && (v22 > 0)
+                                    && (v16p > 0) && (v18p > 0) && (v20p > 0) && (v22p > 0);
+
+                    if (allSolid) {
+                        int yBase = var13 * 8;
+                        for (int var43 = 0; var43 < 4; ++var43) {
+                            int lx = var43 + var11 * 4;
+                            for (int var52 = 0; var52 < 4; ++var52) {
+                                int lz = var52 + var12 * 4;
+                                for (int var32 = 0; var32 < 8; ++var32) {
+                                    setSectionBlock(var3, lx, yBase + var32, lz, BETA_STONE);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Slow path: full interpolation
                     double var14 = 0.125D;
-                    double var16 = this.field_4180_q[((var11) * var10 + var12) * var9 + var13];
-                    double var18 = this.field_4180_q[((var11) * var10 + var12 + 1) * var9 + var13];
-                    double var20 = this.field_4180_q[((var11 + 1) * var10 + var12) * var9 + var13];
-                    double var22 = this.field_4180_q[((var11 + 1) * var10 + var12 + 1) * var9 + var13];
-                    double var24 = (this.field_4180_q[((var11) * var10 + var12) * var9 + var13 + 1] - var16) * var14;
-                    double var26 = (this.field_4180_q[((var11) * var10 + var12 + 1) * var9 + var13 + 1] - var18) * var14;
-                    double var28 = (this.field_4180_q[((var11 + 1) * var10 + var12) * var9 + var13 + 1] - var20) * var14;
-                    double var30 = (this.field_4180_q[((var11 + 1) * var10 + var12 + 1) * var9 + var13 + 1] - var22) * var14;
+                    double var24 = (v16p - v16) * var14;
+                    double var26 = (v18p - v18) * var14;
+                    double var28 = (v20p - v20) * var14;
+                    double var30 = (v22p - v22) * var14;
 
                     for (int var32 = 0; var32 < 8; ++var32) {
-                        double var33 = 0.25D, var35 = var16, var37 = var18;
-                        double var39 = (var20 - var16) * var33, var41 = (var22 - var18) * var33;
+                        double var33 = 0.25D, var35 = v16, var37 = v18;
+                        double var39 = (v20 - v16) * var33, var41 = (v22 - v18) * var33;
 
                         for (int var43 = 0; var43 < 4; ++var43) {
                             int lx = var43 + var11 * 4, lz = 0 + var12 * 4;
@@ -562,7 +627,7 @@ public class BetaChunkProvider {
                             }
                             var35 += var39; var37 += var41;
                         }
-                        var16 += var24; var18 += var26; var20 += var28; var22 += var30;
+                        v16 += var24; v18 += var26; v20 += var28; v22 += var30;
                     }
                 }
             }
@@ -579,7 +644,6 @@ public class BetaChunkProvider {
         this.stoneNoise = this.field_908_o.generateNoiseOctaves(this.stoneNoise,
                 (double)(var1*16), (double)(var2*16), 0.0D, 16, 16, 1, var6*2.0D, var6*2.0D, var6*2.0D);
 
-        // Find highest Y in the sections
         int topY = -1;
         for (int cy : var3.keySet()) {
             int secTop = (cy << 4) + 15;
@@ -676,7 +740,6 @@ public class BetaChunkProvider {
 
                 for (int var33 = 0; var33 < var6; ++var33) {
                     double var34 = 0.0D;
-                    // Use absolute Y index (var33+var3) so falloff works for any Y offset
                     double var36 = ((double)(var33 + var3) - var31) * 12.0D / var27;
                     if (var36 < 0.0D) var36 *= 4.0D;
                     double var38 = this.field_4184_e[var14] / 512.0D;
@@ -776,7 +839,6 @@ public class BetaChunkProvider {
         for (int i=0;i<sugarAttempts;++i){int sx=var4+rand.nextInt(16)+8,sz=var5+rand.nextInt(16)+8;int topY=worldGetTopY(sx,sz);if(topY>0)generateSugarCanePatch(world,sx,topY+1,sz);}
         generateSnow(world,cx,cz);
 
-        // Flush neighbor columns
         for (Map.Entry<Long, HashMap<Integer, byte[]>> entry : neighborBlocks.entrySet()) {
             long key = entry.getKey();
             int ncx = (int)(key>>32), ncz = (int)(key & 0xFFFFFFFFL);
@@ -878,7 +940,7 @@ public class BetaChunkProvider {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  DECORATION HELPERS (unchanged logic, section-based, no 2048 bounds)
+    //  DECORATION HELPERS
     // ══════════════════════════════════════════════════════════════════
 
     private void generateLake(com.voxel.World world,int cx,int cy,int cz,int blockId){
