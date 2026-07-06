@@ -1172,7 +1172,7 @@ public class ChunkManager {
 
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
-                int height = generator.getHeight(worldX + lx, worldZ + lz);
+                int height = generator.getHeight(worldX + lx, worldY, worldZ + lz);
                 // Cubic chunks: terrain can exist at ANY Y level (far lands, void extension).
                 // Only skip if the surface is entirely below this section.
                 if (height < worldY) continue;

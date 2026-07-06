@@ -127,14 +127,14 @@ public class BetaWorldGenerator extends WorldGenerator {
     }
     
     @Override
-    public int getHeight(int x, int z) {
+    public int getHeight(int x, int y, int z) {
         int cx = x >> 4;
         int cz = z >> 4;
         
         // Ensure column is generated
         ensureColumn(cx, cz);
         
-        return betaProvider.getHeight(x, z);
+        return betaProvider.getHeight(x, y, z);
     }
     
     @Override

@@ -20,7 +20,7 @@ public class WorldGenerator {
         return biomeProvider;
     }
 
-    public int getHeight(int x, int z) {
+    public int getHeight(int x, int y, int z) {
         return 64;
     }
 

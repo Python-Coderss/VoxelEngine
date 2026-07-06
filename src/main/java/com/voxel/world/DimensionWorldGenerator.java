@@ -121,7 +121,7 @@ public class DimensionWorldGenerator extends WorldGenerator {
     }
 
     @Override
-    public int getHeight(int x, int z) {
+    public int getHeight(int x, int y, int z) {
         if (dimension != DimensionType.OVERWORLD) {
             return dimension.baseHeight;
         }
@@ -422,7 +422,7 @@ public class DimensionWorldGenerator extends WorldGenerator {
         for (int dx = -3; dx <= 3; dx++) {
             for (int dz = -3; dz <= 3; dz++) {
                 if (dx == 0 && dz == 0) continue;
-                int neighborHeight = getHeight(x + dx, z + dz);
+                int neighborHeight = getHeight(x + dx, 0, z + dz);
                 if (neighborHeight < WATER_LEVEL) return true;
             }
         }
@@ -567,7 +567,7 @@ public class DimensionWorldGenerator extends WorldGenerator {
                 int dz = wz - SPAWN_Z;
                 if (dx * dx + dz * dz < 150) continue;
                 
-                int height = getHeight(wx, wz);
+                int height = getHeight(wx, 0, wz);
                 if (height < WATER_LEVEL + 1) continue;
                 if (cy != (height >> 4)) continue;
                 
