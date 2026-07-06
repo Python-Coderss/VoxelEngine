@@ -347,61 +347,30 @@ public class BetaChunkProvider {
     //  getHeight — with batch extension matching column-cache speed
     // ══════════════════════════════════════════════════════════════════
 
-    public int getHeight(int x, int z) {
-        int cx = x >> 4, cz = z >> 4;
+    public int getHeight(int x, int y, int z) {
+        int cx = x >> 4, cz = z >> 4, cy = y >> 4;
         if (!columnGenerated || columnCX != cx || columnCZ != cz) generateColumn(cx, cz);
-        int lx = x & 15, lz = z & 15;
 
-        // If the highest known section is at 127 (y=2047 at Far Lands),
-        // binary-search the terrain top with cheap evaluateDensity, then
-        // batch-generate all extended sections in ONE func_4061_a call.
-        // This matches the old column-cache speed: 1 noise pass per column.
-        if (maxSectionCY == 127) {
-            int probeCY = maxSectionCY + 1;
-            int probeY = probeCY << 4;
-            
-            // Quick check: is there stone at all above our current max?
-            if (evaluateDensity(x, probeY, z)) {
-                // Terrain continues upward. Binary search for the top
-                // using evaluateDensity (cheap, no modulation but accurate
-                // enough for probing at Far Lands).
-                int loCY = probeCY;
-                int hiCY = probeCY + 1;
-                // Exponentially bound upward
-                while (evaluateDensity(x, hiCY << 4, z) && hiCY - loCY < 512) {
-                    hiCY <<= 1;
-                    if (hiCY > loCY + 2048) { hiCY = loCY + 2048; break; }
-                }
-                // Binary search between loCY and hiCY
-                while (loCY < hiCY) {
-                    int midCY = (loCY + hiCY + 1) >>> 1;
-                    if (evaluateDensity(x, midCY << 4, z)) {
-                        loCY = midCY;
-                    } else {
-                        hiCY = midCY - 1;
-                    }
-                }
-                // Add 8-section margin (128 blocks) so evaluateDensity's minor
-                // inaccuracies at specific XZ positions don't clip terrain.
-                int topCY = loCY + 8;
-                
-                // Batch generate ALL sections from 128 to topCY in ONE call
-                generateSectionRange(128, topCY + 1);
-            }
+        // Far Lands: terrain is infinite at extreme coordinates.
+        // Skip the scan entirely — there is no "top" to find.
+        if (maxSectionCY == 127 || Math.abs(cx) >= 100000 || Math.abs(cy) >= 100000 || Math.abs(cz) >= 100000) {
+            return Integer.MAX_VALUE;
         }
 
-        // Scan from the highest section downward
-        for (int cy = maxSectionCY; cy >= 0; cy--) {
-            byte[] sec = columnSections.get(cy);
+        int lx = x & 15, lz = z & 15;
+
+        // Normal terrain: scan downward from highest known section.
+        for (int scanCY = maxSectionCY; scanCY >= 0; scanCY--) {
+            byte[] sec = columnSections.get(scanCY);
             if (sec == null) continue;
             for (int ly = 15; ly >= 0; ly--) {
                 if (sec[sectionIdx(lx, ly, lz)] != 0) {
-                    return (cy << 4) | ly;
+                    return (scanCY << 4) | ly;
                 }
             }
         }
-        for (int y = -1; y >= -64; y--) {
-            if (evaluateDensity(x, y, z)) return y;
+        for (int yy = -1; yy >= -64; yy--) {
+            if (evaluateDensity(x, yy, z)) return yy;
         }
         return 0;
     }
@@ -678,8 +647,21 @@ public class BetaChunkProvider {
                                 }
                                 if (var17 < var5 && var15 == 0) var15 = BETA_WATER_STILL;
                                 var14 = var13;
+                                // Require 8 blocks of air above for a proper surface.
+                                // If terrain is too close above, leave it as bare stone.
+                                byte topBlock = var15;
+                                if (topBlock != 0) {
+                                    boolean airAbove = true;
+                                    for (int above = 1; above <= 8; above++) {
+                                        if (getSectionBlock(var3, var8, var17 + above, var9) != 0) {
+                                            airAbove = false;
+                                            break;
+                                        }
+                                    }
+                                    if (!airAbove) topBlock = BETA_STONE;
+                                }
                                 setSectionBlock(var3, var8, var17, var9,
-                                    var17 >= var5 - 1 ? var15 : var16);
+                                    var17 >= var5 - 1 ? topBlock : var16);
                             } else if (var14 > 0) {
                                 --var14;
                                 setSectionBlock(var3, var8, var17, var9, var16);

@@ -60,7 +60,7 @@ public class AetherGenerator extends WorldGenerator {
     }
 
     @Override
-    public int getHeight(int x, int z) {
+    public int getHeight(int x, int y, int z) {
         return 128;
     }
 
