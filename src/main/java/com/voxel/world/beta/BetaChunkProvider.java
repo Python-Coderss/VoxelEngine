@@ -704,6 +704,16 @@ public class BetaChunkProvider {
         double var8 = 684.412D, var10 = 684.412D;
         double[] var12 = this.temperatures, var13 = this.humidities;
 
+        // func_4061_a is called with varying Y sample counts: 257 for the
+        // initial generateTerrain (5x257x5=6425) but potentially more for
+        // batch generateSectionRange (e.g. 5x400+x5). Null out any reused
+        // instance arrays that are too small so generateNoiseOctaves allocates
+        // fresh ones of the correct size.
+        int noiseSize = var5 * var6 * var7;
+        if (this.field_4185_d == null || this.field_4185_d.length < noiseSize) this.field_4185_d = null;
+        if (this.field_4184_e == null || this.field_4184_e.length < noiseSize) this.field_4184_e = null;
+        if (this.field_4183_f == null || this.field_4183_f.length < noiseSize) this.field_4183_f = null;
+
         this.field_4182_g = this.field_922_a.func_4109_a(this.field_4182_g, var2, var4, var5, var7, 1.121D, 1.121D, 0.5D);
         this.field_4181_h = this.field_921_b.func_4109_a(this.field_4181_h, var2, var4, var5, var7, 200.0D, 200.0D, 0.5D);
         this.field_4185_d = this.field_910_m.generateNoiseOctaves(this.field_4185_d,
