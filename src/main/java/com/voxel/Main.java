@@ -610,7 +610,7 @@ public class Main {
                 com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) locked;
                 if (!enemy.isDead()) {
                     // Auto-face the locked enemy
-                    Vector3f toTarget = new Vector3f(enemy.position).sub(player.getPosition());
+                    Vector3f toTarget = new Vector3f(enemy.getPosition()).sub(player.getPosition());
                     float targetYaw = (float) Math.toDegrees(Math.atan2(toTarget.x, toTarget.z));
                     // Smoothly rotate player toward target
                     float diff = ((targetYaw - playerYaw) + 180) % 360 - 180;
@@ -871,7 +871,7 @@ public class Main {
                 com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) e;
                 if (enemy.isDead()) continue;
 
-                Vector3f toEnemy = new Vector3f(enemy.position).sub(pPos);
+                Vector3f toEnemy = new Vector3f(enemy.getPosition()).sub(pPos);
                 float dist = toEnemy.length();
 
                 // Wider hit cone in combat mode (0.35 vs 0.45) for better feel
@@ -887,7 +887,7 @@ public class Main {
                         cameraShake = 0.8f + damage * 0.08f;
                         // Spawn damage number at enemy position
                         ctx.damageNumbers.add(new GameContext.DamageNumber(
-                            enemy.position.x, enemy.position.y + 2.0f, enemy.position.z,
+                            enemy.getPosX(), enemy.getPosY() + 2.0f, enemy.getPosZ(),
                             damage
                         ));
                         // Enemy telegraph: flash on hit
@@ -1168,7 +1168,7 @@ public class Main {
                         if (e instanceof com.voxel.entity.EnemyEntity) {
                             com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) e;
                             if (enemy.isDead()) continue;
-                            float dist = pPos.distance(enemy.position);
+                            float dist = pPos.distance(enemy.getPosition());
                             if (dist < nearestDist) {
                                 nearestDist = dist;
                                 nearestIdx = i;

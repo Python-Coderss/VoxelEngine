@@ -1,5 +1,6 @@
 package com.voxel.entity;
 
+import com.voxel.utils.FixedPoint;
 import com.voxel.world.DimensionType;
 import org.joml.Vector3f;
 import org.joml.Vector2f;
@@ -15,11 +16,17 @@ import java.util.Map;
 /**
  * Base class for all entities in the voxel engine.
  * Entities are composed of multiple ModelParts, similar to Minecraft.
+ * 
+ * Position uses 64-bit fixed-point (56-bit integer + 8-bit fractional)
+ * to maintain precision at extreme coordinates (Far Lands).
  */
 public class Entity {
     public int id;
-    public Vector3f position;
-    public Vector3f prevRenderPos;  // previous-frame position for interpolation
+    
+    // Fixed-point position (8 fractional bits: 1/256 ≈ 0.004 blocks resolution)
+    protected long posX, posY, posZ;
+    protected long prevX, prevY, prevZ;  // previous-frame position for interpolation
+    
     public Vector3f rotation; // x=pitch, y=yaw, z=roll
     public List<ModelPart> parts;
     /** The dimension this entity currently belongs to. */
@@ -39,18 +46,84 @@ public class Entity {
 
     public Entity(int id, Vector3f position) {
         this.id = id;
-        this.position = new Vector3f(position);
-        this.prevRenderPos = new Vector3f(position);
+        this.posX = FixedPoint.fromFloat(position.x);
+        this.posY = FixedPoint.fromFloat(position.y);
+        this.posZ = FixedPoint.fromFloat(position.z);
+        this.prevX = posX;
+        this.prevY = posY;
+        this.prevZ = posZ;
         this.parts = new ArrayList<>();
         this.rotation = new Vector3f(0, 0, 0);
+    }
+
+    // ── Fixed-point position accessors ────────────────────────────────
+    
+    /** Raw fixed-point X coordinate. */
+    public long getFixedX() { return posX; }
+    public long getFixedY() { return posY; }
+    public long getFixedZ() { return posZ; }
+    public long getFixedPrevX() { return prevX; }
+    public long getFixedPrevY() { return prevY; }
+    public long getFixedPrevZ() { return prevZ; }
+    
+    /** Float position (for distance/velocity calculations where small deltas are fine). */
+    public float getPosX() { return FixedPoint.toFloat(posX); }
+    public float getPosY() { return FixedPoint.toFloat(posY); }
+    public float getPosZ() { return FixedPoint.toFloat(posZ); }
+    
+    /** Full position as Vector3f. */
+    public Vector3f getPosition() {
+        return new Vector3f(FixedPoint.toFloat(posX), FixedPoint.toFloat(posY), FixedPoint.toFloat(posZ));
+    }
+    
+    /** Set position from floats (e.g., from Player). */
+    public void setPosition(Vector3f p) {
+        this.posX = FixedPoint.fromFloat(p.x);
+        this.posY = FixedPoint.fromFloat(p.y);
+        this.posZ = FixedPoint.fromFloat(p.z);
+    }
+    
+    /** Set position from doubles. */
+    public void setPositionD(double x, double y, double z) {
+        this.posX = FixedPoint.fromDouble(x);
+        this.posY = FixedPoint.fromDouble(y);
+        this.posZ = FixedPoint.fromDouble(z);
+    }
+    
+    /** Set position from longs (copy another entity's fixed-point). */
+    public void setFixedPos(long x, long y, long z) {
+        this.posX = x;
+        this.posY = y;
+        this.posZ = z;
+    }
+    
+    /** Add a delta in world units. */
+    public void addPosition(float dx, float dy, float dz) {
+        posX += FixedPoint.fromFloat(dx);
+        posY += FixedPoint.fromFloat(dy);
+        posZ += FixedPoint.fromFloat(dz);
+    }
+    
+    /** Add a fixed-point delta directly. */
+    public void addFixed(long dx, long dy, long dz) {
+        posX += dx;
+        posY += dy;
+        posZ += dz;
+    }
+    
+    /** Snapshot current position to prevX/Y/Z for interpolation. */
+    public void snapshotPrev() {
+        prevX = posX;
+        prevY = posY;
+        prevZ = posZ;
     }
 
     /** Interpolated position for smooth rendering between logic ticks. */
     public Vector3f getInterpolatedPosition(float partialTicks) {
         return new Vector3f(
-            prevRenderPos.x + (position.x - prevRenderPos.x) * partialTicks,
-            prevRenderPos.y + (position.y - prevRenderPos.y) * partialTicks,
-            prevRenderPos.z + (position.z - prevRenderPos.z) * partialTicks
+            FixedPoint.lerpToFloat(prevX, posX, partialTicks),
+            FixedPoint.lerpToFloat(prevY, posY, partialTicks),
+            FixedPoint.lerpToFloat(prevZ, posZ, partialTicks)
         );
     }
 
