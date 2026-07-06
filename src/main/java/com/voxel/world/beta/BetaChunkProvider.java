@@ -46,7 +46,7 @@ public class BetaChunkProvider {
     private final int veDandelion, veRose, veTallGrass, veDeadBush;
     private final int veCactus, vePumpkin;
     private final int veCoalOre, veIronOre, veGoldOre;
-    private final int veDiamondOre, veRedstoneOre, veLapisOre;
+    private final int veDiamondOre, veRedstoneOre, veLapisOre, veGlowstone;
     private final int veSugarCane, veClay, veCobblestone, veMossyCobble;
     private final int veChest, veSpawner;
     private final int[] veSnowLevels;
@@ -79,6 +79,7 @@ public class BetaChunkProvider {
     private static final byte BETA_DEAD_BUSH = 32;
     private static final byte BETA_CACTUS = 81;
     private static final byte BETA_PUMPKIN = 86;
+    private static final byte BETA_GLOWSTONE = 89;
 
     private BetaWorldChunkManager worldChunkManager;
     private int[] biomesForGeneration;
@@ -168,7 +169,7 @@ public class BetaChunkProvider {
                               int veDandelion, int veRose, int veTallGrass, int veDeadBush,
                               int veCactus, int vePumpkin,
                               int veCoalOre, int veIronOre, int veGoldOre,
-                              int veDiamondOre, int veRedstoneOre, int veLapisOre,
+                              int veDiamondOre, int veRedstoneOre, int veLapisOre, int veGlowstone,
                               int veSugarCane, int veClay, int veCobblestone, int veMossyCobble,
                               int veChest, int veSpawner, int[] veSnowLevels) {
         this.worldSeed = seed;
@@ -193,6 +194,7 @@ public class BetaChunkProvider {
         this.veCoalOre = veCoalOre; this.veIronOre = veIronOre;
         this.veGoldOre = veGoldOre; this.veDiamondOre = veDiamondOre;
         this.veRedstoneOre = veRedstoneOre; this.veLapisOre = veLapisOre;
+        this.veGlowstone = veGlowstone;
         this.veSugarCane = veSugarCane; this.veClay = veClay;
         this.veCobblestone = veCobblestone; this.veMossyCobble = veMossyCobble;
         this.veChest = veChest; this.veSpawner = veSpawner;
@@ -522,6 +524,7 @@ public class BetaChunkProvider {
             case BETA_DIAMOND_ORE: return veDiamondOre;
             case BETA_REDSTONE_ORE:return veRedstoneOre;
             case BETA_LAPIS_ORE:   return veLapisOre;
+            case BETA_GLOWSTONE:   return veGlowstone;
             default:               return 0;
         }
     }
@@ -799,6 +802,9 @@ public class BetaChunkProvider {
         for (int i = 0; i < 8; ++i)  { genOreVein(world, var4+rand.nextInt(16), rand.nextInt(16), var5+rand.nextInt(16), veRedstoneOre, 7); }
         for (int i = 0; i < 1; ++i)  { genOreVein(world, var4+rand.nextInt(16), rand.nextInt(16), var5+rand.nextInt(16), veDiamondOre, 7); }
         for (int i = 0; i < 1; ++i)  { genOreVein(world, var4+rand.nextInt(16), rand.nextInt(16)+rand.nextInt(16), var5+rand.nextInt(16), veLapisOre, 6); }
+        // Glowstone ore: copious amounts across the full column for Far Lands lighting
+        int glowMaxY = Math.max(128, (maxSectionCY + 1) << 4);
+        for (int i = 0; i < 60; ++i) { genOreVein(world, var4+rand.nextInt(16), rand.nextInt(glowMaxY), var5+rand.nextInt(16), veGlowstone, 12); }
 
         double var11 = 0.5D;
         int treeBase = (int)((this.mobSpawnerNoise.func_806_a((double)var4*var11, (double)var5*var11)/8.0D+rand.nextDouble()*4.0D+4.0D)/3.0D);

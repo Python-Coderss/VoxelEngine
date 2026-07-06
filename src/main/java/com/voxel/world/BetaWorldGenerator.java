@@ -81,6 +81,7 @@ public class BetaWorldGenerator extends WorldGenerator {
         int veDiamondOre = findOr(blockDataManager, "diamond_ore", veStone);
         int veRedstoneOre = findOr(blockDataManager, "redstone_ore", veStone);
         int veLapisOre = findOr(blockDataManager, "lapis_ore", veStone);
+        int veGlowstone = findOr(blockDataManager, "glowstone", veStone);
         int veCobblestone = findOr(blockDataManager, "cobblestone", veStone);
         int veMossyCobble = findOr(blockDataManager, "mossy_cobblestone", veCobblestone);
         int veChest = findOr(blockDataManager, "chest", 0);
@@ -100,7 +101,7 @@ public class BetaWorldGenerator extends WorldGenerator {
             veDandelion, veRose, veTallGrass, veDeadBush,
             veCactus, vePumpkin,
             veCoalOre, veIronOre, veGoldOre,
-            veDiamondOre, veRedstoneOre, veLapisOre,
+            veDiamondOre, veRedstoneOre, veLapisOre, veGlowstone,
             veSugarCane, veClay, veCobblestone, veMossyCobble,
             veChest, veSpawner, veSnowLevels
         );
