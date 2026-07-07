@@ -25,7 +25,10 @@ public final class DroppedItem {
     public static final float SPIN_RAD_PER_SEC = (float)(15.0 * 2.0 * Math.PI / 60.0);
 
     public final String itemId;
-    public final float baseX, baseZ; // immutable per item — set at spawn, never written again
+    /** Horizontal position. Mutable — encased fans can push items sideways.
+     *  Volatile so the render thread's buildUpload sees consistent values. */
+    public volatile float baseX;
+    public volatile float baseZ;
     /** Vertical center of the item. Mutable per frame (gravity fall), then locked by `grounded`.
      *  Declared volatile so the render thread's {@code buildUpload} reads each tick see a
      *  consistent, JMM-visible value without re-acquiring the manager's monitor. */

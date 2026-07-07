@@ -59,6 +59,8 @@ public class GameContext {
     public CraftingManager craftingManager;
     /** Tracks items dropped in the world from block breaks. Hover + auto-pickup. */
     public DroppedItemManager droppedItemManager;
+    /** Create-inspired encased fans: push dropped items along their facing when powered. */
+    public EncasedFanSystem encasedFanSystem;
 
     // --- Player ---
     public Player player;

@@ -84,6 +84,8 @@ public class FurnaceManager {
         addSmelting("stone", "stone", 1, 10.0f);
         // sand -> glass
         addSmelting("sand", "glass", 1, 6.0f);
+        // cobblestone -> stone
+        addSmelting("cobblestone", "stone", 1, 8.0f);
         // oak_log -> charcoal
         addSmelting("oak_log", "charcoal", 1, 8.0f);
         // iron_ore smelting

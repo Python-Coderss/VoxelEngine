@@ -176,6 +176,65 @@ public class DroppedItemManager {
     }
 
     /**
+     * Push all dropped items caught inside an encased-fan beam.
+     * The beam occupies the {@code length} voxels adjacent to the fan at
+     * ({@code fanX},{@code fanY},{@code fanZ}) along direction ({@code dx},{@code dy},{@code dz}).
+     * Items are moved by {@code delta} voxels this tick (caller pre-scales by dt);
+     * movement stops against solid blocks. After moving to a new column the item
+     * re-searches for ground beneath it so it settles naturally.
+     */
+    public void pushBeam(int fanX, int fanY, int fanZ, int dx, int dy, int dz, int length, float delta) {
+        if (delta <= 0f || length <= 0) return;
+        synchronized (items) {
+            for (DroppedItem di : items) {
+                if (!di.alive) continue;
+                int ix = (int) Math.floor(di.baseX);
+                int iy = (int) Math.floor(di.baseY);
+                int iz = (int) Math.floor(di.baseZ);
+                // Distance along the beam (1..length) and alignment with the beam column
+                int along = (ix - fanX) * dx + (iy - fanY) * dy + (iz - fanZ) * dz;
+                if (along < 1 || along > length) continue;
+                if (dx == 0 && ix != fanX) continue;
+                if (dy == 0 && iy != fanY) continue;
+                if (dz == 0 && iz != fanZ) continue;
+
+                float nx = di.baseX + dx * delta;
+                float ny = di.baseY + dy * delta;
+                float nz = di.baseZ + dz * delta;
+                // Don't push items into solid blocks
+                if (ctx.world != null &&
+                    ctx.world.getVoxel((int) Math.floor(nx), (int) Math.floor(ny), (int) Math.floor(nz)) != 0) {
+                    continue;
+                }
+                boolean columnChanged = (int) Math.floor(nx) != ix || (int) Math.floor(nz) != iz;
+                di.baseX = nx;
+                di.baseZ = nz;
+                if (dy != 0) {
+                    di.baseY = ny;
+                    di.grounded = false;
+                }
+                if (columnChanged || dy != 0) {
+                    // Re-anchor to the ground beneath the new column
+                    GroundResult ground = findGroundBelow((int) Math.floor(di.baseX), (int) Math.floor(di.baseZ), di.baseY + 1.0f);
+                    di.grounded = false;
+                    di.vy = 0f;
+                    if (ground.found) {
+                        di.groundTopY = ground.groundTopY;
+                        di.supportBlockX = (int) Math.floor(di.baseX);
+                        di.supportBlockY = ground.supportBlockY;
+                        di.supportBlockZ = (int) Math.floor(di.baseZ);
+                        di.hasSupportBlock = true;
+                        di.restY = ground.groundTopY + di.hoverHeight + 0.5f * DROPPED_ITEM_SCALE;
+                    } else {
+                        di.hasSupportBlock = false;
+                        di.restY = Float.NEGATIVE_INFINITY;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Per-tick update: integrate gravity for in-flight drops, then pickup check.
      *
      *  - Falling items: integrate vy with terminal-velocity cap, advance baseY; snap to
