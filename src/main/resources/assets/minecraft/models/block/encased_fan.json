@@ -1,0 +1,11 @@
+{
+    "textures": {
+        "up": "furnace_top",
+        "down": "furnace_top",
+        "north": "planks_oak",
+        "south": "planks_oak",
+        "west": "planks_oak",
+        "east": "planks_oak",
+        "particle": "furnace_top"
+    }
+}

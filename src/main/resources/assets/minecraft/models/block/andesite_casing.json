@@ -1,0 +1,11 @@
+{
+    "textures": {
+        "up": "stone_andesite",
+        "down": "stone_andesite",
+        "north": "planks_oak",
+        "south": "planks_oak",
+        "west": "planks_oak",
+        "east": "planks_oak",
+        "particle": "planks_oak"
+    }
+}

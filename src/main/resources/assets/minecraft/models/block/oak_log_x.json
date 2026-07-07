@@ -1,0 +1,11 @@
+{
+    "textures": {
+        "west": "log_oak_top",
+        "east": "log_oak_top",
+        "north": "log_oak",
+        "south": "log_oak",
+        "up": "log_oak",
+        "down": "log_oak",
+        "particle": "log_oak"
+    }
+}
