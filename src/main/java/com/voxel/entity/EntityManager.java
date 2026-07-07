@@ -116,32 +116,11 @@ public class EntityManager {
             useFpCulling = false;
         }
 
-        // ── First pass: count visible entities (fixed-point culling) ──
-        int visibleCount = 0;
-        for (Entity e : entities) {
-            if (activeDimension != null && e.dimension != activeDimension) continue;
-            if (useFpCulling) {
-                // Fixed-point distance: immune to float32 precision loss at extreme coords.
-                // Per-axis early-out prevents dx*dx overflow at Far Lands (>11.9M blocks).
-                long ix = FixedPoint.lerp(e.getFixedPrevX(), e.getFixedX(), partialTicks);
-                long iy = FixedPoint.lerp(e.getFixedPrevY(), e.getFixedY(), partialTicks);
-                long iz = FixedPoint.lerp(e.getFixedPrevZ(), e.getFixedZ(), partialTicks);
-                long dx = ix - camFpX, dy = iy - camFpY, dz = iz - camFpZ;
-                if (Math.abs(dx) > CULL_FP || Math.abs(dy) > CULL_FP || Math.abs(dz) > CULL_FP) continue;
-                if (dx * dx + dy * dy + dz * dz > CULL_DIST_SQ_FP) continue;
-            } else if (cameraPos != null) {
-                // Legacy float fallback (no player available)
-                Vector3f rp = e.getInterpolatedPosition(partialTicks);
-                float dx = rp.x - cameraPos.x;
-                float dy = rp.y - cameraPos.y;
-                float dz = rp.z - cameraPos.z;
-                if (dx * dx + dy * dy + dz * dz > CULL_BLOCKS * CULL_BLOCKS) continue;
-            }
-            visibleCount++;
-        }
-
-        java.nio.ByteBuffer entityBuffer = MemoryUtil.memAlloc(visibleCount * ENTITY_STRIDE * 4);
+        // ── Single pass: cull, collect, and upload in one iteration ──
+        // (avoids the two-pass race where entity positions change between count and write)
+        java.nio.ByteBuffer entityBuffer = MemoryUtil.memAlloc(entities.size() * ENTITY_STRIDE * 4);
         List<ModelPart> allParts = new ArrayList<>();
+        int writtenCount = 0;
 
         for (Entity entity : entities) {
             if (activeDimension != null && entity.dimension != activeDimension) continue;
@@ -173,8 +152,8 @@ public class EntityManager {
                 if (dx * dx + dy * dy + dz * dz > CULL_BLOCKS * CULL_BLOCKS) continue;
             }
 
+            int partCount = entity.parts != null ? entity.parts.size() : 0;
             int partOffset = allParts.size();
-            int partCount = entity.parts.size();
 
             // ── Buffer-relative position: subtract worldOffset in fixed-point BEFORE float ──
             float relX, relY, relZ;
@@ -224,15 +203,21 @@ public class EntityManager {
             entityBuffer.putFloat(entity.tintColor.z);
             entityBuffer.putFloat(entity.tintAmount);
             entityBuffer.putFloat(0.0f); // Padding for 64-byte alignment
-            allParts.addAll(entity.parts);
+            if (entity.parts != null) allParts.addAll(entity.parts);
+            writtenCount++;
         }
-        entityBuffer.flip();
-        glNamedBufferSubData(entitySSBO, 0, entityBuffer);
+        if (writtenCount > 0) {
+            entityBuffer.limit(writtenCount * ENTITY_STRIDE * 4);
+            entityBuffer.position(0);
+            glNamedBufferSubData(entitySSBO, 0, entityBuffer);
+        }
         MemoryUtil.memFree(entityBuffer);
 
         if (!allParts.isEmpty()) {
-            java.nio.ByteBuffer partBuffer = MemoryUtil.memAlloc(allParts.size() * PART_STRIDE * 4);
-            for (ModelPart part : allParts) {
+            int partUploadCount = Math.min(allParts.size(), MAX_PARTS);
+            java.nio.ByteBuffer partBuffer = MemoryUtil.memAlloc(partUploadCount * PART_STRIDE * 4);
+            for (int i = 0; i < partUploadCount; i++) {
+                ModelPart part = allParts.get(i);
                 partBuffer.putFloat(part.offset.x).putFloat(part.offset.y).putFloat(part.offset.z);
                 partBuffer.putFloat(part.uvOrigin.x); // UV Origin U
                 
