@@ -36,6 +36,9 @@ public class EntityManager {
     // Buffer bounds (REGION_SIZE=128 * CHUNK_SIZE=16 = 2048), valid range [0, 2047] in fixed-point
     private static final long BUF_MAX_FP = 2047L * FixedPoint.SCALE;
 
+    /** Number of entities actually uploaded last frame (after dimension filter + culling). */
+    private int uploadedEntityCount = 0;
+
     public EntityManager() {
         this.entities = new ArrayList<>();
         setupBuffers();
@@ -248,6 +251,7 @@ public class EntityManager {
             glNamedBufferSubData(entitySSBO, 0, entityBuffer);
         }
         MemoryUtil.memFree(entityBuffer);
+        uploadedEntityCount = writtenCount;
 
         if (!allParts.isEmpty()) {
             int partUploadCount = Math.min(allParts.size(), MAX_PARTS);
@@ -281,6 +285,12 @@ public class EntityManager {
     
     public int getEntityCount() {
         return entities.size();
+    }
+
+    /** Returns the number of entities actually uploaded to the GPU last frame
+     *  (after dimension filtering and culling). Use this for the shader's entity count. */
+    public int getUploadedEntityCount() {
+        return uploadedEntityCount;
     }
 
     /**
