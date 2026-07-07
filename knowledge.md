@@ -160,6 +160,8 @@ Reads `renderTexture` back via `glGetTextureImage`, Y-flips, saves timestamped P
 | 119-126 | vegetation/decorative | 127 | aether_portal_ew |
 | 130-141 | staple blocks | 200-205 | stairs |
 | 206-210 | slabs | 211 | torch |
+| 259 | sticky piston head | 260-261 | horizontal oak logs |
+| 262 | andesite_casing | 263 | encased_fan |
 
 ## Important Patterns
 

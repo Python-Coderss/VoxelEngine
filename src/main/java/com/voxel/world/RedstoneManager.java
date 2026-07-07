@@ -35,7 +35,7 @@ public class RedstoneManager {
     public static final int BLOCK_PISTON              = 31;
     public static final int BLOCK_STICKY_PISTON       = 32;
     public static final int BLOCK_PISTON_HEAD_NORMAL  = 33;
-    public static final int BLOCK_PISTON_HEAD_STICKY  = 34;
+    public static final int BLOCK_PISTON_HEAD_STICKY  = 259; // was 34, which is registered to poppy
 
     // Direction constants (stored in extra data bits 0-3)
     private static final int DIR_DOWN  = 0;
@@ -665,9 +665,10 @@ public class RedstoneManager {
         int hx = x + off[0], hy = y + off[1], hz = z + off[2];
 
         int headBlock = world.getVoxel(hx, hy, hz);
-        // If the head position is already occupied by a pushable block, push the chain
-        if (headBlock > 0 && !headBlockOccupiedBy(hx, hy, hz, dir)) {
-            // Try to push blocks in front
+        if (headBlock > 0) {
+            // Never overwrite unpushable blocks (obsidian, other piston heads, ...)
+            if (isUnpushable(headBlock)) return;
+            // Try to push the chain of blocks in front
             if (!pushBlocks(hx, hy, hz, dir)) return;  // can't push, abort
         }
 
@@ -698,16 +699,6 @@ public class RedstoneManager {
                 RedstoneLogger.log("piston/pull", x, y, z, "sticky pulling block " + frontBlock + " from (" + fx + "," + fy + "," + fz + ")");
             }
         }
-    }
-
-    /**
-     * Checks if the head position is occupied by a non-pushable block
-     * or is the extended arm of another piston.
-     */
-    private boolean headBlockOccupiedBy(int hx, int hy, int hz, int dir) {
-        int block = world.getVoxel(hx, hy, hz);
-        if (block == 0) return false;
-        return isUnpushable(block);
     }
 
     /**
