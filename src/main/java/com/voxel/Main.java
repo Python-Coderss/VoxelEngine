@@ -1051,7 +1051,7 @@ public class Main {
             glProgramUniform3f(computeProgram, 2, rx, 0, rz);
             glProgramUniform3f(computeProgram, 3, ux, uy, uz);
             glProgramUniform1f(computeProgram, 4, worldTime);
-            glProgramUniform1i(computeProgram, 5, entityManager.getEntityCount(activeDimension));
+            glProgramUniform1i(computeProgram, 5, entityManager.getUploadedEntityCount());
             atmosphereRenderer.upload(worldTime, activeDimension);
             glProgramUniform1i(computeProgram, atmosphereRenderer.locDimensionID(), activeDimension.id);
             // Upload world sliding window offset
