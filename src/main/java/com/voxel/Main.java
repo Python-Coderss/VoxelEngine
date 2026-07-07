@@ -117,9 +117,6 @@ public class Main {
     // Reusable direct buffer for SDF SSBO sub-uploads (avoid per-frame alloc).
     private java.nio.ByteBuffer reusableSdfBuf;
 
-    // Reusable Vector3f for entity upload worldOffset (avoid per-frame alloc).
-    private final Vector3f reusableWorldOffset = new Vector3f();
-
 
 
     public FloatBuffer persistentPlBuf; // Persistent FloatBuffer for pointLightSSBO (no per-frame alloc)
@@ -986,9 +983,11 @@ public class Main {
             // World buffer origin — used to make all shader positions buffer-relative
             int wox = world.getOffsetX(), woy = world.getOffsetY(), woz = world.getOffsetZ();
 
-            reusableWorldOffset.set(wox, woy, woz);
+            // Upload entities with exact fixed-point worldOffset (bypass float precision loss)
             entityManager.uploadToGPU(activeDimension, cameraPos, logicPartialTicks, player,
-                reusableWorldOffset);
+                (long)wox * FixedPoint.SCALE,
+                (long)woy * FixedPoint.SCALE,
+                (long)woz * FixedPoint.SCALE);
 
             persistentPlBuf.rewind();
             glNamedBufferSubData(pointLightSSBO, 0, persistentPlBuf);
