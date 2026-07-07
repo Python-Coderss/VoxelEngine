@@ -33,6 +33,9 @@ public class EntityManager {
     private static final long CULL_FP = (long) CULL_BLOCKS * FixedPoint.SCALE;  // per-axis threshold in fixed-point
     private static final long CULL_DIST_SQ_FP = CULL_FP * CULL_FP;  // squared distance threshold
 
+    // Buffer bounds (REGION_SIZE=128 * CHUNK_SIZE=16 = 2048), valid range [0, 2047] in fixed-point
+    private static final long BUF_MAX_FP = 2047L * FixedPoint.SCALE;
+
     public EntityManager() {
         this.entities = new ArrayList<>();
         setupBuffers();
@@ -99,6 +102,14 @@ public class EntityManager {
         boolean hasOffset = worldOffset != null;
         boolean hasPlayer = player != null;
 
+        // ── Pre-compute worldOffset in fixed-point (frame-constant) ──
+        long woxFp = 0, woyFp = 0, wozFp = 0;
+        if (hasOffset) {
+            woxFp = FixedPoint.fromFloat(worldOffset.x);
+            woyFp = FixedPoint.fromFloat(worldOffset.y);
+            wozFp = FixedPoint.fromFloat(worldOffset.z);
+        }
+
         // ── Fixed-point camera position for culling ──────────────────
         long camFpX, camFpY, camFpZ;
         boolean useFpCulling;
@@ -156,19 +167,25 @@ public class EntityManager {
             int partOffset = allParts.size();
 
             // ── Buffer-relative position: subtract worldOffset in fixed-point BEFORE float ──
-            float relX, relY, relZ;
+            // Also cull entities whose absolute position doesn't fall within the current
+            // world buffer [worldOffset, worldOffset+2047]. Entities outside the buffer
+            // produce out-of-range relative coords that break the shader ray marcher.
+            long rxFp, ryFp, rzFp;
             if (hasOffset) {
-                long woxFp = FixedPoint.fromFloat(worldOffset.x);
-                long woyFp = FixedPoint.fromFloat(worldOffset.y);
-                long wozFp = FixedPoint.fromFloat(worldOffset.z);
-                relX = FixedPoint.toFloat(ix - woxFp);
-                relY = FixedPoint.toFloat(iy - woyFp);
-                relZ = FixedPoint.toFloat(iz - wozFp);
+                rxFp = ix - woxFp;
+                ryFp = iy - woyFp;
+                rzFp = iz - wozFp;
+                // Buffer-relative coords must be within [0, 2047] (bufSize = REGION_SIZE * CHUNK_SIZE = 2048)
+                if (rxFp < 0 || ryFp < 0 || rzFp < 0
+                    || rxFp > BUF_MAX_FP || ryFp > BUF_MAX_FP || rzFp > BUF_MAX_FP) continue;
             } else {
-                relX = FixedPoint.toFloat(ix);
-                relY = FixedPoint.toFloat(iy);
-                relZ = FixedPoint.toFloat(iz);
+                rxFp = ix;
+                ryFp = iy;
+                rzFp = iz;
             }
+            float relX = FixedPoint.toFloat(rxFp);
+            float relY = FixedPoint.toFloat(ryFp);
+            float relZ = FixedPoint.toFloat(rzFp);
             entityBuffer.putFloat(relX).putFloat(relY).putFloat(relZ);
 
             float health = 1.0f;
