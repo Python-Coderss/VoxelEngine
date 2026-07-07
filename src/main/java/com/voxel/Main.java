@@ -1020,12 +1020,25 @@ public class Main {
                 cfy = FixedPoint.camFrac(py);
                 cfz = FixedPoint.camFrac(pz);
             } else {
-                cbx = (int)Math.floor(cameraPos.x) - wox;
-                cby = (int)Math.floor(cameraPos.y) - woy;
-                cbz = (int)Math.floor(cameraPos.z) - woz;
-                cfx = (float)(cameraPos.x - Math.floor(cameraPos.x));
-                cfy = (float)(cameraPos.y - Math.floor(cameraPos.y));
-                cfz = (float)(cameraPos.z - Math.floor(cameraPos.z));
+                // Third-person/orbit/fixed: compute camera offset from player in float
+                // (delta is small, within float precision), then apply to player's
+                // fixed-point position to get exact camera position at any world coord.
+                Vector3f playerPosF = player.getInterpolatedPosition(playerPartialTicks);
+                float camDeltaX = cameraPos.x - playerPosF.x;
+                float camDeltaY = cameraPos.y - playerPosF.y;
+                float camDeltaZ = cameraPos.z - playerPosF.z;
+                long pxTP = FixedPoint.lerp(player.getFixedPrevX(), player.getFixedX(), playerPartialTicks);
+                long pyTP = FixedPoint.lerp(player.getFixedPrevY(), player.getFixedY(), playerPartialTicks);
+                long pzTP = FixedPoint.lerp(player.getFixedPrevZ(), player.getFixedZ(), playerPartialTicks);
+                long camX_fp = pxTP + FixedPoint.fromFloat(camDeltaX);
+                long camY_fp = pyTP + FixedPoint.fromFloat(camDeltaY);
+                long camZ_fp = pzTP + FixedPoint.fromFloat(camDeltaZ);
+                cbx = FixedPoint.camBlock(camX_fp) - wox;
+                cby = FixedPoint.camBlock(camY_fp) - woy;
+                cbz = FixedPoint.camBlock(camZ_fp) - woz;
+                cfx = FixedPoint.camFrac(camX_fp);
+                cfy = FixedPoint.camFrac(camY_fp);
+                cfz = FixedPoint.camFrac(camZ_fp);
             }
             if (cameraShake > 0.01f) {
                 cfx += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
