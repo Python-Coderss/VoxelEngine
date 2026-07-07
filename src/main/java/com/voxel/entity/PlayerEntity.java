@@ -51,13 +51,18 @@ public class PlayerEntity extends Entity {
 
     public void syncFromPlayer(Player player, float yaw, float pitch, boolean visible, float dt) {
         if (!visible) {
+            // Hidden position: set Y to sentinel so uploadToGPU culls this entity.
+            // Must also snapshot prevX/Y/Z so FixedPoint.lerp() doesn't interpolate
+            // between stale prev values and the hidden position.
             posX = FixedPoint.fromFloat(player.getPosition().x);
             posY = FixedPoint.fromFloat(HIDDEN_Y);
             posZ = FixedPoint.fromFloat(player.getPosition().z);
+            snapshotPrev();
             return;
         }
 
         setPosition(player.getPosition());
+        snapshotPrev();
 
         // --- Cinematic Story Mode Animation ---
         Vector3f vel = player.getVelocity();
