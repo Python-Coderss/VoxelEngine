@@ -29,6 +29,10 @@ public class EntityManager {
     // Part data size: offset(3) + uvU(1) + absOffset(3) + uvV(1) + size(3) + texIdx(1) + rotation(3) + mapping(1) = 16 floats (64 bytes)
     private static final int PART_STRIDE = 16;
 
+    private static final int CULL_BLOCKS = 64;  // entities beyond this distance from camera are skipped
+    private static final long CULL_FP = (long) CULL_BLOCKS * FixedPoint.SCALE;  // per-axis threshold in fixed-point
+    private static final long CULL_DIST_SQ_FP = CULL_FP * CULL_FP;  // squared distance threshold
+
     public EntityManager() {
         this.entities = new ArrayList<>();
         setupBuffers();
@@ -85,24 +89,53 @@ public class EntityManager {
      * Uploads entities to GPU with a world-space offset subtraction so the shader
      * receives buffer-relative positions (always in [0,2048] range → full float32
      * precision at any world coordinate).
+     *
+     * All position math (culling + buffer-relative translation) is done in 64-bit
+     * fixed-point (56.8) to avoid float32 precision loss at extreme coordinates.
      */
     public void uploadToGPU(DimensionType activeDimension, Vector3f cameraPos,
                             float partialTicks, com.voxel.Player player,
                             Vector3f worldOffset) {
-        float cullDistSq = cameraPos != null ? 64.0f * 64.0f : Float.MAX_VALUE; // 64-block radius
+        boolean hasOffset = worldOffset != null;
+        boolean hasPlayer = player != null;
 
-        // First pass: count visible entities
+        // ── Fixed-point camera position for culling ──────────────────
+        long camFpX, camFpY, camFpZ;
+        boolean useFpCulling;
+        if (hasPlayer) {
+            // Use player's fixed-point position for the camera (eye height added).
+            // Uses logic-clock partialTicks; the slight mismatch vs player's own
+            // clock is irrelevant for ±64-block culling.
+            camFpX = FixedPoint.lerp(player.getFixedPrevX(), player.getFixedX(), partialTicks);
+            camFpY = FixedPoint.lerp(player.getFixedPrevY(), player.getFixedY(), partialTicks)
+                    + FixedPoint.fromFloat(1.6f);  // PLAYER_EYE_HEIGHT
+            camFpZ = FixedPoint.lerp(player.getFixedPrevZ(), player.getFixedZ(), partialTicks);
+            useFpCulling = true;
+        } else {
+            camFpX = camFpY = camFpZ = 0;
+            useFpCulling = false;
+        }
+
+        // ── First pass: count visible entities (fixed-point culling) ──
         int visibleCount = 0;
         for (Entity e : entities) {
             if (activeDimension != null && e.dimension != activeDimension) continue;
-            if (cameraPos != null) {
-                // PlayerEntity: use player interpolation unless hidden (first-person mode)
-                boolean peUsePlayer = player != null && e instanceof com.voxel.entity.PlayerEntity && e.getFixedY() > HIDDEN_Y_FP;
-                Vector3f rp = peUsePlayer ? player.getInterpolatedPosition() : e.getInterpolatedPosition(partialTicks);
+            if (useFpCulling) {
+                // Fixed-point distance: immune to float32 precision loss at extreme coords.
+                // Per-axis early-out prevents dx*dx overflow at Far Lands (>11.9M blocks).
+                long ix = FixedPoint.lerp(e.getFixedPrevX(), e.getFixedX(), partialTicks);
+                long iy = FixedPoint.lerp(e.getFixedPrevY(), e.getFixedY(), partialTicks);
+                long iz = FixedPoint.lerp(e.getFixedPrevZ(), e.getFixedZ(), partialTicks);
+                long dx = ix - camFpX, dy = iy - camFpY, dz = iz - camFpZ;
+                if (Math.abs(dx) > CULL_FP || Math.abs(dy) > CULL_FP || Math.abs(dz) > CULL_FP) continue;
+                if (dx * dx + dy * dy + dz * dz > CULL_DIST_SQ_FP) continue;
+            } else if (cameraPos != null) {
+                // Legacy float fallback (no player available)
+                Vector3f rp = e.getInterpolatedPosition(partialTicks);
                 float dx = rp.x - cameraPos.x;
                 float dy = rp.y - cameraPos.y;
                 float dz = rp.z - cameraPos.z;
-                if (dx * dx + dy * dy + dz * dz > cullDistSq) continue;
+                if (dx * dx + dy * dy + dz * dz > CULL_BLOCKS * CULL_BLOCKS) continue;
             }
             visibleCount++;
         }
@@ -112,33 +145,40 @@ public class EntityManager {
 
         for (Entity entity : entities) {
             if (activeDimension != null && entity.dimension != activeDimension) continue;
-            // PlayerEntity: use the physics Player's self-timed interpolated position,
-            // but only when NOT hidden (first-person mode sets y to -10000).
-            Vector3f renderPos;
-            if (player != null && entity instanceof com.voxel.entity.PlayerEntity && entity.getFixedY() > HIDDEN_Y_FP) {
-                renderPos = player.getInterpolatedPosition();
+
+            boolean isVisiblePlayer = hasPlayer && entity instanceof com.voxel.entity.PlayerEntity && entity.getFixedY() > HIDDEN_Y_FP;
+
+            // ── Interpolated position (fixed-point) ──────────────────
+            long ix, iy, iz;
+            if (isVisiblePlayer) {
+                // PlayerEntity: use physics Player's fixed-point interpolation
+                ix = FixedPoint.lerp(player.getFixedPrevX(), player.getFixedX(), partialTicks);
+                iy = FixedPoint.lerp(player.getFixedPrevY(), player.getFixedY(), partialTicks);
+                iz = FixedPoint.lerp(player.getFixedPrevZ(), player.getFixedZ(), partialTicks);
             } else {
-                renderPos = entity.getInterpolatedPosition(partialTicks);
+                ix = FixedPoint.lerp(entity.getFixedPrevX(), entity.getFixedX(), partialTicks);
+                iy = FixedPoint.lerp(entity.getFixedPrevY(), entity.getFixedY(), partialTicks);
+                iz = FixedPoint.lerp(entity.getFixedPrevZ(), entity.getFixedZ(), partialTicks);
             }
-            if (cameraPos != null) {
-                float dx = renderPos.x - cameraPos.x;
-                float dy = renderPos.y - cameraPos.y;
-                float dz = renderPos.z - cameraPos.z;
-                if (dx * dx + dy * dy + dz * dz > cullDistSq) continue;
+
+            // ── Culling (fixed-point) ───────────────────────────────
+            if (useFpCulling) {
+                long dx = ix - camFpX, dy = iy - camFpY, dz = iz - camFpZ;
+                if (Math.abs(dx) > CULL_FP || Math.abs(dy) > CULL_FP || Math.abs(dz) > CULL_FP) continue;
+                if (dx * dx + dy * dy + dz * dz > CULL_DIST_SQ_FP) continue;
+            } else if (cameraPos != null) {
+                // Legacy float fallback
+                float fx = FixedPoint.toFloat(ix), fy = FixedPoint.toFloat(iy), fz = FixedPoint.toFloat(iz);
+                float dx = fx - cameraPos.x, dy = fy - cameraPos.y, dz = fz - cameraPos.z;
+                if (dx * dx + dy * dy + dz * dz > CULL_BLOCKS * CULL_BLOCKS) continue;
             }
+
             int partOffset = allParts.size();
             int partCount = entity.parts.size();
 
-            // position (interpolated), converted to buffer-relative in fixed-point BEFORE float
-            // to preserve full 56-bit precision at extreme coordinates.
-            // PlayerEntity uses renderPos (player's own wall-clock interpolation, already correct)
-            // since the player is always near the camera; float subtraction is fine for it.
+            // ── Buffer-relative position: subtract worldOffset in fixed-point BEFORE float ──
             float relX, relY, relZ;
-            boolean isVisiblePlayer = player != null && entity instanceof com.voxel.entity.PlayerEntity && entity.getFixedY() > HIDDEN_Y_FP;
-            if (worldOffset != null && !isVisiblePlayer) {
-                long ix = FixedPoint.lerp(entity.getFixedPrevX(), entity.getFixedX(), partialTicks);
-                long iy = FixedPoint.lerp(entity.getFixedPrevY(), entity.getFixedY(), partialTicks);
-                long iz = FixedPoint.lerp(entity.getFixedPrevZ(), entity.getFixedZ(), partialTicks);
+            if (hasOffset) {
                 long woxFp = FixedPoint.fromFloat(worldOffset.x);
                 long woyFp = FixedPoint.fromFloat(worldOffset.y);
                 long wozFp = FixedPoint.fromFloat(worldOffset.z);
@@ -146,11 +186,9 @@ public class EntityManager {
                 relY = FixedPoint.toFloat(iy - woyFp);
                 relZ = FixedPoint.toFloat(iz - wozFp);
             } else {
-                relX = renderPos.x; relY = renderPos.y; relZ = renderPos.z;
-                if (worldOffset != null && isVisiblePlayer) {
-                    // PlayerEntity: float subtraction is fine (camera always near player)
-                    relX -= worldOffset.x; relY -= worldOffset.y; relZ -= worldOffset.z;
-                }
+                relX = FixedPoint.toFloat(ix);
+                relY = FixedPoint.toFloat(iy);
+                relZ = FixedPoint.toFloat(iz);
             }
             entityBuffer.putFloat(relX).putFloat(relY).putFloat(relZ);
 
