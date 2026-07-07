@@ -1,5 +1,6 @@
 package com.voxel.entity;
 
+import com.voxel.utils.FixedPoint;
 import com.voxel.world.DimensionType;
 import org.joml.Vector3f;
 import org.lwjgl.system.MemoryUtil;
@@ -128,10 +129,28 @@ public class EntityManager {
             int partOffset = allParts.size();
             int partCount = entity.parts.size();
 
-            // position (interpolated), optionally converted to buffer-relative space
-            float relX = renderPos.x, relY = renderPos.y, relZ = renderPos.z;
-            if (worldOffset != null) {
-                relX -= worldOffset.x; relY -= worldOffset.y; relZ -= worldOffset.z;
+            // position (interpolated), converted to buffer-relative in fixed-point BEFORE float
+            // to preserve full 56-bit precision at extreme coordinates.
+            // PlayerEntity uses renderPos (player's own wall-clock interpolation, already correct)
+            // since the player is always near the camera; float subtraction is fine for it.
+            float relX, relY, relZ;
+            boolean isVisiblePlayer = player != null && entity instanceof com.voxel.entity.PlayerEntity && entity.getFixedY() > HIDDEN_Y_FP;
+            if (worldOffset != null && !isVisiblePlayer) {
+                long ix = FixedPoint.lerp(entity.getFixedPrevX(), entity.getFixedX(), partialTicks);
+                long iy = FixedPoint.lerp(entity.getFixedPrevY(), entity.getFixedY(), partialTicks);
+                long iz = FixedPoint.lerp(entity.getFixedPrevZ(), entity.getFixedZ(), partialTicks);
+                long woxFp = FixedPoint.fromFloat(worldOffset.x);
+                long woyFp = FixedPoint.fromFloat(worldOffset.y);
+                long wozFp = FixedPoint.fromFloat(worldOffset.z);
+                relX = FixedPoint.toFloat(ix - woxFp);
+                relY = FixedPoint.toFloat(iy - woyFp);
+                relZ = FixedPoint.toFloat(iz - wozFp);
+            } else {
+                relX = renderPos.x; relY = renderPos.y; relZ = renderPos.z;
+                if (worldOffset != null && isVisiblePlayer) {
+                    // PlayerEntity: float subtraction is fine (camera always near player)
+                    relX -= worldOffset.x; relY -= worldOffset.y; relZ -= worldOffset.z;
+                }
             }
             entityBuffer.putFloat(relX).putFloat(relY).putFloat(relZ);
 
