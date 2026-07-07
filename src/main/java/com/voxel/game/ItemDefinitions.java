@@ -111,7 +111,9 @@ public class ItemDefinitions {
         registerBlock("redstone_wire", "Redstone Wire", 29, "redstone_dust_dot");
         registerBlock("redstone_lamp_on", "Redstone Lamp (lit)", 30, "redstone_lamp_on");
         // --- Pistons ---
-        registerBlock("piston", "Piston", 33, "piston_top_normal");
+        // Block 31 is the piston BASE (32 = sticky base). Blocks 33/259 are the
+        // extended heads and must never be placed directly by the player.
+        registerBlock("piston", "Piston", 31, "piston_top_normal");
         
         registerBlock("sticky_piston", "Sticky Piston", 32, "piston_top_sticky");
         // --- Biome/Decoration Blocks ---
@@ -215,6 +217,9 @@ public class ItemDefinitions {
         registerBlock("diamond_block", "Diamond Block", 139, "diamond_block");
         registerBlock("emerald_block", "Emerald Block", 140, "emerald_block");
         registerBlock("lapis_block", "Lapis Lazuli Block", 141, "lapis_block");
+        // --- Create-inspired blocks ---
+        registerBlock("andesite_casing", "Andesite Casing", 262, "stone_andesite");
+        registerBlock("encased_fan", "Encased Fan", 263, "furnace_top");
         // --- Stair blocks ---
         registerBlock("oak_stairs", "Oak Stairs", 200, "planks_oak");
         registerBlock("cobblestone_stairs", "Cobblestone Stairs", 201, "cobblestone");
@@ -254,6 +259,10 @@ public class ItemDefinitions {
         registerAlias("piston_block", "piston");
         registerAlias("empty_bucket", "bucket");
         registerAlias("iron_bucket", "bucket");
+        // --- Drop mappings for orientation variants (no separate items) ---
+        // Horizontal oak logs (260/261) drop the regular oak_log item.
+        blockItemByBlockId.put(260, "oak_log");
+        blockItemByBlockId.put(261, "oak_log");
     }
 
     private void registerBlock(String itemId, String displayName, int blockId, String textureName) {

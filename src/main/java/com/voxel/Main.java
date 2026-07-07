@@ -330,6 +330,9 @@ public class Main {
         // playerInventory because pickup uses ctx.playerInventory.addItem().
         ctx.droppedItemManager = new com.voxel.game.DroppedItemManager(ctx);
 
+        // Encased fans (Create-inspired): push dropped items when redstone-powered
+        ctx.encasedFanSystem = new com.voxel.game.EncasedFanSystem(ctx);
+
         blockInteraction = new BlockInteraction(ctx);
         portalSystem = new PortalSystem(ctx, blockInteraction);
         commandProcessor = new CommandProcessor(ctx);
@@ -638,6 +641,11 @@ public class Main {
         // Tick furnaces (smelting logic)
         if (ctx.furnaceManager != null && ctx.chunkManager != null) {
             ctx.furnaceManager.tickAll(ctx.chunkManager, dt);
+        }
+
+        // Tick encased fans (push dropped items along the fan's facing when powered)
+        if (ctx.encasedFanSystem != null) {
+            ctx.encasedFanSystem.tick(dt);
         }
 
         // Tick dropped items (bob animation + auto-pickup when player walks over)
@@ -1692,6 +1700,11 @@ public class Main {
         blockRegistry.register("piston_head_normal", 33);
         shaderBlockRegistry.register(33, 33);
         blockDataManager.registerBlock(33, "piston_head_normal", textureManager, "src/main/resources/assets/minecraft/models/block");
+        // Sticky piston head. RedstoneManager previously pointed at ID 34, which is
+        // registered to poppy — extended sticky pistons placed a flower as their head.
+        blockRegistry.register("piston_head_sticky", 259);
+        shaderBlockRegistry.register(259, 259);
+        blockDataManager.registerBlock(259, "piston_head_sticky", textureManager, "src/main/resources/assets/minecraft/models/block");
         // --- Aether Dimension Blocks ---
         String aetherModels = "src/main/resources/assets/aether/models/block";
         blockRegistry.register("aether_grass_block", 100);
@@ -1995,6 +2008,28 @@ public class Main {
         blockRegistry.register("lapis_block", 141);
         shaderBlockRegistry.register(141, 141);
         blockDataManager.registerBlock(141, "lapis_block", textureManager, mcModels);
+
+        // --- Orientable log variants (axis chosen from clicked face at placement) ---
+        blockRegistry.register("oak_log_x", 260);
+        shaderBlockRegistry.register(260, 260);
+        blockDataManager.registerBlock(260, "oak_log_x", textureManager, mcModels);
+        blockRegistry.register("oak_log_z", 261);
+        shaderBlockRegistry.register(261, 261);
+        blockDataManager.registerBlock(261, "oak_log_z", textureManager, mcModels);
+
+        // --- Create-inspired blocks ---
+        blockRegistry.register("andesite_casing", 262);
+        shaderBlockRegistry.register(262, 262);
+        blockDataManager.registerBlock(262, "andesite_casing", textureManager, mcModels);
+        blockRegistry.register("encased_fan", 263);
+        shaderBlockRegistry.register(263, 263);
+        blockDataManager.registerBlock(263, "encased_fan", textureManager, mcModels);
+        shaderBlockRegistry.registerDirectional(263, com.voxel.utils.Direction.DOWN, 263, 0);
+        shaderBlockRegistry.registerDirectional(263, com.voxel.utils.Direction.UP, 263, 1);
+        shaderBlockRegistry.registerDirectional(263, com.voxel.utils.Direction.NORTH, 263, 2);
+        shaderBlockRegistry.registerDirectional(263, com.voxel.utils.Direction.SOUTH, 263, 3);
+        shaderBlockRegistry.registerDirectional(263, com.voxel.utils.Direction.WEST, 263, 4);
+        shaderBlockRegistry.registerDirectional(263, com.voxel.utils.Direction.EAST, 263, 5);
 
         // --- Stair Blocks ---
         blockRegistry.register("oak_stairs", 200);

@@ -325,6 +325,50 @@ public class CraftingManager {
             {"oak_planks", null, "oak_planks"},
             {"oak_planks", "oak_planks", "oak_planks"}
         }, "chest", 1);
+
+        // ===== Redstone extras =====
+
+        // Redstone Torch: dust over stick
+        addRecipe2x2(new String[][]{
+            {"redstone_wire", null},
+            {"stick", null}
+        }, "redstone_torch", 1);
+
+        // Redstone Block: 9 dust
+        addRecipe3x3(new String[][]{
+            {"redstone_wire", "redstone_wire", "redstone_wire"},
+            {"redstone_wire", "redstone_wire", "redstone_wire"},
+            {"redstone_wire", "redstone_wire", "redstone_wire"}
+        }, "redstone_block", 1);
+
+        // Redstone Lamp: glowstone core, dust cross
+        addRecipe3x3(new String[][]{
+            {null, "redstone_wire", null},
+            {"redstone_wire", "glowstone", "redstone_wire"},
+            {null, "redstone_wire", null}
+        }, "redstone_lamp", 1);
+
+        // ===== Create-inspired recipes =====
+
+        // Andesite from diorite + cobblestone
+        addRecipe2x2(new String[][]{
+            {"diorite", "cobblestone"},
+            {null, null}
+        }, "andesite", 2);
+
+        // Andesite Casing: planks frame + andesite
+        addRecipe3x3(new String[][]{
+            {"oak_planks", "andesite", "oak_planks"},
+            {"andesite", "oak_planks", "andesite"},
+            {"oak_planks", "andesite", "oak_planks"}
+        }, "andesite_casing", 4);
+
+        // Encased Fan: iron frame + casing + redstone
+        addRecipe3x3(new String[][]{
+            {"oak_planks", "iron_ingot", "oak_planks"},
+            {"iron_ingot", "andesite_casing", "iron_ingot"},
+            {"oak_planks", "redstone_wire", "oak_planks"}
+        }, "encased_fan", 1);
     }
     
     private void addRecipe2x2(String[][] pattern, String resultItemId, int resultCount) {

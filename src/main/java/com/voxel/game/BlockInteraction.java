@@ -111,9 +111,29 @@ public class BlockInteraction {
     }
 
     public void breakBlock(int x, int y, int z, int blockId, boolean collectDrop) {
+        // Piston base: read facing before the block is cleared so we can remove the head
+        int pistonDir = -1;
+        if (blockId == 31 || blockId == 32) {
+            pistonDir = (ctx.world.getRawVoxel(x, y, z) >> 16) & 0x7;
+            if (pistonDir > 5) pistonDir = 1;
+        }
         if (!ctx.chunkManager.setVoxel(x, y, z, 0)) return;
+        // Remove an extended piston head left behind by the broken base
+        if (pistonDir >= 0) {
+            int[][] off = {{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}};
+            int hx = x + off[pistonDir][0], hy = y + off[pistonDir][1], hz = z + off[pistonDir][2];
+            int head = ctx.world.getVoxel(hx, hy, hz);
+            if (head == 33 || head == 259) {
+                ctx.chunkManager.setVoxel(hx, hy, hz, 0);
+                ctx.redstoneManager.onBlockChanged(hx, hy, hz);
+                ctx.redstoneManager.notifyNeighbors(hx, hy, hz);
+            }
+        }
         ctx.redstoneManager.onBlockChanged(x, y, z);
         ctx.redstoneManager.notifyNeighbors(x, y, z);
+        if (ctx.encasedFanSystem != null) {
+            ctx.encasedFanSystem.onBlockChanged(x, y, z);
+        }
         // Notify fluid manager: block removed may open space for fluid to flow into
         if (ctx.fluidManager != null) {
             ctx.fluidManager.notifyBlockChanged(x, y, z);
@@ -390,8 +410,15 @@ public class BlockInteraction {
         int existing = ctx.world.getVoxel(px, py, pz);
         if (existing != 0) return;
         if (intersectsPlayer(px, py, pz)) return;
-        if (def.blockId == 31 || def.blockId == 32) {
-            // Piston blocks: encode facing direction into extra data
+        int placeBlockId = def.blockId;
+        // Orientable logs: choose the axis variant from the clicked face normal
+        if (placeBlockId == 5) { // oak_log -> 5 (Y axis), 260 (X axis), 261 (Z axis)
+            int ldx = hit[0] - px, ldz = hit[2] - pz;
+            if (ldx != 0) placeBlockId = 260;
+            else if (ldz != 0) placeBlockId = 261;
+        }
+        if (placeBlockId == 31 || placeBlockId == 32 || placeBlockId == 263) {
+            // Directional blocks (pistons, encased fan): encode facing into extra data
             int dx = hit[0] - px;
             int dy = hit[1] - py;
             int dz = hit[2] - pz;
@@ -403,13 +430,16 @@ public class BlockInteraction {
             } else {
                 direction = dz > 0 ? 3 : 2;  // south or north
             }
-            if (!ctx.chunkManager.setVoxelWithData(px, py, pz, def.blockId, direction)) return;
+            if (!ctx.chunkManager.setVoxelWithData(px, py, pz, placeBlockId, direction)) return;
         } else {
-            if (!ctx.chunkManager.setVoxel(px, py, pz, def.blockId)) return;
+            if (!ctx.chunkManager.setVoxel(px, py, pz, placeBlockId)) return;
         }
 
         ctx.redstoneManager.onBlockChanged(px, py, pz);
         ctx.redstoneManager.notifyNeighbors(px, py, pz);
+        if (ctx.encasedFanSystem != null) {
+            ctx.encasedFanSystem.onBlockChanged(px, py, pz);
+        }
         // Notify fluid manager: block placed next to fluids may affect flow
         if (ctx.fluidManager != null) {
             ctx.fluidManager.notifyBlockChanged(px, py, pz);
