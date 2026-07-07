@@ -99,16 +99,35 @@ public class EntityManager {
     public void uploadToGPU(DimensionType activeDimension, Vector3f cameraPos,
                             float partialTicks, com.voxel.Player player,
                             Vector3f worldOffset) {
-        boolean hasOffset = worldOffset != null;
-        boolean hasPlayer = player != null;
-
-        // ── Pre-compute worldOffset in fixed-point (frame-constant) ──
-        long woxFp = 0, woyFp = 0, wozFp = 0;
-        if (hasOffset) {
-            woxFp = FixedPoint.fromFloat(worldOffset.x);
-            woyFp = FixedPoint.fromFloat(worldOffset.y);
-            wozFp = FixedPoint.fromFloat(worldOffset.z);
+        if (worldOffset != null) {
+            uploadToGPU(activeDimension, cameraPos, partialTicks, player,
+                FixedPoint.fromFloat(worldOffset.x),
+                FixedPoint.fromFloat(worldOffset.y),
+                FixedPoint.fromFloat(worldOffset.z));
+        } else {
+            uploadToGPU(activeDimension, cameraPos, partialTicks, player, 0, 0, 0, false);
         }
+    }
+
+    /**
+     * Uploads entities to GPU with exact fixed-point world-space offset.
+     * Use this overload directly to avoid float precision loss at extreme coords
+     * (>16.7M blocks, where float can't represent exact integers).
+     *
+     * @param offsetXFp  world-space X offset in fixed-point (e.g., (long)wox * FixedPoint.SCALE)
+     * @param offsetYFp  world-space Y offset in fixed-point
+     * @param offsetZFp  world-space Z offset in fixed-point
+     */
+    public void uploadToGPU(DimensionType activeDimension, Vector3f cameraPos,
+                            float partialTicks, com.voxel.Player player,
+                            long offsetXFp, long offsetYFp, long offsetZFp) {
+        uploadToGPU(activeDimension, cameraPos, partialTicks, player, offsetXFp, offsetYFp, offsetZFp, true);
+    }
+
+    private void uploadToGPU(DimensionType activeDimension, Vector3f cameraPos,
+                            float partialTicks, com.voxel.Player player,
+                            long woxFp, long woyFp, long wozFp, boolean hasOffset) {
+        boolean hasPlayer = player != null;
 
         // ── Fixed-point camera position for culling ──────────────────
         long camFpX, camFpY, camFpZ;
