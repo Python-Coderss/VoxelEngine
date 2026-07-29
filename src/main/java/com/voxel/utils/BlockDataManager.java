@@ -109,6 +109,11 @@ public class BlockDataManager {
         public String preferredTool = "hand";
         public int miningTier = 0; // 0=hand, 1=wood, 2=stone, 3=iron, 4=diamond
 
+        // Direction this block faces: 0=down, 1=up, 2=north, 3=south, 4=west, 5=east.
+        // Used by the shader to remap UVs for blocks with directional textures (e.g. pistons).
+        // Default 1 (up) = standard mapping.
+        public int facingDirection = 1;
+
         // List of AABBs for the block shape (each float[6]:
         // minx,miny,minz,maxx,maxy,maxz in 0-1 range)
         public List<float[]> aabbs = new ArrayList<>();
@@ -509,8 +514,9 @@ public class BlockDataManager {
                 buffer.put(data.albedo.getBlue());
                 int packedAnim = (data.isAnimated ? 1 : 0) | ((data.frameCount & 0x3F) << 1) 
                         | ((data.diffuse & 0xFF) << 8)
-                        | ((data.distortion & 0xFF) << 16);
-                buffer.put(packedAnim); // bit0: anim, bit1-6: frames, bit8-15: diffuse, bit16-23: distortion
+                        | ((data.distortion & 0xFF) << 16)
+                        | ((data.facingDirection & 0x7) << 24);
+                buffer.put(packedAnim); // bit0: anim, bit1-6: frames, bit8-15: diffuse, bit16-23: distortion, bit24-26: facingDir
             } else {
                 // Fill with -1 for unused IDs.
                 for (int j = 0; j < 12; j++)

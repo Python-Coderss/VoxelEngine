@@ -195,6 +195,35 @@ mat3 rotationMatrix(vec3 euler) {
     return rotateZ(euler.z) * rotateY(euler.y) * rotateX(euler.x);
 }
 
+// Remap full-block planar UVs for directional blocks based on facing direction.
+// faceType: 0=X-face, 1=Y-face, 2=Z-face.
+// facingDir: 0=down, 1=up, 2=north, 3=south, 4=west, 5=east.
+// Returns the remapped UV coordinate.
+vec2 remapDirectionalUV(vec2 uv, int faceType, int facingDir) {
+    float u = uv.x, v = uv.y;
+    if (facingDir == 2) { // NORTH
+        if (faceType == 0) return vec2(1.0 - v, 1.0 - u);  // X-face: swap + flip both
+        if (faceType == 1) return vec2(u, 1.0 - v);         // Y-face: flip V
+    }
+    if (facingDir == 3) { // SOUTH
+        if (faceType == 0) return vec2(v, u);               // X-face: swap
+    }
+    if (facingDir == 4) { // WEST
+        if (faceType == 1) return vec2(1.0 - v, 1.0 - u);   // Y-face: swap + flip both
+        if (faceType == 2) return vec2(1.0 - v, 1.0 - u);   // Z-face: swap + flip both
+    }
+    if (facingDir == 5) { // EAST
+        if (faceType == 1) return vec2(v, u);               // Y-face: swap
+        if (faceType == 2) return vec2(v, u);               // Z-face: swap
+    }
+    if (facingDir == 0) { // DOWN
+        if (faceType == 0) return vec2(u, 1.0 - v);  // X-face: flip V → head at bottom
+        if (faceType == 2) return vec2(u, 1.0 - v);  // Z-face: flip V → head at bottom
+    }
+    // default: standard mapping
+    return uv;
+}
+
 bool intersectOrientedBox(vec3 ro, vec3 rd, vec3 center, vec3 halfSize, mat3 rotation, out float hitT, out vec3 hitNormal, out vec3 hitLocalPos, out vec3 hitLocalNormal) {
     mat3 invRotation = transpose(rotation);
     vec3 localRo = invRotation * (ro - center);
@@ -964,6 +993,14 @@ void main() {
                 if (abs(n.x) > 0.5) uv = vec2(fract(hp.z), 1.0 - fract(hp.y));
                 else if (abs(n.y) > 0.5) uv = fract(hp.xz);
                 else uv = vec2(fract(hp.x), 1.0 - fract(hp.y));
+
+                // UV remapping for directional blocks (e.g. pistons) based on facing direction.
+                // d2.w bits 24-26 hold facing direction: 0=down,1=up,2=north,3=south,4=west,5=east.
+                int facingDir = (d2.w >> 24) & 0x7;
+                int faceType = (abs(n.x) > 0.5) ? 0 : ((abs(n.y) > 0.5) ? 1 : 2);
+                if (facingDir != 1) {
+                    uv = remapDirectionalUV(uv, faceType, facingDir);
+                }
             }
 
             // Animated texture: d2.w contains [isAnimated(bit0) | frameCount(bit1-6) | diffuse(bit8-15) | distortion(bit16-23)]

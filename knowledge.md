@@ -7,12 +7,12 @@ A Minecraft-style voxel engine built in Java with OpenGL 4.3+ compute shaders.
 - **Build system:** Maven (`./mvnw compile`)
 - **GLFW window:** 1280×720, titled "Voxel Engine"
 - **Entry point:** `com.voxel.Main` — single-class orchestrator (god-object, ~2100 lines)
-- **Launch script:** `launch_freebuff.bat`
+- **Launch script for the ai terminal coding agent that was used to make most of this project:** `launch_freebuff.bat`
 
 ## Architecture
 
 ```
-Main.java (god-object)
+Main.java (god-object) sorry I meant god.
 ├── Render Thread (OpenGL, input polling, render loop)
 │   ├── loop() — frame loop: uniforms → dispatch compute → quad blit → swap
 │   ├── tick() — game logic on a separate LogicThread
@@ -54,6 +54,8 @@ Main.java (god-object)
 - **Temp Light Pool:** byte[] for per-type BFS scalar intensity during propagation
 - **Lighting scale:** internal 0-15, stored as ×17 (0-255), ÷17 when reading back
 
+Recenters do happen to the buffer. in all axises.
+
 ### ChunkManager
 - Manages chunk loading/unloading around player
 - Cubic spiral sort: by Chebyshev distance `max(|dx|, |dz|)`, then angle from forward
@@ -79,6 +81,8 @@ Main.java (god-object)
 - **CraftingTableManager:** per-position 3×3 persistent grids
 - **FurnaceManager:** smelting with fuel/timer tracking
 - **ChestManager:** per-position persistent storage
+
+where is the canonical registry mentioned.
 
 ## Shader Pipeline
 
@@ -114,10 +118,10 @@ Main.java (god-object)
 | `/give <item> [amount]` | Give item to player |
 | `/slotclear [slot]` | Clear inventory slot |
 | `/spawn` | Teleport to spawn |
-| `/dimension <overworld\|nether\|end\|aether>` | Switch dimension |
+| `/dimension <overworld\|nether\|end\|aether>` | Switch dimension | also short form is /dim
 | `/list <items\|blocks\|commands>` | List registered items/blocks |
 | `/camera <follow\|orbit\|fixed>` | Change camera mode |
-| `/setuv <full\|half\|empty> <x> <y> [w] [h]` | Adjust heart UVs |
+| `/setuv <full\|half\|empty> <x> <y> [w] [h]` | Adjust heart UVs | that existed?
 | `/screenshot` | Save current frame as PNG to `screenshots/` |
 
 ## Dimensions
@@ -161,7 +165,7 @@ Reads `renderTexture` back via `glGetTextureImage`, Y-flips, saves timestamped P
 | 130-141 | staple blocks | 200-205 | stairs |
 | 206-210 | slabs | 211 | torch |
 | 259 | sticky piston head | 260-261 | horizontal oak logs |
-| 262 | andesite_casing | 263 | encased_fan |
+| 262 | andesite_casing | 263 | encased_fan | there should be more blocks am I wrong?
 
 ## Important Patterns
 

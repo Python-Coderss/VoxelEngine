@@ -1,5 +1,10 @@
 {
     "parent": "block/block",
+    "textures": {
+        "bottom": "piston_bottom",
+        "top": "piston_top_sticky",
+        "side": "piston_side"
+    },
     "elements": [
         {   "from": [ 0, 0, 0 ],
             "to": [ 16, 16, 16 ],

@@ -1679,24 +1679,59 @@ public class Main {
         blockDataManager.registerBlock(30, "redstone_lamp_on", textureManager, "src/main/resources/assets/minecraft/models/block", 0, 0, 255, 255);
         blockDataManager.setLightColor(30, 255, 220, 150);
         // --- Piston Blocks ---
-        blockRegistry.register("piston_normal", 31);
+        // Directional piston blocks: each direction has its own block ID and model.
+        // The model JSON assigns the piston-face texture to the correct face.
+        // Direction mapping: 0=down, 1=up, 2=north, 3=south, 4=west, 5=east.
+        // Normal piston (IDs 31, 264-268)
+        blockRegistry.register("piston_normal", 31);              // facing up
         shaderBlockRegistry.register(31, 31);
         blockDataManager.registerBlock(31, "piston_normal", textureManager, "src/main/resources/assets/minecraft/models/block");
-        shaderBlockRegistry.registerDirectional(31, com.voxel.utils.Direction.DOWN, 31, 0);
-        shaderBlockRegistry.registerDirectional(31, com.voxel.utils.Direction.UP, 31, 1);
-        shaderBlockRegistry.registerDirectional(31, com.voxel.utils.Direction.NORTH, 31, 2);
-        shaderBlockRegistry.registerDirectional(31, com.voxel.utils.Direction.SOUTH, 31, 3);
-        shaderBlockRegistry.registerDirectional(31, com.voxel.utils.Direction.WEST, 31, 4);
-        shaderBlockRegistry.registerDirectional(31, com.voxel.utils.Direction.EAST, 31, 5);
-        blockRegistry.register("sticky_piston", 32);
+        blockDataManager.blockRegistry.get(31).facingDirection = 0; // down
+        blockRegistry.register("piston_normal_down", 264);
+        shaderBlockRegistry.register(264, 264);
+        blockDataManager.registerBlock(264, "piston_normal_down", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.blockRegistry.get(264).facingDirection = 1; // up
+        blockRegistry.register("piston_normal_north", 265);
+        shaderBlockRegistry.register(265, 265);
+        blockDataManager.registerBlock(265, "piston_normal_north", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.blockRegistry.get(265).facingDirection = 2; // north
+        blockRegistry.register("piston_normal_south", 266);
+        shaderBlockRegistry.register(266, 266);
+        blockDataManager.registerBlock(266, "piston_normal_south", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.blockRegistry.get(266).facingDirection = 3; // south
+        blockRegistry.register("piston_normal_west", 267);
+        shaderBlockRegistry.register(267, 267);
+        blockDataManager.registerBlock(267, "piston_normal_west", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.blockRegistry.get(267).facingDirection = 4; // west
+        blockRegistry.register("piston_normal_east", 268);
+        shaderBlockRegistry.register(268, 268);
+        blockDataManager.registerBlock(268, "piston_normal_east", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.blockRegistry.get(268).facingDirection = 5; // east
+        // Sticky piston (IDs 32, 269-273)
+        blockRegistry.register("sticky_piston", 32);              // facing up
         shaderBlockRegistry.register(32, 32);
         blockDataManager.registerBlock(32, "sticky_piston", textureManager, "src/main/resources/assets/minecraft/models/block");
-        shaderBlockRegistry.registerDirectional(32, com.voxel.utils.Direction.DOWN, 32, 0);
-        shaderBlockRegistry.registerDirectional(32, com.voxel.utils.Direction.UP, 32, 1);
-        shaderBlockRegistry.registerDirectional(32, com.voxel.utils.Direction.NORTH, 32, 2);
-        shaderBlockRegistry.registerDirectional(32, com.voxel.utils.Direction.SOUTH, 32, 3);
-        shaderBlockRegistry.registerDirectional(32, com.voxel.utils.Direction.WEST, 32, 4);
-        shaderBlockRegistry.registerDirectional(32, com.voxel.utils.Direction.EAST, 32, 5);
+        blockDataManager.blockRegistry.get(32).facingDirection = 0; // down
+        blockRegistry.register("sticky_piston_down", 269);
+        shaderBlockRegistry.register(269, 269);
+        blockDataManager.registerBlock(269, "sticky_piston_down", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.blockRegistry.get(269).facingDirection = 1; // up
+        blockRegistry.register("sticky_piston_north", 270);
+        shaderBlockRegistry.register(270, 270);
+        blockDataManager.registerBlock(270, "sticky_piston_north", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.blockRegistry.get(270).facingDirection = 2; // north
+        blockRegistry.register("sticky_piston_south", 271);
+        shaderBlockRegistry.register(271, 271);
+        blockDataManager.registerBlock(271, "sticky_piston_south", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.blockRegistry.get(271).facingDirection = 3; // south
+        blockRegistry.register("sticky_piston_west", 272);
+        shaderBlockRegistry.register(272, 272);
+        blockDataManager.registerBlock(272, "sticky_piston_west", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.blockRegistry.get(272).facingDirection = 4; // west
+        blockRegistry.register("sticky_piston_east", 273);
+        shaderBlockRegistry.register(273, 273);
+        blockDataManager.registerBlock(273, "sticky_piston_east", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.blockRegistry.get(273).facingDirection = 5; // east
         blockRegistry.register("piston_head_normal", 33);
         shaderBlockRegistry.register(33, 33);
         blockDataManager.registerBlock(33, "piston_head_normal", textureManager, "src/main/resources/assets/minecraft/models/block");
