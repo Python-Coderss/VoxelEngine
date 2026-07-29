@@ -32,10 +32,39 @@ public class RedstoneManager {
     private static final int TORCH_COOLDOWN_TICKS = 2;  // Prevent rapid oscillation
 
     // ---- Piston Block IDs ----
+    // Directional piston base block IDs.
+    // Normal: 31(up), 264(down), 265(north), 266(south), 267(west), 268(east)
+    // Sticky: 32(up), 269(down), 270(north), 271(south), 272(west), 273(east)
     public static final int BLOCK_PISTON              = 31;
     public static final int BLOCK_STICKY_PISTON       = 32;
     public static final int BLOCK_PISTON_HEAD_NORMAL  = 33;
     public static final int BLOCK_PISTON_HEAD_STICKY  = 259; // was 34, which is registered to poppy
+
+    /** Returns true if the block ID is any piston base (normal or sticky, any direction). */
+    public static boolean isPistonBase(int blockId) {
+        return (blockId == 31 || blockId == 32) || (blockId >= 264 && blockId <= 273);
+    }
+
+    /**
+     * Returns the push direction for a piston base block ID.
+     * Direction: 0=down, 1=up, 2=north, 3=south, 4=west, 5=east.
+     */
+    public static int pistonDirectionFromBlockId(int blockId) {
+        switch (blockId) {
+            case 31: case 32:  return 1;  // up
+            case 264: case 269: return 0;  // down
+            case 265: case 270: return 2;  // north
+            case 266: case 271: return 3;  // south
+            case 267: case 272: return 4;  // west
+            case 268: case 273: return 5;  // east
+            default: return 1;
+        }
+    }
+
+    /** Returns true if the block ID is a normal (non-sticky) piston base. */
+    public static boolean isNormalPiston(int blockId) {
+        return blockId == 31 || (blockId >= 264 && blockId <= 268);
+    }
 
     // Direction constants (stored in extra data bits 0-3)
     private static final int DIR_DOWN  = 0;
@@ -152,7 +181,7 @@ public class RedstoneManager {
         int block = world.getVoxel(x, y, z);
         long key = pack(x, y, z);
 
-        boolean isPiston = (block == BLOCK_PISTON || block == BLOCK_STICKY_PISTON);
+        boolean isPiston = isPistonBase(block);
         boolean wasComponent = components.contains(key);
         boolean isComponent = isRedstoneComponent(block) || isPiston;
 
@@ -629,12 +658,10 @@ public class RedstoneManager {
         for (long key : components) {
             int x = unpackX(key), y = unpackY(key), z = unpackZ(key);
             int block = world.getVoxel(x, y, z);
-            if (block != BLOCK_PISTON && block != BLOCK_STICKY_PISTON) continue;
+            if (!isPistonBase(block)) continue;
 
-            // Read direction from extra data (bits 0-3)
-            int raw = world.getRawVoxel(x, y, z);
-            int dir = (raw >> 16) & 0x7;  // direction in bits 16-18
-            if (dir < 0 || dir > 5) dir = 1;  // default to up
+            // Derive direction from the directional block ID
+            int dir = pistonDirectionFromBlockId(block);
 
             int[] off = DIR_OFFSETS[dir];
             int hx = x + off[0], hy = y + off[1], hz = z + off[2];
@@ -646,10 +673,10 @@ public class RedstoneManager {
 
             if (isPowered && !hasHead) {
                 // Extend: push blocks and place head
-                extendPiston(x, y, z, dir, block == BLOCK_STICKY_PISTON, key);
+                extendPiston(x, y, z, dir, !isNormalPiston(block), key);
             } else if (!isPowered && hasHead) {
                 // Retract: remove head and pull for sticky
-                retractPiston(x, y, z, dir, block == BLOCK_STICKY_PISTON, key, headBlock, hx, hy, hz);
+                retractPiston(x, y, z, dir, !isNormalPiston(block), key, headBlock, hx, hy, hz);
             }
             // Track extended state
             pistonExtended.put(key, isPowered);

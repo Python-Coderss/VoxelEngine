@@ -111,12 +111,8 @@ public class BlockInteraction {
     }
 
     public void breakBlock(int x, int y, int z, int blockId, boolean collectDrop) {
-        // Piston base: read facing before the block is cleared so we can remove the head
-        int pistonDir = -1;
-        if (blockId == 31 || blockId == 32) {
-            pistonDir = (ctx.world.getRawVoxel(x, y, z) >> 16) & 0x7;
-            if (pistonDir > 5) pistonDir = 1;
-        }
+        // Piston base: derive facing direction from directional block ID before clearing
+        int pistonDir = getPistonDirection(blockId);
         if (!ctx.chunkManager.setVoxel(x, y, z, 0)) return;
         // Remove an extended piston head left behind by the broken base
         if (pistonDir >= 0) {
@@ -417,8 +413,8 @@ public class BlockInteraction {
             if (ldx != 0) placeBlockId = 260;
             else if (ldz != 0) placeBlockId = 261;
         }
-        if (placeBlockId == 31 || placeBlockId == 32 || placeBlockId == 263) {
-            // Directional blocks (pistons, encased fan): encode facing into extra data
+        if (placeBlockId == 31 || placeBlockId == 32) {
+            // Directional piston: place the correct directional variant block ID
             int dx = hit[0] - px;
             int dy = hit[1] - py;
             int dz = hit[2] - pz;
@@ -429,6 +425,21 @@ public class BlockInteraction {
                 direction = dy > 0 ? 1 : 0;  // up or down
             } else {
                 direction = dz > 0 ? 3 : 2;  // south or north
+            }
+            int dirBlockId = getDirectionalPistonId(placeBlockId, direction);
+            if (!ctx.chunkManager.setVoxel(px, py, pz, dirBlockId)) return;
+        } else if (placeBlockId == 263) {
+            // Encased fan: encode facing into extra data
+            int dx = hit[0] - px;
+            int dy = hit[1] - py;
+            int dz = hit[2] - pz;
+            int direction;
+            if (Math.abs(dx) >= Math.abs(dy) && Math.abs(dx) >= Math.abs(dz)) {
+                direction = dx > 0 ? 5 : 4;
+            } else if (Math.abs(dy) >= Math.abs(dz)) {
+                direction = dy > 0 ? 1 : 0;
+            } else {
+                direction = dz > 0 ? 3 : 2;
             }
             if (!ctx.chunkManager.setVoxelWithData(px, py, pz, placeBlockId, direction)) return;
         } else {
@@ -488,6 +499,38 @@ public class BlockInteraction {
      */
     private boolean isWaterBlock(int blockId) {
         return blockId == BLOCK_WATER || (blockId >= BLOCK_WATER_FLOWING_MIN && blockId <= BLOCK_WATER_FLOWING_MAX);
+    }
+
+    /**
+     * Maps a directional piston block ID (31/32 + direction variants 264-273) back
+     * to the direction constant. Returns -1 if not a piston base block.
+     * Direction: 0=down, 1=up, 2=north, 3=south, 4=west, 5=east.
+     */
+    public static int getPistonDirection(int blockId) {
+        switch (blockId) {
+            case 31: case 32:  return 1;  // default facing up
+            case 264: case 269: return 0;  // down
+            case 265: case 270: return 2;  // north
+            case 266: case 271: return 3;  // south
+            case 267: case 272: return 4;  // west
+            case 268: case 273: return 5;  // east
+            default: return -1;
+        }
+    }
+
+    /**
+     * Returns the directional block ID for placing a piston at the given direction.
+     * Maps base piston ID + direction (0=down,1=up,2=north,3=south,4=west,5=east) → directional block ID.
+     */
+    public static int getDirectionalPistonId(int baseBlockId, int direction) {
+        boolean isSticky = (baseBlockId == 32);
+        // dirMap[0]=normal piston, dirMap[1]=sticky piston
+        // Indexed by direction: 0=down, 1=up, 2=north, 3=south, 4=west, 5=east
+        int[][] dirMap = {
+            {264, 31, 265, 266, 267, 268},  // normal: down, up, north, south, west, east
+            {269, 32, 270, 271, 272, 273}   // sticky
+        };
+        return dirMap[isSticky ? 1 : 0][direction];
     }
 
     private boolean intersectsPlayer(int x, int y, int z) {

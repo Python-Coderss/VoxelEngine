@@ -1,0 +1,11 @@
+{
+    "textures": {
+        "east": "piston_bottom",
+        "west": "piston_top_sticky",
+        "up": "piston_side",
+        "down": "piston_side",
+        "north": "piston_side",
+        "south": "piston_side",
+        "particle": "piston_side"
+    }
+}

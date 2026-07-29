@@ -263,6 +263,17 @@ public class ItemDefinitions {
         // Horizontal oak logs (260/261) drop the regular oak_log item.
         blockItemByBlockId.put(260, "oak_log");
         blockItemByBlockId.put(261, "oak_log");
+        // Directional piston variants drop the regular piston items
+        blockItemByBlockId.put(264, "piston");
+        blockItemByBlockId.put(265, "piston");
+        blockItemByBlockId.put(266, "piston");
+        blockItemByBlockId.put(267, "piston");
+        blockItemByBlockId.put(268, "piston");
+        blockItemByBlockId.put(269, "sticky_piston");
+        blockItemByBlockId.put(270, "sticky_piston");
+        blockItemByBlockId.put(271, "sticky_piston");
+        blockItemByBlockId.put(272, "sticky_piston");
+        blockItemByBlockId.put(273, "sticky_piston");
     }
 
     private void registerBlock(String itemId, String displayName, int blockId, String textureName) {
