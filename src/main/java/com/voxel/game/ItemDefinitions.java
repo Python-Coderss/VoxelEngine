@@ -220,6 +220,8 @@ public class ItemDefinitions {
         // --- Create-inspired blocks ---
         registerBlock("andesite_casing", "Andesite Casing", 262, "stone_andesite");
         registerBlock("encased_fan", "Encased Fan", 263, "furnace_top");
+        // --- Villager TV (block 274) ---
+        registerBlock("villager_tv", "Villager TV", 274, "villager_tv_front");
         // --- Stair blocks ---
         registerBlock("oak_stairs", "Oak Stairs", 200, "planks_oak");
         registerBlock("cobblestone_stairs", "Cobblestone Stairs", 201, "cobblestone");
