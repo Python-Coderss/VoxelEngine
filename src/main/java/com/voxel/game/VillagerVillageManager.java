@@ -28,7 +28,7 @@ public class VillagerVillageManager {
         }
     }
     
-    private final Map<String, Village> villages = new HashMap<>();
+    private final Map<String, Village> villages = new java.util.concurrent.ConcurrentHashMap<>();
     
     /** Register a village at the given position. */
     public Village registerVillage(Vector3i center, int radius) {

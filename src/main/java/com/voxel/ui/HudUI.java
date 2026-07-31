@@ -83,6 +83,12 @@ public class HudUI {
     public UILayer.UITextElement commandTextElement;
     public UILayer.UITextElement statusTextElement;
 
+    // ── TV overlay elements ──
+    public UILayer.UIElement tvOverlayBg;
+    public UILayer.UITextElement tvChannelNameText;
+    public UILayer.UITextElement tvContentText;
+    public UILayer.UITextElement tvInstructionsText;
+
     public double itemNameDisplayUntil = 0.0;
     public boolean inventoryUiDirty = true;
 
@@ -476,6 +482,40 @@ public class HudUI {
         statusTextElement.charLineLimit = 40;
         statusTextElement.visible = false;
         layer.addElement(statusTextElement);
+
+        // ── TV overlay ──
+        tvOverlayBg = new UILayer.UIElement(
+            new Vector2f(50, 40),
+            new Vector2f(main.width - 100, main.height - 180),
+            new Vector4f(0.05f, 0.05f, 0.1f, 0.85f)
+        );
+        tvOverlayBg.visible = false;
+        layer.addElement(tvOverlayBg);
+
+        tvChannelNameText = new UILayer.UITextElement(
+            new Vector2f(main.width / 2f - 150, 55),
+            "", 3.0f, new Vector4f(1, 0.9f, 0.3f, 1), fontTextureId
+        );
+        tvChannelNameText.visible = false;
+        tvChannelNameText.charLineLimit = 50;
+        layer.addElement(tvChannelNameText);
+
+        tvContentText = new UILayer.UITextElement(
+            new Vector2f(70, 110),
+            "", 2.2f, new Vector4f(1, 1, 1, 1), fontTextureId
+        );
+        tvContentText.visible = false;
+        tvContentText.charLineLimit = 55;
+        layer.addElement(tvContentText);
+
+        tvInstructionsText = new UILayer.UITextElement(
+            new Vector2f(70, main.height - 120),
+            "LEFT/RIGHT: Change Channel  |  ESC: Exit TV",
+            1.8f, new Vector4f(0.7f, 0.7f, 0.7f, 0.9f), fontTextureId
+        );
+        tvInstructionsText.visible = false;
+        tvInstructionsText.charLineLimit = 60;
+        layer.addElement(tvInstructionsText);
     }
 
     // ── Slot click handlers ───────────────────────────────────────────────────────
@@ -1073,6 +1113,24 @@ public class HudUI {
             }
         }
     
+    }
+
+    /** Always update TV overlay regardless of dirty flag. Called from Main.loop(). */
+    public void updateTVOverlay(double time, float worldTime) {
+        boolean showTV = ctx.tvWatching && ctx.tvSystem != null;
+        tvOverlayBg.visible = showTV;
+        tvChannelNameText.visible = showTV;
+        tvContentText.visible = showTV;
+        tvInstructionsText.visible = showTV;
+        if (showTV) {
+            String channelName = ctx.tvSystem.getChannelName(ctx.tvChannel);
+            tvChannelNameText.text = "[" + channelName + "]";
+            String display = ctx.tvSystem.getChannelDisplay(ctx.tvChannel, worldTime);
+            tvContentText.text = display;
+            // Pulse the instructions text
+            float pulse = 0.6f + 0.4f * (float)Math.abs(Math.sin(time * 2.0));
+            tvInstructionsText.color.set(0.7f, 0.7f, 0.7f, pulse);
+        }
     }
 
     public void updateWindowTitle() {

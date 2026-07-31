@@ -933,6 +933,7 @@ public class ChunkManager {
                     scheduleColumnLighting(cx, cz, colKey, slots);
                 } else {
                     // Column exists — load any missing Y sections in the 3×3 range
+                    boolean addedAny = false;
                     for (int cy = pcy - 1; cy <= pcy + 1; cy++) {
                         if (slots.containsKey(cy)) continue;
                         if (freeSlotTop < 1) { evictFarthestColumn(cx, cz); }
@@ -955,6 +956,11 @@ public class ChunkManager {
                         dirtySlots.add(slot);
                         tableDirty.set(true);
                         sectionsLoaded++;
+                        addedAny = true;
+                    }
+                    // Schedule lighting if we added new sections to this existing column
+                    if (addedAny) {
+                        scheduleColumnLighting(cx, cz, colKey, slots);
                     }
                 }
             }
@@ -1137,6 +1143,15 @@ public class ChunkManager {
         dirtySlots.add(slot);
         tableDirty.set(true);
 
+        // Schedule lighting once this column's full Y-load-range is present.
+        // This runs off the async path (gen thread), so async-loaded chunks get
+        // lighting without requiring another player update. (The previous code
+        // checked loading.isEmpty() BEFORE removing cy — always false — so async
+        // columns were never lit at all.)
+        if (isColumnRangeLoaded(slots)) {
+            scheduleColumnLighting(cx, cz, colKey, slots);
+        }
+
         if (loading != null) {
             loading.remove(cy);
             if (loading.isEmpty()) {
@@ -1145,21 +1160,33 @@ public class ChunkManager {
         }
     }
 
+    /** True when the column has every Y-section in the player's load range loaded. */
+    private boolean isColumnRangeLoaded(NavigableMap<Integer, Integer> slots) {
+        int yMin = lastPlayerCY - yLoadRadius;
+        int yMax = lastPlayerCY + yLoadRadius;
+        for (int cy = yMin; cy <= yMax; cy++) {
+            if (!slots.containsKey(cy)) return false;
+        }
+        return true;
+    }
+
     private void scheduleColumnLighting(int cx, int cz, long key, NavigableMap<Integer, Integer> slots) {
-        if (Math.abs(cx - lastPlayerCX) <= LIGHT_GRID_RADIUS && Math.abs(cz - lastPlayerCZ) <= LIGHT_GRID_RADIUS) {
-            if (is5x5Loaded(cx, cz)) {
-                postLightTask(key, slots, () -> {
-                    dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, slots));
-                    for (Map.Entry<Integer, Integer> se : slots.entrySet()) {
-                        dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, se.getKey(), cz, se.getValue()));
-                    }
-                    lightsNeedUpload = true;
-                    tableDirty.set(true);
-                    runPendingLightingIn5x5(cx, cz);
-                });
-            } else {
-                pendingLighting.add(chunkKey(cx, cz));
-            }
+        // Light the full render distance so async-loaded columns are lit as soon
+        // as they finish loading, regardless of whether the player has moved.
+        if (Math.abs(cx - lastPlayerCX) <= renderDistance && Math.abs(cz - lastPlayerCZ) <= renderDistance) {
+            // Defensive snapshot: the light thread iterates this map while the gen thread
+            // may still be adding sections. Use a copy to avoid ConcurrentModificationException.
+            final NavigableMap<Integer, Integer> snapshot = new TreeMap<>(slots);
+            // Pass null for expectedSlots — the snapshot won't match loadedChunks.get(key)
+            postLightTask(key, null, () -> {
+                dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, snapshot));
+                for (Map.Entry<Integer, Integer> se : snapshot.entrySet()) {
+                    dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, se.getKey(), cz, se.getValue()));
+                }
+                lightsNeedUpload = true;
+                tableDirty.set(true);
+                runPendingLightingIn5x5(cx, cz);
+            });
         }
     }
 
