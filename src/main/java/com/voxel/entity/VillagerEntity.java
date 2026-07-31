@@ -44,6 +44,10 @@ public class VillagerEntity extends Entity {
     private Queue<BuildTask> buildQueue = new LinkedList<>();
     private int buildProgress = 0;
     private static final int BUILD_STEPS = 20;
+    private float autonomousBuildTimer = 0.0f;
+    private static final float AUTONOMOUS_BUILD_INTERVAL = 30.0f; // Check every 30s
+    private boolean hasBuiltHouse = false;
+    private boolean hasFortified = false;
 
     // ── Village reference ──
     private Vector3i villageCenter;
@@ -79,8 +83,16 @@ public class VillagerEntity extends Entity {
     private boolean isMating = false;
     private float mateTimer = 0.0f;
     private int mateCooldown = 0;
+    private VillagerEntity matePartner = null;
 
-    // ── Fear / Fleeing ──
+    // ── Baby / Child ──
+    private boolean isBaby = false;
+    private float babyGrowTimer = 0.0f;
+    private static final float BABY_GROW_TIME = 600.0f; // 10 minutes to grow up
+
+    // ── Work schedule ──
+    private boolean isWorking = false;
+    private float workTimer = 0.0f;
     private Entity fearedEntity = null;
     private float fearTimer = 0.0f;
 
@@ -161,6 +173,19 @@ public class VillagerEntity extends Entity {
     public boolean isWatchingTV() { return watchingTV; }
     public int getTVChannel() { return tvChannel; }
     public Vector3i getTVPosition() { return tvPosition; }
+    public boolean isBaby() { return isBaby; }
+    public void setBaby(boolean baby) {
+        this.isBaby = baby;
+        if (baby) {
+            // Scale down model parts for baby size (60% of adult)
+            for (ModelPart part : parts) {
+                part.size.mul(0.6f);
+                part.offset.mul(0.6f);
+            }
+            moveSpeed = 0.7f;
+            fleeSpeed = 1.5f;
+        }
+    }
 
     public void queueBuild(Vector3i pos, int blockType, boolean place) {
         buildQueue.add(new BuildTask(pos, blockType, place));
@@ -221,12 +246,40 @@ public class VillagerEntity extends Entity {
         if (fearTimer > 0) fearTimer = Math.max(0, fearTimer - dt);
         indoorCheckTimer += dt;
 
+        // Baby growth
+        if (isBaby) {
+            babyGrowTimer += dt;
+            if (babyGrowTimer >= BABY_GROW_TIME) {
+                isBaby = false;
+                // Restore adult size
+                for (ModelPart part : parts) {
+                    part.size.div(0.6f);
+                    part.offset.div(0.6f);
+                }
+                moveSpeed = 1.2f;
+                fleeSpeed = 2.2f;
+            }
+        }
+
+        // Autonomous building check (every ~30 seconds, only for adult builder villagers)
+        autonomousBuildTimer += dt;
+        if (autonomousBuildTimer >= AUTONOMOUS_BUILD_INTERVAL && !isBaby) {
+            autonomousBuildTimer = 0.0f;
+            tryAutonomousBuild();
+        }
+
         // Periodic village and schedule checks
         if (--randomTickDivider <= 0) {
             randomTickDivider = 60 + new Random().nextInt(50);
             isNightOrRaining = isNightTime();
+            // Update work state based on time of day
+            isWorking = !isNightOrRaining && profession == Profession.BUILDER;
             if (!isWillingToMate && mateCooldown <= 0 && !isMating && new Random().nextFloat() < 0.08f) {
                 isWillingToMate = true;
+            }
+            // Occasional profession-based behavior
+            if (profession == Profession.BUILDER && isWorking && buildQueue.isEmpty() && new Random().nextFloat() < 0.15f) {
+                tryAutonomousBuild();
             }
         }
 
@@ -365,10 +418,28 @@ public class VillagerEntity extends Entity {
         return false;
     }
 
-    /** Priority 6: Mate with another willing villager. */
+    /** Priority 6: Mate with another willing villager. Spawns baby villager. */
     private boolean tryMate(float dt) {
-        if (mateCooldown > 0 || !isWillingToMate) return false;
+        if (mateCooldown > 0 || !isWillingToMate || isBaby) return false;
         if (entityManager == null) return false;
+
+        // If currently in a mating pair and close enough, spawn baby
+        if (isMating && matePartner != null) {
+            float dist = getPosition().distance(matePartner.getPosition());
+            if (dist < 2.0f && mateTimer < 3.0f) {
+                // Spawn baby villager!
+                spawnBaby(matePartner);
+                isWillingToMate = false;
+                matePartner.isWillingToMate = false;
+                mateCooldown = 400;
+                matePartner.mateCooldown = 400;
+                isMating = false;
+                matePartner.isMating = false;
+                matePartner = null;
+            }
+            mateTimer = Math.max(0, mateTimer - dt);
+            return true;
+        }
 
         VillagerEntity partner = null;
         float closest = 8.0f;
@@ -376,7 +447,7 @@ public class VillagerEntity extends Entity {
             Entity e = entityManager.getEntity(i);
             if (e instanceof VillagerEntity && e != this) {
                 VillagerEntity v = (VillagerEntity)e;
-                if (v.isWillingToMate && v.mateCooldown <= 0) {
+                if (v.isWillingToMate && v.mateCooldown <= 0 && !v.isBaby) {
                     float d = getPosition().distance(e.getPosition());
                     if (d < closest) {
                         closest = d;
@@ -389,7 +460,9 @@ public class VillagerEntity extends Entity {
         if (partner != null) {
             mateTimer = 5.0f;
             isMating = true;
+            matePartner = partner;
             partner.isMating = true;
+            partner.matePartner = this;
             moveToward(partner.getPosition(), dt, moveSpeed * 0.6f);
             updateWalkAnimation(dt);
             return true;
@@ -397,6 +470,7 @@ public class VillagerEntity extends Entity {
 
         if (mateTimer <= 0) {
             isMating = false;
+            matePartner = null;
             // Stay willing for a few more cycles then reset
             if (new Random().nextFloat() < 0.02f) {
                 isWillingToMate = false;
@@ -404,6 +478,73 @@ public class VillagerEntity extends Entity {
             }
         }
         return false;
+    }
+
+    /** Spawn a baby villager between this villager and the partner. */
+    private void spawnBaby(VillagerEntity partner) {
+        if (entityManager == null || world == null) return;
+        Vector3f midPoint = new Vector3f(getPosition()).add(partner.getPosition()).mul(0.5f);
+        int babyId = 50000 + (int)(Math.random() * 10000);
+        com.voxel.utils.TextureManager tm = com.voxel.world.structure.MapGenVillage.textureManager;
+        if (tm == null) return;
+        VillagerEntity baby = new VillagerEntity(babyId, midPoint, tm);
+        baby.setWorld(world);
+        baby.setBaby(true);
+        baby.dimension = this.dimension;
+        if (isInVillage && villageCenter != null) {
+            baby.setVillage(villageCenter, villageRadius);
+        }
+        // Random profession, but inherit from parents with bias
+        if (new Random().nextFloat() < 0.5f) {
+            baby.setProfession(this.profession);
+        } else {
+            baby.setProfession(partner.profession);
+        }
+        entityManager.addEntity(baby);
+    }
+
+    /** Autonomous building: decide what to build based on village needs. */
+    private void tryAutonomousBuild() {
+        if (!isInVillage || villageCenter == null || world == null || isBaby) return;
+        if (profession != Profession.BUILDER && new Random().nextFloat() < 0.7f) return; // Non-builders rarely build
+
+        // Check if village already has enough houses (don't overbuild)
+        if (!hasBuiltHouse) {
+            // Build a new small house at a random position within the village
+            Random r = new Random();
+            double angle = r.nextDouble() * Math.PI * 2;
+            int dist = 10 + r.nextInt(25);
+            int bx = villageCenter.x + (int)(Math.cos(angle) * dist);
+            int bz = villageCenter.z + (int)(Math.sin(angle) * dist);
+            int by = findSurfaceY(bx, bz);
+            if (by > 0) {
+                int size = 5 + r.nextInt(2);
+                queueBuildHouse(new Vector3i(bx, by + 1, bz), size, size, 3);
+                hasBuiltHouse = true;
+                return;
+            }
+        }
+
+        // Build walls for fortification (once per villager)
+        if (!hasFortified && new Random().nextFloat() < 0.3f) {
+            int wallLength = 8 + new Random().nextInt(12);
+            int dir = new Random().nextInt(4);
+            double angle = new Random().nextDouble() * Math.PI * 2;
+            int wx = villageCenter.x + (int)(Math.cos(angle) * villageRadius * 0.7f);
+            int wz = villageCenter.z + (int)(Math.sin(angle) * villageRadius * 0.7f);
+            int wy = findSurfaceY(wx, wz);
+            if (wy > 0) {
+                queueBuildWall(new Vector3i(wx, wy + 1, wz), wallLength, 3, dir);
+                hasFortified = true;
+            }
+        }
+    }
+
+    private int findSurfaceY(int x, int z) {
+        for (int y = 127; y >= 0; y--) {
+            if (world.getVoxel(x, y, z) > 0) return y;
+        }
+        return -1;
     }
 
     /** Priority 9: Socialize with nearby villagers. */
@@ -726,4 +867,10 @@ public class VillagerEntity extends Entity {
     public boolean isWillingToMate() { return isWillingToMate; }
     public void setWillingToMate(boolean w) { this.isWillingToMate = w; mateCooldown = w ? 0 : 200; }
     public int getCareerLevel() { return careerLevel; }
+
+    /** Get the channel display text for rendering the TV screen UI. */
+    public static String getTVDisplayForChannel(int channel, float worldTime, com.voxel.game.VillagerTVSystem tvSystem) {
+        if (tvSystem == null) return "No Signal";
+        return tvSystem.getChannelDisplay(channel, worldTime);
+    }
 }

@@ -347,6 +347,8 @@ public class Main {
         // Initialize villager TV and village systems
         ctx.tvSystem = new VillagerTVSystem();
         ctx.villageManager = new VillagerVillageManager();
+        // Wire village manager into MapGenVillage (must happen after ctx.villageManager is set)
+        com.voxel.world.structure.MapGenVillage.setVillageManager(ctx.villageManager);
         ctx.tvBlockX = 0; ctx.tvBlockY = 0; ctx.tvBlockZ = 0;
 
         // Initialize crafting system (MUST be before setupUi)
@@ -1027,6 +1029,7 @@ public class Main {
             }
 
             updateInventoryUi();
+            hud.updateTVOverlay(glfwGetTime(), worldTime);
             hud.updateWindowTitle();
 
             hud.uiManager.begin();

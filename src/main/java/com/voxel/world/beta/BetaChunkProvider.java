@@ -914,10 +914,16 @@ public class BetaChunkProvider {
     }
 
     private void placeTree(com.voxel.World world,int x,int y,int z,int biomeId){
+        HashMap<Integer,byte[]>tb=getColumnBlocks(x>>4,z>>4);int lx=x&15,lz=z&15;
+        // Vanilla Beta 1.7.3 ground rule: trees may only grow on grass or dirt.
+        // worldGetTopY() returns the topmost NON-zero block, which over an ocean
+        // is the water surface — without this check trees spawn on water.
+        // Checked BEFORE any RNG consumption so rejected trees don't waste rand().
+        byte ground=getSectionBlock(tb,lx,y-1,lz);
+        if(ground!=BETA_GRASS&&ground!=BETA_DIRT)return;
         int height;boolean isBig=false;
         if((biomeId==BetaBiomeGenBase.FOREST||biomeId==BetaBiomeGenBase.RAINFOREST)&&rand.nextInt(10)==0){isBig=true;height=5+rand.nextInt(11);}
         else height=4+rand.nextInt(3);
-        HashMap<Integer,byte[]>tb=getColumnBlocks(x>>4,z>>4);int lx=x&15,lz=z&15;
         for(int dy=0;dy<height+2;dy++){if(getSectionBlock(tb,lx,y+dy,lz)!=0&&dy<height)return;}
         for(int dy=0;dy<height;dy++){setSectionBlock(tb,lx,y+dy,lz,BETA_WOOD);world.setVoxel(x,y+dy,z,veWood);}
         int leafStart=height-3;if(isBig)leafStart=height-4;

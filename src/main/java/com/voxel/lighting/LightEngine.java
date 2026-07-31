@@ -115,9 +115,97 @@ public class LightEngine {
             }
         }
 
+        // Phase 2: Horizontal sky light spread
+        // After vertical sweep, propagate sky light horizontally in 4 directions.
+        // Decay: 50% brightness every 4 blocks of horizontal travel.
+        int hChanged = propagateSkyLightHorizontal(cx, cz, slots, dirtySlots);
+
         WorldGenLogger.logChunk("LIGHT_SKY", cx, -1, cz,
-            "dirty=" + dirtySlots.size() + " changedVoxels=" + changedVoxels);
+            "dirty=" + dirtySlots.size() + " changedVoxels=" + changedVoxels
+            + " horizSpread=" + hChanged);
         return dirtySlots;
+    }
+
+    /**
+     * Horizontal sky light spread: BFS queue from sky-lit voxels
+     * outward in 4 horizontal directions (N/S/E/W).
+     * Brightness halves every 4 blocks using approx per-block decay (×21/25 ≈ 0.84).
+     * After 4 horizontal steps: 15→12→10→8→6 ≈ 50%. After 8: →3 ≈ 25%.
+     */
+    private int propagateSkyLightHorizontal(int cx, int cz, java.util.NavigableMap<Integer, Integer> slots,
+                                             Set<Integer> dirtySlots) {
+        int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
+        int maxRel = bufSize - 1;
+
+        LongQueue queue = new LongQueue(1024);
+        int worldBaseX = cx << 4;
+        int worldBaseZ = cz << 4;
+
+        // Seed queue with all valid sky light sources in this column
+        for (java.util.Map.Entry<Integer, Integer> entry : slots.entrySet()) {
+            int cy = entry.getKey();
+            int slot = entry.getValue();
+            if (slot == World.EMPTY) continue;
+
+            int worldBaseY = cy << 4;
+            for (int ly = 0; ly < 16; ly++) {
+                for (int lz = 0; lz < 16; lz++) {
+                    for (int lx = 0; lx < 16; lx++) {
+                        int intensity = world.getSkyLight(slot, lx, ly, lz) / 17;
+                        if (intensity > 1) {
+                            int rx = (worldBaseX + lx) - ox;
+                            int ry = (worldBaseY + ly) - oy;
+                            int rz = (worldBaseZ + lz) - oz;
+                            queue.add(packNodeScalar(rx, ry, rz, intensity));
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4 horizontal direction offsets (N/S/E/W)
+        int[][] horizDirs = {{0, 0, 1}, {0, 0, -1}, {1, 0, 0}, {-1, 0, 0}};
+        int totalChanges = 0;
+
+        // Process horizontal spread via BFS
+        while (!queue.isEmpty()) {
+            long node = queue.poll();
+            int rx = nodeX(node), ry = nodeY(node), rz = nodeZ(node);
+            int cur = nodeIntensityScalar(node);
+
+            // Decay: approx 50% brightness every 4 blocks (cur * 21 / 25 ≈ cur * 0.84)
+            int next = (cur * 21) / 25;
+            if (next <= 0) continue;
+
+            for (int[] dir : horizDirs) {
+                int nx = rx + dir[0];
+                int nz = rz + dir[2];
+
+                if (nx < 0 || nz < 0 || ry < 0 || nx > maxRel || nz > maxRel || ry > maxRel) continue;
+
+                int nSlot = world.getIndirectionTable()[(nx >> 4) + (ry >> 4) * World.REGION_SIZE + (nz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
+                if (nSlot == World.EMPTY) continue;
+
+                int absX = nx + ox, absY = ry + oy, absZ = nz + oz;
+                int opacity = getBlockOpacity(world.getVoxel(absX, absY, absZ));
+                int actNext = Math.max(0, next - opacity);
+                if (actNext <= 0) continue;
+
+                int lx = nx & 15, ly = ry & 15, lz = nz & 15;
+                int existing = world.getSkyLight(nSlot, lx, ly, lz) / 17;
+
+                if (actNext > existing) {
+                    world.setSkyLight(nSlot, lx, ly, lz, actNext * 17);
+                    dirtySlots.add(nSlot);
+                    totalChanges++;
+                    if (actNext > 1) {
+                        queue.add(packNodeScalar(nx, ry, nz, actNext));
+                    }
+                }
+            }
+        }
+
+        return totalChanges;
     }
 
     // ══════════════════════════════════════════════════════════════════

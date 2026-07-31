@@ -16,8 +16,10 @@ public class MapGenVillage {
     // Static references set by Main.init() — follows EnemyEntity pattern
     public static com.voxel.entity.EntityManager entityManager;
     public static com.voxel.utils.TextureManager textureManager;
+    public static com.voxel.game.VillagerVillageManager villageManager;
     public static void setEntityManager(com.voxel.entity.EntityManager em) { entityManager = em; }
     public static void setTextureManager(com.voxel.utils.TextureManager tm) { textureManager = tm; }
+    public static void setVillageManager(com.voxel.game.VillagerVillageManager vm) { villageManager = vm; }
 
     private static final int VILLAGE_CHANCE = 32; // 1 in 32 chunks
     private static final int VILLAGE_SIZE = 48; // blocks radius
@@ -104,8 +106,24 @@ public class MapGenVillage {
         lastVillageZ = centerZ;
         lastVillageGenerated = true;
 
-        // Spawn villagers at the new village
-        spawnVillagers(world, centerX, surfaceY + 1, centerZ, rand);
+        // Register village with the village manager
+        if (villageManager != null) {
+            com.voxel.game.VillagerVillageManager.Village village =
+                villageManager.registerVillage(new org.joml.Vector3i(centerX, surfaceY + 1, centerZ), VILLAGE_SIZE);
+            // Mark building origins for existing structures
+            for (int i = 0; i < buildingCount; i++) {
+                double angle = (Math.PI * 2 * i) / buildingCount + rand.nextDouble() * 0.3;
+                int dist = 14 + rand.nextInt(20);
+                int bx = centerX + (int)(Math.cos(angle) * dist);
+                int bz = centerZ + (int)(Math.sin(angle) * dist);
+                village.buildingOrigins.add(new org.joml.Vector3i(bx, findSurfaceHeight(world, bx, bz), bz));
+            }
+            // Spawn villagers and add them to the village's villager list
+            spawnVillagersForVillage(world, village, centerX, surfaceY + 1, centerZ, rand);
+        } else {
+            // Fallback: spawn villagers without village registration
+            spawnVillagers(world, centerX, surfaceY + 1, centerZ, rand);
+        }
 
         return true;
     }
@@ -122,6 +140,26 @@ public class MapGenVillage {
             villager.setWorld(world);
             villager.setVillage(new org.joml.Vector3i(cx, cy, cz), VILLAGE_SIZE);
             entityManager.addEntity(villager);
+        }
+    }
+
+    /** Spawn villagers and add them to the village's registered villager list. */
+    private void spawnVillagersForVillage(World world, com.voxel.game.VillagerVillageManager.Village village,
+                                           int cx, int cy, int cz, Random rand) {
+        if (entityManager == null || textureManager == null) return;
+        int count = 4 + rand.nextInt(4); // 4-7 villagers
+        for (int i = 0; i < count; i++) {
+            float sx = cx + (rand.nextFloat() - 0.5f) * 10f;
+            float sz = cz + (rand.nextFloat() - 0.5f) * 10f;
+            int id = 60000 + (lastVillageX & 0xFFFF) * 100 + i;
+            VillagerEntity villager = new VillagerEntity(id, new Vector3f(sx, cy, sz), textureManager);
+            villager.setWorld(world);
+            villager.setVillage(new org.joml.Vector3i(cx, cy, cz), VILLAGE_SIZE);
+            entityManager.addEntity(villager);
+            // Add to village's villager list for TV gathering and population management
+            if (village != null) {
+                village.villagers.add(villager);
+            }
         }
     }
 
