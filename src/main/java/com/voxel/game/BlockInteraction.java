@@ -25,6 +25,7 @@ public class BlockInteraction {
     private static final int BLOCK_FURNACE = 116;
     private static final int BLOCK_FURNACE_ON = 117;
     private static final int BLOCK_CHEST = 118;
+    private static final int BLOCK_TV = 274;
     private static final int BLOCK_WATER = 15;
     private static final int BLOCK_WATER_FLOWING_MIN = 150;
     private static final int BLOCK_WATER_FLOWING_MAX = 156;
@@ -209,13 +210,85 @@ public class BlockInteraction {
         }
     }
 
+    /** Raycast against entities. Returns {entityIndex, hitDistanceBits} or null. */
+    public int[] raycastEntity(float maxDist) {
+        Vector3f dir = getLookDirection();
+        Vector3f pos = getActiveCameraPosition();
+        float closestT = maxDist;
+        int closestIdx = -1;
+
+        com.voxel.entity.EntityManager em = ctx.entityManager;
+        if (em == null) return null;
+
+        for (int i = 0; i < em.getEntityCount(); i++) {
+            com.voxel.entity.Entity e = em.getEntity(i);
+            if (e == null || e.dimension != ctx.activeDimension) continue;
+            if (e instanceof com.voxel.entity.PlayerEntity) continue;
+            if (e instanceof com.voxel.entity.EnemyEntity && ((com.voxel.entity.EnemyEntity) e).isDead()) continue;
+
+            Vector3f ePos = e.getPosition();
+            float w = 0.3f, h = 0.9f;
+            Vector3f bMin = new Vector3f(ePos.x - w, ePos.y, ePos.z - w);
+            Vector3f bMax = new Vector3f(ePos.x + w, ePos.y + h * 2, ePos.z + w);
+
+            Vector3f invDir = new Vector3f(1.0f / dir.x, 1.0f / dir.y, 1.0f / dir.z);
+            float t1 = (bMin.x - pos.x) * invDir.x, t2 = (bMax.x - pos.x) * invDir.x;
+            float t3 = (bMin.y - pos.y) * invDir.y, t4 = (bMax.y - pos.y) * invDir.y;
+            float t5 = (bMin.z - pos.z) * invDir.z, t6 = (bMax.z - pos.z) * invDir.z;
+
+            float tMin = Math.max(Math.max(Math.min(t1, t2), Math.min(t3, t4)), Math.min(t5, t6));
+            float tMax = Math.min(Math.min(Math.max(t1, t2), Math.max(t3, t4)), Math.max(t5, t6));
+
+            if (tMax >= 0 && tMin <= tMax && tMin < closestT) {
+                closestT = tMin;
+                closestIdx = i;
+            }
+        }
+        if (closestIdx >= 0) return new int[]{closestIdx, Float.floatToRawIntBits(closestT)};
+        return null;
+    }
+
+    /** Show villager interaction when right-clicked. */
+    private void interactWithEntity(com.voxel.entity.Entity e) {
+        if (e instanceof com.voxel.entity.VillagerEntity) {
+            com.voxel.entity.VillagerEntity v = (com.voxel.entity.VillagerEntity) e;
+            String prof = v.getProfession().name().toLowerCase().replace('_', ' ');
+            String name = prof.substring(0, 1).toUpperCase() + prof.substring(1);
+            ctx.setStatus("Villager (" + name + ") — \"Hmm...\"");
+        }
+    }
+
     public void attemptPlaceBlock() {
         if (ctx.player.isDead()) return;
         int[] hit = raycastBlock(6.0f);
+
+        // Check for entity interaction — if player looks at a villager (even through no block)
+        if (!ctx.inventoryOpen && !ctx.commandMode && !ctx.tvCutsceneActive && !ctx.craftingCutsceneActive) {
+            int[] entityHit = raycastEntity(6.0f);
+            if (entityHit != null) {
+                float entDist = Float.intBitsToFloat(entityHit[1]);
+                float blockDist = hit != null ? getActiveCameraPosition().distance(
+                    new Vector3f(hit[0] + 0.5f, hit[1] + 0.5f, hit[2] + 0.5f)) : Float.MAX_VALUE;
+                if (entDist < blockDist) {
+                    com.voxel.entity.Entity e = ctx.entityManager.getEntity(entityHit[0]);
+                    if (e != null) { interactWithEntity(e); return; }
+                }
+            } else if (hit == null) {
+                // Looking at nothing in range — nothing to interact with
+                return;
+            }
+        }
+
         if (hit == null) return;
 
         // Right-click on a crafting table block — start cutscene walk to table
         int hitBlock = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
+
+        // Right-click on villager TV block — start TV cutscene
+        if (hitBlock == BLOCK_TV && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
+            startTVCutscene(hit);
+            return;
+        }
 
         // Right-click on furnace
         if ((hitBlock == BLOCK_FURNACE || hitBlock == BLOCK_FURNACE_ON) && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.furnaceOpen) {
@@ -539,6 +612,77 @@ public class BlockInteraction {
         float pMinY = pos.y, pMaxY = pos.y + PLAYER_HEIGHT;
         float pMinZ = pos.z - PLAYER_HALF_WIDTH, pMaxZ = pos.z + PLAYER_HALF_WIDTH;
         return pMaxX > x && pMinX < x + 1 && pMaxY > y && pMinY < y + 1 && pMaxZ > z && pMinZ < z + 1;
+    }
+
+    /** Start the TV watching cutscene. */
+    private void startTVCutscene(int[] hit) {
+        ctx.tvBlockX = hit[0];
+        ctx.tvBlockY = hit[1];
+        ctx.tvBlockZ = hit[2];
+
+        // Get current channel from TV system
+        if (ctx.tvSystem != null) {
+            ctx.tvChannel = ctx.tvSystem.getChannel(hit[0], hit[1], hit[2]);
+            
+            // Gather nearby villagers to watch TV
+            if (ctx.villageManager != null) {
+                com.voxel.game.VillagerVillageManager.Village village = 
+                    ctx.villageManager.findVillageAt(hit[0], hit[2]);
+                if (village != null) {
+                    ctx.villageManager.gatherVillagersAtTV(village, hit[0], hit[1], hit[2], 
+                        ctx.tvSystem, ctx.tvChannel);
+                }
+            }
+        }
+
+        // Compute camera position: zoom in front of TV with slight angle
+        Vector3f playerPos = ctx.player.getPosition();
+        float tvCX = hit[0] + 0.5f;
+        float tvCY = hit[1] + 0.8f;
+        float tvCZ = hit[2] + 0.5f;
+
+        // Camera: position 2 blocks away from TV's front face
+        float cx = tvCX;
+        float cy = tvCY + 0.3f;
+        float cz = tvCZ + 2.5f; // In front of the TV
+
+        ctx.tvCutsceneCameraStart.set(playerPos.x, playerPos.y + 1.6f, playerPos.z);
+        ctx.tvCutsceneCameraTarget.set(cx, cy, cz);
+        ctx.tvCutsceneStartYaw = ctx.yaw;
+        ctx.tvCutsceneStartPitch = ctx.pitch;
+        ctx.tvCutsceneTargetYaw = -90;
+        ctx.tvCutsceneTargetPitch = -10;
+
+        ctx.tvCutsceneActive = true;
+        ctx.tvCutsceneTimer = 0.0f;
+        ctx.tvWatching = false;
+        ctx.setStatus("Watching TV - Channel: " + 
+            (ctx.tvSystem != null ? ctx.tvSystem.getChannelName(ctx.tvChannel) : "VNN"));
+    }
+
+    /** Cycle the TV channel. Called when player presses a key while watching. */
+    public void cycleTVChannel() {
+        if (ctx.tvSystem != null) {
+            int newChannel = ctx.tvSystem.nextChannel(ctx.tvBlockX, ctx.tvBlockY, ctx.tvBlockZ);
+            ctx.tvChannel = newChannel;
+            ctx.setStatus("TV: " + ctx.tvSystem.getChannelName(newChannel));
+        }
+    }
+
+    /** Stop watching TV. */
+    public void stopWatchingTV() {
+        ctx.tvCutsceneActive = false;
+        ctx.tvWatching = false;
+        
+        // Dismiss villagers
+        if (ctx.villageManager != null && ctx.tvSystem != null) {
+            com.voxel.game.VillagerVillageManager.Village village = 
+                ctx.villageManager.findVillageAt(ctx.tvBlockX, ctx.tvBlockZ);
+            if (village != null) {
+                ctx.villageManager.dismissVillagersFromTV(village, 
+                    ctx.tvBlockX, ctx.tvBlockY, ctx.tvBlockZ, ctx.tvSystem);
+            }
+        }
     }
 
     Vector3f getLookDirection() {

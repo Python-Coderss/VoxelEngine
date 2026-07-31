@@ -57,6 +57,13 @@ public class BiomeRegistry {
     public static final int MESA_ROCK = 38;
     public static final int MESA_CLEAR_ROCK = 39;
 
+    // Beta 1.7.3 dedicated biome IDs (so BetaWorldGenerator doesn't need to lie)
+    public static final int RAINFOREST = 40;
+    public static final int SEASONAL_FOREST = 41;
+    public static final int SHRUBLAND = 42;
+    public static final int ICE_DESERT = 43;
+    public static final int TUNDRA = 44;
+
     // Mutated biome IDs
     public static final int MUTATED_PLAINS = 129;
     public static final int MUTATED_DESERT = 130;
@@ -203,7 +210,22 @@ public class BiomeRegistry {
             .setBaseHeight(0.45f).setHeightVariation(0.3f)
             .setTemperature(2.0f).setRainfall(0.0f).setRainDisabled(), true, false));
 
-        // --- Void ---
+        // --- Beta 1.7.3 dedicated biomes (honest mapping, no lying) ---
+        register(RAINFOREST, new BiomeRainforest("Rainforest", new BiomeProperties("Rainforest")
+            .setBaseHeight(0.1f).setHeightVariation(0.2f)
+            .setTemperature(0.95f).setRainfall(0.9f)));
+        register(SEASONAL_FOREST, new BiomeSeasonalForest("Seasonal Forest", new BiomeProperties("Seasonal Forest")
+            .setBaseHeight(0.1f).setHeightVariation(0.2f)
+            .setTemperature(0.7f).setRainfall(0.8f)));
+        register(SHRUBLAND, new BiomeShrubland("Shrubland", new BiomeProperties("Shrubland")
+            .setBaseHeight(0.125f).setHeightVariation(0.05f)
+            .setTemperature(0.8f).setRainfall(0.4f)));
+        register(ICE_DESERT, new BiomeIceDesert("Ice Desert", new BiomeProperties("Ice Desert")
+            .setBaseHeight(0.125f).setHeightVariation(0.05f)
+            .setTemperature(0.0f).setRainfall(0.0f).setSnowEnabled().setRainDisabled()));
+        register(TUNDRA, new BiomeTundra("Tundra", new BiomeProperties("Tundra")
+            .setBaseHeight(0.1f).setHeightVariation(0.1f)
+            .setTemperature(0.0f).setRainfall(0.5f).setSnowEnabled()));
         register(BIOME_VOID, new BiomeVoid("The Void", new BiomeProperties("The Void")
             .setBaseHeight(0.1f).setHeightVariation(0.2f)
             .setTemperature(0.5f).setRainfall(0.5f).setRainDisabled()));

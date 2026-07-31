@@ -5,6 +5,7 @@ import com.voxel.biome.BiomeProvider;
 import com.voxel.biome.BiomeRegistry;
 import com.voxel.world.beta.BetaChunkProvider;
 import com.voxel.world.beta.BetaBiomeGenBase;
+import com.voxel.world.structure.MapGenStructure;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -28,21 +29,24 @@ public class BetaWorldGenerator extends WorldGenerator {
     
     // Track which columns have been decorated (seed-once-per-column)
     private final Set<Long> decoratedColumns = new HashSet<>();
+    
+    // Structure generator for villages, mineshafts, etc.
+    private final MapGenStructure structureGen;
 
-    // Map Beta 1.7.3 biome IDs → VoxelEngine BiomeRegistry IDs
+    // Map Beta 1.7.3 biome IDs → dedicated VoxelEngine BiomeRegistry IDs (honest mapping)
     private static final int[] BETA_TO_VE_BIOME = new int[13];
     static {
-        BETA_TO_VE_BIOME[BetaBiomeGenBase.RAINFOREST]       = BiomeRegistry.JUNGLE;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.RAINFOREST]       = BiomeRegistry.RAINFOREST;
         BETA_TO_VE_BIOME[BetaBiomeGenBase.SWAMPLAND]        = BiomeRegistry.SWAMPLAND;
-        BETA_TO_VE_BIOME[BetaBiomeGenBase.SEASONAL_FOREST]  = BiomeRegistry.FOREST;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.SEASONAL_FOREST]  = BiomeRegistry.SEASONAL_FOREST;
         BETA_TO_VE_BIOME[BetaBiomeGenBase.FOREST]           = BiomeRegistry.FOREST;
         BETA_TO_VE_BIOME[BetaBiomeGenBase.SAVANNA]          = BiomeRegistry.SAVANNA;
-        BETA_TO_VE_BIOME[BetaBiomeGenBase.SHRUBLAND]        = BiomeRegistry.PLAINS;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.SHRUBLAND]        = BiomeRegistry.SHRUBLAND;
         BETA_TO_VE_BIOME[BetaBiomeGenBase.TAIGA]            = BiomeRegistry.TAIGA;
         BETA_TO_VE_BIOME[BetaBiomeGenBase.DESERT]           = BiomeRegistry.DESERT;
         BETA_TO_VE_BIOME[BetaBiomeGenBase.PLAINS]           = BiomeRegistry.PLAINS;
-        BETA_TO_VE_BIOME[BetaBiomeGenBase.ICE_DESERT]       = BiomeRegistry.ICE_FLATS;
-        BETA_TO_VE_BIOME[BetaBiomeGenBase.TUNDRA]           = BiomeRegistry.ICE_FLATS;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.ICE_DESERT]       = BiomeRegistry.ICE_DESERT;
+        BETA_TO_VE_BIOME[BetaBiomeGenBase.TUNDRA]           = BiomeRegistry.TUNDRA;
         BETA_TO_VE_BIOME[BetaBiomeGenBase.HELL]             = BiomeRegistry.HELL;
         BETA_TO_VE_BIOME[BetaBiomeGenBase.SKY]              = BiomeRegistry.SKY;
     }
@@ -92,6 +96,9 @@ public class BetaWorldGenerator extends WorldGenerator {
         for (int level = 1; level <= 8; level++) {
             veSnowLevels[level] = findOr(blockDataManager, "snow_" + level, veSnow);
         }
+        // Initialize structure generator with the world seed
+        this.structureGen = new MapGenStructure(seed);
+        
         this.betaProvider = new BetaChunkProvider(
             seed,
             veStone, veGrass, veDirt, veBedrock,
@@ -167,6 +174,9 @@ public class BetaWorldGenerator extends WorldGenerator {
         
         decoratedColumns.add(colKey);
         betaProvider.populateColumn(world, cx, cz);
+        
+        // Generate structures (villages, mineshafts, etc.) in Beta terrain
+        structureGen.generateStructures(world, cx, cz, biomeProvider);
     }
     
     /**

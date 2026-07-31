@@ -1,0 +1,12 @@
+{
+    "parent": "block/cube",
+    "textures": {
+        "particle": "blocks/villager_tv_side",
+        "down": "blocks/villager_tv_side",
+        "up": "blocks/villager_tv_top",
+        "north": "blocks/villager_tv_front",
+        "east": "blocks/villager_tv_side",
+        "south": "blocks/villager_tv_side",
+        "west": "blocks/villager_tv_side"
+    }
+}

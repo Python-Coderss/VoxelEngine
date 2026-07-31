@@ -42,9 +42,11 @@ public class MapGenStructure {
             || biome instanceof com.voxel.biome.BiomeSavanna
             || biome instanceof com.voxel.biome.BiomeDesert
             || biome instanceof com.voxel.biome.BiomeTaiga
+            || biome instanceof com.voxel.biome.BiomeShrubland
             || biome.name.toLowerCase().contains("plains")
             || biome.name.toLowerCase().contains("savanna")
             || biome.name.toLowerCase().contains("desert")
-            || biome.name.toLowerCase().contains("taiga");
+            || biome.name.toLowerCase().contains("taiga")
+            || biome.name.toLowerCase().contains("shrubland");
     }
 }
