@@ -165,7 +165,21 @@ Reads `renderTexture` back via `glGetTextureImage`, Y-flips, saves timestamped P
 | 130-141 | staple blocks | 200-205 | stairs |
 | 206-210 | slabs | 211 | torch |
 | 259 | sticky piston head | 260-261 | horizontal oak logs |
-| 262 | andesite_casing | 263 | encased_fan | there should be more blocks am I wrong?
+| 262 | andesite_casing | 263 | encased_fan |
+| 274 | villager_tv | - | - |
+
+## Villager System
+
+- **VillagerEntity.java** – peaceful NPC with own model (`villager.json`: big nose, robe, hat)
+- AI states: IDLE → WANDERING → BUILDING → FORTIFYING → FLEEING → WATCHING_TV
+- Block place/break via `BuildTask` queue, builds houses (planks + cobblestone + glass + roof)
+- Village walls fortification, walks within village radius, crosses arms when idle
+- **VillagerVillageManager.java** – tracks villages, assigns building projects, manages TV gatherings
+- **VillagerTVSystem.java** – 4 channels:
+  - 0: Static/Off-Air, 1: Villager Shopping Network, 2: Weather & Time, 3: VNN Villager News
+- TV block (ID 274): right-click = zoom cutscene, LEFT/RIGHT = cycle channels, ESC = exit
+- `/locate village` – find nearest village; `/tv <0-3>` – change TV channel
+- **MapGenVillage improved**: log corners, glass windows, roof overhangs, cobblestone plaza, gravel paths, glowstone light posts, perimeter walls, workshops with crafting tables
 
 ## Important Patterns
 

@@ -1,0 +1,85 @@
+{
+  "parts": [
+    {
+      "name": "head",
+      "from": [-4.0, 24.0, -4.0],
+      "size": [8.0, 10.0, 8.0],
+      "absolute_offset": [0.0, 24.0, 0.0],
+      "texture": "villager",
+      "uv": [0, 0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "nose",
+      "from": [-1.0, 25.0, -6.0],
+      "size": [2.0, 4.0, 2.0],
+      "absolute_offset": [0.0, 28.0, 0.0],
+      "texture": "villager",
+      "uv": [24, 0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "robe",
+      "from": [-4.5, 5.5, -3.5],
+      "size": [9.0, 19.0, 7.0],
+      "absolute_offset": [0.0, 24.0, 0.0],
+      "texture": "villager",
+      "uv": [0, 38],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "left_arm",
+      "from": [-8.0, 16.0, -2.0],
+      "size": [4.0, 8.0, 4.0],
+      "absolute_offset": [-6.0, 22.0, 0.0],
+      "texture": "villager",
+      "uv": [44, 22],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "right_arm",
+      "from": [4.0, 16.0, -2.0],
+      "size": [4.0, 8.0, 4.0],
+      "absolute_offset": [6.0, 22.0, 0.0],
+      "texture": "villager",
+      "uv": [44, 22],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "arm_connector",
+      "from": [-4.0, 16.0, -2.0],
+      "size": [8.0, 4.0, 4.0],
+      "absolute_offset": [0.0, 22.0, 0.0],
+      "texture": "villager",
+      "uv": [40, 38],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "left_leg",
+      "from": [-4.0, 0.0, -2.0],
+      "size": [4.0, 12.0, 4.0],
+      "absolute_offset": [-2.0, 12.0, 0.0],
+      "texture": "villager",
+      "uv": [0, 22],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "right_leg",
+      "from": [0.0, 0.0, -2.0],
+      "size": [4.0, 12.0, 4.0],
+      "absolute_offset": [2.0, 12.0, 0.0],
+      "texture": "villager",
+      "uv": [0, 22],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "hat",
+      "from": [-4.0, 24.0, -4.0],
+      "size": [8.0, 10.0, 8.0],
+      "absolute_offset": [0.0, 24.0, 0.0],
+      "texture": "villager",
+      "uv": [48, 0],
+      "texture_mapping": "cuboid_atlas"
+    }
+  ]
+}

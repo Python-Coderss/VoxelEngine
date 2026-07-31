@@ -164,8 +164,22 @@ public class GameContext {
     public com.voxel.world.FluidManager fluidManager;
 
     // --- Active UI state (which overlay is shown) ---
-    public enum ActiveUI { NONE, INVENTORY, CHEST, FURNACE, CRAFTING_TABLE }
+    public enum ActiveUI { NONE, INVENTORY, CHEST, FURNACE, CRAFTING_TABLE, TV }
     public ActiveUI activeUI = ActiveUI.NONE;
+
+    // --- Villager TV ---
+    public VillagerTVSystem tvSystem;
+    public VillagerVillageManager villageManager;
+    public boolean tvCutsceneActive = false;
+    public float tvCutsceneTimer = 0.0f;
+    public static final float TV_CUTSCENE_DURATION = 1.0f;
+    public int tvBlockX, tvBlockY, tvBlockZ;
+    public int tvChannel = 3; // Default to VNN
+    public Vector3f tvCutsceneCameraStart = new Vector3f();
+    public Vector3f tvCutsceneCameraTarget = new Vector3f();
+    public float tvCutsceneStartYaw, tvCutsceneStartPitch;
+    public float tvCutsceneTargetYaw = -90, tvCutsceneTargetPitch = -15;
+    public boolean tvWatching = false;
 
     // --- Pending spawn adjustment (deferred until spawn chunks are loaded) ---
     public int pendingSpawnX = Integer.MIN_VALUE;

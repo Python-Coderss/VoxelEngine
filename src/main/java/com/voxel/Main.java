@@ -15,6 +15,9 @@ import com.voxel.world.DimensionManager;
 import com.voxel.world.DimensionType;
 import com.voxel.entity.Entity;
 import com.voxel.entity.ModelPart;
+import com.voxel.entity.VillagerEntity;
+import com.voxel.game.VillagerTVSystem;
+import com.voxel.game.VillagerVillageManager;
 import com.voxel.game.AtmosphereRenderer;
 import com.voxel.game.BlockInteraction;
 import com.voxel.game.CommandProcessor;
@@ -283,6 +286,9 @@ public class Main {
 
         entityManager = new com.voxel.entity.EntityManager();
         com.voxel.entity.EnemyEntity.setEntityManager(entityManager);
+        com.voxel.entity.VillagerEntity.setEntityManager(entityManager);
+        com.voxel.world.structure.MapGenVillage.setEntityManager(entityManager);
+        com.voxel.world.structure.MapGenVillage.setTextureManager(textureManager);
         player = new Player(1024, 100, 1024); // Spawn above the water pool at y=62
 
         setupQuad();
@@ -337,6 +343,11 @@ public class Main {
         portalSystem = new PortalSystem(ctx, blockInteraction);
         commandProcessor = new CommandProcessor(ctx);
         atmosphereRenderer = new AtmosphereRenderer(computeProgram);
+
+        // Initialize villager TV and village systems
+        ctx.tvSystem = new VillagerTVSystem();
+        ctx.villageManager = new VillagerVillageManager();
+        ctx.tvBlockX = 0; ctx.tvBlockY = 0; ctx.tvBlockZ = 0;
 
         // Initialize crafting system (MUST be before setupUi)
         craftingManager = new CraftingManager();
@@ -411,7 +422,26 @@ public class Main {
             zombie.dimension = activeDimension;
             zombie.setWorld(world);
             entityManager.addEntity(zombie);
-            
+        }
+        
+        // Spawn initial villagers near villages
+        spawnInitialVillagers();
+    }
+
+    public void spawnInitialVillagers() {
+        // Spawn a few villagers near the player's spawn for testing
+        for (int i = 0; i < 4; i++) {
+            float vx = 1050 + i * 8;
+            float vz = 1050 - i * 5;
+            int vy = 65;
+            // Find surface
+            for (int y = 127; y >= 0; y--) {
+                if (world.getVoxel((int)vx, y, (int)vz) > 0) { vy = y + 1; break; }
+            }
+            VillagerEntity villager = new VillagerEntity(50000 + i, new Vector3f(vx, vy, vz), textureManager);
+            villager.dimension = activeDimension;
+            villager.setWorld(world);
+            entityManager.addEntity(villager);
         }
     }
 
@@ -575,6 +605,7 @@ public class Main {
         }
 
         worldTime += dt;
+        VillagerEntity.setGlobalWorldTime(worldTime);
         blockInteraction.updateMining(dt);
 
         if (cameraShake > 0) cameraShake -= dt * 5.0f;
@@ -656,6 +687,11 @@ public class Main {
         entityManager.update(dt);
         portalSystem.checkTeleport();
 
+        // Tick villager TV system
+        if (ctx.tvSystem != null) {
+            ctx.tvSystem.tick(dt);
+        }
+
         // Fall from Aether: if player drops below y=0, fall back to Overworld
         if (activeDimension == DimensionType.AETHER && player.getPosition().y < 0) {
             ctx.setStatus("Fell out of the Aether!");
@@ -674,6 +710,27 @@ public class Main {
         } else {
             if (craftingCameraInited) {
                 craftingCameraInited = false;
+            }
+        }
+
+        // ---- Villager TV cutscene: zoom camera toward TV ----
+        if (ctx.tvCutsceneActive) {
+            ctx.tvCutsceneTimer += dt;
+            float t = Math.min(1.0f, ctx.tvCutsceneTimer / GameContext.TV_CUTSCENE_DURATION);
+            float smoothT = t * t * (3.0f - 2.0f * t);
+
+            // Lerp camera yaw/pitch to looking at TV
+            yaw = ctx.tvCutsceneStartYaw + (ctx.tvCutsceneTargetYaw - ctx.tvCutsceneStartYaw) * smoothT;
+            pitch = ctx.tvCutsceneStartPitch + (ctx.tvCutsceneTargetPitch - ctx.tvCutsceneStartPitch) * smoothT;
+            ctx.yaw = yaw;
+            ctx.pitch = pitch;
+            playerYaw = yaw;
+
+            // When cutscene completes, activate TV watching mode
+            if (t >= 1.0f && !ctx.tvWatching) {
+                ctx.tvWatching = true;
+                ctx.activeUI = GameContext.ActiveUI.TV;
+                needsCursorUpdate = true;
             }
         }            // Sync fields after potential dimension switch from PortalSystem/CommandProcessor
         if (chunkManager != ctx.chunkManager) {
@@ -702,7 +759,7 @@ public class Main {
     }
 
     public void handleInput(float dt) {
-        if (inventoryOpen || commandMode || player.isDead() || ctx.craftingCutsceneActive) return;
+        if (inventoryOpen || commandMode || player.isDead() || ctx.craftingCutsceneActive || ctx.tvCutsceneActive) return;
 
         // Compute forward/right vectors early (needed for dodge roll and movement)
         double ry = Math.toRadians(yaw);
@@ -1144,6 +1201,20 @@ public class Main {
                 return;
             }
 
+            if (key == GLFW_KEY_V) {
+                // Spawn a test villager at the player's position
+                com.voxel.entity.VillagerEntity v = new com.voxel.entity.VillagerEntity(
+                    70000 + (int)(Math.random() * 1000),
+                    new Vector3f(player.getPosition()),
+                    textureManager
+                );
+                v.dimension = activeDimension;
+                v.setWorld(world);
+                entityManager.addEntity(v);
+                System.out.println("Spawned villager at " + player.getPosition());
+                return;
+            }
+
             if (key == GLFW_KEY_F5) {
                 toggleCameraMode();
                 return;
@@ -1216,6 +1287,12 @@ public class Main {
             }
 
             if (key == GLFW_KEY_ESCAPE) {
+                if (ctx.tvWatching) {
+                    // Exit TV watching mode
+                    blockInteraction.stopWatchingTV();
+                    updateCursorMode();
+                    return;
+                }
                 if (ctx.craftingCutsceneActive) {
                     // Abort crafting cutscene
                     ctx.craftingCutsceneActive = false;
@@ -1234,6 +1311,12 @@ public class Main {
             if (key >= GLFW_KEY_1 && key < GLFW_KEY_1 + HOTBAR_SIZE) {
                 playerInventory.setSelectedSlot(key - GLFW_KEY_1);
                 showSelectedItemName();
+                return;
+            }
+
+            // TV channel cycling (LEFT/RIGHT arrows while watching TV)
+            if (ctx.tvWatching && (key == GLFW_KEY_LEFT || key == GLFW_KEY_RIGHT)) {
+                blockInteraction.cycleTVChannel();
                 return;
             }
         }
@@ -2059,6 +2142,11 @@ public class Main {
         blockRegistry.register("encased_fan", 263);
         shaderBlockRegistry.register(263, 263);
         blockDataManager.registerBlock(263, "encased_fan", textureManager, mcModels);
+
+        // Villager TV block (ID 274)
+        blockRegistry.register("villager_tv", 274);
+        shaderBlockRegistry.register(274, 274);
+        blockDataManager.registerBlock(274, "villager_tv", textureManager, mcModels);
         shaderBlockRegistry.registerDirectional(263, com.voxel.utils.Direction.DOWN, 263, 0);
         shaderBlockRegistry.registerDirectional(263, com.voxel.utils.Direction.UP, 263, 1);
         shaderBlockRegistry.registerDirectional(263, com.voxel.utils.Direction.NORTH, 263, 2);

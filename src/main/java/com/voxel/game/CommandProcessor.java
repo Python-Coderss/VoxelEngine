@@ -46,10 +46,12 @@ public class CommandProcessor {
             case "help": handleHelp(); break;
             case "list": handleList(parts); break;
             case "camera": handleCamera(parts); break;
+            case "locate": handleLocate(parts); break;
             case "screenshot":
                 ctx.screenshotRequested = true;
                 ctx.setStatus("Screenshot saved to screenshots/");
                 break;
+            case "tv": handleTv(parts); break;
             default: ctx.setStatus("Unknown command: /" + command + ". Type /help for commands."); break;
         }
     }
@@ -170,6 +172,8 @@ public class CommandProcessor {
         sb.append("\n  /dimension <overworld|nether|end|aether> - Switch dimension");
         sb.append("\n  /setuv <full|half|empty> <x> <y> [w] [h] - Adjust heart UVs");
         sb.append("\n  /camera <follow|orbit|fixed> - Set camera shot type");
+        sb.append("\n  /locate <village> - Find nearest village");
+        sb.append("\n  /tv <channel> - Change TV channel (0=Static,1=Shopping,2=Weather,3=VNN)");
         sb.append("\n  /screenshot - Save a screenshot to screenshots/");
         ctx.setStatus(sb.toString());
     }
@@ -254,5 +258,51 @@ public class CommandProcessor {
         }
         ctx.playerInventory.clearSlot(slotIndex);
         ctx.setStatus("Cleared slot " + (slotIndex + 1));
+    }
+
+    private void handleLocate(String[] parts) {
+        if (parts.length < 2) {
+            ctx.setStatus("Usage: /locate <village>");
+            return;
+        }
+        String structure = parts[1].toLowerCase(Locale.ROOT);
+        if (structure.equals("village")) {
+            if (com.voxel.world.structure.MapGenVillage.hasLastVillage()) {
+                int vx = com.voxel.world.structure.MapGenVillage.getLastVillageX();
+                int vy = com.voxel.world.structure.MapGenVillage.getLastVillageY();
+                int vz = com.voxel.world.structure.MapGenVillage.getLastVillageZ();
+                float px = ctx.player.getPosition().x;
+                float pz = ctx.player.getPosition().z;
+                int dist = (int)Math.sqrt((vx - px) * (vx - px) + (vz - pz) * (vz - pz));
+                ctx.setStatus("Nearest village: " + vx + ", " + vy + ", " + vz + " (" + dist + " blocks away)");
+            } else {
+                ctx.setStatus("No village found nearby. Try exploring more!");
+            }
+        } else {
+            ctx.setStatus("Unknown structure: " + structure + ". Available: village");
+        }
+    }
+
+    private void handleTv(String[] parts) {
+        if (parts.length < 2) {
+            ctx.setStatus("Usage: /tv <channel> - Change TV channel (0=Static, 1=Shopping, 2=Weather, 3=VNN News)");
+            return;
+        }
+        try {
+            int channel = Integer.parseInt(parts[1]);
+            if (channel < 0 || channel > 3) {
+                ctx.setStatus("Invalid channel. Use 0-3: 0=Static, 1=Shopping, 2=Weather, 3=VNN News");
+                return;
+            }
+            if (ctx.tvSystem != null) {
+                // Find nearby TV and set its channel
+                ctx.tvSystem.setChannel(ctx.tvBlockX, ctx.tvBlockY, ctx.tvBlockZ, channel);
+                ctx.setStatus("TV channel set to: " + ctx.tvSystem.getChannelName(channel));
+            } else {
+                ctx.setStatus("No TV system available");
+            }
+        } catch (NumberFormatException e) {
+            ctx.setStatus("Invalid channel number");
+        }
     }
 }
