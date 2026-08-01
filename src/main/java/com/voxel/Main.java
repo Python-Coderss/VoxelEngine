@@ -146,6 +146,7 @@ public class Main {
     public PortalSystem portalSystem;
     public CommandProcessor commandProcessor;
     public AtmosphereRenderer atmosphereRenderer;
+    public com.voxel.audio.VillagerAudioManager villagerAudioManager;
 
     public com.voxel.camera.CameraController cameraController;
     public com.voxel.ui.HudUI hud;
@@ -238,6 +239,9 @@ public class Main {
         glDeleteBuffers(craftingItemSSBO);
         glDeleteBuffers(sdfSSBO);
         if (persistentPlBuf != null) MemoryUtil.memFree(persistentPlBuf);
+        if (villagerAudioManager != null) {
+            villagerAudioManager.close();
+        }
         chunkManager.shutdown();
         RedstoneLogger.shutdown();
         WorldGenLogger.shutdown();
@@ -270,6 +274,11 @@ public class Main {
         glfwSwapInterval(0);
         glfwShowWindow(window);
         GL.createCapabilities();
+
+        // Initialize OpenAL on the render thread. Voice synthesis itself is queued
+        // asynchronously and never runs inside the game loop.
+        villagerAudioManager = new com.voxel.audio.VillagerAudioManager();
+        villagerAudioManager.initialize();
 
         quadProgram = ShaderUtil.createProgram(
             ShaderUtil.compileShader("src/main/resources/shaders/quad.vert", GL_VERTEX_SHADER),
@@ -317,6 +326,7 @@ public class Main {
         ctx.updateCursorMode = this::updateCursorMode;
         ctx.statusConsumer = this::setStatus;
         ctx.uiDirtyMarker = () -> { hud.inventoryUiDirty = true; };
+        ctx.villagerAudioManager = villagerAudioManager;
 
         // Create extracted subsystems
         itemDefinitions = new ItemDefinitions();
@@ -607,6 +617,7 @@ public class Main {
         }
 
         worldTime += dt;
+        ctx.worldTime = worldTime;
         VillagerEntity.setGlobalWorldTime(worldTime);
         blockInteraction.updateMining(dt);
 
@@ -1186,6 +1197,9 @@ public class Main {
 
             glfwSwapBuffers(window);
             glfwPollEvents();
+            if (villagerAudioManager != null) {
+                villagerAudioManager.update();
+            }
             leftMousePressedThisFrame = false;
             // ctx.leftMousePressedThisFrame is consumed/reset by the logic thread in tick()
         }
