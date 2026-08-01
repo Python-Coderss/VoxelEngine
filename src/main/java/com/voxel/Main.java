@@ -1089,11 +1089,16 @@ public class Main {
                 needsCursorUpdate = false;
             }
 
-            // World-side GPU bookkeeping only runs once the deferred init has wired
-            // world / chunkManager / redstoneManager on the logic thread. Until
-            // then we skip these so the render loop just shows the spawn-loading
-            // overlay sitting on a (still-zeroed) cleared framebuffer.
-            if (world != null && chunkManager != null && redstoneManager != null) {
+            // World-side GPU bookkeeping only runs once the LOGIC thread has
+            // fully completed Main.initializeWorldPhase() — i.e. once
+            // GameContext.initializing (volatile) flips false. That single
+            // volatile write is the happens-before barrier for everything
+            // initializeWorldPhase() did, including all entityManager.addEntity
+            // calls; checking it AFTER the world/chunkManager null guards closes
+            // the race window where the GL thread would otherwise start calling
+            // entityManager.uploadToGPU() concurrently with the LOGIC thread
+            // still adding the initial enemies.
+            if (!ctx.initializing) {
                 redstoneManager.applyLampChanges();
                 // Deferred world GPU upload (must happen on GL thread)
                 if (needsWorldUpload) {
@@ -1131,7 +1136,10 @@ public class Main {
             // Camera uses interpolated player position
             Vector3f cameraPos = cameraController.getActiveCameraPosition(playerPartialTicks);
 
-            if (world != null && chunkManager != null) {
+            // Same gate as block A above: world / chunkManager / entityManager
+            // are only safe to read AFTER initializeWorldPhase() finishes (see
+            // the volatile ctx.initializing flag).
+            if (!ctx.initializing) {
             // World buffer origin — used to make all shader positions buffer-relative
             int wox = world.getOffsetX(), woy = world.getOffsetY(), woz = world.getOffsetZ();
 
