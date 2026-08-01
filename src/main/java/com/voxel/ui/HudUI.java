@@ -1238,6 +1238,14 @@ public class HudUI {
         if (now - lastTitleUpdate < 0.25) return;
         lastTitleUpdate = now;
         StringBuilder title = new StringBuilder("Voxel Engine | FPS: ").append(ctx.lastMeasuredFps);
+        // During the loading-screen phase the heavy world init still runs on the
+        // LOGIC thread (GameContext.initializing) and chunkManager / world are
+        // not yet wired. Show just the FPS until Main.initializeWorldPhase()
+        // finishes; otherwise we'd NPE on ctx.chunkManager.isChunkLoaded below.
+        if (ctx.initializing || ctx.chunkManager == null) {
+            glfwSetWindowTitle(main.window, title.toString());
+            return;
+        }
         title.append(" | ").append(ctx.gameMode == GameContext.GameMode.CREATIVE ? "creative" : "survival");
         com.voxel.Player p = main.player;
         long pfx = p.getFixedX(), pfy = p.getFixedY(), pfz = p.getFixedZ();
