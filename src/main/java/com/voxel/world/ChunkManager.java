@@ -41,6 +41,9 @@ public class ChunkManager {
     // Column sections: column key (cx,cz) → NavigableMap<cy, slot>
     // Each column can have any set of cy sections loaded, not a fixed count.
     private final Map<Long, NavigableMap<Integer, Integer>> loadedChunks = new ConcurrentHashMap<>();
+    // Columns whose immediate 3-section spawn area has finished generation/loading.
+    private final Set<Long> fullyGeneratedColumns = ConcurrentHashMap.newKeySet();
+    private final AtomicBoolean spawnRetryQueued = new AtomicBoolean(false);
 
 
 
@@ -225,6 +228,41 @@ public class ChunkManager {
      */
     public boolean isChunkLoaded(int cx, int cz) {
         return loadedChunks.containsKey(chunkKey(cx, cz));
+    }
+
+    /**
+     * Returns true only after the 3x3 XZ spawn area has completed its immediate
+     * section generation. A column entry alone is not sufficient because it is
+     * published before its sections are filled.
+     */
+    public boolean areSpawnChunksGenerated(int centerCx, int centerCz) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (!fullyGeneratedColumns.contains(chunkKey(centerCx + dx, centerCz + dz))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Requeues the immediate spawn-area generation when the initial pass could
+     * not allocate every required section. The guard prevents a loading frame
+     * from flooding the generation queue while the worker is still busy.
+     */
+    public void retrySpawnGeneration(Vector3f playerPos, float yaw) {
+        int pcx = (int) Math.floor(playerPos.x) >> 4;
+        int pcy = (int) Math.floor(playerPos.y) >> 4;
+        int pcz = (int) Math.floor(playerPos.z) >> 4;
+        if (!spawnRetryQueued.compareAndSet(false, true)) return;
+        taskQueue.addFirst(() -> {
+            try {
+                manageChunks(pcx, pcy, pcz, yaw);
+            } finally {
+                spawnRetryQueued.set(false);
+            }
+        });
     }
 
     /**
@@ -434,6 +472,7 @@ public class ChunkManager {
         for (Long key : toUnload) {
             NavigableMap<Integer, Integer> slots = loadedChunks.remove(key);
             if (slots != null) {
+                fullyGeneratedColumns.remove(key);
                 unloadChunk(key, slots);
                 tableDirty.set(true);
                 unloadedCount++;
@@ -602,6 +641,7 @@ public class ChunkManager {
         // Cancel any pending light tasks for this chunk BEFORE freeing slots
         cancelledLightTasks.add(key);
         columnSectionsLoaded.remove(key);
+        fullyGeneratedColumns.remove(key);
 
         if (saveManager != null) {
             saveManager.saveChunk(dimension, cx, cz, world);
@@ -931,6 +971,18 @@ public class ChunkManager {
                     tableDirty.set(true);
                     scheduleFluidsInColumn(cx, cz, slots);
                     scheduleColumnLighting(cx, cz, colKey, slots);
+
+                    // Do not publish readiness if slot pressure interrupted the
+                    // immediate three-section spawn range.
+                    boolean immediateRangeComplete = true;
+                    for (int cy = pcy - 1; cy <= pcy + 1; cy++) {
+                        if (!slots.containsKey(cy)) {
+                            immediateRangeComplete = false;
+                            break;
+                        }
+                    }
+                    if (immediateRangeComplete) fullyGeneratedColumns.add(colKey);
+                    else fullyGeneratedColumns.remove(colKey);
                 } else {
                     // Column exists — load any missing Y sections in the 3×3 range
                     boolean addedAny = false;
@@ -962,6 +1014,16 @@ public class ChunkManager {
                     if (addedAny) {
                         scheduleColumnLighting(cx, cz, colKey, slots);
                     }
+                    // Publish readiness only when all three immediate Y sections exist.
+                    boolean immediateRangeComplete = true;
+                    for (int cy = pcy - 1; cy <= pcy + 1; cy++) {
+                        if (!slots.containsKey(cy)) {
+                            immediateRangeComplete = false;
+                            break;
+                        }
+                    }
+                    if (immediateRangeComplete) fullyGeneratedColumns.add(colKey);
+                    else fullyGeneratedColumns.remove(colKey);
                 }
             }
         }
@@ -1108,6 +1170,7 @@ public class ChunkManager {
                 scheduleFluidsInColumn(cx, cz, slots);
                 scheduleColumnLighting(cx, cz, colKey, slots);
                 columnSectionsLoaded.remove(colKey);
+                fullyGeneratedColumns.add(colKey);
                 return;
             }
 

@@ -45,6 +45,7 @@ public class HudUI {
     public Vector2i uiTextureSize = new Vector2i(1, 1);
     public int fontTextureId = 0;
     public Vector2i fontTextureSize = new Vector2i(1, 1);
+    public int loadingTextureId = 0;
 
     public UILayer.UIElement crosshairElement;
     public UILayer.UIElement hotbarActiveElement;
@@ -88,6 +89,13 @@ public class HudUI {
     public UILayer.UITextElement tvChannelNameText;
     public UILayer.UITextElement tvContentText;
     public UILayer.UITextElement tvInstructionsText;
+
+    // ── Spawn loading overlay ──
+    // These are appended last so the overlay is composited above the normal HUD.
+    public UILayer.UIElement spawnLoadingBackground;
+    public UILayer.UITextElement spawnLoadingTitle;
+    public UILayer.UITextElement spawnLoadingStatus;
+    public UILayer.UITextElement spawnLoadingSpinner;
 
     public double itemNameDisplayUntil = 0.0;
     public boolean inventoryUiDirty = true;
@@ -149,6 +157,7 @@ public class HudUI {
 
         tryLoadUiTexture();
         tryLoadFontTexture();
+        tryLoadLoadingTexture();
         buildInventoryUi(hudLayer);
         uiLayers.add(hudLayer);
     }
@@ -174,6 +183,19 @@ public class HudUI {
             }
         } catch (Exception e) {
             System.err.println("Note: ascii.png not found");
+        }
+    }
+
+    public void tryLoadLoadingTexture() {
+        try {
+            java.io.File loadingFile = new java.io.File("src/main/resources/ui/loading.png");
+            if (loadingFile.exists()) {
+                loadingTextureId = UIManager.loadTexture(loadingFile.getPath());
+            } else {
+                System.err.println("Note: loading.png not found; using the bright fallback color");
+            }
+        } catch (Exception e) {
+            System.err.println("Note: loading.png could not be loaded; using the bright fallback color");
         }
     }
 
@@ -516,6 +538,60 @@ public class HudUI {
         tvInstructionsText.visible = false;
         tvInstructionsText.charLineLimit = 60;
         layer.addElement(tvInstructionsText);
+
+        // ── Spawn loading overlay ──
+        // Keep this in the same layer, but append it after every other element so
+        // it remains visually above the inventory/HUD while world generation runs.
+        spawnLoadingBackground = new UILayer.UIElement(
+            new Vector2f(0, 0),
+            new Vector2f(main.width, main.height),
+            new Vector4f(loadingTextureId != 0 ? 1.0f : 0.88f,
+                         loadingTextureId != 0 ? 1.0f : 0.94f,
+                         loadingTextureId != 0 ? 1.0f : 0.78f,
+                         1.0f)
+        );
+        if (loadingTextureId != 0) {
+            // The generated texture is a normal 2D image; white prevents
+            // vertex-color tinting from muddying the bright daytime artwork.
+            spawnLoadingBackground.textureId = loadingTextureId;
+        }
+        // Consume clicks while loading so hidden inventory controls cannot be
+        // activated through the overlay.
+        spawnLoadingBackground.onClick = () -> { };
+        spawnLoadingBackground.visible = false;
+        layer.addElement(spawnLoadingBackground);
+
+        spawnLoadingTitle = new UILayer.UITextElement(
+            new Vector2f(main.width / 2f - 175, main.height / 2f - 70),
+            "WORLD INITIALIZING",
+            3.0f,
+            new Vector4f(0.06f, 0.22f, 0.32f, 1.0f),
+            fontTextureId
+        );
+        spawnLoadingTitle.visible = false;
+        spawnLoadingTitle.charLineLimit = 40;
+        layer.addElement(spawnLoadingTitle);
+
+        spawnLoadingSpinner = new UILayer.UITextElement(
+            new Vector2f(main.width / 2f - 12, main.height / 2f - 10),
+            "|",
+            3.0f,
+            new Vector4f(0.06f, 0.48f, 0.48f, 1.0f),
+            fontTextureId
+        );
+        spawnLoadingSpinner.visible = false;
+        layer.addElement(spawnLoadingSpinner);
+
+        spawnLoadingStatus = new UILayer.UITextElement(
+            new Vector2f(main.width / 2f - 230, main.height / 2f + 55),
+            "Generating spawn chunks...",
+            1.8f,
+            new Vector4f(0.10f, 0.28f, 0.34f, 1.0f),
+            fontTextureId
+        );
+        spawnLoadingStatus.visible = false;
+        spawnLoadingStatus.charLineLimit = 52;
+        layer.addElement(spawnLoadingStatus);
     }
 
     // ── Slot click handlers ───────────────────────────────────────────────────────
@@ -1113,6 +1189,30 @@ public class HudUI {
             }
         }
     
+    }
+
+    /**
+     * Always update the spawn overlay regardless of inventory UI dirty state.
+     * Called from Main.loop() so generation and surface detection remain visible
+     * while the logic thread intentionally pauses gameplay.
+     */
+    public void updateSpawnLoadingOverlay(double time) {
+        boolean loading = ctx.spawnLoading;
+        spawnLoadingBackground.visible = loading;
+        spawnLoadingTitle.visible = loading;
+        spawnLoadingSpinner.visible = loading;
+        spawnLoadingStatus.visible = loading;
+        if (!loading) return;
+
+        String message = ctx.spawnLoadingMessage;
+        spawnLoadingStatus.text = (message == null || message.isEmpty())
+            ? "Preparing spawn..." : message;
+
+        // A small, deterministic pulse makes it clear that the game is working.
+        int spinnerFrame = (int) Math.floor(time * 8.0) % 4;
+        spawnLoadingSpinner.text = new String[] { "|", "/", "-", "\\" }[spinnerFrame];
+        float pulse = 0.72f + 0.28f * (float) Math.abs(Math.sin(time * 3.0));
+        spawnLoadingSpinner.color.w = pulse;
     }
 
     /** Always update TV overlay regardless of dirty flag. Called from Main.loop(). */

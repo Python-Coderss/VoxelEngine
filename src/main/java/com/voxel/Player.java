@@ -63,6 +63,8 @@ public class Player {
     private boolean isDead = false;
     private float fallDistance = 0.0f;
     private long spawnX, spawnY, spawnZ;
+    private final java.util.EnumMap<com.voxel.world.DimensionType, Vector3f> spawnPoints =
+        new java.util.EnumMap<>(com.voxel.world.DimensionType.class);
 
     private float yaw = -90, pitch = 0;
     private com.voxel.world.DimensionType dimension = com.voxel.world.DimensionType.OVERWORLD;
@@ -77,6 +79,7 @@ public class Player {
         spawnX = posX;
         spawnY = posY;
         spawnZ = posZ;
+        spawnPoints.put(dimension, new Vector3f((float) x, (float) y, (float) z));
     }
 
     public void update(float dt, World world, BlockDataManager blockDataManager) {
@@ -450,12 +453,22 @@ public class Player {
     }
 
     public void respawn() {
-        posX = spawnX;
-        posY = spawnY;
-        posZ = spawnZ;
-        prevPosX = spawnX;
-        prevPosY = spawnY;
-        prevPosZ = spawnZ;
+        Vector3f dimensionSpawn = spawnPoints.get(dimension);
+        if (dimensionSpawn != null) {
+            posX = FixedPoint.fromFloat(dimensionSpawn.x);
+            posY = FixedPoint.fromFloat(dimensionSpawn.y);
+            posZ = FixedPoint.fromFloat(dimensionSpawn.z);
+            prevPosX = posX;
+            prevPosY = posY;
+            prevPosZ = posZ;
+        } else {
+            posX = spawnX;
+            posY = spawnY;
+            posZ = spawnZ;
+            prevPosX = spawnX;
+            prevPosY = spawnY;
+            prevPosZ = spawnZ;
+        }
         velocity.set(0);
         health = maxHealth;
         isDead = false;
@@ -487,6 +500,7 @@ public class Player {
         spawnX = FixedPoint.fromFloat(point.x);
         spawnY = FixedPoint.fromFloat(point.y);
         spawnZ = FixedPoint.fromFloat(point.z);
+        spawnPoints.put(dimension, new Vector3f(point));
     }
 
     // ════════════════════════════════════════════════════════════════
