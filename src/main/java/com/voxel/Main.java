@@ -298,7 +298,8 @@ public class Main {
         com.voxel.entity.VillagerEntity.setEntityManager(entityManager);
         com.voxel.world.structure.MapGenVillage.setEntityManager(entityManager);
         com.voxel.world.structure.MapGenVillage.setTextureManager(textureManager);
-        player = new Player(1024, 100, 1024); // Spawn above the water pool at y=62
+        // The spawn pool's water surface is at y=62; player feet should start one block above it.
+        player = new Player(1024, 63, 1024); // Spawn above the water pool at y=62
 
         setupQuad();
         setupTexture();
@@ -406,6 +407,8 @@ public class Main {
         // Spawn initial enemies
         spawnInitialEnemies(player);
 
+        // Surface detection is intentionally deferred until the spawn chunks finish generating.
+        ctx.beginSpawnResolution(1024, 1024);
         chunkManager.update(player.getPosition(), yaw);
         uploadWorldToGpu();
         updateCursorMode();
@@ -506,6 +509,16 @@ public class Main {
         if (!running) return;
         syncGameState();
 
+        // Dimension switches replace the active world/chunk manager on the logic thread.
+        // Pick up that reference before checking spawn-generation readiness.
+        if (chunkManager != ctx.chunkManager) {
+            chunkManager = ctx.chunkManager;
+            world = ctx.world;
+            activeDimension = ctx.activeDimension;
+            redstoneManager = ctx.redstoneManager;
+            player.setDimension(activeDimension);
+        }
+
         if (cameraMode == CameraMode.FIRST_PERSON) {
             playerYaw = yaw;
         }
@@ -514,9 +527,14 @@ public class Main {
         int pcz = (int) Math.floor(player.getPosition().z) >> 4;
         boolean chunksReady = chunkManager.isChunkLoaded(pcx, pcz);
 
-        if (chunksReady) {
-            // After dimension switch: adjust player y to 1 block above the actual surface
-            // once spawn chunks are loaded (surface scan fails earlier since chunks aren't ready)
+        // Resolve the final surface only after ChunkManager reports that all immediate
+        // spawn columns have finished generation/loading.
+        if (ctx.spawnLoading) {
+            ctx.resolveSpawnAfterChunksGenerated();
+        }
+
+        if (chunksReady && !ctx.spawnLoading) {
+            // Compatibility call; resolution is already complete by this point.
             ctx.adjustSpawnYAfterChunkLoad();
 
             handleInput(dt);
@@ -575,6 +593,17 @@ public class Main {
 
         if (playerEntity != null) {
             playerEntity.syncFromPlayer(player, playerYaw, pitch, cameraMode != CameraMode.FIRST_PERSON, dt);
+        }
+
+        // Keep chunk streaming alive while the loading screen is visible, but do not
+        // run movement, combat, AI, fluids, or other gameplay simulation yet.
+        if (ctx.spawnLoading) {
+            // Keep retrying the immediate spawn area if the first pass could not
+            // allocate every section; ChunkManager coalesces these requests.
+            chunkManager.retrySpawnGeneration(player.getPosition(), yaw);
+            chunkManager.update(player.getPosition(), yaw);
+            lastLogicTickNanos = System.nanoTime();
+            return;
         }
 
         // --- Crafting cutscene: walk player towards the table ---
@@ -1041,6 +1070,7 @@ public class Main {
 
             updateInventoryUi();
             hud.updateTVOverlay(glfwGetTime(), worldTime);
+            hud.updateSpawnLoadingOverlay(glfwGetTime());
             hud.updateWindowTitle();
 
             hud.uiManager.begin();

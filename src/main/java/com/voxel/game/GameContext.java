@@ -183,9 +183,12 @@ public class GameContext {
     public float tvCutsceneTargetYaw = -90, tvCutsceneTargetPitch = -15;
     public boolean tvWatching = false;
 
-    // --- Pending spawn adjustment (deferred until spawn chunks are loaded) ---
+    // --- Spawn resolution (deferred until spawn chunks are generated) ---
     public int pendingSpawnX = Integer.MIN_VALUE;
     public int pendingSpawnZ = Integer.MIN_VALUE;
+    private int pendingSpawnY = Integer.MIN_VALUE;
+    public volatile boolean spawnLoading = true;
+    public volatile String spawnLoadingMessage = "Generating spawn chunks...";
 
     // --- Runnables passed by Main for dimension switching ---
     public Runnable uploadWorldToGpu;
@@ -229,6 +232,17 @@ public class GameContext {
         if (statusConsumer != null) statusConsumer.accept(msg);
     }
 
+    /** Starts deferred spawn resolution for a newly selected world position. */
+    public void beginSpawnResolution(int x, int z) {
+        pendingSpawnX = x;
+        pendingSpawnZ = z;
+        pendingSpawnY = player == null
+            ? activeDimension.baseHeight + 3
+            : (int) Math.floor(player.getPosition().y);
+        spawnLoading = true;
+        spawnLoadingMessage = "Generating spawn chunks...";
+    }
+
     /** Legacy overload: translates from the player's current position. */
     public void switchToDimension(DimensionType target) {
         switchToDimension(target, new Vector3f(player.getPosition()));
@@ -270,29 +284,27 @@ public class GameContext {
         float tz = translateCoordinate(sourcePosition.z, previous, target);
         int spawnX = Math.round(tx);
         int spawnZ = Math.round(tz);
+        // Do not scan terrain here: the target world's spawn chunks may not exist yet.
+        // Use a harmless fallback while the loading overlay is shown, then resolve the
+        // actual surface after ChunkManager confirms the spawn area is generated.
         int spawnY;
-
-        if (target == DimensionType.END) {
-            // End: island dimension — search for an island near the translated position
-            spawnY = findIslandSurface(spawnX, spawnZ);
-            pendingSpawnX = spawnX;
-            pendingSpawnZ = spawnZ;
+        if (target == DimensionType.NETHER) {
+            spawnY = 32;
         } else if (target == DimensionType.AETHER) {
-            // Aether: island dimension — search for an island near the translated position
-            spawnY = findIslandSurface(spawnX, spawnZ);
-            pendingSpawnX = spawnX;
-            pendingSpawnZ = spawnZ;
-        } else if (target == DimensionType.NETHER) {
-            // Nether: cave dimension, scan downward from ceiling
-            spawnY = findNetherSpawn(spawnX, spawnZ);
+            // Start near the configured Aether terrain height so the immediate
+            // generated sections include the island surface for detection.
+            spawnY = target.baseHeight + 3;
         } else {
-            // Overworld: find surface near translated position
-            spawnY = findSurfaceNear(spawnX, spawnZ, 1, 255, 32);
+            spawnY = target.baseHeight + 3;
         }
 
         player.setPosition(spawnX + 0.5, spawnY, spawnZ + 0.5);
         player.resetVelocity();
         player.setDimension(target);
+        beginSpawnResolution(spawnX, spawnZ);
+        // Keep /spawn and death aligned with the safe location resolved for the
+        // dimension the player just entered.
+        player.setSpawnPoint(new Vector3f(player.getPosition()));
         // Sync playerEntity dimension for entity visibility filtering
         if (playerEntity != null) {
             playerEntity.dimension = target;
@@ -309,6 +321,22 @@ public class GameContext {
         setStatus("Switched to " + target.name);
     }
 
+    /**
+     * The spawn loader generates three vertical sections around the fallback
+     * player position. Keep all surface probes inside that generated range;
+     * reading higher unloaded sections would look like air and produce a bad
+     * spawn height.
+     */
+    private int spawnLoadedMinY() {
+        int playerCy = Math.floorDiv(pendingSpawnY, 16);
+        return (playerCy - 1) * 16;
+    }
+
+    private int spawnLoadedMaxY() {
+        int playerCy = Math.floorDiv(pendingSpawnY, 16);
+        return (playerCy + 2) * 16 - 1;
+    }
+
     /** Scans an area around (cx, cz) for the highest solid block, returns y+2 (air above). */
     private int findSurfaceNear(int cx, int cz, int yMin, int yMax, int maxRadius) {
         for (int r = 0; r <= maxRadius; r += 3) {
@@ -317,7 +345,7 @@ public class GameContext {
                     int sx = cx + ox, sz = cz + oz;
                     for (int sy = yMax - 1; sy >= yMin; sy--) {
                         int block = world.getVoxel(sx, sy, sz);
-                        if (block != 0 && block != 106) { // 106 = aether portal (not solid ground)
+                        if (block != 0 && block != 106 && !blockDataManager.isLiquid(block)) {
                             return sy + 2;
                         }
                     }
@@ -325,26 +353,46 @@ public class GameContext {
             }
         }
         // Fallback
-        if (activeDimension == DimensionType.AETHER) return 96;
         if (activeDimension == DimensionType.NETHER) return 32;
         return activeDimension.baseHeight + 3;
     }
 
     /**
-     * Called each tick after a dimension switch. Once the spawn chunks are loaded,
-     * re-scans for the island surface and adjusts the player's y to 2 blocks above it.
-     * This prevents fall damage from spawning at a wrong y when chunks weren't ready.
+     * Resolves the final spawn only after the immediate 3x3 spawn columns have
+     * completed generation. Returns true when the player can begin simulation.
      */
-    public void adjustSpawnYAfterChunkLoad() {
-        if (pendingSpawnX == Integer.MIN_VALUE) return;
-        int surfaceY = findIslandSurface(pendingSpawnX, pendingSpawnZ);
-        float currentY = player.getPosition().y;
-        // Only adjust if we found a different (real) surface — don't adjust if still fallback
-        if (Math.abs(surfaceY - currentY) > 0.5f && surfaceY > 10 && surfaceY < 200) {
-            org.joml.Vector3d d = player.getPositionD();
-            player.setPosition(d.x, surfaceY, d.z);
+    public boolean resolveSpawnAfterChunksGenerated() {
+        if (!spawnLoading) return true;
+        if (pendingSpawnX == Integer.MIN_VALUE || chunkManager == null) return false;
+
+        int centerCx = Math.floorDiv(pendingSpawnX, 16);
+        int centerCz = Math.floorDiv(pendingSpawnZ, 16);
+        if (!chunkManager.areSpawnChunksGenerated(centerCx, centerCz)) return false;
+
+        spawnLoadingMessage = "Detecting surface...";
+        int surfaceY;
+        if (activeDimension == DimensionType.AETHER || activeDimension == DimensionType.END) {
+            surfaceY = findIslandSurface(pendingSpawnX, pendingSpawnZ);
+        } else if (activeDimension == DimensionType.NETHER) {
+            surfaceY = findNetherSpawn(pendingSpawnX, pendingSpawnZ);
+        } else {
+            surfaceY = findSurfaceNear(pendingSpawnX, pendingSpawnZ,
+                Math.max(1, spawnLoadedMinY()), spawnLoadedMaxY(), 16);
         }
+
+        player.setPosition(pendingSpawnX + 0.5, surfaceY, pendingSpawnZ + 0.5);
+        player.resetVelocity();
+        player.setSpawnPoint(new Vector3f(player.getPosition()));
         pendingSpawnX = Integer.MIN_VALUE;
+        pendingSpawnZ = Integer.MIN_VALUE;
+        spawnLoading = false;
+        spawnLoadingMessage = "Spawn ready";
+        return true;
+    }
+
+    /** Compatibility entry point for older callers; readiness is checked internally. */
+    public void adjustSpawnYAfterChunkLoad() {
+        resolveSpawnAfterChunksGenerated();
     }
 
     /**
@@ -353,12 +401,19 @@ public class GameContext {
      * Excludes aerclouds, leaves, portals, and other non-full blocks.
      */
     private int findIslandSurface(int cx, int cz) {
-        int radius = 6 * 16; // 6 chunks = 96 blocks
+        // The readiness check guarantees a 3x3 XZ area, so do not probe
+        // beyond that generated area and accidentally treat unloaded columns
+        // as terrain/air.
+        int radius = 16;
+        int scanMinY = Math.max(20, spawnLoadedMinY());
+        // Leave two generated blocks above the candidate so the above/above2
+        // air checks never read beyond the loaded spawn sections.
+        int scanMaxY = spawnLoadedMaxY() - 2;
         for (int r = 0; r <= radius; r += 4) {
             for (int ox = -r; ox <= r; ox += 4) {
                 for (int oz = -r; oz <= r; oz += 4) {
                     int sx = cx + ox, sz = cz + oz;
-                    for (int sy = 120; sy >= 20; sy--) {
+                    for (int sy = scanMaxY; sy >= scanMinY; sy--) {
                         int block = world.getVoxel(sx, sy, sz);
                         // Only count full blocks (terrain) — excludes aerclouds, leaves, portals, etc.
                         if (block != 0 && blockDataManager.isFullBlock(block)) {
@@ -371,22 +426,26 @@ public class GameContext {
                 }
             }
         }
-        // Fallback: try coarser scan for any solid block
-        return findSurfaceNear(cx, cz, 20, 120, 48);
+        // Fallback: keep the coarser scan inside the same generated range;
+        // never treat unloaded sections as empty terrain.
+        return findSurfaceNear(cx, cz,
+            Math.max(1, spawnLoadedMinY()), spawnLoadedMaxY(), 16);
     }
 
     /** Nether-specific spawn finder: scan downward from ceiling for a cave floor. */
     private int findNetherSpawn(int cx, int cz) {
+        int scanMinY = Math.max(4, spawnLoadedMinY());
+        int scanMaxY = Math.min(110, spawnLoadedMaxY() - 2);
         // Scan around for a cave floor: solid block with air above
         for (int r = 0; r <= 16; r += 4) {
             for (int ox = -r; ox <= r; ox += 4) {
                 for (int oz = -r; oz <= r; oz += 4) {
                     int sx = cx + ox, sz = cz + oz;
-                    for (int sy = 110; sy >= 4; sy--) {
+                    for (int sy = scanMaxY; sy >= scanMinY; sy--) {
                         int below = world.getVoxel(sx, sy, sz);
                         int above = world.getVoxel(sx, sy + 1, sz);
                         int above2 = world.getVoxel(sx, sy + 2, sz);
-                        if (below != 0 && above == 0 && above2 == 0) {
+                        if (below != 0 && !blockDataManager.isLiquid(below) && above == 0 && above2 == 0) {
                             return sy + 2;
                         }
                     }
