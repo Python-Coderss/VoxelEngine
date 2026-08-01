@@ -3,3 +3,6 @@ nul
 dev/
 target/
 *.log
+models/java/*.onnx
+__pycache__/
+*.pyc

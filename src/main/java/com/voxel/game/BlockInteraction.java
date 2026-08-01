@@ -254,7 +254,10 @@ public class BlockInteraction {
             com.voxel.entity.VillagerEntity v = (com.voxel.entity.VillagerEntity) e;
             String prof = v.getProfession().name().toLowerCase().replace('_', ' ');
             String name = prof.substring(0, 1).toUpperCase() + prof.substring(1);
-            ctx.setStatus("Villager (" + name + ") — \"Hmm...\"");
+            String dialogue = ctx.villagerAudioManager != null
+                    ? ctx.villagerAudioManager.requestVillagerDialogue(v, ctx.worldTime)
+                    : "Hmm...";
+            ctx.setStatus("Villager (" + name + ") — \"" + dialogue + "\"");
         }
     }
 

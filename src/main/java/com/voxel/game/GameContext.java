@@ -61,6 +61,8 @@ public class GameContext {
     public DroppedItemManager droppedItemManager;
     /** Create-inspired encased fans: push dropped items along their facing when powered. */
     public EncasedFanSystem encasedFanSystem;
+    /** Optional asynchronous villager voice and OpenAL playback bridge. */
+    public com.voxel.audio.VillagerAudioManager villagerAudioManager;
 
     // --- Player ---
     public Player player;
