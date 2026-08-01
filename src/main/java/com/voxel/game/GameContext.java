@@ -190,6 +190,13 @@ public class GameContext {
     public volatile boolean spawnLoading = true;
     public volatile String spawnLoadingMessage = "Generating spawn chunks...";
 
+    // --- Heavy init phase (deferred from Main.init() to the loading screen) ---
+    // True while Main hasn't yet created the Overworld dimension / chunkManager /
+    // redstoneManager / fluidManager / playerEntity / initial enemies. The
+    // Main logic thread runs Main.initializeWorldPhase() once on its first tick;
+    // until that completes, the render loop just shows the spawn-loading overlay.
+    public volatile boolean initializing = true;
+
     // --- Runnables passed by Main for dimension switching ---
     public Runnable uploadWorldToGpu;
     public Runnable updateCursorMode;

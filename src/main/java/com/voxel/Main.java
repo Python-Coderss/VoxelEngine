@@ -377,40 +377,20 @@ public class Main {
 
         WorldGenLogger.init();
 
-        // Initialize dimension system (only create Overworld at startup to save memory)
-        dimensionManager = new DimensionManager(blockDataManager, ctx.worldSaveManager, biomeManager);
-        dimensionManager.createDimension(DimensionType.OVERWORLD, 8);
-        // Other dimensions (Nether, End, Aether) are created lazily when first visited
-
-        // Use Overworld as default
-        world = dimensionManager.getActiveWorld();
-        chunkManager = dimensionManager.getActiveChunkManager();
-        ctx.world = world;
-        ctx.chunkManager = chunkManager;
-        ctx.dimensionManager = dimensionManager;
-
-        redstoneManager = new RedstoneManager(world, chunkManager);
-        ctx.redstoneManager = redstoneManager;
-
-        // Initialize fluid manager for water and lava flow
-        ctx.fluidManager = new com.voxel.world.FluidManager(world, chunkManager, blockDataManager, false);
-        chunkManager.setFluidManager(ctx.fluidManager);
-
-        // Persistent FloatBuffer for pointLightSSBO zeroing
+        // Persistent FloatBuffer for pointLightSSBO zeroing (cheap; do it here so
+        // the SSBO clear in the render loop can run before the world exists).
         persistentPlBuf = MemoryUtil.memAllocFloat(4);
         persistentPlBuf.put(0, Float.intBitsToFloat(0));
 
-        playerEntity = new com.voxel.entity.PlayerEntity(10_000, new Vector3f(player.getPosition()), textureManager);
-        playerEntity.dimension = activeDimension;
-        entityManager.addEntity(playerEntity);
+        // Heavy world + initial-entity initialization is intentionally deferred to
+        // the loading-screen phase (see GameContext.initializing). It runs on the
+        // logic thread during the first tick() via Main.initializeWorldPhase() so
+        // the spawn-loading overlay is visible immediately instead of after a long
+        // blank window. Shader compile/link and GL setup stay here per the user
+        // (negligible startup cost).
+        ctx.initializing = true;
+        ctx.spawnLoadingMessage = "Initializing world...";
 
-        // Spawn initial enemies
-        spawnInitialEnemies(player);
-
-        // Surface detection is intentionally deferred until the spawn chunks finish generating.
-        ctx.beginSpawnResolution(1024, 1024);
-        chunkManager.update(player.getPosition(), yaw);
-        uploadWorldToGpu();
         updateCursorMode();
         setStatus("Mode: survival. Press E for inventory, / for commands. R to respawn.");
     }
@@ -460,6 +440,52 @@ public class Main {
         }
     }
 
+    /**
+     * One-shot deferred init that creates the Overworld dimension + chunk and
+     * redstone / fluid managers + the player entity + initial enemy roster, then
+     * kicks off the per-dimension spawn resolution. Runs on the LOGIC thread
+     * from tick() while ctx.initializing is true, while the spawn-loading
+     * overlay is already visible on the GL thread. Shader compile/link and GL
+     * resource creation stay in init() — they're not moved.
+     */
+    private void initializeWorldPhase() {
+        // Create only Overworld at startup; other dimensions lazy-load.
+        dimensionManager = new DimensionManager(blockDataManager, ctx.worldSaveManager, biomeManager);
+        dimensionManager.createDimension(DimensionType.OVERWORLD, 8);
+
+        world = dimensionManager.getActiveWorld();
+        chunkManager = dimensionManager.getActiveChunkManager();
+        ctx.world = world;
+        ctx.chunkManager = chunkManager;
+        ctx.dimensionManager = dimensionManager;
+
+        redstoneManager = new RedstoneManager(world, chunkManager);
+        ctx.redstoneManager = redstoneManager;
+
+        ctx.fluidManager = new com.voxel.world.FluidManager(world, chunkManager, blockDataManager, false);
+        chunkManager.setFluidManager(ctx.fluidManager);
+
+        playerEntity = new com.voxel.entity.PlayerEntity(10_000, new Vector3f(player.getPosition()), textureManager);
+        playerEntity.dimension = activeDimension;
+        entityManager.addEntity(playerEntity);
+
+        spawnInitialEnemies(player);
+
+        // Hand the GPU world-upload to the render thread (uploadWorldToGpu() is
+        // a GL-only call; ctx.uploadWorldToGpu is already wired to
+        // (() -> { needsWorldUpload = true; }) in init()).
+        needsWorldUpload = true;
+
+        // Begin the existing per-dimension spawn resolution flow. Once the spawn
+        // chunks finish generating + the surface is detected, the loading overlay
+        // hides.
+        ctx.spawnLoadingMessage = "Generating spawn chunks...";
+        ctx.beginSpawnResolution(1024, 1024);
+        chunkManager.update(player.getPosition(), yaw);
+
+        ctx.initializing = false;
+    }
+
     public void setupUi() { hud.setupUi(); }
 
     public void tryLoadUiTexture() { hud.tryLoadUiTexture(); }
@@ -507,6 +533,16 @@ public class Main {
 
     public void tick(float dt) {
         if (!running) return;
+
+        // Deferred world + initial-entity init runs once on the logic thread while
+        // the spawn-loading overlay is already visible on the GL thread. By the
+        // time this returns, world / chunkManager / redstoneManager /
+        // fluidManager / playerEntity are wired up and beginSpawnResolution() has
+        // been invoked, so the rest of tick() can run normally.
+        if (ctx.initializing) {
+            initializeWorldPhase();
+        }
+
         syncGameState();
 
         // Dimension switches replace the active world/chunk manager on the logic thread.
@@ -1053,19 +1089,25 @@ public class Main {
                 needsCursorUpdate = false;
             }
 
-            redstoneManager.applyLampChanges();
-            // Deferred world GPU upload (must happen on GL thread)
-            if (needsWorldUpload) {
-                uploadWorldToGpu();
-                needsWorldUpload = false;
-            }
+            // World-side GPU bookkeeping only runs once the deferred init has wired
+            // world / chunkManager / redstoneManager on the logic thread. Until
+            // then we skip these so the render loop just shows the spawn-loading
+            // overlay sitting on a (still-zeroed) cleared framebuffer.
+            if (world != null && chunkManager != null && redstoneManager != null) {
+                redstoneManager.applyLampChanges();
+                // Deferred world GPU upload (must happen on GL thread)
+                if (needsWorldUpload) {
+                    uploadWorldToGpu();
+                    needsWorldUpload = false;
+                }
 
-            uploadDirtyChunks();
+                uploadDirtyChunks();
 
-            // Upload biome map to GPU when the gen thread has slid it
-            if (chunkManager.isBiomeMapDirty()) {
-                biomeManager.uploadBiomeMap();
-                chunkManager.clearBiomeMapDirty();
+                // Upload biome map to GPU when the gen thread has slid it
+                if (chunkManager.isBiomeMapDirty()) {
+                    biomeManager.uploadBiomeMap();
+                    chunkManager.clearBiomeMapDirty();
+                }
             }
 
             updateInventoryUi();
@@ -1089,6 +1131,7 @@ public class Main {
             // Camera uses interpolated player position
             Vector3f cameraPos = cameraController.getActiveCameraPosition(playerPartialTicks);
 
+            if (world != null && chunkManager != null) {
             // World buffer origin — used to make all shader positions buffer-relative
             int wox = world.getOffsetX(), woy = world.getOffsetY(), woz = world.getOffsetZ();
 
@@ -1224,6 +1267,19 @@ public class Main {
             glUniform1i(locQuadPass, 1);
             glBindVertexArray(quadVAO);
             glDrawArrays(GL_TRIANGLES, 0, 6);
+            } else {
+                // Loading-screen-only frame: clear to a known background and
+                // draw the quad over renderTexture (still zero-initialized at
+                // this point). HudUI's spawn-loading overlay covers the screen.
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glViewport(0, 0, width, height);
+                glClear(GL_COLOR_BUFFER_BIT);
+                glUseProgram(quadProgram);
+                glBindTextureUnit(0, renderTexture);
+                glUniform1i(locQuadPass, 1);
+                glBindVertexArray(quadVAO);
+                glDrawArrays(GL_TRIANGLES, 0, 6);
+            }
 
             glfwSwapBuffers(window);
             glfwPollEvents();
