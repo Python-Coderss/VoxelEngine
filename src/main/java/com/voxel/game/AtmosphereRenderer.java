@@ -12,6 +12,7 @@ public class AtmosphereRenderer {
     private final int locSunDir, locSunColor, locMoonDir, locMoonColor;
     private final int locSkyZenith, locSkyHorizon, locAmbient;
     private final int locDimensionID;
+    private final float[] sdTmp = new float[3]; // reusable sun-dir scratch (no per-frame alloc)
 
     public AtmosphereRenderer(int computeProgram) {
         locSunDir = glGetUniformLocation(computeProgram, "u_SunDir");
@@ -27,10 +28,6 @@ public class AtmosphereRenderer {
     public int locDimensionID() { return locDimensionID; }
 
     public void upload(float worldTime, DimensionType activeDimension) {
-        float t = worldTime;
-        float cycle = (t / 1440.0f) % 1.0f;
-        float angle = cycle * 2.0f * 3.14159265359f - (3.14159265359f * 0.5f);
-
         if (activeDimension == DimensionType.NETHER) {
             glUniform3f(locSunDir, 0f, -0.5f, 0f);
             glUniform3f(locSunColor, 0.6f, 0.2f, 0.05f);
@@ -57,15 +54,11 @@ public class AtmosphereRenderer {
             glUniform3f(locAmbient, 0.3f, 0.35f, 0.4f);
         } else {
             // Overworld: day/night cycle
-            float sinA = (float) Math.sin(angle);
-            float cosA = (float) Math.cos(angle);
-            float sunX = cosA, sunY = sinA, sunZ = 0.3f;
-            float len = (float) Math.sqrt(sunX * sunX + sunY * sunY + sunZ * sunZ);
-            sunX /= len; sunY /= len; sunZ /= len;
-            glUniform3f(locSunDir, sunX, sunY, sunZ);
-            glUniform3f(locMoonDir, -sunX, -sunY, -sunZ);
+            computeSunDir(activeDimension, worldTime, sdTmp);
+            glUniform3f(locSunDir, sdTmp[0], sdTmp[1], sdTmp[2]);
+            glUniform3f(locMoonDir, -sdTmp[0], -sdTmp[1], -sdTmp[2]);
 
-            float h = sunY;
+            float h = sdTmp[1];
             float skyZenR = mix(0.01f, 0.1f, smoothstep(-0.15f, 0.15f, h));
             float skyZenG = mix(0.02f, 0.35f, smoothstep(-0.15f, 0.15f, h));
             float skyZenB = mix(0.05f, 0.75f, smoothstep(-0.15f, 0.15f, h));
@@ -88,6 +81,23 @@ public class AtmosphereRenderer {
             float ambB = mix(0.07f, skyZenB * 0.4f, smoothstep(-0.2f, 0.2f, h));
             glUniform3f(locAmbient, ambR, ambG, ambB);
         }
+    }
+
+    /**
+     * Computes the sun direction for a dimension (identical math to upload()).
+     * Used by Main to build the sun shadow-map basis.
+     */
+    public static void computeSunDir(DimensionType dim, float worldTime, float[] out) {
+        float cycle = ((worldTime / 1440.0f) % 1.0f);
+        float angle = cycle * 2.0f * 3.14159265359f - (3.14159265359f * 0.5f);
+        if (dim == DimensionType.NETHER) { out[0] = 0f; out[1] = -0.5f; out[2] = 0f; return; }
+        if (dim == DimensionType.END)    { out[0] = 0f; out[1] = 1f; out[2] = 0f; return; }
+        if (dim == DimensionType.AETHER) { out[0] = 0f; out[1] = 1f; out[2] = 0.3f; return; }
+        float sinA = (float) Math.sin(angle);
+        float cosA = (float) Math.cos(angle);
+        float sunX = cosA, sunY = sinA, sunZ = 0.3f;
+        float len = (float) Math.sqrt(sunX * sunX + sunY * sunY + sunZ * sunZ);
+        out[0] = sunX / len; out[1] = sunY / len; out[2] = sunZ / len;
     }
 
     static float smoothstep(float a, float b, float x) {
