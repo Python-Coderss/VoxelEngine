@@ -2585,34 +2585,6 @@ public class Main {
     public java.nio.IntBuffer reusableLightBuf;
 
     public void uploadDirtyChunks() {
-        // Light pool upload: check BEFORE the dirty-slots early return.
-        // The gen thread sets lightsNeedUpload=true asynchronously after BFS;
-        // if we early-return because dirty slots are exhausted, the light pool
-        // would never reach the GPU.
-        if (chunkManager.needsLightUpload() && !chunkManager.isLightingActive()) {
-            int[] lightPool = world.getLightPool();
-
-            // Warn instead of crash: if BFS ran but the light pool is all zeros,
-            // this is normal for unlit areas (caves with no emissive blocks) or
-            // when sky light has not been computed yet. Skip upload to avoid flushing
-            // stale zeros over current GPU data.
-            boolean anyNonZero = false;
-            for (int v : lightPool) {
-                if (v != 0) { anyNonZero = true; break; }
-            }
-            if (!anyNonZero) {
-                GameLogger.log("WARN: lightsNeedUpload=true but light pool is all zeros — skipping upload");
-                chunkManager.clearLightUpload();
-                // Fall through: continue uploading dirty slots (just skip the stale light upload)
-            }
-
-            java.nio.IntBuffer lightBuf = MemoryUtil.memAllocInt(lightPool.length);
-            lightBuf.put(lightPool).flip();
-            glNamedBufferSubData(lightSSBO, 0, lightBuf);
-            MemoryUtil.memFree(lightBuf);
-            chunkManager.clearLightUpload();
-        }
-
         java.util.Set<Integer> dirty = chunkManager.getDirtySlots();
 
         // Capped upload: persist an iterator across frames to avoid per-frame spikes
@@ -2623,6 +2595,12 @@ public class Main {
         boolean tableDirty = chunkManager.isTableDirty();
         if (!dirtyUploadIterator.hasNext() && !tableDirty) {
             dirtyUploadIterator = null;
+            // A pending light upload is complete once the dirty set drains empty:
+            // every producer pairs lightsNeedUpload=true with dirtySlots.add(...), so
+            // no slots left to drain means every changed slot's light reached the GPU.
+            if (chunkManager.needsLightUpload() && dirty.isEmpty()) {
+                chunkManager.clearLightUpload();
+            }
             return;
         }
 
@@ -2657,6 +2635,11 @@ public class Main {
         int[] pool = world.getChunkPool();
         int[] masks = world.getBitmaskPool();
         short[] occs = world.getOcclusionPool();
+        // Light pool slice per slot — uploaded with each dirty slot below (replaces the
+        // old one-shot full-pool upload, which copied+uploaded the ENTIRE pool — at
+        // poolSize>=2048 that is >=32MB, and with the default render distance it is
+        // 140-300MB — in a single frame on EVERY lighting pass).
+        int[] lightPool = world.getLightPool();
 
         int uploaded = 0;
         while (dirtyUploadIterator.hasNext() && uploaded < MAX_DIRTY_UPLOADS_PER_FRAME) {
@@ -2674,6 +2657,15 @@ public class Main {
             reusableOccBuf.clear();
             reusableOccBuf.put(occs, s * vpc, vpc).flip();
             glNamedBufferSubData(occlusionSSBO, (long) s * vpc * Short.BYTES, reusableOccBuf);
+
+            // Per-slot light pool slice (16KB each). The old code uploaded the ENTIRE
+            // pool in one frame on every lighting pass (a 140-300MB copy + upload with
+            // the default pool sizes) — the worst recurring frame spike. Only the dirty
+            // slot's slice is uploaded here, capped at 48/frame; BFS completions
+            // re-mark affected slots so GPU light always converges with the pool.
+            reusableLightBuf.clear();
+            reusableLightBuf.put(lightPool, s * vpc, vpc).flip();
+            glNamedBufferSubData(lightSSBO, (long) s * vpc * Integer.BYTES, reusableLightBuf);
 
             // Pack directional SDF (8 bytes per slot) into 2 uints and upload.
             byte[] sdfs = world.getDirSdfPool();
@@ -2694,9 +2686,13 @@ public class Main {
             uploaded++;
         }
 
-        // Iterator exhausted: reset for next cycle
+        // Iterator exhausted: reset for next cycle. If the dirty set drained to empty,
+        // any pending light upload is complete too (see the early return above).
         if (!dirtyUploadIterator.hasNext()) {
             dirtyUploadIterator = null;
+            if (chunkManager.needsLightUpload() && dirty.isEmpty()) {
+                chunkManager.clearLightUpload();
+            }
         }
 
     }

@@ -487,7 +487,7 @@ float fastShadow(vec3 ro, vec3 rd, float maxDist) {
     return 1.0;
 }
 
-bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx) {
+bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out ivec4 resBlockData1) {
     ivec3 bufMin = ivec3(0);
     ivec3 bufMax = ivec3(WORLD_SIZE);
     float tn, tf; if (!intersectAABB(ro, rd, vec3(bufMin), vec3(bufMax), tn, tf)) return false;
@@ -495,6 +495,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float 
     vec3 dd = abs(1.0 / rd); ivec3 s = ivec3(sign(rd));
     vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
     int side = 0; if (skipFirst) side = advanceDDA(mp, sd, dd, s);
+    resBlockData1 = ivec4(0); // block-data d1 threaded to the caller (avoids a redundant texelFetch in main)
     // Per-chunk SDF sphere-trace step is gated at SDF>1.5; when close to surface
     // (SDF<=1.5) or crossing a chunk boundary, fallback to per-voxel DDA.
     for (int i = 0; i < 256; i++) {  // bumped from 72: sphere-trace skips chunks fast
@@ -587,6 +588,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float 
                             resSide = side;
                             resT = (side == 0 ? sd.x - dd.x : (side == 1 ? sd.y - dd.y : sd.z - dd.z)) + st;
                             resAabbIdx = -1;
+                            resBlockData1 = d1;
                             return true;
                         }
                         ivec4 info = texelFetch(u_BlockAABBInfo, int(voxelType));
@@ -599,6 +601,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float 
                             resSide = side;
                             resT = (side == 0 ? sd.x - dd.x : (side == 1 ? sd.y - dd.y : sd.z - dd.z)) + st;
                             resAabbIdx = -1;
+                            resBlockData1 = d1;
                             return true;
                         }
                         float exitT = st + min(sd.x, min(sd.y, sd.z));
@@ -614,6 +617,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float 
                                     resWireConn = wireConn;
                                     resT = aTn;
                                     resAabbIdx = (aabbOffset / 2) + k;
+                                    resBlockData1 = d1;
                                     vec3 hp = ro + rd * aTn;
                                     vec3 center = (bMin + bMax) * 0.5;
                                     vec3 halfSize = (bMax - bMin) * 0.5;
@@ -636,15 +640,14 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float 
     return false;
 }
 
-bool traceAll(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out int resEntIdx, out int resCraftingIdx) {
-    resT = 1e30; resEntUv = vec2(0.5); isEnt = false; isHpBar = false; hpRatio = 1.0; resWirePower = 0u; resWireConn = 0u; resAabbIdx = -1; resEntIdx = -1; resCraftingIdx = -1;
+bool traceAll(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out int resEntIdx, out int resCraftingIdx, out ivec4 resBlockData1) {
+    resT = 1e30; resEntUv = vec2(0.5); isEnt = false; isHpBar = false; hpRatio = 1.0; resWirePower = 0u; resWireConn = 0u; resAabbIdx = -1; resEntIdx = -1; resCraftingIdx = -1; resBlockData1 = ivec4(0);
     float tV; int sideV; uint voxelV, wirePowerV, wireConnV; int aabbIdxV;
-    if (traceWorld(ro, rd, skipFirst, lastMediumTag, tV, sideV, voxelV, wirePowerV, wireConnV, aabbIdxV)) {
+    if (traceWorld(ro, rd, skipFirst, lastMediumTag, tV, sideV, voxelV, wirePowerV, wireConnV, aabbIdxV, resBlockData1)) {
         resT = tV; resVoxel = voxelV;
         resWirePower = wirePowerV;
         resWireConn = wireConnV;
         resAabbIdx = aabbIdxV;
-        resT = tV; resVoxel = voxelV;
         resN = (sideV == 0) ? vec3(-sign(rd.x), 0, 0) : ((sideV == 1) ? vec3(0, -sign(rd.y), 0) : vec3(0, 0, -sign(rd.z)));
     }
     // Early cull: skip entities far from the ray origin or behind the camera
@@ -850,8 +853,8 @@ void main() {
 
 
     for (int b = 0; b < 2; b++) {  // reduced from 4 → 2 bounces for perf
-        float t; vec3 n; uint voxel, eTex, wirePower, wireConn; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx;
-        if (!traceAll(ro, rd, skip, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx)) { final += throu * GetSky(rd, at); break; }
+        float t; vec3 n; uint voxel, eTex, wirePower, wireConn; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx; ivec4 blockData1;
+        if (!traceAll(ro, rd, skip, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx, blockData1)) { final += throu * GetSky(rd, at); break; }
         
         vec3 hp = ro + rd * t, alb; float trans = 0, refl = 0;
         vec3 beam = vec3(0.0); // hoisted — assigned in each hit-type path below
@@ -961,7 +964,7 @@ void main() {
                 beam += at.moonColor * max(0.0, dot(n, at.moonDir)) * 0.5;
             }
         } else {
-            ivec4 d0 = texelFetch(u_BlockData, int(voxel)*3), d1 = texelFetch(u_BlockData, int(voxel)*3+1), d2 = texelFetch(u_BlockData, int(voxel)*3+2);
+            ivec4 d0 = texelFetch(u_BlockData, int(voxel)*3), d1 = blockData1, d2 = texelFetch(u_BlockData, int(voxel)*3+2);
             int face = (n.y > 0.9) ? 1 : ((n.y < -0.9) ? 0 : ((n.z < -0.9) ? 2 : ((n.z > 0.9) ? 3 : ((n.x < -0.9) ? 4 : 5))));
             int tex = (face == 0) ? d0.x : (face == 1 ? d0.y : (face == 2 ? d0.z : (face == 3 ? d0.w : (face == 4 ? d1.x : d1.y))));
             vec2 uv;
@@ -1183,8 +1186,8 @@ void main() {
         // and uses block ID as tag for all other translucent blocks (e.g., glass).
         uint mediumTag = voxel;
         if (!isEnt) {
-            ivec4 bd1 = texelFetch(u_BlockData, int(voxel)*3+1);
-            int eff = (bd1.w >> 10) & 0xF;
+            // Reuse the block-data d1 threaded out of traceWorld (no redundant texelFetch)
+            int eff = (blockData1.w >> 10) & 0xF;
             if (eff == 2) { // LIQUID
                 // Differentiate water (tag=1) from lava (tag=2)
                 mediumTag = (voxel == 21u) ? 2u : 1u;
