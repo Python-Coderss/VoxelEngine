@@ -167,7 +167,7 @@ public class CommandProcessor {
             return;
         }
         if (parts.length < 4) {
-            ctx.setStatus("Usage: /light <r> <g> <b> - place a light at your feet (RGB 0-255, radius 32). Or /light clear");
+            ctx.setStatus("Usage: /light <r> <g> <b> - place a light that follows you (RGB 0-255, radius 32). Or /light clear");
             return;
         }
         try {
@@ -186,7 +186,7 @@ public class CommandProcessor {
             d[i] = pos.x; d[i + 1] = pos.y; d[i + 2] = pos.z; d[i + 3] = 32.0f;
             d[i + 4] = r; d[i + 5] = g; d[i + 6] = b; d[i + 7] = 2.0f; // intensity
             ctx.numPointLights++;
-            ctx.setStatus(String.format(Locale.ROOT, "Point light RGB(%.0f, %.0f, %.0f) placed at your position (radius 32)",
+            ctx.setStatus(String.format(Locale.ROOT, "Point light RGB(%.0f, %.0f, %.0f) now follows you (radius 32)",
                 r * 255f, g * 255f, b * 255f));
         } catch (NumberFormatException e) {
             ctx.setStatus("Invalid number in /light args (use integers 0-255)");

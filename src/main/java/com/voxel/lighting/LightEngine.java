@@ -555,7 +555,7 @@ public class LightEngine {
      * @param oldBlockId  Block ID that was at this position before the change
      * @return Set of dirty slot indices
      */
-    public Set<Integer> onBlockChanged(int x, int y, int z, int oldBlockId) {
+    public Set<Integer> onBlockChanged(int x, int y, int z, int oldBlockId, Set<Integer> lightPending) {
         Set<Integer> dirtySlots = new HashSet<>();
         int newBlockId = world.getVoxel(x, y, z);
         int oldEmissive = blockDataManager.getEmissive(oldBlockId);
@@ -570,12 +570,14 @@ public class LightEngine {
             if (oldEmissive > 0) {
                 int intensity = Math.min(oldEmissive, 15);
                 Set<Integer> contrib = computeSingleSourceContribution(x, y, z, intensity);
+                lightPending.addAll(contrib);
                 applyTintToMain(oldBlockId, false, contrib);
                 dirtySlots.addAll(contrib);
             }
             if (newEmissive > 0) {
                 int intensity = Math.min(newEmissive, 15);
                 Set<Integer> contrib = computeSingleSourceContribution(x, y, z, intensity);
+                lightPending.addAll(contrib);
                 applyTintToMain(newBlockId, true, contrib);
                 dirtySlots.addAll(contrib);
             }
@@ -592,6 +594,10 @@ public class LightEngine {
                         int slot = getSlotForSection(cx + dcx, cy + dcy, cz + dcz, ox, oy, oz);
                         cachedSlots[dcx + 1][dcy + 1][dcz + 1] = slot;
                         if (slot != World.EMPTY) {
+                            // Mark pending BEFORE zeroing the pool: never leave a
+                            // window where the pool already reads as zeros but the
+                            // render thread would still upload it.
+                            lightPending.add(slot);
                             world.clearLightPoolSlot(slot);
                             dirtySlots.add(slot);
                         }

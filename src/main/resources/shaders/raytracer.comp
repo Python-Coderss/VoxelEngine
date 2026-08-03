@@ -955,7 +955,10 @@ vec3 marchLightShafts(vec3 ro, vec3 rd, float tMax, Atmosphere at) {
 // Dynamic point lights (added via /light). Accumulates diffuse + soft shadow.
 vec3 pointLightContrib(vec3 p, vec3 n) {
     vec3 acc = vec3(0.0);
-    for (int i = 0; i < numPointLights; i++) {
+    // Defense in depth: clamp the count so a corrupt/oversized header can never
+    // drive this loop to billions of iterations (GPU hang / frozen screen).
+    int npl = min(numPointLights, 16);
+    for (int i = 0; i < npl; i++) {
         PointLight L = pointLights[i];
         vec3 toL = L.position - p;
         float d2 = dot(toL, toL);
