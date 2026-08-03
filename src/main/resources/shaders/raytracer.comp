@@ -59,8 +59,26 @@ struct PointLight { vec3 position; float radius; vec3 color; float intensity; };
 layout(std430, binding = 5) buffer readonly restrict PointLightBuffer { 
     int numPointLights; 
     int pl_pad1, pl_pad2, pl_pad3; 
-    PointLight pointLights[]; 
+    PointLight pointLights[];
 };
+
+// 16 baked light pools (8 sun-trajectory + 8 moon-trajectory): ortho depth maps of
+// the world from fixed light directions, regenerated ~20Hz. No surface sun shadows —
+// the main pass samples the ACTIVE sun/moon pools only for volumetric god rays.
+layout(r32f, binding = 1) uniform writeonly image2D u_ShadowMapOut;
+layout(location = 22) uniform int u_ShadowPass;      // 0=main, 1=light-pool gen
+layout(location = 23) uniform vec3 u_ShadowOrigin;   // ACTIVE SUN pool near-plane origin (buffer-relative)
+layout(location = 24) uniform vec3 u_ShadowRight;    // ACTIVE SUN pool right basis (unit length)
+layout(location = 25) uniform vec3 u_ShadowUp;       // ACTIVE SUN pool up basis (unit length)
+layout(location = 26) uniform vec3 u_ShadowSunDir;   // ACTIVE SUN pool light direction
+layout(location = 27) uniform vec2 u_ShadowExtent;   // (half-extent blocks, depth blocks)
+layout(location = 30) uniform float u_ShadowMapSize; // 1.0 / pool resolution
+layout(location = 31) uniform sampler2D u_SunPoolTex;
+layout(location = 32) uniform sampler2D u_MoonPoolTex;
+layout(location = 33) uniform vec3 u_MoonPoolOrigin; // ACTIVE MOON pool near-plane origin
+layout(location = 34) uniform vec3 u_MoonPoolRight;  // ACTIVE MOON pool right basis
+layout(location = 35) uniform vec3 u_MoonPoolUp;     // ACTIVE MOON pool up basis
+layout(location = 36) uniform vec3 u_MoonPoolDir;    // ACTIVE MOON pool light direction
 
 // Entities
 struct EntityData { vec3 position; float health; vec3 rotation; float maxHealth; int partCount; int partOffset; float hitFlash; float tintR; float tintG; float tintB; float tintAmount; float padding; };
@@ -829,7 +847,132 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float re
     return resT < 1e20;
 }
 
+// Two-layer shadow helpers
+
+// March from the pool near plane into the scene (-u_ShadowSunDir) and return the
+// first occluding voxel's distance along the light axis, normalized to [0,1]
+// (1.0 = nothing within the pool depth). Mirrors fastShadow's hit rules so baked
+// pools match visible geometry exactly.
+float poolDepth(vec3 ro) {
+    vec3 rd = -u_ShadowSunDir;
+    ivec3 bufMin = ivec3(0); ivec3 bufMax = ivec3(WORLD_SIZE);
+    float tn, tf; if (!intersectAABB(ro, rd, vec3(bufMin), vec3(bufMax), tn, tf)) return 1.0;
+    float st = max(0.0, tn);
+    vec3 p = ro + rd * st; ivec3 mp = ivec3(floor(p));
+    vec3 dd = abs(1.0 / rd); ivec3 s = ivec3(sign(rd));
+    vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
+    float invDepth = 1.0 / u_ShadowExtent.y;
+    int side = 0; // axis of the face the ray crossed to enter the current cell
+    for (int i = 0; i < 96; i++) {
+        if (any(lessThan(mp, ivec3(0))) || any(greaterThanEqual(mp, ivec3(WORLD_SIZE)))) break;
+        // Current cell entry distance from the ray origin = the last-stepped axis'
+        // boundary (the axis returned by advanceDDA, exactly like traceWorld).
+        float enter = (side == 0 ? sd.x - dd.x : (side == 1 ? sd.y - dd.y : sd.z - dd.z));
+        float cellEnter = st + enter;
+        if (cellEnter > u_ShadowExtent.y) break;
+        ivec3 rel = mp;
+        uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
+        if (slot == EMPTY) { skipChunk(mp, sd, dd, s); }
+        else {
+            if (isBitSolid(slot, mp)) {
+                int bi = (mp.x & 15) | ((mp.y & 15) << 4) | ((mp.z & 15) << 8);
+                uint rawVoxel = voxelPool[(slot << 12) | bi];
+                uint v = rawVoxel & 0xFFFFu;
+                ivec4 d1 = texelFetch(u_BlockData, int(v) * 3 + 1);
+                if (((d1.w >> 9) & 1) == 1) return clamp(max(cellEnter, 0.0) * invDepth, 0.0, 1.0);
+                ivec4 info = texelFetch(u_BlockAABBInfo, int(v));
+                int aabbCount = info.y;
+                if (aabbCount > 0) {
+                    int aabbOffset = info.x;
+                    vec3 blockOrigin = floor(vec3(mp));
+                    float exitT = st + min(sd.x, min(sd.y, sd.z)); // cell exit distance
+                    for (int k = 0; k < min(aabbCount, 8); k++) {
+                        vec3 bMin = texelFetch(u_BlockAABBs, aabbOffset + k * 2).xyz + blockOrigin;
+                        vec3 bMax = texelFetch(u_BlockAABBs, aabbOffset + k * 2 + 1).xyz + blockOrigin;
+                        float aTn, aTf;
+                        if (intersectAABB(ro, rd, bMin, bMax, aTn, aTf)) {
+                            if (aTn < exitT) return clamp(max(aTn, 0.0) * invDepth, 0.0, 1.0);
+                        }
+                    }
+                }
+            }
+        }
+        side = advanceDDA(mp, sd, dd, s); // runs for BOTH branches (empty chunks too)
+    }
+    return 1.0;
+}
+
+// Light pool: parallel rays from the pool near plane record first-hit depth along
+// the pool's light direction (Java binds the target pool texture + basis per gen).
+void genLightPool() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy); ivec2 sz = imageSize(u_ShadowMapOut);
+    if (any(greaterThanEqual(px, sz))) return;
+    vec2 ndc = ((vec2(px) + 0.5) / vec2(sz)) * 2.0 - 1.0;
+    vec3 ro = u_ShadowOrigin + u_ShadowRight * (ndc.x * u_ShadowExtent.x)
+                              + u_ShadowUp * (ndc.y * u_ShadowExtent.x);
+    imageStore(u_ShadowMapOut, px, vec4(poolDepth(ro), 0.0, 0.0, 1.0));
+}
+
+// Sample the ACTIVE sun or moon pool at world point p: 1.0 if light from the pool's
+// direction reaches p (depth test in the pool's ortho space), 0.0 if terrain blocks.
+float poolVis(vec3 p, vec3 origin, vec3 right, vec3 up, vec3 dir, sampler2D tex) {
+    vec3 d = p - origin;
+    vec2 uvw = vec2(dot(d, right) / (2.0 * u_ShadowExtent.x) + 0.5,
+                    dot(d, up) / (2.0 * u_ShadowExtent.x) + 0.5);
+    if (uvw.x < 0.0 || uvw.y < 0.0 || uvw.x > 1.0 || uvw.y > 1.0) return 0.0;
+    float pDepth = -dot(d, dir) / u_ShadowExtent.y;
+    return (pDepth <= texture(tex, uvw).r + 0.004) ? 1.0 : 0.0;
+}
+
+// Volumetric god rays: march the primary ray, accumulating light scattered toward
+// the camera from the active sun pool (day) and moon pool (night). Only rays with a
+// positive dot against a lit source contribute (cheap early-out for the rest).
+vec3 marchLightShafts(vec3 ro, vec3 rd, float tMax, Atmosphere at) {
+    vec3 acc = vec3(0.0);
+    float sunDot = dot(rd, at.sunDir);
+    float moonDot = dot(rd, at.moonDir);
+    float sunLit = (at.sunColor.x + at.sunColor.y + at.sunColor.z);
+    float moonLit = (at.moonColor.x + at.moonColor.y + at.moonColor.z);
+    if ((sunDot <= 0.05 || sunLit <= 0.001) && (moonDot <= 0.05 || moonLit <= 0.001)) return acc;
+    const int STEPS = 14;
+    float step = tMax / float(STEPS);
+    float t = step * 0.5;
+    for (int i = 0; i < STEPS; i++) {
+        vec3 p = ro + rd * t;
+        if (sunDot > 0.05 && sunLit > 0.001) {
+            float vis = poolVis(p, u_ShadowOrigin, u_ShadowRight, u_ShadowUp, u_ShadowSunDir, u_SunPoolTex);
+            acc += at.sunColor * vis * sunDot * step * 0.008;
+        }
+        if (moonDot > 0.05 && moonLit > 0.001) {
+            float vis = poolVis(p, u_MoonPoolOrigin, u_MoonPoolRight, u_MoonPoolUp, u_MoonPoolDir, u_MoonPoolTex);
+            acc += at.moonColor * vis * moonDot * step * 0.008;
+        }
+        t += step;
+    }
+    return acc;
+}
+
+// Dynamic point lights (added via /light). Accumulates diffuse + soft shadow.
+vec3 pointLightContrib(vec3 p, vec3 n) {
+    vec3 acc = vec3(0.0);
+    for (int i = 0; i < numPointLights; i++) {
+        PointLight L = pointLights[i];
+        vec3 toL = L.position - p;
+        float d2 = dot(toL, toL);
+        if (d2 > L.radius * L.radius || d2 < 1e-4) continue;
+        float d = sqrt(d2);
+        vec3 ldir = toL / d;
+        float ndl = max(0.0, dot(n, ldir));
+        float att = 1.0 - d / L.radius; att *= att;
+        if (fastShadow(p + n * 0.02, ldir, d) > 0.5) {
+            acc += L.color * (L.intensity * ndl * att);
+        }
+    }
+    return acc;
+}
+
 void main() {
+    if (u_ShadowPass == 1) { genLightPool(); return; }
     ivec2 px = ivec2(gl_GlobalInvocationID.xy); ivec2 sz = imageSize(imgOutput);
     if (any(greaterThanEqual(px, sz))) return;
     vec2 ndc = ((vec2(px) + 0.5) / vec2(sz)) * 2.0 - 1.0;
@@ -848,6 +991,7 @@ void main() {
     at.skyHorizon = u_SkyHorizon;
     at.ambient = u_Ambient;
     vec3 final = vec3(0.0), throu = vec3(1.0), ro = camPos; bool skip = false;
+    vec3 godRd = rd; float godT = 96.0; // primary ray for god-ray marching
     uint lastMediumTag = 0xFFFFFFFFu; // Track last translucent medium tag to skip same-medium faces
 
 
@@ -855,6 +999,7 @@ void main() {
     for (int b = 0; b < 2; b++) {  // reduced from 4 → 2 bounces for perf
         float t; vec3 n; uint voxel, eTex, wirePower, wireConn; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx; ivec4 blockData1;
         if (!traceAll(ro, rd, skip, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx, blockData1)) { final += throu * GetSky(rd, at); break; }
+        if (b == 0) godT = t; // primary-ray hit distance bounds the shaft march
         
         vec3 hp = ro + rd * t, alb; float trans = 0, refl = 0;
         vec3 beam = vec3(0.0); // hoisted — assigned in each hit-type path below
@@ -913,7 +1058,11 @@ void main() {
             } else {
                 alb = texel.rgb * (vec3(d2.rgb)/255.0);
                 trans = 1.0 - texel.a; refl = 0.1;
-                beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
+                // Sun diffuse (no shadow ray — light pools only feed god rays)
+                float sunVisC = max(0.0, dot(n, at.sunDir));
+                beam = at.ambient * 1.0;
+                if (sunVisC > 0.0) beam += at.sunColor * sunVisC;
+                beam += pointLightContrib(hp, n);
                 vec3 bc = alb * beam * (1.0 - trans);
                 float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, GetSky(rd, at), fog);
                 final += throu * bc;
@@ -943,8 +1092,11 @@ void main() {
                     else alb = heartCol.rgb;
                 }
                 refl = 0.0;
-                beam = at.ambient + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
+                float sunVisH = max(0.0, dot(n, at.sunDir));
+                beam = at.ambient;
+                if (sunVisH > 0.0) beam += at.sunColor * sunVisH;
                 beam += at.moonColor * max(0.0, dot(n, at.moonDir)) * 0.5;
+                beam += pointLightContrib(hp, n);
             } else {
                 vec4 entTex = texture(u_EntityTextures, vec3(eUv, float(eTex)));
                 // Apply alpha-based transparency (0 = transparent, 255 = opaque)
@@ -959,9 +1111,13 @@ void main() {
                     vec3 tint = vec3(entities[entIdx].tintR, entities[entIdx].tintG, entities[entIdx].tintB);
                     alb = mix(alb, alb * tint, entities[entIdx].tintAmount);
                 }
-                // Compute lighting for the entity: directional (sun+moon) + ambient
-                beam = at.ambient + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
+                // Compute lighting for the entity: directional (sun+moon) + ambient.
+                // No sun shadow ray — light pools only feed god rays.
+                float sunVisE = max(0.0, dot(n, at.sunDir));
+                beam = at.ambient;
+                if (sunVisE > 0.0) beam += at.sunColor * sunVisE;
                 beam += at.moonColor * max(0.0, dot(n, at.moonDir)) * 0.5;
+                beam += pointLightContrib(hp, n);
             }
         } else {
             ivec4 d0 = texelFetch(u_BlockData, int(voxel)*3), d1 = blockData1, d2 = texelFetch(u_BlockData, int(voxel)*3+2);
@@ -1112,10 +1268,7 @@ void main() {
                 else alb *= texture(u_FoliageColormap, cmUV).rgb;
               } }
 
-            // Compute direct+ambient lighting for the block (same as crafting item path)
-            beam = at.ambient * 1.0 + at.sunColor * max(0.0, dot(n, at.sunDir)) * fastShadow(hp + n * 0.01, at.sunDir, 100.0);
-
-            // Sample RGB lightmap from the nearest non-full-block voxel adjacent to the hit face
+            // Sample the baked RGB lightmap (block light from the LightPool SSBO).
             ivec3 lightSamplePos = ivec3(floor(hp + n * 0.5));
             vec4 lightMap = sampleLightmap(lightSamplePos);
             if (lightMap.x < 0.0) {
@@ -1134,8 +1287,17 @@ void main() {
             if (blockIntensity > 0.001) {
                 blockTint = vec3(blockR, blockG, blockB) / blockIntensity;
             }
+
+            // Direct+ambient lighting for the block (no sun shadow ray — pools only
+            // feed god rays; baked sky light already darkens caves/overhangs).
+            float sunVis = max(0.0, dot(n, at.sunDir));
+            beam = at.ambient * 1.0;
+            if (sunVis > 0.0 && skyContrib > 0.03) {
+                beam += at.sunColor * sunVis;
+            }
             beam *= totalLightContrib * mix(vec3(1.0), blockTint, blockContrib * 0.8);
             beam += at.ambient * 0.3;
+            beam += pointLightContrib(hp, n);
 
             // Ambient occlusion: darken face edges/corners based on neighboring blocks
             float ao = computeAmbientOcclusion(hp, n);
@@ -1213,6 +1375,10 @@ void main() {
         else if (refl > 0.0) { throu *= refl; ro = hp + n * 0.01; rd = reflect(rd, n); skip = false; }
         else break;
     }
+    
+    // God rays: volumetric shafts from the ACTIVE sun/moon light pools. March the
+    // primary ray up to its first hit; shafts only accumulate in air gaps.
+    if (godT > 0.5) final += marchLightShafts(camPos, godRd, min(godT, 96.0), at);
     
     vec3 result = ACESFilm(final);
     if (uiCol.a > 0.0) result = mix(result, uiCol.rgb, uiCol.a);

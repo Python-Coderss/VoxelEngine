@@ -123,6 +123,36 @@ public class Main {
 
 
     public FloatBuffer persistentPlBuf; // Persistent FloatBuffer for pointLightSSBO (no per-frame alloc)
+
+    // 16 baked light pools (8 sun-trajectory + 8 moon-trajectory), regenerated ~20Hz.
+    // No surface sun shadows — the main pass samples the ACTIVE sun/moon pools only
+    // for volumetric god rays. Block light comes from the LightPool SSBO (unchanged).
+    public int[] lightPoolTex;                       // [0..7] sun pools, [8..15] moon pools
+    public volatile boolean lightPoolDirty = true;
+    private final int shadowMapRes = 512;
+    private final float shadowHalfExtent = 48.0f;
+    private final float shadowDepth = 192.0f;
+    private int shadowFrameCount = 0;
+    private final float[][] poolDirs = new float[16][3]; // fixed light dir per pool
+    private final float[] activeSunDir = new float[3];   // live sun dir for pool pick
+    private final float[] activeMoonDir = new float[3];  // live moon dir for pool pick
+    private final float[] shadowCamPosPrev = new float[3];
+    private int activeSunPool = 0, activeMoonPool = 8;
+    private int prevActiveSunPool = -1, prevActiveMoonPool = -1;
+    // Fixed uniform locations (declared in raytracer.comp)
+    private static final int LOC_SHADOW_PASS = 22;
+    private static final int LOC_SHADOW_ORIGIN = 23;
+    private static final int LOC_SHADOW_RIGHT = 24;
+    private static final int LOC_SHADOW_UP = 25;
+    private static final int LOC_SHADOW_SUN_DIR = 26;
+    private static final int LOC_SHADOW_EXTENT = 27;
+    private static final int LOC_SHADOW_MAP_SIZE = 30;
+    private static final int LOC_SUN_POOL = 31;
+    private static final int LOC_MOON_POOL = 32;
+    private static final int LOC_MOON_POOL_ORIGIN = 33;
+    private static final int LOC_MOON_POOL_RIGHT = 34;
+    private static final int LOC_MOON_POOL_UP = 35;
+    private static final int LOC_MOON_POOL_DIR = 36;
     public com.voxel.entity.EntityManager entityManager;
     public World world;
     public com.voxel.world.ChunkManager chunkManager;
@@ -230,6 +260,7 @@ public class Main {
         glDeleteBuffers(quadVBO);
         glDeleteVertexArrays(quadVAO);
         glDeleteTextures(renderTexture);
+        if (lightPoolTex != null) for (int t : lightPoolTex) glDeleteTextures(t);
         glDeleteBuffers(indirectionSSBO);
         glDeleteBuffers(chunkPoolSSBO);
         glDeleteBuffers(bitmaskSSBO);
@@ -379,7 +410,8 @@ public class Main {
 
         // Persistent FloatBuffer for pointLightSSBO zeroing (cheap; do it here so
         // the SSBO clear in the render loop can run before the world exists).
-        persistentPlBuf = MemoryUtil.memAllocFloat(4);
+        // Header (4 ints: count + padding) + MAX_POINT_LIGHTS lights * 8 floats.
+        persistentPlBuf = MemoryUtil.memAllocFloat(4 + GameContext.MAX_POINT_LIGHTS * 8);
         persistentPlBuf.put(0, Float.intBitsToFloat(0));
 
         // Heavy world + initial-entity initialization is intentionally deferred to
@@ -1149,7 +1181,18 @@ public class Main {
                 (long)woy * FixedPoint.SCALE,
                 (long)woz * FixedPoint.SCALE);
 
-            persistentPlBuf.rewind();
+            // Upload dynamic point lights (converted from absolute world coords to
+            // buffer-relative space so the shader compares them against voxel space).
+            int npl = ctx.numPointLights;
+            persistentPlBuf.clear();
+            persistentPlBuf.put(npl).put(0).put(0).put(0);
+            float[] pld = ctx.pointLightData;
+            for (int i = 0; i < npl; i++) {
+                int b = i * 8;
+                persistentPlBuf.put(pld[b] - wox).put(pld[b + 1] - woy).put(pld[b + 2] - woz).put(pld[b + 3]);
+                persistentPlBuf.put(pld[b + 4]).put(pld[b + 5]).put(pld[b + 6]).put(pld[b + 7]);
+            }
+            persistentPlBuf.flip();
             glNamedBufferSubData(pointLightSSBO, 0, persistentPlBuf);
 
             // Compute camera vectors early (used by prepass and compute dispatch)
@@ -1217,9 +1260,13 @@ public class Main {
             // Upload world sliding window offset
             glProgramUniform3i(computeProgram, 6, world.getOffsetX(), world.getOffsetY(), world.getOffsetZ());
 
-            // Upload block break overlay uniforms
+            // Upload block break overlay uniforms.
+            // breakTarget* is in ABSOLUTE world coords (from raycastBlock -> world.getVoxel),
+            // but the shader compares against buffer-relative blockCoord (derived from
+            // _camBlock which is already offset-subtracted). Convert here so the overlay
+            // matches after the sliding window recenters (offset != 0).
             if (ctx.breakTargetX != Integer.MIN_VALUE) {
-                glProgramUniform3i(computeProgram, 19, ctx.breakTargetX, ctx.breakTargetY, ctx.breakTargetZ);
+                glProgramUniform3i(computeProgram, 19, ctx.breakTargetX - wox, ctx.breakTargetY - woy, ctx.breakTargetZ - woz);
                 glProgramUniform1f(computeProgram, 20, ctx.breakProgress / Math.max(1.0f, ctx.blockDataManager.getHardness(ctx.world.getVoxel(ctx.breakTargetX, ctx.breakTargetY, ctx.breakTargetZ))));
             } else {
                 glProgramUniform3i(computeProgram, 19, 0, 0, 0);
@@ -1257,6 +1304,60 @@ public class Main {
 
 
             uploadCraftingItems();
+
+            // ── 16 baked light pools (8 sun-trajectory + 8 moon-trajectory, ~20Hz) ──
+            // No surface sun shadows: the main pass samples the ACTIVE sun/moon pools
+            // for god rays only. Regen active pools when terrain/camera moved or the
+            // active pool index changed; round-robin 2 pools/tick keeps all fresh.
+            shadowFrameCount++;
+            float camBX = cbx + cfx, camBY = cby + cfy, camBZ = cbz + cfz;
+            // Fixed pool directions: 8 evenly-spaced samples along the day for the
+            // sun trajectory (pools 0-7) and moon trajectory (pools 8-15).
+            for (int i = 0; i < 8; i++) {
+                float sampleT = (i + 0.5f) / 8.0f * 1440.0f;
+                AtmosphereRenderer.computeSunDir(activeDimension, sampleT, poolDirs[i]);
+                if (activeDimension == DimensionType.NETHER) { poolDirs[8+i][0]=0f; poolDirs[8+i][1]=0.5f; poolDirs[8+i][2]=0f; }
+                else if (activeDimension == DimensionType.END) { poolDirs[8+i][0]=0f; poolDirs[8+i][1]=-1f; poolDirs[8+i][2]=0f; }
+                else if (activeDimension == DimensionType.AETHER) { poolDirs[8+i][0]=0f; poolDirs[8+i][1]=-1f; poolDirs[8+i][2]=-0.3f; }
+                else { poolDirs[8+i][0] = -poolDirs[i][0]; poolDirs[8+i][1] = -poolDirs[i][1]; poolDirs[8+i][2] = -poolDirs[i][2]; }
+            }
+            AtmosphereRenderer.computeSunDir(activeDimension, worldTime, activeSunDir);
+            if (activeDimension == DimensionType.NETHER) { activeMoonDir[0]=0f; activeMoonDir[1]=0.5f; activeMoonDir[2]=0f; }
+            else if (activeDimension == DimensionType.END) { activeMoonDir[0]=0f; activeMoonDir[1]=-1f; activeMoonDir[2]=0f; }
+            else if (activeDimension == DimensionType.AETHER) { activeMoonDir[0]=0f; activeMoonDir[1]=-1f; activeMoonDir[2]=-0.3f; }
+            else { activeMoonDir[0] = -activeSunDir[0]; activeMoonDir[1] = -activeSunDir[1]; activeMoonDir[2] = -activeSunDir[2]; }
+            activeSunPool = nearestPool(activeSunDir, 0);
+            activeMoonPool = nearestPool(activeMoonDir, 8); // nearestPool already returns the absolute index (8..15)
+            float camDX = camBX - shadowCamPosPrev[0], camDY = camBY - shadowCamPosPrev[1], camDZ = camBZ - shadowCamPosPrev[2];
+            boolean poolTick = (shadowFrameCount % 3 == 0); // 20Hz
+            boolean activeChanged = (activeSunPool != prevActiveSunPool) || (activeMoonPool != prevActiveMoonPool);
+            boolean activeDirty = lightPoolDirty || (camDX * camDX + camDY * camDY + camDZ * camDZ) > 4.0f || activeChanged;
+            int r32f = org.lwjgl.opengl.GL30.GL_R32F;
+            if (activeDirty) {
+                regenLightPool(activeSunPool, camBX, camBY, camBZ, r32f);
+                regenLightPool(activeMoonPool, camBX, camBY, camBZ, r32f);
+                lightPoolDirty = false;
+                shadowCamPosPrev[0] = camBX; shadowCamPosPrev[1] = camBY; shadowCamPosPrev[2] = camBZ;
+                prevActiveSunPool = activeSunPool; prevActiveMoonPool = activeMoonPool;
+            }
+            if (poolTick) {
+                int rr = (shadowFrameCount / 3) % 16; // round-robin 1 pool per tick (all fresh ~0.8s)
+                regenLightPool(rr, camBX, camBY, camBZ, r32f);
+            }
+            glProgramUniform1i(computeProgram, LOC_SHADOW_PASS, 0);
+            // Bind ACTIVE pools + upload their ortho bases for the god-ray march.
+            uploadPoolBasis(LOC_SHADOW_ORIGIN, LOC_SHADOW_RIGHT, LOC_SHADOW_UP, LOC_SHADOW_SUN_DIR,
+                            poolDirs[activeSunPool], camBX, camBY, camBZ);
+            uploadPoolBasis(LOC_MOON_POOL_ORIGIN, LOC_MOON_POOL_RIGHT, LOC_MOON_POOL_UP, LOC_MOON_POOL_DIR,
+                            poolDirs[activeMoonPool], camBX, camBY, camBZ);
+            glProgramUniform2f(computeProgram, LOC_SHADOW_EXTENT, shadowHalfExtent, shadowDepth);
+            glActiveTexture(org.lwjgl.opengl.GL13.GL_TEXTURE18);
+            glBindTexture(GL_TEXTURE_2D, lightPoolTex[activeSunPool]);
+            glActiveTexture(org.lwjgl.opengl.GL13.GL_TEXTURE19);
+            glBindTexture(GL_TEXTURE_2D, lightPoolTex[activeMoonPool]);
+            glProgramUniform1i(computeProgram, LOC_SUN_POOL, 18);
+            glProgramUniform1i(computeProgram, LOC_MOON_POOL, 19);
+            glProgramUniform1f(computeProgram, LOC_SHADOW_MAP_SIZE, 1.0f / shadowMapRes);
 
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
             glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
@@ -2480,11 +2581,69 @@ public class Main {
         }
     }
 
+    // ── Light-pool helpers ──
+
+    /** Nearest of the 8 fixed pool directions to the live direction. */
+    private int nearestPool(float[] dir, int base) {
+        int best = base; float bestDot = -2f;
+        for (int i = 0; i < 8; i++) {
+            float[] d = poolDirs[base + i];
+            float dot = dir[0]*d[0] + dir[1]*d[1] + dir[2]*d[2];
+            if (dot > bestDot) { bestDot = dot; best = base + i; }
+        }
+        return best;
+    }
+
+    /** Compute the ortho basis (right/up/near-plane origin) for a pool direction and upload. */
+    private void uploadPoolBasis(int locOrigin, int locRight, int locUp, int locDir,
+                                 float[] dir, float camBX, float camBY, float camBZ) {
+        float sx = dir[0], sy = dir[1], sz = dir[2];
+        float svx = -sx, svy = -sy, svz = -sz; // view forward = -dir (from light into scene)
+        float srx = svz, srz = -svx;           // right = cross(worldUp, v) = (vz, 0, -vx)
+        float srl = (float) Math.sqrt(srx * srx + srz * srz);
+        if (srl < 1e-4f) { srx = 1.0f; srz = 0.0f; srl = 1.0f; } // dir parallel to worldUp
+        srx /= srl; srz /= srl;
+        float sux = svy * srz, suy = svz * srx - svx * srz, suz = -svy * srx; // up = cross(v, right)
+        float eyeX = camBX + sx * (shadowDepth * 0.5f);
+        float eyeY = camBY + sy * (shadowDepth * 0.5f);
+        float eyeZ = camBZ + sz * (shadowDepth * 0.5f);
+        glProgramUniform3f(computeProgram, locOrigin, eyeX, eyeY, eyeZ);
+        glProgramUniform3f(computeProgram, locRight, srx, 0.0f, srz);
+        glProgramUniform3f(computeProgram, locUp, sux, suy, suz);
+        glProgramUniform3f(computeProgram, locDir, sx, sy, sz);
+    }
+
+    /** Regenerate one light pool: bind it as the write image, dispatch the gen pass. */
+    private void regenLightPool(int idx, float camBX, float camBY, float camBZ, int r32f) {
+        uploadPoolBasis(LOC_SHADOW_ORIGIN, LOC_SHADOW_RIGHT, LOC_SHADOW_UP, LOC_SHADOW_SUN_DIR,
+                        poolDirs[idx], camBX, camBY, camBZ);
+        glProgramUniform2f(computeProgram, LOC_SHADOW_EXTENT, shadowHalfExtent, shadowDepth);
+        glBindImageTexture(1, lightPoolTex[idx], 0, false, 0, GL_WRITE_ONLY, r32f);
+        glProgramUniform1i(computeProgram, LOC_SHADOW_PASS, 1);
+        int gx = (shadowMapRes + 15) / 16;
+        glDispatchCompute(gx, gx, 1);
+        glMemoryBarrier(org.lwjgl.opengl.GL45.GL_TEXTURE_FETCH_BARRIER_BIT | org.lwjgl.opengl.GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    }
+
     public void setupTexture() {
         renderTexture = glCreateTextures(GL_TEXTURE_2D);
         glTextureStorage2D(renderTexture, 1, GL_RGBA8, width, height);
         glTextureParameteri(renderTexture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTextureParameteri(renderTexture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+        // 16 baked light pools (8 sun-trajectory + 8 moon-trajectory). Written by
+        // pool-gen dispatches via image unit 1; ACTIVE pools sampled on units 18/19.
+        int r32f = org.lwjgl.opengl.GL30.GL_R32F;
+        int clampE = org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE;
+        lightPoolTex = new int[16];
+        for (int i = 0; i < 16; i++) {
+            lightPoolTex[i] = glCreateTextures(GL_TEXTURE_2D);
+            glTextureStorage2D(lightPoolTex[i], 1, r32f, shadowMapRes, shadowMapRes);
+            glTextureParameteri(lightPoolTex[i], GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTextureParameteri(lightPoolTex[i], GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTextureParameteri(lightPoolTex[i], GL_TEXTURE_WRAP_S, clampE);
+            glTextureParameteri(lightPoolTex[i], GL_TEXTURE_WRAP_T, clampE);
+        }
     }
 
     /**
@@ -2606,6 +2765,8 @@ public class Main {
 
         int vpc = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
         int poolSize = world.getPoolSizeForAlloc();
+        // Chunks changed this frame -> the light pools must refresh
+        lightPoolDirty = true;
 
         // Lazy-init reusable buffers sized to current world
         int sdfBytesPerChunk = 8; // 6 directional SDF bytes + 2 padding per chunk section

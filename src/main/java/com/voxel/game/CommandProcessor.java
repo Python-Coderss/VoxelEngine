@@ -6,6 +6,7 @@ import java.util.Locale;
 
 import com.voxel.game.GameContext.CameraMode;
 import com.voxel.game.GameContext.GameMode;
+import org.joml.Vector3f;
 
 
 /**
@@ -52,6 +53,7 @@ public class CommandProcessor {
                 ctx.setStatus("Screenshot saved to screenshots/");
                 break;
             case "tv": handleTv(parts); break;
+            case "light": handleLight(parts); break;
             default: ctx.setStatus("Unknown command: /" + command + ". Type /help for commands."); break;
         }
     }
@@ -158,6 +160,39 @@ public class CommandProcessor {
         ctx.setStatus(added ? "Given " + amount + " " + def.displayName : "Inventory full");
     }
 
+    private void handleLight(String[] parts) {
+        if (parts.length >= 2 && parts[1].equalsIgnoreCase("clear")) {
+            ctx.numPointLights = 0;
+            ctx.setStatus("Cleared all point lights");
+            return;
+        }
+        if (parts.length < 4) {
+            ctx.setStatus("Usage: /light <r> <g> <b> - place a light at your feet (RGB 0-255, radius 32). Or /light clear");
+            return;
+        }
+        try {
+            // RGB values in 0-255 range, clamped; radius is always 32 blocks.
+            float r = Math.max(0f, Math.min(255f, Float.parseFloat(parts[1]))) / 255f;
+            float g = Math.max(0f, Math.min(255f, Float.parseFloat(parts[2]))) / 255f;
+            float b = Math.max(0f, Math.min(255f, Float.parseFloat(parts[3]))) / 255f;
+            if (ctx.numPointLights >= GameContext.MAX_POINT_LIGHTS) {
+                ctx.setStatus("Max " + GameContext.MAX_POINT_LIGHTS + " point lights reached (use /light clear)");
+                return;
+            }
+            // Place at the player's feet, radius fixed at 32 blocks
+            Vector3f pos = ctx.player.getPosition();
+            int i = ctx.numPointLights * 8;
+            float[] d = ctx.pointLightData;
+            d[i] = pos.x; d[i + 1] = pos.y; d[i + 2] = pos.z; d[i + 3] = 32.0f;
+            d[i + 4] = r; d[i + 5] = g; d[i + 6] = b; d[i + 7] = 2.0f; // intensity
+            ctx.numPointLights++;
+            ctx.setStatus(String.format(Locale.ROOT, "Point light RGB(%.0f, %.0f, %.0f) placed at your position (radius 32)",
+                r * 255f, g * 255f, b * 255f));
+        } catch (NumberFormatException e) {
+            ctx.setStatus("Invalid number in /light args (use integers 0-255)");
+        }
+    }
+
     private void handleHelp() {
         StringBuilder sb = new StringBuilder("Available commands:");
         sb.append("\n  /help - Show this help");
@@ -175,6 +210,7 @@ public class CommandProcessor {
         sb.append("\n  /locate <village> - Find nearest village");
         sb.append("\n  /tv <channel> - Change TV channel (0=Static,1=Shopping,2=Weather,3=VNN)");
         sb.append("\n  /screenshot - Save a screenshot to screenshots/");
+        sb.append("\n  /light <r> <g> <b> - Place a point light (RGB 0-255, radius 32) at your position (/light clear)");
         ctx.setStatus(sb.toString());
     }
 

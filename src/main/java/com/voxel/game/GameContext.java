@@ -64,6 +64,13 @@ public class GameContext {
     /** Optional asynchronous villager voice and OpenAL playback bridge. */
     public com.voxel.audio.VillagerAudioManager villagerAudioManager;
 
+    // --- Dynamic point lights (added via /light) ---
+    /** Max point lights supported by the pointLightSSBO. */
+    public static final int MAX_POINT_LIGHTS = 16;
+    /** Packed light data: 8 floats per light = x,y,z,radius, r,g,b,intensity. World (absolute) coords. */
+    public final float[] pointLightData = new float[MAX_POINT_LIGHTS * 8];
+    public volatile int numPointLights = 0;
+
     // --- Player ---
     public Player player;
 
