@@ -862,6 +862,24 @@ public class Main {
             ctx.fluidManager.tick(64);
         }
 
+        // /light point lights are DYNAMIC: they follow the player. The command stores
+        // radius/RGB/intensity once, but the position is re-snapped to the player's
+        // current location every tick so the light stays glued to them (the render
+        // thread still converts to buffer-relative coords at upload time).
+        // +1.0 lift: keeps the light in an air cell at block boundaries / slopes so
+        // fastShadow never reports it as self-occluded (light would blink out).
+        int npl = ctx.numPointLights;
+        if (npl > 0) {
+            Vector3f lp = player.getPosition();
+            float[] ld = ctx.pointLightData;
+            for (int i = 0; i < npl; i++) {
+                int b = i * 8;
+                ld[b] = lp.x;
+                ld[b + 1] = lp.y + 1.0f;
+                ld[b + 2] = lp.z;
+            }
+        }
+
         chunkManager.update(player.getPosition(), yaw);
 
         // Record wall-clock time for render-thread interpolation
@@ -1183,9 +1201,17 @@ public class Main {
 
             // Upload dynamic point lights (converted from absolute world coords to
             // buffer-relative space so the shader compares them against voxel space).
-            int npl = ctx.numPointLights;
+            // Clamp at the source too (belt-and-suspenders with the shader's min()):
+            // a corrupt count must never overrun the 132-float buffer or reach the GPU.
+            int npl = Math.min(ctx.numPointLights, GameContext.MAX_POINT_LIGHTS);
             persistentPlBuf.clear();
-            persistentPlBuf.put(npl).put(0).put(0).put(0);
+            // Header count MUST be written as raw int bits (Float.intBitsToFloat),
+            // not as (float)npl: the shader reads this back as `int numPointLights`.
+            // Writing 1.0f here stores bits 0x3F800000 = 1,065,353,216 as an int,
+            // driving the point-light loop to a billion iterations -> GPU hang /
+            // frozen screen at uncapped FPS. (npl == 0 masked this bug: 0.0f has
+            // all-zero bits.)
+            persistentPlBuf.put(Float.intBitsToFloat(npl)).put(0).put(0).put(0);
             float[] pld = ctx.pointLightData;
             for (int i = 0; i < npl; i++) {
                 int b = i * 8;
@@ -2805,7 +2831,14 @@ public class Main {
         int uploaded = 0;
         while (dirtyUploadIterator.hasNext() && uploaded < MAX_DIRTY_UPLOADS_PER_FRAME) {
             int s = dirtyUploadIterator.next();
-            dirtyUploadIterator.remove();
+            // Black-frame guard: while the light thread is rebuilding this slot's light
+            // (CPU pool cleared to zeros), hold the light-slice upload. Geometry still
+            // uploads immediately, but the slot stays dirty so the FINAL converged light
+            // is pushed once the rebuild task completes.
+            boolean lightPending = chunkManager.isLightRebuildPending(s);
+            if (!lightPending) {
+                dirtyUploadIterator.remove();
+            }
 
             reusableVoxelBuf.clear();
             reusableVoxelBuf.put(pool, s * vpc, vpc).flip();
@@ -2824,9 +2857,11 @@ public class Main {
             // the default pool sizes) — the worst recurring frame spike. Only the dirty
             // slot's slice is uploaded here, capped at 48/frame; BFS completions
             // re-mark affected slots so GPU light always converges with the pool.
-            reusableLightBuf.clear();
-            reusableLightBuf.put(lightPool, s * vpc, vpc).flip();
-            glNamedBufferSubData(lightSSBO, (long) s * vpc * Integer.BYTES, reusableLightBuf);
+            if (!lightPending) {
+                reusableLightBuf.clear();
+                reusableLightBuf.put(lightPool, s * vpc, vpc).flip();
+                glNamedBufferSubData(lightSSBO, (long) s * vpc * Integer.BYTES, reusableLightBuf);
+            }
 
             // Pack directional SDF (8 bytes per slot) into 2 uints and upload.
             byte[] sdfs = world.getDirSdfPool();

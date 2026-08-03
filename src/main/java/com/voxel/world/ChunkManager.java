@@ -69,6 +69,13 @@ public class ChunkManager {
     // ── Lighting ──
     private volatile boolean lightsNeedUpload = false;
 
+    // Slots whose light-pool slice is currently being rebuilt by the light thread
+    // (cleared to zeros on the CPU pool). The render thread must NOT upload these
+    // slices — doing so pushes a transient all-zero light state to the GPU, which
+    // renders as a BLACK frame on block break/place. The slot stays dirty until
+    // the rebuild task finishes, then the final light is uploaded.
+    private final Set<Integer> lightRebuildPending = ConcurrentHashMap.newKeySet();
+
     // ── Dedicated lighting thread: processes all BFS work off the gen thread ──
     private final BlockingDeque<Runnable> lightQueue = new LinkedBlockingDeque<>();
     private final Thread lightThread;
@@ -325,14 +332,20 @@ public class ChunkManager {
         final int fOldBlockId = oldBlockId;
         long colKey = chunkKey(colCx, colCz);
         postLightTask(colKey, () -> {
-            Set<Integer> aff = mcLightEngine.onBlockChanged(x, y, z, fOldBlockId);
-            NavigableMap<Integer, Integer> colSlots = loadedChunks.get(colKey);
-            if (colSlots != null) {
-                aff.addAll(mcLightEngine.generateSkyLight(colCx, colCz, colSlots));
+            try {
+                Set<Integer> aff = mcLightEngine.onBlockChanged(x, y, z, fOldBlockId, lightRebuildPending);
+                NavigableMap<Integer, Integer> colSlots = loadedChunks.get(colKey);
+                if (colSlots != null) {
+                    aff.addAll(mcLightEngine.generateSkyLight(colCx, colCz, colSlots));
+                }
+                dirtySlots.addAll(aff);
+                lightsNeedUpload = true;
+                tableDirty.set(true);
+            } finally {
+                // Rebuild complete: release the pending guard so the render thread
+                // uploads the final converged light.
+                lightRebuildPending.clear();
             }
-            dirtySlots.addAll(aff);
-            lightsNeedUpload = true;
-            tableDirty.set(true);
         });
         return true;
     }
@@ -357,14 +370,20 @@ public class ChunkManager {
         final int fOldBlockId2 = oldBlockId;
         long colKey2 = chunkKey(colCx2, colCz2);
         postLightTask(colKey2, () -> {
-            Set<Integer> aff = mcLightEngine.onBlockChanged(x, y, z, fOldBlockId2);
-            NavigableMap<Integer, Integer> colSlots = loadedChunks.get(colKey2);
-            if (colSlots != null) {
-                aff.addAll(mcLightEngine.generateSkyLight(colCx2, colCz2, colSlots));
+            try {
+                Set<Integer> aff = mcLightEngine.onBlockChanged(x, y, z, fOldBlockId2, lightRebuildPending);
+                NavigableMap<Integer, Integer> colSlots = loadedChunks.get(colKey2);
+                if (colSlots != null) {
+                    aff.addAll(mcLightEngine.generateSkyLight(colCx2, colCz2, colSlots));
+                }
+                dirtySlots.addAll(aff);
+                lightsNeedUpload = true;
+                tableDirty.set(true);
+            } finally {
+                // Rebuild complete: release the pending guard so the render thread
+                // uploads the final converged light.
+                lightRebuildPending.clear();
             }
-            dirtySlots.addAll(aff);
-            lightsNeedUpload = true;
-            tableDirty.set(true);
         });
         return true;
     }
@@ -379,6 +398,7 @@ public class ChunkManager {
     public void markBiomeMapDirty() { biomeMapDirty.set(true); }
     public boolean needsLightUpload() { return lightsNeedUpload; }
     public void clearLightUpload() { lightsNeedUpload = false; }
+    public boolean isLightRebuildPending(int slot) { return lightRebuildPending.contains(slot); }
     public Map<Long, NavigableMap<Integer, Integer>> getLoadedChunks() { return loadedChunks; }
 
     // volatile guard: true while any thread (gen or light) is modifying light pool
