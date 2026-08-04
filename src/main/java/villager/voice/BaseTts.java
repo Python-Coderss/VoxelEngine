@@ -6,7 +6,10 @@ import com.k2fsa.sherpa.onnx.OfflineTtsConfig;
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig;
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+
 
 /** Offline base TTS. Its output is immediately converted by the custom RVC model. */
 public final class BaseTts implements AutoCloseable {
@@ -15,15 +18,36 @@ public final class BaseTts implements AutoCloseable {
     public BaseTts(Path modelDir) {
         Path model = modelDir.resolve("base-tts.onnx");
         Path tokens = modelDir.resolve("tokens.txt");
-        Path dataDir = modelDir.resolve("espeak-ng-data");
-        OfflineTtsVitsModelConfig vits = OfflineTtsVitsModelConfig.builder()
+        Path overrides = modelDir.resolve("pronunciation-overrides.tsv");
+        Path lexicon = modelDir.resolve("pronunciation-lexicon.txt");
+        OfflineTtsVitsModelConfig.Builder vitsBuilder = OfflineTtsVitsModelConfig.builder()
                 .setModel(model.toString())
                 .setTokens(tokens.toString())
-                .setDataDir(dataDir.toString())
                 .setLengthScale(1.0f)
-                .setNoiseScale(0.667f)
-                .setNoiseScaleW(0.8f)
-                .build();
+                // Higher stochasticity and lower duration noise reduce the
+                // repeated, buzzy cadence of the old neural default while
+                // keeping articulation stable for RVC conversion.
+                .setNoiseScale(0.82f)
+                .setNoiseScaleW(0.58f);
+        // A sparse custom lexicon makes Sherpa reject every word that is not
+        // explicitly listed (the first version failed on ordinary dialogue
+        // such as "I am haggling you"). Keep the model's complete English
+        // frontend enabled by default; the readable overrides remain available
+        // as an opt-in diagnostic lexicon for callers that supply a complete
+        // vocabulary.
+        boolean useSparseLexicon = Boolean.getBoolean("voxel.voice.use.lexicon");
+        if (useSparseLexicon && Files.isRegularFile(overrides)) {
+            try {
+                PronunciationLexicon.compile(overrides, tokens, lexicon);
+            } catch (IOException error) {
+                throw new IllegalStateException("Invalid pronunciation overrides: " + overrides,
+                        error);
+            }
+            vitsBuilder.setLexicon(lexicon.toString());
+        } else {
+            vitsBuilder.setDataDir(modelDir.resolve("espeak-ng-data").toString());
+        }
+        OfflineTtsVitsModelConfig vits = vitsBuilder.build();
         OfflineTtsModelConfig modelConfig = OfflineTtsModelConfig.builder()
                 .setVits(vits)
                 .setNumThreads(Math.max(1, Runtime.getRuntime().availableProcessors() / 2))

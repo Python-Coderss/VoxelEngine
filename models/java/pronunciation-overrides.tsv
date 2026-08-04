@@ -1,0 +1,34 @@
+# Readable pronunciation overrides for the Piper/Sherpa token lexicon.
+# Format: word<TAB>readable phonemes separated by dashes<TAB>comment
+# Readable aliases are expanded and validated against tokens.txt at runtime.
+bet	b-eh-t	EH as in bet
+about	uh-b-ow-t	unstressed UH and OW as in about
+cup	k-uh2-p	stressed UH as in cup
+bird	b-er-d	ER as in bird (rhotic vowel)
+now	n-ow	OW as in now
+#
+# Hard-g words: force voiced /ɡ/ instead of devoiced /k/ or fricated /h/
+# The 'g' here is the model's voiced velar plosive token.
+# Only using aliases defined in PronunciationLexicon.readableAliases().
+get	g-eh-t	voiced hard g
+got	g-ah-t	voiced hard g
+give	g-ih-v	voiced hard g
+go	g-ow	voiced hard g
+good	g-uh2-d	voiced hard g
+great	g-r-eh-t	voiced hard g
+green	g-r-ee-n	voiced hard g
+grow	g-r-ow	voiced hard g
+group	g-r-oo-p	voiced hard g
+guess	g-eh-s	voiced hard g
+guild	g-ih-l-d	voiced hard g
+guilt	g-ih-l-t	voiced hard g
+guitar	g-ih-t-er	voiced hard g
+gold	g-ow-l-d	voiced hard g
+gone	g-ah-n	voiced hard g
+glass	g-l-ae-s	voiced hard g
+globe	g-l-ow-b	voiced hard g
+glory	g-l-er-ee	voiced hard g
+golden	g-ow-l-d-eh-n	voiced hard g
+ghost	g-ow-s-t	voiced hard g
+ghostly	g-ow-s-t-l-ee	voiced hard g
+

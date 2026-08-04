@@ -14,9 +14,10 @@ file limit:
 - `model-parts.manifest` — part counts, byte counts, and SHA-256 checksums.
 
 At runtime, `ModelAssembler` validates and joins these parts atomically into
-`VoxelEngine/dev/voice-models/`, which is ignored by Git. It also copies
-`tokens.txt` and `espeak-ng-data/` into that runtime directory. Delete
-`dev/voice-models/` to force reconstruction.
+`VoxelEngine/dev/voice-models/`, which is ignored by Git. It also copies `tokens.txt`,
+`phoneme-map.tsv`, the readable `pronunciation-overrides.tsv`, and
+`espeak-ng-data/` into that runtime directory. Delete `dev/voice-models/` to force
+reconstruction.
 
 ## Preparing or replacing models
 
@@ -44,6 +45,11 @@ The assembled runtime directory contains:
 - `base-tts.onnx` — Piper/VITS base text-to-speech model used only to create
   intelligible source speech.
 - `tokens.txt` and `espeak-ng-data/` — Sherpa ONNX text frontend assets.
+- `phoneme-map.tsv` — optional display-only IPA names and token descriptions.
+- `pronunciation-overrides.tsv` — readable word pronunciations used to build a
+  validated Sherpa lexicon. Entries use labels such as `eh`, `uh`, `uh2`, `er`,
+  and `ow`, separated by dashes; they are converted to model symbols before
+  synthesis.
 - `vec-768-layer-12.onnx` — ContentVec feature extractor for RVC v2.
 - `rvc-villager.onnx` — exported custom villager RVC v2 timbre model.
 

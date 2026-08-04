@@ -38,8 +38,7 @@ public final class VillagerVoice implements AutoCloseable {
         if (options == null) {
             throw new IllegalArgumentException("options must not be null");
         }
-        WavAudio audio = synthesizer.render(text, options.getSpeed(),
-                options.getPitchSemitones());
+        WavAudio audio = synthesizer.render(text, options);
         return new VoiceClip(audio);
     }
 
@@ -47,6 +46,7 @@ public final class VillagerVoice implements AutoCloseable {
     public VoiceClip speak(String text, double speed, double pitchSemitones) throws Exception {
         return speak(text, new SpeechOptions(speed, pitchSemitones));
     }
+
 
     private void ensureOpen() {
         if (closed) {

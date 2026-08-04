@@ -10,9 +10,11 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.nio.charset.StandardCharsets;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
+import villager.voice.SpeechOptions;
 
 /**
  * Persistent cache for generated mono 16-bit PCM voice clips.
@@ -22,7 +24,7 @@ import javax.sound.sampled.AudioSystem;
  * to scan or migrate the cache directory.
  */
 public final class VoiceCache {
-    private static final String CACHE_VERSION = "voice-cache-v1";
+    private static final String CACHE_VERSION = "voice-cache-v7-singing-default";
 
     private final Path directory;
 
@@ -33,9 +35,14 @@ public final class VoiceCache {
         this.directory = directory.toAbsolutePath().normalize();
     }
 
-    /** Return a cached clip, or {@code null} when it has not been generated yet. */
+    /** Return a default-profile cached clip, or null when it has not been generated. */
     public AudioData load(String text) {
-        Path file = cacheFile(text);
+        return load(text, SpeechOptions.DEFAULT);
+    }
+
+    /** Return a cached clip for the exact text and voice profile. */
+    public AudioData load(String text, SpeechOptions options) {
+        Path file = cacheFile(text, options);
         if (!Files.isRegularFile(file)) {
             return null;
         }
@@ -58,13 +65,18 @@ public final class VoiceCache {
         }
     }
 
-    /** Write a clip atomically so an interrupted run cannot leave a partial WAV. */
+    /** Write a default-profile clip atomically. */
     public void save(String text, AudioData audio) {
+        save(text, SpeechOptions.DEFAULT, audio);
+    }
+
+    /** Write a profile-specific clip atomically so an interruption cannot leave a partial WAV. */
+    public void save(String text, SpeechOptions options, AudioData audio) {
         if (audio == null || audio.channels != 1 || audio.samples.length == 0
                 || !audio.isValid()) {
             return;
         }
-        Path file = cacheFile(text);
+        Path file = cacheFile(text, options);
         Path temp = file.resolveSibling(file.getFileName().toString() + ".tmp");
         try {
             Files.createDirectories(directory);
@@ -90,7 +102,14 @@ public final class VoiceCache {
     }
 
     Path cacheFile(String text) {
-        return directory.resolve(hash(text) + ".wav");
+        return cacheFile(text, SpeechOptions.DEFAULT);
+    }
+
+    Path cacheFile(String text, SpeechOptions options) {
+        if (options == null) {
+            throw new IllegalArgumentException("options must not be null");
+        }
+        return directory.resolve(hash(text + "\\n" + options.cacheKey()) + ".wav");
     }
 
     private static AudioData readWav(File file) throws Exception {
@@ -133,7 +152,7 @@ public final class VoiceCache {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] bytes = digest.digest((CACHE_VERSION + "\n" + text)
-                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    .getBytes(StandardCharsets.UTF_8));
             StringBuilder result = new StringBuilder(bytes.length * 2);
             for (byte value : bytes) {
                 result.append(String.format("%02x", value & 0xff));
@@ -143,4 +162,5 @@ public final class VoiceCache {
             throw new IllegalStateException("SHA-256 is unavailable", impossible);
         }
     }
+
 }
