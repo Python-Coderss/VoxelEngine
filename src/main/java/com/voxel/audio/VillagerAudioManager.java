@@ -6,6 +6,7 @@ import org.lwjgl.openal.ALC;
 import org.lwjgl.openal.ALCCapabilities;
 import org.lwjgl.openal.ALC10;
 import com.voxel.entity.VillagerEntity;
+import villager.voice.SpeechOptions;
 import villager.voice.VillagerVoice;
 import villager.voice.VoiceClip;
 
@@ -106,7 +107,13 @@ public final class VillagerAudioManager implements AutoCloseable {
 
     /** Queue one line for synthesis; repeated requests while busy are coalesced. */
     public void requestSpeech(String text) {
-        if (closed || !openALReady || text == null || text.trim().isEmpty()) {
+        requestSpeech(text, SpeechOptions.DEFAULT);
+    }
+
+    /** Queue one line with a complete voice profile. */
+    public void requestSpeech(String text, SpeechOptions options) {
+        if (closed || !openALReady || text == null || text.trim().isEmpty()
+                || options == null) {
             return;
         }
         if (!synthesisPending.compareAndSet(false, true)) {
@@ -115,7 +122,7 @@ public final class VillagerAudioManager implements AutoCloseable {
         synthesisExecutor.execute(() -> {
             try {
                 String line = text.trim();
-                AudioData cached = cache.load(line);
+                AudioData cached = cache.load(line, options);
                 PendingClip clip;
                 if (cached != null) {
                     clip = PendingClip.fromSamples(cached.samples, cached.sampleRate);
@@ -124,8 +131,8 @@ public final class VillagerAudioManager implements AutoCloseable {
                     if (voice == null) {
                         voice = new VillagerVoice(modelDirectory);
                     }
-                    VoiceClip generated = voice.speak(line);
-                    cache.save(line, new AudioData(generated.getSamples(), 1,
+                    VoiceClip generated = voice.speak(line, options);
+                    cache.save(line, options, new AudioData(generated.getSamples(), 1,
                             generated.getSampleRate()));
                     clip = PendingClip.fromPcm(generated.getPcm16(), generated.getSampleRate());
                     System.out.println("VillagerAudioManager: generated and cached dialogue");
@@ -188,6 +195,9 @@ public final class VillagerAudioManager implements AutoCloseable {
         ByteBuffer pcm = clip.pcm.order(ByteOrder.LITTLE_ENDIAN);
         currentBuffer = AL10.alGenBuffers();
         AL10.alBufferData(currentBuffer, AL10.AL_FORMAT_MONO16, pcm, clip.sampleRate);
+        // Volume is already baked into the generated PCM; keep OpenAL at unity
+        // so cached and freshly generated clips behave identically.
+        AL10.alSourcef(source, AL10.AL_GAIN, 1.0f);
         AL10.alSourcei(source, AL10.AL_BUFFER, currentBuffer);
         AL10.alSourcePlay(source);
     }

@@ -24,6 +24,7 @@ Thumbs.db
 
 # Dev scratch
 dev/
+voice/corpus/
 
 # Generated files
 src/generated/

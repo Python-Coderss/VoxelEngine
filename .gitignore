@@ -1,6 +1,7 @@
 .kilo
 nul
 dev/
+voice/corpus/
 target/
 *.log
 models/java/*.onnx

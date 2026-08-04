@@ -48,6 +48,9 @@ public final class ModelAssembler {
             assemble(source, runtime, model);
         }
         copyFile(source.resolve("tokens.txt"), runtime.resolve("tokens.txt"));
+        copyOptional(source.resolve("phoneme-map.tsv"), runtime.resolve("phoneme-map.tsv"));
+        copyOptional(source.resolve("pronunciation-overrides.tsv"),
+                runtime.resolve("pronunciation-overrides.tsv"));
         copyDirectory(source.resolve("espeak-ng-data"), runtime.resolve("espeak-ng-data"));
         return runtime;
     }
@@ -161,6 +164,14 @@ public final class ModelAssembler {
             Files.createDirectories(parent);
         }
         Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private static void copyOptional(Path source, Path target) throws IOException {
+        if (Files.isRegularFile(source)) {
+            copyFile(source, target);
+        } else {
+            Files.deleteIfExists(target);
+        }
     }
 
     private static void copyDirectory(Path source, Path target) throws IOException {
