@@ -5,7 +5,7 @@ public final class SpeechOptions {
     // Neural default tuned toward the supplied TEAVSRP corpus: retain some of
     // the natural base waveform under RVC instead of producing a dry vocoder.
     public static final SpeechOptions DEFAULT = new SpeechOptions(
-            1.0, 0.0, 1.0, -0.10, 0.36, "neutral", 1.0);
+            1.0, 0.0, 1.0, -0.10, 0.36, "happy", 1.0);
 
     private final double speed;
     private final double pitchSemitones;
@@ -16,12 +16,12 @@ public final class SpeechOptions {
     private final double singing;
 
     public SpeechOptions() {
-        this(1.0, 0.0, 1.0, -0.10, 0.36, "neutral", 1.0);
+        this(1.0, 0.0, 1.0, -0.10, 0.36, "happy", 1.0);
     }
 
     /** Backwards-compatible constructor for callers that only set speed/pitch. */
     public SpeechOptions(double speed, double pitchSemitones) {
-        this(speed, pitchSemitones, 1.0, -0.10, 0.36, "neutral", 1.0);
+        this(speed, pitchSemitones, 1.0, -0.10, 0.36, "happy", 1.0);
     }
 
     /** Backwards-compatible constructor for the original editable profile. */
