@@ -7,7 +7,7 @@ import java.util.Random;
  * KlattSynth — a compact formant (Klatt-style) synthesizer.
  * <p>
  * Pipeline per sample: glottal source (Rosenberg pulse) + frication noise
- * → cascade of 5 second-order formant resonators (peak-gain normalized) → out.
+ * → five parallel second-order formant resonators (peak-gain normalized) → out.
  * Formant frequencies, F0 and the noise mix are interpolated smoothly across
  * each segment, and F0 carries an optional vibrato for a sung quality.
  */
@@ -142,18 +142,15 @@ public class KlattSynth {
         // Cap breathiness: the analyzer's estimate can be inflated by reverb/
         // backing energy; >0.12 turns the voice into audible white-noise hiss.
         double breath = Math.min(breathiness, 0.12);
-        // Real vocal tracts radiate the higher formants much weaker than F1/F2.
-        // Tapering F3/F4/F5 keeps the voice from sounding thin and top-heavy
-        // (peak-normalizing all five to ~1 made the 3.4/4.6 kHz formants as loud
-        // as the low ones — the "missing low freqs / pitch changed" complaint).
-        // Dan's identity is a bright, high-F2 timbre (profile F2 median 1586 Hz)
-        // — keep F2/F3 prominent so vowels carry his signature, while the very
-        // top formants stay a little tamed. A heavy taper makes a generic voice.
+        // Parallel branch weights (not a cascade): F1 carries the body, F2
+        // gives vowels their identity, F3-F5 add the top that fricatives need.
+        // A heavy taper on F2/F3 makes the voice generic and flat; too little
+        // taper brings back a thin, top-heavy "talking through a kazoo" tone.
         r1.gain = 1.0;
-        r2.gain = 0.95;
-        r3.gain = 0.8;
-        r4.gain = 0.6;
-        r5.gain = 0.45;
+        r2.gain = 0.66;
+        r3.gain = 0.44;
+        r4.gain = 0.28;
+        r5.gain = 0.18;
         // Restore the fundamental's body with a low-shelf driven by the profile's
         // spectral tilt (Dan's low band runs ~9.6 dB hotter than his high band).
         double bassDb = bassBoostDb(tilt);
@@ -225,16 +222,24 @@ public class KlattSynth {
                     }
                 }
 
-                double src = glottal + noise;
-                src = r1.tick(src);
-                src = r2.tick(src);
-                src = r3.tick(src);
-                src = r4.tick(src);
-                src = r5.tick(src);
+                // Parallel formant branches, not a cascade. In a cascade every
+                // sample passes through the narrow F1 resonator first, whose
+                // ~100 Hz skirt attenuates everything above ~500 Hz by tens of
+                // dB — that was the muffled low hum with inaudible consonants.
+                // Summing independent branches keeps the F2/F3 character of
+                // vowels and the frication of consonants (classic Klatt88
+                // parallel topology). Fricatives need a lift: noise crosses
+                // every branch's skirt, so without help consonants end up far
+                // quieter than the reference recordings.
+                double src = glottal + noise * 1.8;
+                double shaped = r1.tick(src) + r2.tick(src) + r3.tick(src)
+                        + r4.tick(src) + r5.tick(src);
 
-                // Proper DC blocker: y[n] = x[n] − x[n−1] + 0.995·y[n−1]
-                double dc = src - prevIn + 0.995 * prevOut;
-                prevIn = src;
+                // Proper DC blocker: y[n] = x[n] − x[n−1] + 0.995·y[n−1],
+                // where x is the shaped branch sum. Feeding it the raw source
+                // instead leaks a huge offset through the 0.995 pole.
+                double dc = shaped - prevIn + 0.995 * prevOut;
+                prevIn = shaped;
                 prevOut = dc;
                 if (bassDb > 0) dc = bass.tick(dc);   // low-frequency body
                 out[idx] = (float) (dc * amp);
