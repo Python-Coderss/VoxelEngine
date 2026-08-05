@@ -31,11 +31,10 @@ VoxelEngine/dev/voice-models/
 
 The source parts are each below GitHub's 100 MB file limit. The reconstructed
 bundle is approximately 545 MB and is never committed. Delete
-`dev/voice-models/` to force a verified rebuild. The small `tokens.txt`, readable
-`pronunciation-overrides.tsv`, display-only `phoneme-map.tsv`, and `espeak-ng-data`
-assets are copied into the same runtime directory. The readable overrides are
-compiled into a validated Sherpa token lexicon; the display map is not passed to
-ONNX synthesis.
+`dev/voice-models/` to force a verified rebuild. The small `cmudict.dict` and
+`homographs.en` assets are copied into the same runtime directory for the
+VCTK/ESPnet frontend. Legacy Piper/eSpeak assets may also be copied when
+present, but are not required by the neutral VCTK path.
 
 Start the engine with `VoxelEngine` as the working directory so the default
 `models/java` source path resolves correctly. If the parts are moved, pass the
@@ -65,11 +64,16 @@ Generated clips are saved as WAV files under:
 VoxelEngine/dev/voice-cache/
 ```
 
-The cache uses versioned SHA-256 keys of the exact dialogue text and writes files
-atomically. It is covered by the repository's `dev/` ignore rule, so clips persist
-between runs on the C: drive without being committed. On a cache hit, the engine
-plays the WAV directly and does not initialize or run the neural voice models for
-that line. Delete `dev/voice-cache/` if you want to regenerate all dialogue.
+Files are named after the dialogue text so the cache is directly inspectable
+while debugging: `hmm_what_do_you_want_traveler.wav` for the default profile,
+with the few differing voice parameters appended for custom profiles
+(`hmm_what_do_you_want_traveler_emo=happy.wav`). Writes are atomic. The cache is
+disposable — it is simply deleted on game updates — so it carries no versioning
+or hashing. It is covered by the repository's `dev/` ignore rule, so clips
+persist between runs on the C: drive without being committed. On a cache hit,
+the engine plays the WAV directly and does not initialize or run the neural
+voice models for that line. Delete `dev/voice-cache/` if you want to regenerate
+all dialogue.
 
 ## Audio behavior
 
@@ -84,33 +88,27 @@ that line. Delete `dev/voice-cache/` if you want to regenerate all dialogue.
 If OpenAL cannot open an audio device, the engine continues without voice
 playback and logs the failure to stderr.
 
-## Explicit formant phonemes
+## Debugging the voice
 
-The formant backend can render hand-authored readable phonemes without
-spelling inference, eSpeak, or IPA/token injection. Use braces around a phrase,
-hyphens between phonemes in a word, and spaces between words:
-
-```text
-{dh-schwa f-ah-m-er}
-{ay ae-m h-ae-g-l-ih-ng y-oo}
-{n-oa}
-```
-
-The pure-Java inventory contains the 24 consonants and 20 vowels from the
-project's English 44-sound reference. Notation is strict: hyphens separate
-phonemes, spaces separate words, and plus signs group a connected blend:
-
-```text
-{b+l-ae  g+l-ih  s+t+r-ee-t}
-```
-
-Here `b+l`, `g+l`, and `s+t+r` are blends. `--phonemes` is available in the
-voice CLI; batch files may put the same brace notation in each entry's `text`
-field.
+`bash tools/render_voice_samples.sh` renders a set of samples and builds
+`dev/voice-samples/index.html`: a self-contained spectrogram comparison page
+(unchanged reference corpus recordings vs generated neural output for the same
+lines, with pitch-contour overlays, raw/aligned timing metrics, and click-to-seek).
+It refreshes neural samples by default (`--reuse` deliberately keeps old renders),
+creates comparison-only `*_neural_aligned.wav` copies with
+`tools/align_neural_to_reference.py`, and never writes to the reference corpus.
+The comparison page shows both the full 40–8,000 Hz view and an expanded
+40–1,000 Hz low-band view so voice body is not visually compressed. The aligner
+maps each generated active speech span onto the reference span for comparison;
+it does not change runtime clips or claim phoneme-level DTW. The page reports
+an aligned-span PASS when the timing error is at most 5%. It inlines
+every WAV as base64 so it works from `file://`. `python tools/analyze_wav.py <wav...>` prints
+numeric stats (duration, RMS, peak, centroid, pitch);
+`python tools/probe_wav.py <wav>` prints a per-window table.
 
 ## Transcript reference backend
 
-The standalone CLI also has a Java-only `reference` mode for the supplied,
+The standalone CLI also has a read-only `reference` mode for the supplied,
 transcript-renamed TEAVSRP clips:
 
 ```bash
@@ -125,17 +123,21 @@ voice/corpus/assets/minecraft/sounds/mob/villager/
 ```
 
 It normalizes the caller text and matches it to a transcript filename. Exact
-known lines use the recorded clip, with speed, tone, and volume controls applied;
-unseen lines fall back to the formant renderer. This is corpus replay/concatenative
-coverage, not a claim of in-Java neural training. The normal default is now `neural`; `formant` and `reference` must be selected explicitly. Set
+known lines return the recording content unchanged (resampling only when the
+runtime playback rate requires it); reference mode ignores neural voice controls.
+A missing transcript is an error in reference mode rather than
+a synthesized fallback, so the corpus remains an honest, unchanged comparison
+source. The normal generated mode is `neural`; the neutral neural path currently matches
+the Python baseline only. Emotion, singing, speed, pitch, tone, source mixing,
+and denoise controls remain deferred until that baseline is measured. `reference`
+is read-only corpus playback. The former Java formant mode is no longer exposed or used. Set
 `-Dvoxel.voice.reference=/path/to/clip-directory` to use another licensed corpus.
 
 ## Voice expression controls
 
-The neural and formant backends accept the full editable voice profile. Reference
-mode continues to use its recorded clip behavior and applies the compatible timing,
-tone, and volume controls. Existing speed, pitch, volume, tone, and natural-source
-settings remain compatible; the additional controls are:
+The neural backend accepts the full editable voice profile. Reference mode
+returns the recorded clip content unchanged (apart from the runtime sample-rate
+conversion) and ignores neural voice controls. The additional neural controls are:
 
 - `--emotion neutral|happy|sad|angry|scared` — changes delivery energy, pitch,
   timing, loudness, and spectral tilt without replacing the explicit controls.
