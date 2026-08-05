@@ -6,6 +6,7 @@ implementation that previously mirrored it has been **removed** from this
 repository (the game now plays a silent stub and shows the dialogue text in
 the HUD). This document records the Python pipeline so it can be reproduced
 or reimplemented later with a stronger model.
+> **Update (Java 8 runtime restored):** the removed Java villager voice has been restored to this repository - `villager.voice` package, ONNX parts under `models/java/` (Coqui VCTK VITS + ContentVec + RVC), and OpenAL playback via `VillagerAudioManager`. All inference runs in Java (ONNX Runtime, pure-Java cmudict frontend; no Python or eSpeak); this document remains the record of the Python recipe used to produce and tune the RVC timbre model.
 
 ## Repository layout (`../villager_voice/`)
 

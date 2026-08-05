@@ -16,20 +16,6 @@ public final class VillagerDialogue {
         return lines[Math.floorMod(seed, lines.length)];
     }
 
-    /**
-     * Pick a delivery emotion for the line: friendly (happy) through the day
-     * and for the news anchor, calm neutral at evening and night. The default
-     * profile is spoken, so this only varies prosody, not singing.
-     */
-    public static String emotionFor(VillagerEntity villager, float worldTime) {
-        if (villager != null
-                && villager.getProfession() == VillagerEntity.Profession.NEWS_ANCHOR) {
-            return "happy";
-        }
-        Period period = period(worldTime);
-        return period == Period.MORNING || period == Period.DAY ? "happy" : "neutral";
-    }
-
     private static Period period(float worldTime) {
         float time = worldTime % 1440.0f;
         if (time < 360.0f) return Period.NIGHT;

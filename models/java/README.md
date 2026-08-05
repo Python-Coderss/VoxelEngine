@@ -1,51 +1,76 @@
 # Java custom voice model bundle
 
-This directory contains the source assets used by the Java-only neural villager
-voice. The game runtime does not start Python and does not use the old formant
-backend.
+This directory contains the source assets used by the Java-only villager voice.
+The runtime never starts Python and does not use eSpeak, Piper/Sherpa, or any
+web API.
+
+## Pipeline
+
+Dialogue is synthesized entirely in Java 8 with ONNX Runtime:
+
+1. `coqui-vctk-vits.onnx` — natural Coqui VCTK VITS base TTS (speaker p226),
+   driven by a pure-Java CMU-dictionary G2P frontend (`CoquiFrontend` ->
+   `CoquiVitsTts`). No eSpeak, no subprocess, no network.
+2. `vec-768-layer-12.onnx` — ContentVec feature extractor for RVC v2.
+3. `rvc-villager.onnx` — exported custom villager RVC v2 timbre model
+   (Dan Lloyd / Element Animation villager voice).
 
 ## Repository format
 
-Large ONNX files are split into Git-safe parts:
+The large ONNX files are split into parts smaller than GitHub's 100 MB limit:
 
-- `vctk-vits.onnx.partNNN` — exported VCTK/ESPnet VITS base model, 22.05 kHz,
-  with the matching CMU dictionary and homograph data.
+- `coqui-vctk-vits.onnx.partNNN` — Coqui VCTK VITS base TTS graph.
 - `vec-768-layer-12.onnx.partNNN` — ContentVec feature extractor for RVC v2.
 - `rvc-villager.onnx.partNNN` — exported custom villager RVC v2 timbre model.
 - `model-parts.manifest` — part counts, byte counts, and SHA-256 checksums.
 
-The Java runtime assembles the parts atomically into the ignored
-`dev/voice-models/` directory. It also copies the frontend assets and bundled
-eSpeak runtime there. Delete `dev/voice-models/` to force reconstruction.
+Small frontend assets shipped next to the parts:
 
-## Self-contained neural runtime
+- `cmudict.dict` — CMU pronunciation dictionary (134k words) for the Java G2P.
+- `coqui-vctk-vocab.json` — the model's symbol vocabulary (id = index, blank 178).
+- `coqui-vctk-config.json` / `coqui-vctk-speaker_ids.json` — model metadata.
 
-The Java path is:1. Normalize text with the bundled CMU dictionary and homograph table.
-2. Convert words to the ESPnet VCTK phoneme IDs, preserving supported punctuation.
-3. Run `vctk-vits.onnx` with speaker `p226` (speaker ID 1).
-4. For sentence-delimited input, synthesize each sentence separately and insert
-   100 ms of silence between sentences, matching the neutral Python runner.
-5. Feed the resulting 22.05 kHz waveform into the Java RVC model.
+At runtime, `ModelAssembler` validates and joins these parts atomically into
+`VoxelEngine/dev/voice-models/`, which is ignored by Git, and copies the small
+frontend assets into that runtime directory. Delete `dev/voice-models/` to
+force reconstruction.
 
-`espeak-ng.exe`, `libespeak-ng.dll`, and `espeak-ng-data/` are copied into the
-same runtime folder, so no Python, system PATH dependency, JNI bridge, or
-separate installation is needed.
+## Preparing or replacing models
+
+The Coqui VCTK graph is exported once in the `villager_voice` pipeline
+(`tools/export_coqui_vctk_onnx.py`, Python prep only — the game never runs it).
+From the repository root, stage the assets and split the ONNX files:
+
+```bat
+copy villager_voice\models\java\coqui-vctk-vits.onnx VoxelEngine\models\java\
+copy villager_voice\models\java\vec-768-layer-12.onnx VoxelEngine\models\java\
+copy villager_voice\models\java\rvc-villager.onnx VoxelEngine\models\java\
+python VoxelEngine\tools\split_model_assets.py VoxelEngine\models\java
+```
+
+The splitter leaves the originals available locally for verification, but they
+are ignored by Git. The Java runtime uses only the checked-in parts and rebuilds
+the ignored copies automatically. The runtime can also use a complete external
+model directory passed through `--models` or `voxel.voice.models`; only the
+default `models/java` source bundle uses part reconstruction.
 
 ## Runtime files
 
-The assembled folder contains:
+The assembled runtime directory contains:
 
-- `vctk-vits.onnx` — VCTK/ESPnet VITS graph.
-- `cmudict.dict` and `homographs.en` — the Java-side VCTK frontend assets.
-- `vec-768-layer-12.onnx` and `rvc-villager.onnx` — neural RVC conversion assets.
-- Optional `rmvpe.onnx` and `rvc-villager.index.bin` — parity sidecars.
-- Optional `rmvpe.onnx` and `rvc-villager.index.bin` sidecars.
+- `coqui-vctk-vits.onnx` — natural Coqui VCTK VITS base TTS graph.
+- `cmudict.dict` — CMU dictionary used by the pure-Java frontend.
+- `coqui-vctk-vocab.json` — symbol vocabulary used by `CoquiFrontend`.
+- `vec-768-layer-12.onnx` — ContentVec feature extractor for RVC v2.
+- `rvc-villager.onnx` — exported custom villager RVC v2 timbre model.
 
-The reference corpus remains read-only and is not used to create or overwrite
-these assets.
+The Java process loads the graphs through ONNX Runtime and writes the final
+WAV. There is no Python subprocess, eSpeak, or network access in this path.
 
 ## Sources and licenses
 
-The VCTK/ESPnet graph and frontend assets are distributed under their upstream
-model/data terms. The ContentVec and RVC model licenses and the source-recording
-terms must be checked before redistribution.
+The Coqui VCTK VITS graph is exported from Coqui TTS `tts_models/en/vctk/vits`
+(MIT), speaker p226. The RVC timbre model is derived from the Element
+Animation villager voice (Dan Lloyd). The ContentVec model comes from the
+Hugging Face `NaruseMioShirakana/MoeSS-SUBModel` repository. Check the model
+licenses and the source-recording/model terms before redistribution.

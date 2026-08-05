@@ -15,7 +15,7 @@ import hashlib
 from pathlib import Path
 
 PART_SIZE = 45 * 1024 * 1024
-MODEL_NAMES = ("coqui-vctk-vits.onnx", "vctk-vits.onnx",
+MODEL_NAMES = ("coqui-vctk-vits.onnx",
                "vec-768-layer-12.onnx", "rvc-villager.onnx")
 MANIFEST = "model-parts.manifest"
 
