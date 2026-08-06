@@ -7,7 +7,9 @@ import org.lwjgl.openal.ALCCapabilities;
 import org.lwjgl.openal.ALC10;
 import com.voxel.entity.VillagerEntity;
 import villager.voice.SpeechOptions;
+import villager.voice.VillagerNewsIntro;
 import villager.voice.VillagerVoice;
+import villager.voice.VoiceMode;
 import villager.voice.VoiceClip;
 
 import java.nio.ByteBuffer;
@@ -35,6 +37,7 @@ public final class VillagerAudioManager implements AutoCloseable {
 
     private final Path modelDirectory;
     private final VoiceCache cache;
+    private final DialogueCatalog dialogueCatalog;
     private final ExecutorService synthesisExecutor;
     private final ConcurrentLinkedQueue<PendingClip> pendingClips = new ConcurrentLinkedQueue<PendingClip>();
     private final ConcurrentHashMap<Integer, Integer> interactionCounts = new ConcurrentHashMap<Integer, Integer>();
@@ -66,6 +69,7 @@ public final class VillagerAudioManager implements AutoCloseable {
         }
         this.modelDirectory = modelDirectory.toAbsolutePath().normalize();
         this.cache = new VoiceCache(cacheDirectory);
+        this.dialogueCatalog = DialogueCatalog.loadDefault();
         this.synthesisExecutor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "VillagerVoiceSynthesis");
             thread.setDaemon(true);
@@ -157,6 +161,58 @@ public final class VillagerAudioManager implements AutoCloseable {
         requestSpeech(DEFAULT_LINE);
     }
 
+    /**
+     * Queue the editable, community-arranged Villager News opening theme.
+     * The note asset is fingerprinted into the cache key, so tuning the JSON
+     * automatically produces a fresh clip without manual cache cleanup.
+     */
+    public void requestNewsIntro() {
+        requestNewsIntro(SpeechOptions.DEFAULT);
+    }
+
+    /** Queue the news intro with an optional overall voice profile. */
+    public void requestNewsIntro(SpeechOptions profile) {
+        if (closed || !openALReady || profile == null
+                || !synthesisPending.compareAndSet(false, true)) {
+            return;
+        }
+        synthesisExecutor.execute(() -> {
+            try {
+                VillagerNewsIntro intro = VillagerNewsIntro.loadDefault();
+                if (voice == null) {
+                    voice = new VillagerVoice(modelDirectory);
+                    System.out.println("VillagerAudioManager: dialogue voice loaded (Coqui VITS + RVC, Java only)");
+                }
+                if (!intro.supports(voice.getMode())) {
+                    throw new IllegalStateException("Villager News intro is available only in neural voice mode");
+                }
+                String cacheText = "[VNN_INTRO]" + intro.cacheKey(profile)
+                        + ";backend=" + voice.getMode().name();
+                AudioData cached = cache.load(cacheText, profile);
+                PendingClip clip;
+                if (cached != null) {
+                    clip = PendingClip.fromSamples(cached.samples, cached.sampleRate);
+                    System.out.println("VillagerAudioManager: Villager News intro cache hit");
+                } else {
+                    villager.voice.WavAudio rendered = intro.render(voice, profile);
+                    cache.save(cacheText, profile,
+                            new AudioData(rendered.samples.clone(), 1, rendered.sampleRate));
+                    clip = PendingClip.fromSamples(rendered.samples, rendered.sampleRate);
+                    System.out.println("VillagerAudioManager: generated and cached Villager News intro"
+                            + " (" + intro.getAttribution() + ")");
+                }
+                while (pendingClips.poll() != null) {
+                    // Keep only the newest requested clip.
+                }
+                pendingClips.offer(clip);
+            } catch (Throwable error) {
+                System.err.println("VillagerAudioManager: Villager News intro failed: " + error);
+            } finally {
+                synthesisPending.set(false);
+            }
+        });
+    }
+
     /** Select and queue a profession/time-aware line, returning it for the HUD. */
     public String requestVillagerDialogue(VillagerEntity villager, float worldTime) {
         if (villager == null) {
@@ -166,9 +222,12 @@ public final class VillagerAudioManager implements AutoCloseable {
         Integer oldCount = interactionCounts.get(villager.id);
         int count = oldCount == null ? 0 : oldCount;
         interactionCounts.put(villager.id, count + 1);
-        String line = VillagerDialogue.choose(villager, worldTime, count);
-        requestSpeech(line);
-        return line;
+        String period = VillagerDialogue.periodName(worldTime);
+        DialogueLine authored = dialogueCatalog.choose(villager, period, count);
+        DialogueLine selected = authored != null
+                ? authored : VillagerDialogue.chooseLine(villager, worldTime, count);
+        requestSpeech(selected.getText(), selected.getOptions());
+        return selected.getText();
     }
 
     /**

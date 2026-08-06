@@ -69,12 +69,19 @@ public final class ReferenceCorpusVoice implements AutoCloseable {
 
         WavAudio source = WavAudio.read(clip).resampled(VillagerSynthesizer.DEFAULT_SAMPLE_RATE);
         float[] samples = source.samples.clone();
-        if (options.getSpeed() != 1.0) {
-            int length = Math.max(1, (int) Math.round(samples.length / options.getSpeed()));
+        double effectiveSpeed = options.getEffectiveSpeed();
+        if (effectiveSpeed != 1.0) {
+            int length = Math.max(1, (int) Math.round(samples.length / effectiveSpeed));
             samples = AudioDsp.resample(samples, length);
         }
-        AudioDsp.applyToneTilt(samples, options.getTone());
-        AudioDsp.applyGain(samples, options.getVolume());
+        AudioDsp.applyToneTilt(samples, options.getEffectiveSpectralTilt());
+        if (options.getSarcasm() > 0.0) {
+            AudioDsp.applyGain(samples, 1.0 - options.getSarcasm() * 0.08);
+        }
+        if (options.isQuestion()) {
+            AudioDsp.applyQuestionEnding(samples);
+        }
+        AudioDsp.applyGain(samples, options.getEffectiveVolume());
         AudioDsp.normalizePeak(samples, 0.98f);
         AudioDsp.fadeEdges(samples, Math.min(source.sampleRate / 80, samples.length / 5));
         return new WavAudio(VillagerSynthesizer.DEFAULT_SAMPLE_RATE, samples);

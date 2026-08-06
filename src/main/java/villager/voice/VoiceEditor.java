@@ -10,6 +10,7 @@ import javax.swing.JPanel;
 import javax.swing.JSlider;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.JCheckBox;
 import javax.swing.SwingConstants;
 import javax.swing.SwingWorker;
 import java.awt.BorderLayout;
@@ -35,7 +36,9 @@ public final class VoiceEditor {
     private final JSlider volume = slider(0, 200, 100);
     private final JSlider tone = slider(-100, 100, 0);
     private final JSlider natural = slider(0, 50, 36);
-    private final JSlider singing = slider(0, 100, 100);
+    private final JSlider singing = slider(0, 100, 0);
+    private final JSlider sarcasm = slider(0, 100, 0);
+    private final JCheckBox question = new JCheckBox("Question / rising ending");
     private final JComboBox<String> emotion = new JComboBox<>(
             new String[]{"neutral", "happy", "sad", "angry", "scared"});
     private final Path modelDirectory;
@@ -68,20 +71,31 @@ public final class VoiceEditor {
         textPanel.add(text, BorderLayout.CENTER);
         contentPanel.add(textPanel, BorderLayout.NORTH);
 
-        JPanel controls = new JPanel(new GridLayout(7, 1, 4, 4));
+        JPanel controls = new JPanel(new GridLayout(9, 1, 4, 4));
         controls.setBorder(BorderFactory.createTitledBorder("Voice parameters"));
-        controls.add(row("Speed", speed, "%.2fx", 100.0));
-        controls.add(row("Pitch", pitch, "%+.1f st", 10.0));
-        controls.add(row("Volume", volume, "%.0f%%", 1.0));
-        controls.add(row("Tone", tone, "%+.1f", 100.0));
-        controls.add(row("Natural source", natural, "%.0f%%", 1.0));
-        controls.add(row("Singing", singing, "%.0f%%", 1.0));
+        controls.add(row("Speed", speed, "%.2fx", 100.0,
+                "Speech rate. 0.50x is slow and deliberate; 2.00x is fast and energetic."));
+        controls.add(row("Pitch", pitch, "%+.1f st", 10.0,
+                "Static pitch offset in semitones. 0 is the model default."));
+        controls.add(row("Volume", volume, "%.0f%%", 1.0,
+                "Output loudness. 100% is unchanged; it is normalized to avoid clipping."));
+        controls.add(row("Mood", tone, "%+.1f", 100.0,
+                "Delivery mood: -1 serious/weighty, 0 neutral, +1 joking/playful."));
+        controls.add(row("Natural source", natural, "%.0f%%", 1.0,
+                "Natural VITS body mixed under RVC. More sounds less synthetic."));
+        controls.add(row("Singing", singing, "%.0f%%", 1.0,
+                "Musical vibrato and sustained pitch. 0% is spoken; 100% is strongly sung."));
+        controls.add(row("Sarcasm", sarcasm, "%.0f%%", 1.0,
+                "Dry, deadpan delivery. Higher values flatten prosody and lower the voice."));
         JPanel emotionRow = new JPanel(new BorderLayout(8, 0));
         JLabel emotionLabel = new JLabel("Emotion", SwingConstants.LEFT);
         emotionLabel.setPreferredSize(new java.awt.Dimension(110, 20));
         emotionRow.add(emotionLabel, BorderLayout.WEST);
         emotionRow.add(emotion, BorderLayout.CENTER);
+        emotionRow.setToolTipText("Broad emotional color applied to timing, pitch, and loudness.");
         controls.add(emotionRow);
+        question.setToolTipText("Adds a smooth pitch rise at the end. Text ending in ? also enables this automatically when metadata omits the flag.");
+        controls.add(question);
         contentPanel.add(controls, BorderLayout.CENTER);
 
         JPanel bottom = new JPanel(new BorderLayout(6, 6));
@@ -117,7 +131,7 @@ public final class VoiceEditor {
         frame.setLocationByPlatform(true);
     }
 
-    private JPanel row(String label, JSlider slider, String format, double scale) {
+    private JPanel row(String label, JSlider slider, String format, double scale, String help) {
         JPanel row = new JPanel(new BorderLayout(8, 0));
         JLabel name = new JLabel(label, SwingConstants.LEFT);
         name.setPreferredSize(new java.awt.Dimension(110, 20));
@@ -128,6 +142,9 @@ public final class VoiceEditor {
                 format, slider.getValue() / scale));
         slider.addChangeListener(e -> update.run());
         update.run();
+        name.setToolTipText(help);
+        slider.setToolTipText(help);
+        row.setToolTipText(help);
         row.add(name, BorderLayout.WEST);
         row.add(slider, BorderLayout.CENTER);
         row.add(value, BorderLayout.EAST);
@@ -147,7 +164,9 @@ public final class VoiceEditor {
                 tone.getValue() / 100.0,
                 natural.getValue() / 100.0,
                 (String) emotion.getSelectedItem(),
-                singing.getValue() / 100.0);
+                singing.getValue() / 100.0,
+                sarcasm.getValue() / 100.0,
+                question.isSelected());
     }
 
     private void generatePreview() {
@@ -220,6 +239,8 @@ public final class VoiceEditor {
         tone.setValue((int) Math.round(options.getTone() * 100.0));
         natural.setValue((int) Math.round(options.getNaturalSourceMix() * 100.0));
         singing.setValue((int) Math.round(options.getSinging() * 100.0));
+        sarcasm.setValue((int) Math.round(options.getSarcasm() * 100.0));
+        question.setSelected(options.isQuestion());
         emotion.setSelectedItem(options.getEmotion());
     }
 

@@ -30,6 +30,7 @@ public class VillagerTVSystem {
 
     /** Per-TV state: block position -> active channel */
     private final Map<String, Integer> tvChannels = new HashMap<>();
+    private java.util.function.IntConsumer channelChangeListener;
     
     /** Per-TV: list of villagers watching this TV */
     private final Map<String, List<VillagerEntity>> tvViewers = new HashMap<>();
@@ -81,9 +82,19 @@ public class VillagerTVSystem {
         return tvChannels.getOrDefault(key, CHANNEL_VNN); // Default to VNN
     }
 
+    /** Install an optional listener for every channel assignment, including tooling/AI paths. */
+    public void setChannelChangeListener(java.util.function.IntConsumer listener) {
+        this.channelChangeListener = listener;
+    }
+
     /** Set the channel for a TV. */
     public void setChannel(int x, int y, int z, int channel) {
-        tvChannels.put(posKey(x, y, z), Math.max(0, Math.min(NUM_CHANNELS - 1, channel)));
+        int selected = Math.max(0, Math.min(NUM_CHANNELS - 1, channel));
+        String key = posKey(x, y, z);
+        Integer previous = tvChannels.put(key, selected);
+        if (channelChangeListener != null && (previous == null || previous.intValue() != selected)) {
+            channelChangeListener.accept(selected);
+        }
     }
 
     /** Cycle to the next channel. */

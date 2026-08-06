@@ -27,6 +27,11 @@ public final class VillagerVoice implements AutoCloseable {
         this.synthesizer = synthesizer;
     }
 
+    /** Backend currently used by this voice instance. */
+    public VoiceMode getMode() {
+        return synthesizer.getMode();
+    }
+
     /** Synthesize with normal speed and pitch settings. */
     public VoiceClip speak(String text) throws Exception {
         return speak(text, SpeechOptions.DEFAULT);

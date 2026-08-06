@@ -195,6 +195,32 @@ public final class AudioDsp {
         }
     }
 
+    /**
+     * Add a restrained interrogative emphasis to recorded/reference clips.
+     * Neural clips receive a true F0 rise in CustomRvcModel; this fallback adds
+     * a smooth terminal presence lift so reference mode still sounds questioning.
+     */
+    public static void applyQuestionEnding(float[] samples) {
+        int start = (int) (samples.length * 0.78);
+        for (int i = Math.max(0, start); i < samples.length; i++) {
+            double progress = (i - start) / (double) Math.max(1, samples.length - start - 1);
+            double ramp = progress * progress * (3.0 - 2.0 * progress);
+            samples[i] *= (float) (1.0 + 0.10 * ramp);
+        }
+        applyToneTiltRange(samples, start, 0.18);
+    }
+
+    private static void applyToneTiltRange(float[] samples, int start, double tone) {
+        if (start >= samples.length) return;
+        float low = samples[start];
+        double amount = Math.max(-0.85, Math.min(0.85, tone)) * 0.18;
+        for (int i = start; i < samples.length; i++) {
+            float current = samples[i];
+            low += (current - low) * 0.035f;
+            samples[i] = (float) (current + amount * (current - low));
+        }
+    }
+
     public static void applyGain(float[] samples, double gain) {
         if (gain == 1.0) {
             return;

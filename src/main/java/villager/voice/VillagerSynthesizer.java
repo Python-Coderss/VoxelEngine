@@ -78,17 +78,24 @@ public final class VillagerSynthesizer implements AutoCloseable {
         if (options == null) {
             throw new IllegalArgumentException("options must not be null");
         }
+        // Legacy/direct callers do not carry catalog metadata, so punctuation
+        // supplies the natural question cue without changing ordinary lines.
+        SpeechOptions effectiveOptions = options.isQuestion()
+                || !options.allowsAutomaticQuestionDetection()
+                || !SpeechOptions.looksLikeQuestion(text)
+                ? options : options.withQuestion(true);
         if (mode == VoiceMode.REFERENCE) {
-            return referenceVoice.render(text, options);
+            return referenceVoice.render(text, effectiveOptions);
         }
 
-        WavAudio base = baseTts.synthesize(text, options.getEffectiveSpeed());
-        WavAudio converted = customVoice.convert(base, options.getEffectivePitchSemitones(),
-                options.getSinging(), options.getEmotion());
+        WavAudio base = baseTts.synthesize(text, effectiveOptions.getEffectiveSpeed());
+        WavAudio converted = customVoice.convert(base, effectiveOptions.getEffectivePitchSemitones(),
+                effectiveOptions.getSinging(), effectiveOptions.getEmotion(),
+                effectiveOptions.getSarcasm(), effectiveOptions.isQuestion());
         // Keep a substantial amount of the natural VITS source under RVC. A
         // completely dry conversion is where the metallic/hacker quality is
         // most apparent; the default profile supplies 36% natural body.
-        mixNaturalSource(converted, base, options.getEffectiveNaturalSourceMix());
+        mixNaturalSource(converted, base, effectiveOptions.getEffectiveNaturalSourceMix());
         // Apply the source envelope after mixing so the natural VITS layer cannot
         // restore a continuously voiced carrier during pauses.
         WavAudio sourceAtOutputRate = base.resampled(converted.sampleRate);
@@ -99,9 +106,9 @@ public final class VillagerSynthesizer implements AutoCloseable {
         AudioDsp.applySpeechDenoise(converted.samples, converted.sampleRate);
         AudioDsp.fadeEdges(converted.samples,
                 Math.min(converted.sampleRate / 100, converted.samples.length / 5));
-        AudioDsp.applyToneTilt(converted.samples, options.getEffectiveTone());
+        AudioDsp.applyToneTilt(converted.samples, effectiveOptions.getEffectiveSpectralTilt());
         AudioDsp.normalizePeak(converted.samples, PEAK_CEILING);
-        AudioDsp.applyGain(converted.samples, options.getEffectiveVolume());
+        AudioDsp.applyGain(converted.samples, effectiveOptions.getEffectiveVolume());
         AudioDsp.normalizePeak(converted.samples, 0.98f);
         return converted.resampled(DEFAULT_SAMPLE_RATE);
     }
