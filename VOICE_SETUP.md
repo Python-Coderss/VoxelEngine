@@ -106,7 +106,7 @@ voice/corpus/assets/minecraft/sounds/mob/villager/
 ```
 
 It normalizes the caller text and matches it to a transcript filename. Exact
-known lines use the recorded clip, with speed, tone, and volume controls
+known lines use the recorded clip, with speed, mood, and volume controls
 applied; unseen lines raise a clear error, so the CLI doubles as a corpus
 coverage check. The normal default is `neural` (Coqui); `reference` must be
 selected explicitly. Set `-Dvoxel.voice.reference=/path/to/clip-directory` to
@@ -116,17 +116,19 @@ use another licensed corpus.
 
 The neural (Coqui) backend accepts the full editable voice profile. Reference
 mode continues to use its recorded clip behavior and applies the compatible
-timing, tone, and volume controls. Existing speed, pitch, volume, tone, and
+timing, mood, and volume controls. Existing speed, pitch, volume, mood, and
 natural-source settings remain compatible; the additional controls are:
 
 - `--emotion neutral|happy|sad|angry|scared` — changes delivery energy, pitch,
-  timing, loudness, and spectral tilt without replacing the explicit controls.
+  timing, loudness, and pitch color without replacing the explicit controls.
 - `--singing 0.0..1.0` — adds musical pitch movement/vibrato to the detected voice
   contour. `0` is normal speech; `1` is the strongest singing expression. This is
   expressive singing/vibrato, not a note-by-note melody sequencer. Singing disables
   the spoken natural-source layer so it does not fight the sung RVC pitch contour.
 - `--pitch VALUE` — static pitch offset in semitones.
-- `--tone VALUE` — warm/dark through bright, from `-1.0` to `+1.0`.
+- `--sarcasm VALUE` — dry/deadpan delivery from `0.0` sincere to `1.0` strongly sarcastic. It flattens prosody, lowers pitch, and reduces the natural carrier.
+- `--question` — adds a rising interrogative ending. Dialogue metadata can set `question`; when omitted, text ending in `?` is detected automatically.
+- `--tone VALUE` — delivery mood from `-1.0` serious/weighty through `0.0` neutral to `+1.0` joking/playful. It no longer means EQ brightness.
 
 Examples:
 
@@ -139,5 +141,41 @@ java -cp <classpath> villager.voice.Main --singing 0.75 --pitch -2 \
   "Aha that seems like a deal that will work for both of us" -o sung-aha.wav
 ```
 
-The standalone `--editor` exposes emotion and singing alongside the existing
-sliders and saves both values in voice preset JSON files.
+The standalone `--editor` exposes emotion, mood, sarcasm, and question delivery alongside
+speed, pitch, volume, natural-source, and singing controls. Hover each editor control
+for its units, endpoints, and audible effect. Presets and dialogue catalogs persist
+all of these values in JSON files.
+
+## Villager News intro arrangement
+
+The VNN TV channel uses the editable score asset at
+`src/main/resources/voice/villager_news_intro.json`. The current version uses
+the user-supplied transcription of GingerGuru's community arrangement:
+
+- Score: <https://musescore.com/user/39216960/scores/6905213>
+- Source file: `THE SVG.SVG`
+- Key signature: C major / A minor
+- Time signature: 4/4
+- Tempo: 130 BPM
+- Fidelity: user-supplied transcription, editable and subject to later correction
+
+This is **not official sheet music**. The supplied transcription describes a
+five-measure piano excerpt with “Play like a Villager,” “Think like a Villager,”
+and “Become a Villager” lyrics. The current Java voice render uses the treble
+melody only; the bass accompaniment/chords are intentionally omitted from this
+first JSON version because the runtime voice is monophonic. Rests are represented
+explicitly, so the render preserves the measure timing. This excerpt does not
+contain the separate “Da-da...” / “Villager News!” title intro.
+The game uses `src/main/resources/voice/villager_news_intro.mid` as the
+runtime-authoritative asset. The older JSON transcription remains as a human-
+readable fallback/reference. MIDI edits are fingerprinted into the voice cache,
+so changing pitches, timing, or velocities regenerates the intro automatically.
+Open the editor with `--midi-editor`; double-click to add notes, drag notes to
+change pitch/time, edit duration/velocity/syllable, save MIDI, and use Preview
+Villager WAV to hear the actual neural villager rendering.
+
+When entering the VNN channel, the game queues the intro asynchronously through
+the existing Java voice worker. The first generation is CPU-intensive because
+each note is synthesized separately; later plays use the normal persistent voice
+cache. The intro is only requested when opening a TV already on VNN or cycling
+into VNN.

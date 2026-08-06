@@ -77,6 +77,12 @@ public final class CustomRvcModel implements AutoCloseable {
     /** Convert with singing vibrato and an emotional phrase contour. */
     public WavAudio convert(WavAudio source, double pitchSemitones, double singing,
                             String emotion) throws Exception {
+        return convert(source, pitchSemitones, singing, emotion, 0.0, false);
+    }
+
+    /** Convert with singing, emotion, sarcasm, and an optional question rise. */
+    public WavAudio convert(WavAudio source, double pitchSemitones, double singing,
+                            String emotion, double sarcasm, boolean question) throws Exception {
         WavAudio at40k = source.resampled(SAMPLE_RATE);
         float[] samples = at40k.samples;
         float[] at16k = resample(samples, SAMPLE_RATE, CONTENT_RATE);
@@ -99,7 +105,8 @@ public final class CustomRvcModel implements AutoCloseable {
         }
         phoneBuffer.flip();
 
-        float[] pitchf = estimatePitch(samples, modelFrames, pitchSemitones, singing, emotion);
+        float[] pitchf = estimatePitch(samples, modelFrames, pitchSemitones, singing,
+                emotion, sarcasm, question);
         LongBuffer pitchBuffer = directLongBuffer(modelFrames);
         for (int i = 0; i < modelFrames; i++) {
             pitchBuffer.put(quantizePitch(pitchf[i]));
@@ -212,7 +219,8 @@ public final class CustomRvcModel implements AutoCloseable {
     }
 
     private static float[] estimatePitch(float[] audio, int frames, double semitones,
-                                         double singing, String emotion) {
+                                         double singing, String emotion, double sarcasm,
+                                         boolean question) {
         float[] raw = new float[frames];
         float[] energies = new float[frames];
         double shift = Math.pow(2.0, semitones / 12.0);
@@ -266,7 +274,7 @@ public final class CustomRvcModel implements AutoCloseable {
             }
         }
         float previous = onsetPitch;
-        float[] phraseOffsets = phraseOffsets(frames, emotion);
+        float[] phraseOffsets = phraseOffsets(frames, emotion, sarcasm);
         for (int frame = 0; frame < raw.length; frame++) {
             float candidate = raw[frame];
             if (candidate <= 0.0f) {
@@ -301,13 +309,21 @@ public final class CustomRvcModel implements AutoCloseable {
                 // varies across words without adding a synthetic wobble.
                 candidate *= (float) Math.pow(2.0, phraseOffsets[frame] / 12.0);
             }
+            if (question && candidate > 0.0f && frames > 1) {
+                // Interrogative uptalk: raise the final fifth of voiced frames
+                // by about three semitones with a smooth, non-clicking ramp.
+                double progress = frame / (double) (frames - 1);
+                double rise = Math.max(0.0, Math.min(1.0, (progress - 0.78) / 0.22));
+                rise = rise * rise * (3.0 - 2.0 * rise);
+                candidate *= (float) Math.pow(2.0, (3.0 * rise) / 12.0);
+            }
             result[frame] = candidate;
             previous = candidate;
         }
         return result;
     }
 
-    private static float[] phraseOffsets(int frames, String emotion) {
+    private static float[] phraseOffsets(int frames, String emotion, double sarcasm) {
         float[] offsets = new float[Math.max(0, frames)];
         if (frames == 0) {
             return offsets;
@@ -317,6 +333,8 @@ public final class CustomRvcModel implements AutoCloseable {
         if ("angry".equalsIgnoreCase(emotion)) depth = 0.36;
         if ("sad".equalsIgnoreCase(emotion)) depth = 0.12;
         if ("scared".equalsIgnoreCase(emotion)) depth = 0.42;
+        // Sarcasm is intentionally flatter and less musically sincere.
+        depth *= Math.max(0.0, 1.0 - sarcasm);
 
         int spacing = Math.max(8, Math.min(18, frames / 8));
         long state = 0x4D4943524F50524FL ^ frames;

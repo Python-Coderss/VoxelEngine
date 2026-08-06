@@ -1,6 +1,7 @@
 package com.voxel.audio;
 
 import com.voxel.entity.VillagerEntity;
+import villager.voice.SpeechOptions;
 
 /** Selects short, repeatable villager lines for synthesis and cache keys. */
 public final class VillagerDialogue {
@@ -8,12 +9,29 @@ public final class VillagerDialogue {
     }
 
     public static String choose(VillagerEntity villager, float worldTime, int interactionIndex) {
+        return chooseLine(villager, worldTime, interactionIndex).getText();
+    }
+
+    /** Choose the built-in line and expose its context for metadata overlays. */
+    public static DialogueLine chooseLine(VillagerEntity villager, float worldTime,
+                                          int interactionIndex) {
         if (villager == null) {
-            return "Hmm...";
+            return new DialogueLine("fallback", "Hmm...", "NITWIT", "ANY", 0,
+                    SpeechOptions.DEFAULT);
         }
-        String[] lines = linesFor(villager.getProfession(), period(worldTime));
-        int seed = villager.id * 31 + interactionIndex * 17 + period(worldTime).ordinal() * 7;
-        return lines[Math.floorMod(seed, lines.length)];
+        Period selectedPeriod = period(worldTime);
+        String[] values = linesFor(villager.getProfession(), selectedPeriod);
+        int seed = villager.id * 31 + interactionIndex * 17 + selectedPeriod.ordinal() * 7;
+        int variant = Math.floorMod(seed, values.length);
+        String id = "builtin_" + villager.getProfession().name().toLowerCase()
+                + "_" + selectedPeriod.name().toLowerCase() + "_" + variant;
+        return new DialogueLine(id, values[variant], villager.getProfession().name(),
+                selectedPeriod.name(), variant, SpeechOptions.DEFAULT);
+    }
+
+    /** Stable context key used by the editable dialogue catalog. */
+    public static String periodName(float worldTime) {
+        return period(worldTime).name();
     }
 
     private static Period period(float worldTime) {

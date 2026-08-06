@@ -388,6 +388,11 @@ public class Main {
 
         // Initialize villager TV and village systems
         ctx.tvSystem = new VillagerTVSystem();
+        ctx.tvSystem.setChannelChangeListener(channel -> {
+            if (channel == VillagerTVSystem.CHANNEL_VNN && ctx.villagerAudioManager != null) {
+                ctx.villagerAudioManager.requestNewsIntro();
+            }
+        });
         ctx.villageManager = new VillagerVillageManager();
         // Wire village manager into MapGenVillage (must happen after ctx.villageManager is set)
         com.voxel.world.structure.MapGenVillage.setVillageManager(ctx.villageManager);

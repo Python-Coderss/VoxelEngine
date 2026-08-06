@@ -626,7 +626,6 @@ public class BlockInteraction {
         // Get current channel from TV system
         if (ctx.tvSystem != null) {
             ctx.tvChannel = ctx.tvSystem.getChannel(hit[0], hit[1], hit[2]);
-            
             // Gather nearby villagers to watch TV
             if (ctx.villageManager != null) {
                 com.voxel.game.VillagerVillageManager.Village village = 
