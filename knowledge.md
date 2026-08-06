@@ -135,6 +135,13 @@ where is the canonical registry mentioned.
 
 ## Key Recent Changes
 
+### Beta Numeric Precision and Far Lands
+- Beta world generation uses independent configurable short, int, float, and double controls in `com.voxel.world.beta.BetaNumericProfile`.
+- Current default preset: `shortBits=10`, `intBits=20`, float `8/11` (exponent/mantissa), and double `11/26` (exponent/mantissa).
+- With the 20-bit integer precision preset, the empirically observed Beta Far Lands boundary is approximately **3,060–3,061 blocks** from the origin.
+- This is an observed terrain/noise boundary, not the legacy `12,550,821` constant; the effective threshold depends on the configured numeric widths and sampler offsets.
+- Beta section generation uses cached bulk section population and does not require a per-voxel `getHeight()` query.
+
 ### Sky Light Fix (2 parts)
 1. `generateSkyLight` now starts from world ceiling instead of `topY` — air above terrain gets sky=15
 2. `onBlockChanged` regenerates sky light for 9 affected chunk columns after clearing (was leaving it at 0)
