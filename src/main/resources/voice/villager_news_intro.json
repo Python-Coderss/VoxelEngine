@@ -1,0 +1,46 @@
+{
+  "version": 2,
+  "title": "Villager News Main Theme - GingerGuru five-measure transcription",
+  "key": "C major / A minor",
+  "timeSignature": "4/4",
+  "bpm": 130,
+  "attribution": "User-supplied transcription of the community arrangement by GingerGuru; not official sheet music.",
+  "sourceUrl": "https://musescore.com/user/39216960/scores/6905213",
+  "sourceFile": "THE SVG.SVG",
+  "renderTrack": "treble melody only",
+  "scope": "five-measure piano excerpt; does not include the Da-da intro or Villager News title motif",
+  "lyrics": [
+    "Play like a Villager.",
+    "Think like a Villager.",
+    "Become a Villager"
+  ],
+  "notes": [
+    { "text": "rest", "pitch": "REST", "startBeat": 0.0, "durationBeats": 4.0, "gate": 1.0, "velocity": 0.0 },
+    { "text": "rest", "pitch": "REST", "startBeat": 4.0, "durationBeats": 4.0, "gate": 1.0, "velocity": 0.0 },
+
+    { "text": "da", "pitch": "C5", "startBeat": 8.0, "durationBeats": 0.5, "gate": 0.82, "velocity": 0.95 },
+    { "text": "da", "pitch": "C5", "startBeat": 8.5, "durationBeats": 0.5, "gate": 0.82, "velocity": 0.95 },
+    { "text": "da", "pitch": "C5", "startBeat": 9.0, "durationBeats": 0.5, "gate": 0.82, "velocity": 0.95 },
+    { "text": "rest", "pitch": "REST", "startBeat": 9.5, "durationBeats": 0.5, "gate": 1.0, "velocity": 0.0 },
+    { "text": "da", "pitch": "C5", "startBeat": 10.0, "durationBeats": 0.5, "gate": 0.82, "velocity": 0.95 },
+    { "text": "da", "pitch": "C5", "startBeat": 10.5, "durationBeats": 0.5, "gate": 0.82, "velocity": 0.95 },
+    { "text": "da", "pitch": "E5", "startBeat": 11.0, "durationBeats": 0.5, "gate": 0.82, "velocity": 1.0 },
+    { "text": "rest", "pitch": "REST", "startBeat": 11.5, "durationBeats": 0.5, "gate": 1.0, "velocity": 0.0 },
+
+    { "text": "da", "pitch": "G#4", "startBeat": 12.0, "durationBeats": 0.5, "gate": 0.82, "velocity": 0.95 },
+    { "text": "da", "pitch": "A4", "startBeat": 12.5, "durationBeats": 0.5, "gate": 0.82, "velocity": 0.95 },
+    { "text": "da", "pitch": "B4", "startBeat": 13.0, "durationBeats": 0.5, "gate": 0.82, "velocity": 0.95 },
+    { "text": "rest", "pitch": "REST", "startBeat": 13.5, "durationBeats": 0.5, "gate": 1.0, "velocity": 0.0 },
+    { "text": "da", "pitch": "C5", "startBeat": 14.0, "durationBeats": 0.5, "gate": 0.82, "velocity": 1.0 },
+    { "text": "rest", "pitch": "REST", "startBeat": 14.5, "durationBeats": 0.5, "gate": 1.0, "velocity": 0.0 },
+    { "text": "da", "pitch": "B4", "startBeat": 15.0, "durationBeats": 0.5, "gate": 0.82, "velocity": 0.95 },
+    { "text": "rest", "pitch": "REST", "startBeat": 15.5, "durationBeats": 0.5, "gate": 1.0, "velocity": 0.0 },
+
+    { "text": "rest", "pitch": "REST", "startBeat": 16.0, "durationBeats": 0.5, "gate": 1.0, "velocity": 0.0 },
+    { "text": "da", "pitch": "A4", "startBeat": 16.5, "durationBeats": 0.5, "gate": 0.82, "velocity": 1.0 },
+    { "text": "da", "pitch": "C5", "startBeat": 17.0, "durationBeats": 0.5, "gate": 0.82, "velocity": 1.0 },
+    { "text": "da", "pitch": "E5", "startBeat": 17.5, "durationBeats": 0.5, "gate": 0.90, "velocity": 1.0 },
+    { "text": "rest", "pitch": "REST", "startBeat": 18.0, "durationBeats": 1.0, "gate": 1.0, "velocity": 0.0 },
+    { "text": "rest", "pitch": "REST", "startBeat": 19.0, "durationBeats": 1.0, "gate": 1.0, "velocity": 0.0 }
+  ]
+}

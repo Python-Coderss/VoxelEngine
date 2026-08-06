@@ -10,23 +10,35 @@ import java.util.Random;
 public class NoiseGeneratorOctaves {
     private NoiseGeneratorPerlin[] generatorCollection;
     private int field_1191_b;
+    private BetaNumericProfile numericProfile;
 
     public NoiseGeneratorOctaves(Random var1, int var2) {
+        this(var1, var2, BetaNumericProfile.DEFAULT);
+    }
+
+    public NoiseGeneratorOctaves(Random var1, int var2, BetaNumericProfile numericProfile) {
         this.field_1191_b = var2;
+        this.numericProfile = numericProfile == null ? BetaNumericProfile.DEFAULT : numericProfile;
         this.generatorCollection = new NoiseGeneratorPerlin[var2];
 
         for (int var3 = 0; var3 < var2; ++var3) {
-            this.generatorCollection[var3] = new NoiseGeneratorPerlin(var1);
+            this.generatorCollection[var3] = new NoiseGeneratorPerlin(var1, this.numericProfile);
         }
     }
 
+    public void setNumericProfile(BetaNumericProfile numericProfile) {
+        this.numericProfile = numericProfile == null ? BetaNumericProfile.DEFAULT : numericProfile;
+        for (NoiseGeneratorPerlin generator : generatorCollection) generator.setNumericProfile(this.numericProfile);
+    }
+
     public double func_806_a(double var1, double var3) {
-        double var5 = 0.0D;
-        double var7 = 1.0D;
+        double var5 = numericProfile.doubleValue(0.0D);
+        double var7 = numericProfile.doubleValue(1.0D);
 
         for (int var9 = 0; var9 < this.field_1191_b; ++var9) {
-            var5 += this.generatorCollection[var9].func_801_a(var1 * var7, var3 * var7) / var7;
-            var7 /= 2.0D;
+            var5 = numericProfile.doubleValue(var5
+                    + this.generatorCollection[var9].func_801_a(var1 * var7, var3 * var7) / var7);
+            var7 = numericProfile.doubleValue(var7 / 2.0D);
         }
 
         return var5;
@@ -43,14 +55,15 @@ public class NoiseGeneratorOctaves {
             }
         }
 
-        double var20 = 1.0D;
+        double var20 = numericProfile.doubleValue(1.0D);
 
         for (int var19 = 0; var19 < this.field_1191_b; ++var19) {
             // BUG: var20 doubles each octave, causing floating-point precision loss
             // at extreme coordinates (the Far Lands)
             this.generatorCollection[var19].func_805_a(var1, var2, var4, var6, var8, var9, var10,
-                    var11 * var20, var13 * var20, var15 * var20, var20);
-            var20 /= 2.0D;
+                    numericProfile.doubleValue(var11 * var20), numericProfile.doubleValue(var13 * var20),
+                    numericProfile.doubleValue(var15 * var20), var20);
+            var20 = numericProfile.doubleValue(var20 / 2.0D);
         }
 
         return var1;

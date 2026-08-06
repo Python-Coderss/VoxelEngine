@@ -1,0 +1,110 @@
+[
+  {
+    "id": "farmer_morning_harvest",
+    "text": "A good morning for planting, hmm.",
+    "profession": "FARMER",
+    "period": "MORNING",
+    "variant": 0,
+    "voice": {
+      "emotion": "happy",
+      "speed": 1.04,
+      "pitch": 0.5,
+      "volume": 1.0,
+      "tone": 0.35,
+      "sarcasm": 0.0,
+      "question": false,
+      "naturalSourceMix": 0.36,
+      "singing": 0.0
+    }
+  },
+  {
+    "id": "builder_day_measure",
+    "text": "Measure twice, place once, hmm.",
+    "profession": "BUILDER",
+    "period": "DAY",
+    "variant": 0,
+    "voice": {
+      "emotion": "neutral",
+      "speed": 1.0,
+      "pitch": -0.5,
+      "volume": 1.0,
+      "tone": -0.15,
+      "sarcasm": 0.0,
+      "question": false,
+      "naturalSourceMix": 0.36,
+      "singing": 0.0
+    }
+  },
+  {
+    "id": "news_morning_intro",
+    "text": "Good morning, villagers. Here is today's news.",
+    "profession": "NEWS_ANCHOR",
+    "period": "MORNING",
+    "variant": 0,
+    "voice": {
+      "emotion": "neutral",
+      "speed": 0.98,
+      "pitch": 0.0,
+      "volume": 1.02,
+      "tone": -0.05,
+      "sarcasm": 0.0,
+      "question": false,
+      "naturalSourceMix": 0.34,
+      "singing": 0.0
+    }
+  },
+  {
+    "id": "shopkeeper_bargain",
+    "text": "A fine day for commerce, hmm.",
+    "profession": "SHOPKEEPER",
+    "period": "DAY",
+    "variant": 0,
+    "voice": {
+      "emotion": "happy",
+      "speed": 1.02,
+      "pitch": 0.5,
+      "volume": 1.0,
+      "tone": 0.25,
+      "sarcasm": 0.0,
+      "question": false,
+      "naturalSourceMix": 0.36,
+      "singing": 0.0
+    }
+  },
+  {
+    "id": "night_global_warning",
+    "text": "It is late. You should find a bed, hmm.",
+    "profession": "*",
+    "period": "NIGHT",
+    "variant": 0,
+    "voice": {
+      "emotion": "scared",
+      "speed": 0.94,
+      "pitch": 1.0,
+      "volume": 0.96,
+      "tone": -0.25,
+      "sarcasm": 0.15,
+      "question": false,
+      "naturalSourceMix": 0.32,
+      "singing": 0.0
+    }
+  },
+  {
+    "id": "global_celebration",
+    "text": "A fine day for doing absolutely nothing.",
+    "profession": "*",
+    "period": "DAY",
+    "variant": 0,
+    "voice": {
+      "emotion": "happy",
+      "speed": 1.0,
+      "pitch": 0.0,
+      "volume": 1.0,
+      "tone": -0.25,
+      "sarcasm": 0.15,
+      "question": false,
+      "naturalSourceMix": 0.36,
+      "singing": 0.0
+    }
+  }
+]

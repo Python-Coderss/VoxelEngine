@@ -10,6 +10,11 @@ import java.util.Random;
 public class BetaMapGenCaves {
     protected int field_1306_a = 8;
     protected Random rand = new Random();
+    protected BetaNumericProfile numericProfile = BetaNumericProfile.DEFAULT;
+
+    public void setNumericProfile(BetaNumericProfile numericProfile) {
+        this.numericProfile = numericProfile == null ? BetaNumericProfile.DEFAULT : numericProfile;
+    }
 
     // Block ID constants (Beta 1.7.3 values) - these are used internally
     // and mapped to VoxelEngine IDs by the caller
@@ -60,9 +65,9 @@ public class BetaMapGenCaves {
             }
 
             for (int var16 = 0; var16 < var15; ++var16) {
-                float var17 = this.rand.nextFloat() * (float) Math.PI * 2.0F;
-                float var18 = (this.rand.nextFloat() - 0.5F) * 2.0F / 8.0F;
-                float var19 = this.rand.nextFloat() * 2.0F + this.rand.nextFloat();
+                float var17 = numericProfile.floatValue(this.rand.nextFloat() * (float) Math.PI * 2.0F);
+                float var18 = numericProfile.floatValue((this.rand.nextFloat() - 0.5F) * 2.0F / 8.0F);
+                float var19 = numericProfile.floatValue(this.rand.nextFloat() * 2.0F + this.rand.nextFloat());
                 this.releaseEntitySkin(var3, var4, var5, var9, var11, var13, var19, var17, var18, 0, 0, 0.5D);
             }
         }
@@ -79,8 +84,8 @@ public class BetaMapGenCaves {
                                       int var13, int var14, double var15) {
         double var17 = (double) (var1 * 16 + 8);
         double var19 = (double) (var2 * 16 + 8);
-        float var21 = 0.0F;
-        float var22 = 0.0F;
+        float var21 = numericProfile.floatValue(0.0F);
+        float var22 = numericProfile.floatValue(0.0F);
         Random var23 = new Random(this.rand.nextLong());
         if (var14 <= 0) {
             int var24 = this.field_1306_a * 16 - 16;
@@ -97,24 +102,30 @@ public class BetaMapGenCaves {
         boolean var26 = var23.nextInt(6) == 0;
 
         for (; var13 < var14; ++var13) {
-            double var27 = 1.5D + (double) (Math.sin((float) var13 * (float) Math.PI / (float) var14) * var10 * 1.0F);
+            double var27 = numericProfile.doubleValue(1.5D
+                    + (double) numericProfile.floatValue(Math.sin((float) var13 * (float) Math.PI / (float) var14)
+                    * var10 * 1.0F));
             double var29 = var27 * var15;
-            float var31 = (float) Math.cos(var12);
-            float var32 = (float) Math.sin(var12);
-            var4 += (double) ((float) Math.cos(var11) * var31);
-            var6 += (double) var32;
-            var8 += (double) ((float) Math.sin(var11) * var31);
+            float var31 = numericProfile.floatValue(Math.cos(var12));
+            float var32 = numericProfile.floatValue(Math.sin(var12));
+            var4 = numericProfile.doubleValue(var4
+                    + (double) numericProfile.floatValue(Math.cos(var11) * var31));
+            var6 = numericProfile.doubleValue(var6 + (double) var32);
+            var8 = numericProfile.doubleValue(var8
+                    + (double) numericProfile.floatValue(Math.sin(var11) * var31));
             if (var26) {
-                var12 *= 0.92F;
+                var12 = numericProfile.floatValue(var12 * 0.92F);
             } else {
-                var12 *= 0.7F;
+                var12 = numericProfile.floatValue(var12 * 0.7F);
             }
-            var12 += var22 * 0.1F;
-            var11 += var21 * 0.1F;
-            var22 *= 0.9F;
-            var21 *= 12.0F / 16.0F;
-            var22 += (var23.nextFloat() - var23.nextFloat()) * var23.nextFloat() * 2.0F;
-            var21 += (var23.nextFloat() - var23.nextFloat()) * var23.nextFloat() * 4.0F;
+            var12 = numericProfile.floatValue(var12 + var22 * 0.1F);
+            var11 = numericProfile.floatValue(var11 + var21 * 0.1F);
+            var22 = numericProfile.floatValue(var22 * 0.9F);
+            var21 = numericProfile.floatValue(var21 * (12.0F / 16.0F));
+            var22 = numericProfile.floatValue(var22
+                    + (var23.nextFloat() - var23.nextFloat()) * var23.nextFloat() * 2.0F);
+            var21 = numericProfile.floatValue(var21
+                    + (var23.nextFloat() - var23.nextFloat()) * var23.nextFloat() * 4.0F);
 
             if (!var52 && var13 == var25 && var10 > 1.0F) {
                 this.releaseEntitySkin(var1, var2, var3, var4, var6, var8,

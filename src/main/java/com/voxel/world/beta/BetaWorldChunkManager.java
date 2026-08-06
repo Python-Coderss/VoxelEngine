@@ -18,9 +18,14 @@ public class BetaWorldChunkManager {
     public int[] field_4195_d; // biome IDs (was BiomeGenBase[] in original)
 
     public BetaWorldChunkManager(long seed) {
-        this.field_4194_e = new NoiseGeneratorOctaves2(new Random(seed * 9871L), 4);
-        this.field_4193_f = new NoiseGeneratorOctaves2(new Random(seed * 39811L), 4);
-        this.field_4192_g = new NoiseGeneratorOctaves2(new Random(seed * 543321L), 2);
+        this(seed, BetaNumericProfile.DEFAULT);
+    }
+
+    public BetaWorldChunkManager(long seed, BetaNumericProfile numericProfile) {
+        BetaNumericProfile profile = numericProfile == null ? BetaNumericProfile.DEFAULT : numericProfile;
+        this.field_4194_e = new NoiseGeneratorOctaves2(new Random(seed * 9871L), 4, profile);
+        this.field_4193_f = new NoiseGeneratorOctaves2(new Random(seed * 39811L), 4, profile);
+        this.field_4192_g = new NoiseGeneratorOctaves2(new Random(seed * 543321L), 2, profile);
     }
 
     public int getBiomeGenAt(int var1, int var2) {

@@ -32,6 +32,37 @@ public class WorldGenerator {
         // Override in subclasses
     }
 
+    /**
+     * Populate a section directly into the world's pool when the generator has
+     * a bulk section representation. A negative result requests the generic
+     * per-voxel fallback; otherwise the result is the solid-voxel count.
+     */
+    public int populateSection(int cx, int cy, int cz, com.voxel.World world, int slot) {
+        return -1;
+    }
+
+    /**
+     * Prepare a section before voxel queries. A false result means the section
+     * is known to be entirely empty and the caller may skip its voxel loop.
+     * Legacy generators conservatively return true.
+     */
+    public boolean prepareSection(int cx, int cy, int cz) {
+        return true;
+    }
+
+    /**
+     * Returns the block at a world coordinate without requiring the caller to
+     * calculate a column height first. Generators with direct 3D terrain
+     * evaluation should override this method. The default keeps the legacy
+     * height-based generators compatible.
+     */
+    public int getBlockType(int x, int y, int z) {
+        return getBlockType(x, y, z, getHeight(x, y, z));
+    }
+
+    /**
+     * Legacy height-based block query retained for the non-Beta generators.
+     */
     public int getBlockType(int x, int y, int z, int height) {
         if (y > height) return 0;
         if (y == height) return 1;
