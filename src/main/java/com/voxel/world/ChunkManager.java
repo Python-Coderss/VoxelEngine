@@ -1278,17 +1278,29 @@ public class ChunkManager {
         int worldX = cx << 4;
         int worldY = cy << 4;
         int worldZ = cz << 4;
+
+        // Prefer a generator's bulk section path. Beta already builds and
+        // caches complete 16³ sections, so copying that cache avoids a second
+        // 4,096-call per-voxel traversal during startup.
+        int bulkCount = generator.populateSection(cx, cy, cz, world, slot);
+        if (bulkCount >= 0) return bulkCount;
+
         int solidCount = 0;
+
+        // Let direct 3D generators cheaply reject known-empty sections. This
+        // replaces the old getHeight-based early-out without making section
+        // generation depend on a column-height query.
+        if (!generator.prepareSection(cx, cy, cz)) return 0;
 
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
-                int height = generator.getHeight(worldX + lx, worldY, worldZ + lz);
-                // Cubic chunks: terrain can exist at ANY Y level (far lands, void extension).
-                // Only skip if the surface is entirely below this section.
-                if (height < worldY) continue;
+                // Use the generator's direct 3D query. Beta terrain is not
+                // representable by a single column height, and querying one
+                // here both costs an extra terrain pass and makes generation
+                // depend on getHeight's cache/side effects.
                 for (int ly = 0; ly < 16; ly++) {
                     int y = worldY + ly;
-                    int type = generator.getBlockType(worldX + lx, y, worldZ + lz, height);
+                    int type = generator.getBlockType(worldX + lx, y, worldZ + lz);
                     if (type != 0) {
                         world.setVoxelInPool(slot, lx, ly, lz, type);
                         solidCount++;

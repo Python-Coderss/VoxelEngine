@@ -13,6 +13,12 @@ import java.util.Random;
  */
 public class BetaChunkProvider {
     private Random rand;
+    private final BetaNumericProfile numericProfile;
+
+    private double d(double value) { return numericProfile.doubleValue(value); }
+    private float f(double value) { return numericProfile.floatValue(value); }
+    private int i(long value) { return numericProfile.intValue(value); }
+    private short s(long value) { return numericProfile.shortPrimitive(value); }
     private NoiseGeneratorOctaves field_912_k;   // octaves=16
     private NoiseGeneratorOctaves field_911_l;   // octaves=16
     private NoiseGeneratorOctaves field_910_m;   // octaves=8
@@ -112,6 +118,7 @@ public class BetaChunkProvider {
     }
 
     private byte[] getOrCreateSection(int cy) {
+        cy = i(cy);
         byte[] sec = columnSections.get(cy);
         if (sec == null) {
             sec = new byte[4096];
@@ -122,19 +129,19 @@ public class BetaChunkProvider {
     }
 
     static byte getSectionBlock(HashMap<Integer, byte[]> sections, int lx, int ly, int lz) {
-        int cy = ly >> 4;
+        int cy = (int) (ly >> 4);
         byte[] sec = sections.get(cy);
         return sec != null ? sec[sectionIdx(lx, ly & 15, lz)] : 0;
     }
 
     static void setSectionBlock(HashMap<Integer, byte[]> sections, int lx, int ly, int lz, byte val) {
         if (val == 0) {
-            int cy = ly >> 4;
-            byte[] sec = sections.get(cy);
+        int cy = (int) (ly >> 4);
+        byte[] sec = sections.get(cy);
             if (sec != null) sec[sectionIdx(lx, ly & 15, lz)] = 0;
             return;
         }
-        int cy = ly >> 4;
+        int cy = (int) (ly >> 4);
         byte[] sec = sections.get(cy);
         if (sec == null) {
             sec = new byte[4096];
@@ -172,16 +179,36 @@ public class BetaChunkProvider {
                               int veDiamondOre, int veRedstoneOre, int veLapisOre, int veGlowstone,
                               int veSugarCane, int veClay, int veCobblestone, int veMossyCobble,
                               int veChest, int veSpawner, int[] veSnowLevels) {
+        this(seed, BetaNumericProfile.DEFAULT,
+                veStone, veGrass, veDirt, veBedrock, veWaterStill, veLavaStill, veSand, veGravel,
+                veSandStone, veIce, veSnow, veObsidian, veLeaves, veWood,
+                veDandelion, veRose, veTallGrass, veDeadBush, veCactus, vePumpkin,
+                veCoalOre, veIronOre, veGoldOre, veDiamondOre, veRedstoneOre, veLapisOre, veGlowstone,
+                veSugarCane, veClay, veCobblestone, veMossyCobble, veChest, veSpawner, veSnowLevels);
+    }
+
+    public BetaChunkProvider(long seed, BetaNumericProfile numericProfile,
+                              int veStone, int veGrass, int veDirt, int veBedrock,
+                              int veWaterStill, int veLavaStill, int veSand, int veGravel,
+                              int veSandStone, int veIce, int veSnow, int veObsidian,
+                              int veLeaves, int veWood,
+                              int veDandelion, int veRose, int veTallGrass, int veDeadBush,
+                              int veCactus, int vePumpkin,
+                              int veCoalOre, int veIronOre, int veGoldOre,
+                              int veDiamondOre, int veRedstoneOre, int veLapisOre, int veGlowstone,
+                              int veSugarCane, int veClay, int veCobblestone, int veMossyCobble,
+                              int veChest, int veSpawner, int[] veSnowLevels) {
         this.worldSeed = seed;
+        this.numericProfile = numericProfile == null ? BetaNumericProfile.DEFAULT : numericProfile;
         this.rand = new Random(seed);
-        this.field_912_k = new NoiseGeneratorOctaves(this.rand, 16);
-        this.field_911_l = new NoiseGeneratorOctaves(this.rand, 16);
-        this.field_910_m = new NoiseGeneratorOctaves(this.rand, 8);
-        this.field_909_n = new NoiseGeneratorOctaves(this.rand, 4);
-        this.field_908_o = new NoiseGeneratorOctaves(this.rand, 4);
-        this.field_922_a = new NoiseGeneratorOctaves(this.rand, 10);
-        this.field_921_b = new NoiseGeneratorOctaves(this.rand, 16);
-        this.mobSpawnerNoise = new NoiseGeneratorOctaves(this.rand, 8);
+        this.field_912_k = new NoiseGeneratorOctaves(this.rand, 16, this.numericProfile);
+        this.field_911_l = new NoiseGeneratorOctaves(this.rand, 16, this.numericProfile);
+        this.field_910_m = new NoiseGeneratorOctaves(this.rand, 8, this.numericProfile);
+        this.field_909_n = new NoiseGeneratorOctaves(this.rand, 4, this.numericProfile);
+        this.field_908_o = new NoiseGeneratorOctaves(this.rand, 4, this.numericProfile);
+        this.field_922_a = new NoiseGeneratorOctaves(this.rand, 10, this.numericProfile);
+        this.field_921_b = new NoiseGeneratorOctaves(this.rand, 16, this.numericProfile);
+        this.mobSpawnerNoise = new NoiseGeneratorOctaves(this.rand, 8, this.numericProfile);
 
         this.veStone = veStone; this.veGrass = veGrass; this.veDirt = veDirt;
         this.veBedrock = veBedrock; this.veWaterStill = veWaterStill;
@@ -208,7 +235,7 @@ public class BetaChunkProvider {
         this.betaSandStone = BETA_SANDSTONE; this.betaIce = BETA_ICE;
         this.betaSnow = BETA_SNOW;
 
-        this.worldChunkManager = new BetaWorldChunkManager(seed);
+        this.worldChunkManager = new BetaWorldChunkManager(seed, this.numericProfile);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -270,6 +297,7 @@ public class BetaChunkProvider {
                 caveTempArray[(lx * 16 + lz) * 128 + y] = sec[i];
             }
         }
+        caveGen.setNumericProfile(numericProfile);
         caveGen.func_867_a(worldSeed, cx, cz, caveTempArray);
         for (int cy = 0; cy < 8; cy++) {
             boolean any = false;
@@ -323,6 +351,61 @@ public class BetaChunkProvider {
     //  BLOCK QUERIES
     // ══════════════════════════════════════════════════════════════════
 
+    /**
+     * Copy a prepared Beta section directly into the engine's chunk pool.
+     * Returns the number of solid blocks, or -1 for sections below zero that
+     * still require direct density evaluation.
+     */
+    public int populateSection(int cx, int cy, int cz, com.voxel.World world, int slot) {
+        if (!columnGenerated || columnCX != cx || columnCZ != cz) {
+            generateColumn(cx, cz);
+        }
+        if (cy < 0) return -1;
+        byte[] sec = columnSections.get(cy);
+        if (sec == null) {
+            generateSectionRange(cy, cy + 1);
+            sec = columnSections.get(cy);
+        }
+        if (sec == null) return 0;
+        int solidCount = 0;
+        for (int i = 0; i < sec.length; i++) {
+            int block = sec[i] & 0xFF;
+            if (block == 0) continue;
+            int lx = i & 15;
+            int ly = (i >> 4) & 15;
+            int lz = (i >> 8) & 15;
+            world.setVoxelInPool(slot, lx, ly, lz, mapToVeBlock(block));
+            solidCount++;
+        }
+        return solidCount;
+    }
+
+    /**
+     * Prepare a section for direct voxel queries and cheaply report whether it
+     * contains any blocks. Existing column sections are reused; missing
+     * sections are generated once and then cached.
+     */
+    public boolean prepareSection(int cx, int cy, int cz) {
+        if (!columnGenerated || columnCX != cx || columnCZ != cz) {
+            generateColumn(cx, cz);
+        }
+        if (cy < 0) {
+            // Below the generated Beta column, density is evaluated directly
+            // per voxel; do not claim the section is empty without sampling it.
+            return true;
+        }
+        byte[] sec = columnSections.get(cy);
+        if (sec == null) {
+            generateSectionRange(cy, cy + 1);
+            sec = columnSections.get(cy);
+        }
+        if (sec == null) return false;
+        for (byte block : sec) {
+            if (block != 0) return true;
+        }
+        return false;
+    }
+
     public int getBetaBlock(int x, int z, int y) {
         int cx = x >> 4, cz = z >> 4;
         if (!columnGenerated || columnCX != cx || columnCZ != cz) {
@@ -355,7 +438,9 @@ public class BetaChunkProvider {
 
         // Far Lands: terrain is infinite at extreme coordinates.
         // Skip the scan entirely — there is no "top" to find.
-        if (maxSectionCY == 127 || Math.abs(cx) >= 100000 || Math.abs(cy) >= 100000 || Math.abs(cz) >= 100000) {
+        if (maxSectionCY == 127 || Math.abs((long) x) >= BetaNumericProfile.CLASSIC_FAR_LANDS_BLOCKS
+                || Math.abs((long) y) >= BetaNumericProfile.CLASSIC_FAR_LANDS_BLOCKS
+                || Math.abs((long) z) >= BetaNumericProfile.CLASSIC_FAR_LANDS_BLOCKS) {
             return Integer.MAX_VALUE;
         }
 
@@ -416,10 +501,10 @@ public class BetaChunkProvider {
         for (int var11 = 0; var11 < var6; ++var11) {
             for (int var12 = 0; var12 < var6; ++var12) {
                 for (int var13 = 0; var13 < sampleCount; ++var13) {
-                    double v16 = densityField[((var11) * var10 + var12) * var9 + var13];
-                    double v18 = densityField[((var11) * var10 + var12 + 1) * var9 + var13];
-                    double v20 = densityField[((var11 + 1) * var10 + var12) * var9 + var13];
-                    double v22 = densityField[((var11 + 1) * var10 + var12 + 1) * var9 + var13];
+                    double v16 = d(densityField[((var11) * var10 + var12) * var9 + var13]);
+                    double v18 = d(densityField[((var11) * var10 + var12 + 1) * var9 + var13]);
+                    double v20 = d(densityField[((var11 + 1) * var10 + var12) * var9 + var13]);
+                    double v22 = d(densityField[((var11 + 1) * var10 + var12 + 1) * var9 + var13]);
 
                     // ── Short-circuit: if all 8 corners are > 0, the entire
                     //     4×8×4 sub-volume is solid stone. Skip the inner loops.
@@ -475,7 +560,7 @@ public class BetaChunkProvider {
                                 }
                                 if (var48 > 0.0D) var55 = BETA_STONE;
                                 setMainBlock(lx, var52 + var12 * 4, y, (byte) var55);
-                                var48 += var50;
+                                var48 = d(var48 + var50);
                             }
                             var35 += var39; var37 += var41;
                         }
@@ -578,14 +663,14 @@ public class BetaChunkProvider {
                     double var30 = (v22p - v22) * var14;
 
                     for (int var32 = 0; var32 < 8; ++var32) {
-                        double var33 = 0.25D, var35 = v16, var37 = v18;
-                        double var39 = (v20 - v16) * var33, var41 = (v22 - v18) * var33;
+                        double var33 = d(0.25D), var35 = v16, var37 = v18;
+                        double var39 = d((v20 - v16) * var33), var41 = d((v22 - v18) * var33);
 
                         for (int var43 = 0; var43 < 4; ++var43) {
                             int lx = var43 + var11 * 4, lz = 0 + var12 * 4;
                             int y = var13 * 8 + var32;
-                            double var46 = 0.25D, var48 = var35;
-                            double var50 = (var37 - var35) * var46;
+                            double var46 = d(0.25D), var48 = var35;
+                            double var50 = d((var37 - var35) * var46);
 
                             for (int var52 = 0; var52 < 4; ++var52) {
                                 double var53 = var5[(var11 * 4 + var43) * 16 + var12 * 4 + var52];
@@ -595,7 +680,7 @@ public class BetaChunkProvider {
                                 }
                                 if (var48 > 0.0D) var55 = BETA_STONE;
                                 setSectionBlock(var3, lx, y, lz + var52, var55 == 0 ? (byte)0 : (byte)var55);
-                                var48 += var50;
+                                var48 = d(var48 + var50);
                             }
                             var35 += var39; var37 += var41;
                         }
@@ -771,6 +856,7 @@ public class BetaChunkProvider {
         columnGenerated = false; columnCX = Integer.MIN_VALUE; columnCZ = Integer.MIN_VALUE;
     }
 
+    public BetaNumericProfile getNumericProfile() { return numericProfile; }
     public int[] getCurrentBiomes() { return biomesForGeneration; }
     public double[] getCurrentTemperatures() { return temperatures; }
     public int getBetaBiomeId(int x, int z) { return worldChunkManager.getBiomeGenAt(x, z); }
@@ -867,17 +953,21 @@ public class BetaChunkProvider {
     }
 
     private void genOreVein(com.voxel.World world, int cx, int cy, int cz, int blockId, int count) {
-        float f = this.rand.nextFloat() * (float)Math.PI;
-        double dx=(double)((float)(cx+8)+(float)Math.sin(f)*(float)count/8.0F);
-        double dy=(double)((float)(cx+8)-(float)Math.sin(f)*(float)count/8.0F);
-        double dz=(double)((float)(cz+8)+(float)Math.cos(f)*(float)count/8.0F);
-        double dw=(double)((float)(cz+8)-(float)Math.cos(f)*(float)count/8.0F);
+        float f = this.f(this.rand.nextFloat() * (float)Math.PI);
+        double sinF = this.f(Math.sin(f));
+        double cosF = this.f(Math.cos(f));
+        double dx=d(this.f(cx+8) + this.f(sinF * count / 8.0F));
+        double dy=d(this.f(cx+8) - this.f(sinF * count / 8.0F));
+        double dz=d(this.f(cz+8) + this.f(cosF * count / 8.0F));
+        double dw=d(this.f(cz+8) - this.f(cosF * count / 8.0F));
         double ex=(double)(cy+this.rand.nextInt(3)-2), ey=(double)(cy+this.rand.nextInt(3)-2);
-        for (int i=0;i<count;++i){float progress=(float)i/(float)count;
-            double cx2=dx+(dy-dx)*(double)progress, cy2=ex+(ey-ex)*(double)progress, cz2=dz+(dw-dz)*(double)progress;
-            double radius=this.rand.nextDouble()*(double)count/16.0D;
-            double rXZ=(double)((float)Math.sin((float)i*(float)Math.PI/(float)count)+1.0F)*radius+1.0D;
-            double rY=(double)((float)Math.sin((float)i*(float)Math.PI/(float)count)+1.0F)*radius+1.0D;
+        for (int i=0;i<count;++i){float progress=numericProfile.floatValue((float)i/(float)count);
+            double cx2=d(dx+(dy-dx)*(double)progress), cy2=d(ex+(ey-ex)*(double)progress), cz2=d(dz+(dw-dz)*(double)progress);
+            double radius=d(this.rand.nextDouble()*(double)count/16.0D);
+            float arc = f((float)i*(float)Math.PI/(float)count);
+            double arcSin = f(Math.sin(arc));
+            double rXZ=d((double)(arcSin+1.0F)*radius+1.0D);
+            double rY=d((double)(arcSin+1.0F)*radius+1.0D);
             int minX=(int)Math.floor(cx2-rXZ/2.0D),minY=(int)Math.floor(cy2-rY/2.0D),minZ=(int)Math.floor(cz2-rXZ/2.0D);
             int maxX=(int)Math.floor(cx2+rXZ/2.0D),maxY=(int)Math.floor(cy2+rY/2.0D),maxZ=(int)Math.floor(cz2+rXZ/2.0D);
             for(int px=minX;px<=maxX;++px){double dxD=((double)px+0.5D-cx2)/(rXZ/2.0D);if(dxD*dxD>=1.0D)continue;

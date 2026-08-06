@@ -5,6 +5,7 @@ import com.voxel.biome.BiomeProvider;
 import com.voxel.biome.BiomeRegistry;
 import com.voxel.world.beta.BetaChunkProvider;
 import com.voxel.world.beta.BetaBiomeGenBase;
+import com.voxel.world.beta.BetaNumericProfile;
 import com.voxel.world.structure.MapGenStructure;
 import java.util.HashSet;
 import java.util.Set;
@@ -22,6 +23,7 @@ import java.util.Set;
 public class BetaWorldGenerator extends WorldGenerator {
     
     private final BetaChunkProvider betaProvider;
+    private final BetaNumericProfile numericProfile;
     
     // Cache the last column to avoid regenerating
     private int lastCX = Integer.MIN_VALUE;
@@ -52,7 +54,13 @@ public class BetaWorldGenerator extends WorldGenerator {
     }
     
     public BetaWorldGenerator(long seed, com.voxel.utils.BlockDataManager blockDataManager) {
+        this(seed, blockDataManager, BetaNumericProfile.DEFAULT);
+    }
+
+    public BetaWorldGenerator(long seed, com.voxel.utils.BlockDataManager blockDataManager,
+                              BetaNumericProfile numericProfile) {
         super(seed, blockDataManager);
+        this.numericProfile = numericProfile == null ? BetaNumericProfile.DEFAULT : numericProfile;
         
         // Look up VoxelEngine block IDs from BlockDataManager (all null-safe)
         int veStone = findOr(blockDataManager, "stone", 2);
@@ -100,7 +108,7 @@ public class BetaWorldGenerator extends WorldGenerator {
         this.structureGen = new MapGenStructure(seed);
         
         this.betaProvider = new BetaChunkProvider(
-            seed,
+            seed, this.numericProfile,
             veStone, veGrass, veDirt, veBedrock,
             veWater, veLava, veSand, veGravel,
             veSandStone, veIce, veSnow, veObsidian,
@@ -124,6 +132,10 @@ public class BetaWorldGenerator extends WorldGenerator {
         };
     }
     
+    public BetaNumericProfile getNumericProfile() {
+        return numericProfile;
+    }
+
     /** Returns the underlying BetaChunkProvider for direct access. */
     public BetaChunkProvider getBetaProvider() {
         return betaProvider;
@@ -145,6 +157,36 @@ public class BetaWorldGenerator extends WorldGenerator {
         return betaProvider.getHeight(x, y, z);
     }
     
+    /**
+     * Copy the provider's cached Beta section directly into the engine pool.
+     * This keeps startup section generation batched and avoids a second 4,096
+     * block-query pass through the generator.
+     */
+    @Override
+    public int populateSection(int cx, int cy, int cz, World world, int slot) {
+        return betaProvider.populateSection(cx, cy, cz, world, slot);
+    }
+
+    /**
+     * Prepare one Beta section and report whether it contains any blocks. The
+     * provider performs the section-level noise/interpolation work once; this
+     * prevents ChunkManager from issuing 4,096 queries for an empty section.
+     */
+    @Override
+    public boolean prepareSection(int cx, int cy, int cz) {
+        return betaProvider.prepareSection(cx, cy, cz);
+    }
+
+    /**
+     * Direct Beta lookup used by cubic section generation. Beta terrain is a
+     * 3D function of (x,y,z), so no column height is needed or consulted.
+     */
+    @Override
+    public int getBlockType(int x, int y, int z) {
+        int betaId = betaProvider.getBetaBlock(x, z, y);
+        return betaProvider.mapToVeBlock(betaId);
+    }
+
     @Override
     public int getBlockType(int x, int y, int z, int height) {
         int cx = x >> 4;
