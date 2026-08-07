@@ -56,6 +56,8 @@ public class Player {
     private static final float WATER_SLOWDOWN = 0.8F;
     private static final float LADDER_MAX_SPEED = 0.15F;
     private static final float SLIP_CONSTANT = 0.16277136F;
+    private static final long ONE_BLOCK_FIXED = FixedPoint.fromDouble(1.0D);
+    private static final int MAX_UNSTUCK_STEPS = 4096;
 
     // Health / death / spawn
     private float health = 20.0f;
@@ -494,6 +496,33 @@ public class Player {
         parachuteDeployed = false;
         parachuteItemId = null;
         parachuteSlotIndex = -1;
+    }
+
+    /**
+     * Raises the player one block at a time until its AABB is no longer blocked.
+     * Returns the number of blocks raised, or -1 if the safety limit was reached.
+     */
+    public int unstuck(World world, BlockDataManager blockDataManager) {
+        if (!checkCollision(world, blockDataManager)) return 0;
+
+        long originalY = posY;
+        int steps = 0;
+        while (steps < MAX_UNSTUCK_STEPS && checkCollision(world, blockDataManager)) {
+            posY += ONE_BLOCK_FIXED;
+            steps++;
+        }
+        if (checkCollision(world, blockDataManager)) {
+            posY = originalY;
+            return -1;
+        }
+
+        prevPosX = posX;
+        prevPosY = posY;
+        prevPosZ = posZ;
+        velocity.y = 0;
+        fallDistance = 0;
+        onGround = false;
+        return steps;
     }
 
     public void setSpawnPoint(Vector3f point) {
