@@ -43,7 +43,16 @@ public class ChunkManager {
     private final Map<Long, NavigableMap<Integer, Integer>> loadedChunks = new ConcurrentHashMap<>();
     // Columns whose immediate 3-section spawn area has finished generation/loading.
     private final Set<Long> fullyGeneratedColumns = ConcurrentHashMap.newKeySet();
+    // Procedurally generated Beta columns whose decoration was skipped during
+    // bootstrap. Gen-thread confined; consumed after spawn is released.
+    private final Set<Long> deferredBetaDecoration = new HashSet<>();
+    private boolean deferredBetaDecorationQueued = false;
+    private volatile boolean deferredBetaDecorationCancelled = false;
     private final AtomicBoolean spawnRetryQueued = new AtomicBoolean(false);
+    // The first manage cycle only needs the immediate spawn cube. Do not queue
+    // thousands of render-distance sections before the player can leave the
+    // loading screen; the full stream is enabled after spawn resolution.
+    private volatile boolean spawnBootstrap = true;
 
 
 
@@ -60,6 +69,7 @@ public class ChunkManager {
 
     // ── Single dedicated world-gen thread with FIFO task queue ──
     private final BlockingDeque<Runnable> taskQueue = new LinkedBlockingDeque<>();
+    private final Runnable deferredBetaDecorationTask = this::runDeferredBetaDecoration;
     private final Thread genThread;
     private volatile boolean running = true;
 
@@ -85,6 +95,15 @@ public class ChunkManager {
 
     // ── Deferred lighting: chunks waiting for 5×5 grid to load before light runs ──
     private final Set<Long> pendingLighting = new HashSet<>();
+    // Coalesces relights caused by sections arriving above/below an already loaded
+    // section. The work itself always runs on the single Lighting thread.
+    private final Set<Long> queuedColumnRelights = ConcurrentHashMap.newKeySet();
+    // Set when another section arrives while a column relight is already queued;
+    // the light worker schedules one follow-up pass after the current pass.
+    private final Set<Long> relightAgain = ConcurrentHashMap.newKeySet();
+    // Pool slots captured by an in-flight or queued lighting snapshot. The gen
+    // thread will not release these slots until the Lighting worker finishes.
+    private final ConcurrentHashMap<Integer, AtomicInteger> lightPinnedSlots = new ConcurrentHashMap<>();
 
     // ── Per-column section load tracking (gen thread only) ──
     // Track which sections of a column are currently being generated.
@@ -184,10 +203,20 @@ public class ChunkManager {
      * @param work The lighting work to perform
      */
     private void postLightTask(long chunkKey, NavigableMap<Integer, Integer> expectedSlots, Runnable work) {
+        postLightTask(chunkKey, expectedSlots, work, () -> { });
+    }
+
+    /** Posts a task with a callback for the stale/cancelled case. */
+    private void postLightTask(long chunkKey, NavigableMap<Integer, Integer> expectedSlots,
+                               Runnable work, Runnable onSkipped) {
         lightQueue.addLast(() -> {
-            if (cancelledLightTasks.remove(chunkKey)) return; // cancelled by unload
-            // Verify slots haven't changed (chunk wasn't unloaded and reloaded)
-            if (expectedSlots != null && loadedChunks.get(chunkKey) != expectedSlots) return;
+            boolean cancelled = cancelledLightTasks.remove(chunkKey);
+            boolean valid = running && lightRunning && !cancelled
+                    && (expectedSlots == null || loadedChunks.get(chunkKey) == expectedSlots);
+            if (!valid) {
+                onSkipped.run();
+                return;
+            }
             lightingActiveCount.incrementAndGet();
             try {
                 work.run();
@@ -270,6 +299,22 @@ public class ChunkManager {
                 spawnRetryQueued.set(false);
             }
         });
+    }
+
+    /**
+     * Enables normal render-distance streaming after the immediate spawn area
+     * has been resolved. The next update is forced to queue the full stream.
+     */
+    public void finishSpawnBootstrap() {
+        spawnBootstrap = false;
+        lastPlayerCX = -1000;
+        lastPlayerCY = -1000;
+        lastPlayerCZ = -1000;
+
+        // Beta decoration performs neighbor-column copies and is much more
+        // expensive than the immediate terrain needed to find a spawn. The
+        // first post-bootstrap manage cycle consumes the deferred set after
+        // the loading gate opens.
     }
 
     /**
@@ -396,6 +441,23 @@ public class ChunkManager {
     public boolean isBiomeMapDirty() { return biomeMapDirty.get(); }
     public void clearBiomeMapDirty() { biomeMapDirty.set(false); }
     public void markBiomeMapDirty() { biomeMapDirty.set(true); }
+
+    /**
+     * Generates the full biome noise map after the spawn bootstrap task. The
+     * neutral fallback remains bound while this runs, so biome generation never
+     * delays the first playable frame and still stays on the single world-gen
+     * worker rather than introducing another generator thread.
+     */
+    public void queueBiomeMapGeneration() {
+        taskQueue.addLast(() -> {
+            if (!running || biomeManager == null || biomeManager.getBiomeProvider() == null) return;
+            long t0 = System.currentTimeMillis();
+            biomeManager.generateBiomeData(World.REGION_SIZE * World.CHUNK_SIZE);
+            biomeMapDirty.set(true);
+            System.out.println("[BOOT] biome map ready " + (System.currentTimeMillis() - t0) + " ms");
+        });
+    }
+
     public boolean needsLightUpload() { return lightsNeedUpload; }
     public void clearLightUpload() { lightsNeedUpload = false; }
     public boolean isLightRebuildPending(int slot) { return lightRebuildPending.contains(slot); }
@@ -406,7 +468,14 @@ public class ChunkManager {
     public boolean isLightingActive() { return lightingActiveCount.get() > 0; }
 
     public void shutdown() {
+        // Publish cancellation before taking the lifecycle lock so an already
+        // running deferred pass can stop between columns instead of making
+        // shutdown wait for the entire expensive population pass.
         running = false;
+        deferredBetaDecorationCancelled = true;
+        synchronized (this) {
+            deferredBetaDecorationQueued = false;
+        }
         taskQueue.clear(); // Discard stale tasks from old dimension
         genThread.interrupt();
         try { genThread.join(5000); } catch (InterruptedException ignored) {}
@@ -438,6 +507,18 @@ public class ChunkManager {
 
         // ── 3×3×3 grid: ensure all 27 chunks around player are loaded synchronously ──
         ensure3x3x3Loaded(pcx, pcy, pcz);
+
+        // Spawn readiness must not wait for the complete render-distance ring.
+        // The initial 3×3×3 cube above is enough for surface detection and keeps
+        // Beta's expensive decoration/noise work off the critical startup path.
+        if (spawnBootstrap) {
+            recenterIfNeeded(pcx, pcy, pcz);
+            return;
+        }
+
+        // Deferred Beta decoration is consumed by runGenLoop after the queued
+        // terrain stream drains, so it cannot block this first post-bootstrap
+        // manage cycle.
 
         // Maximum distance: 2× forward, 1× sideways/back
         int maxDist = renderDistance * 2;
@@ -490,7 +571,9 @@ public class ChunkManager {
         }
         toUnload.sort(Long::compareTo);
         for (Long key : toUnload) {
-            NavigableMap<Integer, Integer> slots = loadedChunks.remove(key);
+            NavigableMap<Integer, Integer> slots = loadedChunks.get(key);
+            if (slots == null || hasPinnedSlot(slots)) continue;
+            slots = loadedChunks.remove(key);
             if (slots != null) {
                 fullyGeneratedColumns.remove(key);
                 unloadChunk(key, slots);
@@ -505,8 +588,16 @@ public class ChunkManager {
         int yMin = pcy - yLoadRadius;
         int yMax = pcy + yLoadRadius;
 
-        // ── Queue new columns in 2D XZ-spiral order (nearest first) ──
+        // ── Queue new columns in 2D XZ order (player 3×3 first) ──
+        List<Integer> yOrder = orderedSections(yMin, yMax);
         if (!chunksToLoad.isEmpty()) {
+            // Remove the deferred-population sentinel wherever it is in the
+            // queue before pruning. Otherwise clear() could silently drop it
+            // while leaving deferredBetaDecorationQueued=true forever.
+            if (taskQueue.removeFirstOccurrence(deferredBetaDecorationTask)) {
+                deferredBetaDecorationQueued = false;
+            }
+
             // Keep the last 2 tasks so the gen thread never idles between swaps.
             Runnable keep1 = taskQueue.pollLast();
             Runnable keep2 = taskQueue.pollLast();
@@ -514,12 +605,17 @@ public class ChunkManager {
             if (keep2 != null) taskQueue.addFirst(keep2);
             if (keep1 != null) taskQueue.addFirst(keep1);
 
-            // Sort missing columns by 2D Chebyshev distance from player (XZ only).
+            // Sort missing columns by player-centered 3×3 priority, then
+            // distance and view angle. This keeps the immediate 3×3 grid ahead
+            // of the rest of the render-distance stream.
             float lookX = (float) Math.cos(Math.toRadians(yaw));
             float lookZ = (float) Math.sin(Math.toRadians(yaw));
             chunksToLoad.sort((a, b) -> {
                 int dxA = a[0] - pcx, dzA = a[1] - pcz;
                 int dxB = b[0] - pcx, dzB = b[1] - pcz;
+                boolean immediateA = isPlayer3x3(dxA, dzA);
+                boolean immediateB = isPlayer3x3(dxB, dzB);
+                if (immediateA != immediateB) return immediateA ? -1 : 1;
                 int distA = Math.max(Math.abs(dxA), Math.abs(dzA));
                 int distB = Math.max(Math.abs(dxB), Math.abs(dzB));
                 if (distA != distB) return Integer.compare(distA, distB);
@@ -530,12 +626,8 @@ public class ChunkManager {
                 return Float.compare(angleA, angleB);
             });
 
-            // Build Y-section order: nearest to player Y first, radiating outward
-            List<Integer> yOrder = new ArrayList<>();
-            for (int cy = yMin; cy <= yMax; cy++) yOrder.add(cy);
-            yOrder.sort((a, b) -> Integer.compare(Math.abs(a - pcy), Math.abs(b - pcy)));
-
             // Queue: for each column (nearest first), queue all Y-range sections
+            // high-to-low so the upper view becomes available first.
             // in Y-spiral order.
             for (int[] col : chunksToLoad) {
                 int cx = col[0], cz = col[1];
@@ -557,9 +649,12 @@ public class ChunkManager {
         // ── Expand existing columns: queue missing Y sections when player moves vertically ──
         // Must run AFTER queue clear (above) so tasks are not lost.
         int expandedCount = 0;
-        for (Map.Entry<Long, NavigableMap<Integer, Integer>> entry : loadedChunks.entrySet()) {
+        List<Map.Entry<Long, NavigableMap<Integer, Integer>>> expansionColumns =
+                new ArrayList<>(loadedChunks.entrySet());
+        expansionColumns.sort((a, b) -> compareColumnPriority(a.getKey(), b.getKey(), pcx, pcz));
+        for (Map.Entry<Long, NavigableMap<Integer, Integer>> entry : expansionColumns) {
             NavigableMap<Integer, Integer> colSlots = entry.getValue();
-            for (int cy = yMin; cy <= yMax; cy++) {
+            for (int cy : yOrder) {
                 if (!colSlots.containsKey(cy)) {
                     long key = entry.getKey();
                     int cx = unpackX(key);
@@ -571,6 +666,12 @@ public class ChunkManager {
                     expandedCount++;
                 }
             }
+        }
+
+        if (!spawnBootstrap && !deferredBetaDecoration.isEmpty()
+                && !deferredBetaDecorationQueued) {
+            deferredBetaDecorationQueued = true;
+            taskQueue.addLast(deferredBetaDecorationTask);
         }
 
         if (!chunksToLoad.isEmpty() || expandedCount > 0) {
@@ -587,6 +688,16 @@ public class ChunkManager {
     // ══════════════════════════════════════════════════════════════════
 
     private void recenterIfNeeded(int pcx, int pcy, int pcz) {
+        // The initial world buffer starts at (0,0,0), and the default spawn is
+        // already safely inside its positive coordinate range. Re-centering it
+        // immediately would clear the entire 128³ indirection table before the
+        // loading screen can finish (a several-second operation on some JVMs).
+        // Wait until the player actually approaches a buffer edge.
+        if (canSkipInitialRecenter(spawnBootstrap, world.getOffsetX(), world.getOffsetY(),
+                world.getOffsetZ(), pcx, pcy, pcz)) {
+            return;
+        }
+
         int bufMinX = world.getOffsetX() >> 4;
         int bufMinY = world.getOffsetY() >> 4;
         int bufMinZ = world.getOffsetZ() >> 4;
@@ -653,6 +764,35 @@ public class ChunkManager {
     //  CHUNK UNLOAD — runs only on the gen thread
     // ══════════════════════════════════════════════════════════════════
 
+    private boolean hasPinnedSlot(NavigableMap<Integer, Integer> slots) {
+        for (Integer slot : slots.values()) {
+            if (isLightSlotPinned(slot)) return true;
+        }
+        return false;
+    }
+
+    private Set<Integer> pinLightSlots(NavigableMap<Integer, Integer> snapshot) {
+        Set<Integer> pinned = new HashSet<>(snapshot.values());
+        for (Integer slot : pinned) {
+            lightPinnedSlots.computeIfAbsent(slot, ignored -> new AtomicInteger()).incrementAndGet();
+        }
+        return pinned;
+    }
+
+    private void unpinLightSlots(Set<Integer> pinned) {
+        for (Integer slot : pinned) {
+            AtomicInteger count = lightPinnedSlots.get(slot);
+            if (count != null && count.decrementAndGet() <= 0) {
+                lightPinnedSlots.remove(slot, count);
+            }
+        }
+    }
+
+    private boolean isLightSlotPinned(int slot) {
+        AtomicInteger count = lightPinnedSlots.get(slot);
+        return count != null && count.get() > 0;
+    }
+
     private void unloadChunk(long key, NavigableMap<Integer, Integer> slots) {
         int cx = unpackX(key);
         int cz = unpackZ(key);
@@ -662,6 +802,9 @@ public class ChunkManager {
         cancelledLightTasks.add(key);
         columnSectionsLoaded.remove(key);
         fullyGeneratedColumns.remove(key);
+        deferredBetaDecoration.remove(key);
+        queuedColumnRelights.remove(key);
+        relightAgain.remove(key);
 
         if (saveManager != null) {
             saveManager.saveChunk(dimension, cx, cz, world);
@@ -965,7 +1108,8 @@ public class ChunkManager {
                     // Try disk load
                     boolean fromDisk = saveManager != null && saveManager.loadChunk(dimension, cx, cz, world);
 
-                    for (int cy = pcy - 1; cy <= pcy + 1; cy++) {
+                    int[] immediateSections = {pcy + 1, pcy, pcy - 1};
+                    for (int cy : immediateSections) {
                         if (freeSlotTop < 1) break;
                         int slot = allocateSlot();
                         slots.put(cy, slot);
@@ -974,7 +1118,7 @@ public class ChunkManager {
 
                         if (!fromDisk) {
                             generateBaseTerrain(cx, cy, cz, slot);
-                            generator.decorate(cx, cy, cz, slot, world);
+                            decorateSectionIfAllowed(cx, cy, cz, slot);
 
                             int bmBase = slot << 7;
                             boolean anySolid = false;
@@ -988,11 +1132,16 @@ public class ChunkManager {
                         sectionsLoaded++;
                     }
 
-                    tableDirty.set(true);
-                    scheduleFluidsInColumn(cx, cz, slots);
-                    scheduleColumnLighting(cx, cz, colKey, slots);
+                tableDirty.set(true);
+                scheduleFluidsInColumn(cx, cz, slots);
+                scheduleColumnLighting(cx, cz, colKey, slots);
+                if (slots.size() > 1) {
+                    int highest = slots.lastKey();
+                    trimLowerSectionsAfterHigherLoad(colKey, slots, highest);
+                    scheduleNeighborSectionRelight(cx, highest, cz, colKey, slots);
+                }
 
-                    // Do not publish readiness if slot pressure interrupted the
+                // Do not publish readiness if slot pressure interrupted the
                     // immediate three-section spawn range.
                     boolean immediateRangeComplete = true;
                     for (int cy = pcy - 1; cy <= pcy + 1; cy++) {
@@ -1004,9 +1153,11 @@ public class ChunkManager {
                     if (immediateRangeComplete) fullyGeneratedColumns.add(colKey);
                     else fullyGeneratedColumns.remove(colKey);
                 } else {
-                    // Column exists — load any missing Y sections in the 3×3 range
+                    // Column exists — load any missing Y sections in the 3×3 range,
+                    // high sections first.
                     boolean addedAny = false;
-                    for (int cy = pcy - 1; cy <= pcy + 1; cy++) {
+                    int[] immediateSections = {pcy + 1, pcy, pcy - 1};
+                    for (int cy : immediateSections) {
                         if (slots.containsKey(cy)) continue;
                         if (freeSlotTop < 1) { evictFarthestColumn(cx, cz); }
                         if (freeSlotTop < 1) break;
@@ -1016,7 +1167,7 @@ public class ChunkManager {
                         world.clearChunkPoolSlot(slot);
                         world.setChunkSlot(cx, cy, cz, slot);
                         generateBaseTerrain(cx, cy, cz, slot);
-                        generator.decorate(cx, cy, cz, slot, world);
+                        decorateSectionIfAllowed(cx, cy, cz, slot);
 
                         int bmBase = slot << 7;
                         boolean anySolid = false;
@@ -1033,6 +1184,11 @@ public class ChunkManager {
                     // Schedule lighting if we added new sections to this existing column
                     if (addedAny) {
                         scheduleColumnLighting(cx, cz, colKey, slots);
+                        if (slots.size() > 1) {
+                            int highest = slots.lastKey();
+                            trimLowerSectionsAfterHigherLoad(colKey, slots, highest);
+                            scheduleNeighborSectionRelight(cx, highest, cz, colKey, slots);
+                        }
                     }
                     // Publish readiness only when all three immediate Y sections exist.
                     boolean immediateRangeComplete = true;
@@ -1065,6 +1221,8 @@ public class ChunkManager {
         });
         while (freeSlotTop < 2 && !byDist.isEmpty()) {
             Long victim = byDist.remove(0);
+            NavigableMap<Integer, Integer> current = loadedChunks.get(victim);
+            if (current == null || hasPinnedSlot(current)) continue;
             NavigableMap<Integer, Integer> vSlots = loadedChunks.remove(victim);
             if (vSlots != null) {
                 unloadChunk(victim, vSlots);
@@ -1122,7 +1280,7 @@ public class ChunkManager {
         // Try disk load first
         boolean fromDisk = saveManager != null && saveManager.loadChunk(dimension, cx, cz, world);
 
-        for (int cy = yMin; cy <= yMax; cy++) {
+        for (int cy : orderedSections(yMin, yMax)) {
             int slot = allocateSlot();
             slots.put(cy, slot);
             world.clearChunkPoolSlot(slot);
@@ -1135,7 +1293,7 @@ public class ChunkManager {
                 world.setChunkSlot(cx, cy, cz, slot);
                 world.clearChunkPoolSlot(slot);
                 generateBaseTerrain(cx, cy, cz, slot);
-                generator.decorate(cx, cy, cz, slot, world);
+                decorateSectionIfAllowed(cx, cy, cz, slot);
 
                 int bmBase = slot << 7;
                 boolean anySolid = false;
@@ -1151,6 +1309,11 @@ public class ChunkManager {
         tableDirty.set(true);
         scheduleFluidsInColumn(cx, cz, slots);
         scheduleColumnLighting(cx, cz, colKey, slots);
+        if (slots.size() > 1) {
+            int highest = slots.lastKey();
+            trimLowerSectionsAfterHigherLoad(colKey, slots, highest);
+            scheduleNeighborSectionRelight(cx, highest, cz, colKey, slots);
+        }
     }
 
     /** Allocate a single slot from the free pool. */
@@ -1179,7 +1342,11 @@ public class ChunkManager {
             if (saveManager != null && saveManager.loadChunk(dimension, cx, cz, world)) {
                 int yMin = lastPlayerCY - yLoadRadius;
                 int yMax = lastPlayerCY + yLoadRadius;
-                for (int scy = yMin; scy <= yMax; scy++) {
+                for (int scy : orderedSections(yMin, yMax)) {
+                    if (freeSlotTop < 1 && scy > lastPlayerCY) {
+                        trimLowerSectionsAfterHigherLoad(colKey, slots, scy);
+                    }
+                    if (freeSlotTop < 1) return;
                     int slot = allocateSlot();
                     slots.put(scy, slot);
                     world.setChunkSlot(cx, scy, cz, slot);
@@ -1191,6 +1358,11 @@ public class ChunkManager {
                 scheduleColumnLighting(cx, cz, colKey, slots);
                 columnSectionsLoaded.remove(colKey);
                 fullyGeneratedColumns.add(colKey);
+                if (slots.size() > 1) {
+                    int highest = slots.lastKey();
+                    trimLowerSectionsAfterHigherLoad(colKey, slots, highest);
+                    scheduleNeighborSectionRelight(cx, highest, cz, colKey, slots);
+                }
                 return;
             }
 
@@ -1202,8 +1374,12 @@ public class ChunkManager {
         Set<Integer> loading = columnSectionsLoaded.get(colKey);
         if (slots.containsKey(cy)) return; // already loaded
         if (loading != null && loading.contains(cy)) return; // being loaded by another task
+        if (freeSlotTop < 1 && cy > lastPlayerCY) {
+            // A higher section may reclaim stale lower sections in this same
+            // column before we give up on the allocation.
+            trimLowerSectionsAfterHigherLoad(colKey, slots, cy);
+        }
         if (freeSlotTop < 1) return;
-
         int slot = allocateSlot();
         slots.put(cy, slot);
         if (loading != null) loading.add(cy);
@@ -1211,7 +1387,7 @@ public class ChunkManager {
         world.clearChunkPoolSlot(slot);
         world.setChunkSlot(cx, cy, cz, slot);
         generateBaseTerrain(cx, cy, cz, slot);
-        generator.decorate(cx, cy, cz, slot, world);
+        decorateSectionIfAllowed(cx, cy, cz, slot);
 
         // Directional SDF for empty chunks
         int bmBase = slot << 7;
@@ -1241,6 +1417,16 @@ public class ChunkManager {
                 columnSectionsLoaded.remove(colKey);
             }
         }
+
+        // A section arriving next to an existing section changes the vertical
+        // sky-light path. Queue one complete-column rebuild on the dedicated
+        // Lighting thread; duplicate arrivals coalesce by column key.
+        if (slots.lowerKey(cy) != null || slots.higherKey(cy) != null) {
+            // Trim first: the relight snapshot must never retain a section whose
+            // slot has just been returned to the allocator.
+            trimLowerSectionsAfterHigherLoad(colKey, slots, cy);
+            scheduleNeighborSectionRelight(cx, cy, cz, colKey, slots);
+        }
     }
 
     /** True when the column has every Y-section in the player's load range loaded. */
@@ -1257,19 +1443,204 @@ public class ChunkManager {
         // Light the full render distance so async-loaded columns are lit as soon
         // as they finish loading, regardless of whether the player has moved.
         if (Math.abs(cx - lastPlayerCX) <= renderDistance && Math.abs(cz - lastPlayerCZ) <= renderDistance) {
-            // Defensive snapshot: the light thread iterates this map while the gen thread
-            // may still be adding sections. Use a copy to avoid ConcurrentModificationException.
+            // Snapshot on the generation thread before handing work to the
+            // single lighting worker. The worker must never copy a mutable
+            // TreeMap concurrently with section insertion.
             final NavigableMap<Integer, Integer> snapshot = new TreeMap<>(slots);
-            // Pass null for expectedSlots — the snapshot won't match loadedChunks.get(key)
-            postLightTask(key, null, () -> {
+            final Set<Integer> pinned = pinLightSlots(snapshot);
+            postLightTask(key, slots, () -> {
+                try {
+                    dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, snapshot));
+                    for (Map.Entry<Integer, Integer> se : snapshot.entrySet()) {
+                        dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, se.getKey(), cz, se.getValue()));
+                    }
+                    lightsNeedUpload = true;
+                    tableDirty.set(true);
+                    runPendingLightingIn5x5(cx, cz);
+                } finally {
+                    unpinLightSlots(pinned);
+                }
+            }, () -> unpinLightSlots(pinned));
+        }
+    }
+
+    /**
+     * Queues a coalesced relight after a section appears next to another section
+     * in the same column. It is intentionally submitted to lightQueue only; the
+     * generation thread never performs this rebuild.
+     */
+    private void scheduleNeighborSectionRelight(int cx, int cy, int cz, long key,
+                                                 NavigableMap<Integer, Integer> slots) {
+        if (!queuedColumnRelights.add(key)) {
+            relightAgain.add(key);
+            return;
+        }
+        final NavigableMap<Integer, Integer> snapshot = new TreeMap<>(slots);
+        final Set<Integer> pinned = pinLightSlots(snapshot);
+        postLightTask(key, slots, () -> {
+            try {
                 dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, snapshot));
-                for (Map.Entry<Integer, Integer> se : snapshot.entrySet()) {
-                    dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, se.getKey(), cz, se.getValue()));
+                for (Map.Entry<Integer, Integer> entry : snapshot.entrySet()) {
+                    dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, entry.getKey(), cz, entry.getValue()));
                 }
                 lightsNeedUpload = true;
                 tableDirty.set(true);
-                runPendingLightingIn5x5(cx, cz);
-            });
+            } finally {
+                unpinLightSlots(pinned);
+                queuedColumnRelights.remove(key);
+                // A later section may have arrived while this pass was queued.
+                // Requeue from the generation thread with a fresh snapshot.
+                final boolean needsFollowUp = relightAgain.remove(key);
+                if (running && loadedChunks.get(key) == slots) {
+                    final int followCx = cx, followCy = cy, followCz = cz;
+                    taskQueue.addLast(() -> {
+                        // The current snapshot is no longer using these slots.
+                        trimLowerSectionsAfterHigherLoad(key, slots, followCy);
+                        if (!slots.containsKey(followCy)) {
+                            // A higher request may have been deferred while the
+                            // previous relight held its snapshot. Retry it now
+                            // that lower slots can safely be reclaimed.
+                            loadOneSection(followCx, followCy, followCz);
+                        } else if (needsFollowUp) {
+                            scheduleNeighborSectionRelight(followCx, followCy, followCz, key, slots);
+                        }
+                    });
+                }
+            }
+        }, () -> {
+            unpinLightSlots(pinned);
+            queuedColumnRelights.remove(key);
+            relightAgain.remove(key);
+        });
+    }
+
+    /**
+     * Removes stale lower sections only after a higher section has arrived and
+     * only when they are below the active vertical window. The spawn cube is
+     * explicitly protected so surface detection never loses its three sections.
+     */
+    private void trimLowerSectionsAfterHigherLoad(long key, NavigableMap<Integer, Integer> slots, int higherCy) {
+        if (higherCy <= lastPlayerCY) return;
+        // Never free a section represented by a queued relight snapshot. A
+        // follow-up pass will see the current column after the first completes.
+        // Do not free slots captured by the currently queued snapshot. The
+        // follow-up pass retries this trim after that snapshot completes.
+        if (queuedColumnRelights.contains(key)) return;
+        int activeMinY = lastPlayerCY - yLoadRadius;
+        boolean spawnColumn = isPlayer3x3(unpackX(key) - lastPlayerCX, unpackZ(key) - lastPlayerCZ);
+        int protectedMin = lastPlayerCY - 1;
+        int protectedMax = lastPlayerCY + 1;
+        List<Integer> stale = new ArrayList<>();
+        for (Integer sectionY : slots.keySet()) {
+            boolean protectedSpawnSection = spawnBootstrap && spawnColumn
+                    && sectionY >= protectedMin && sectionY <= protectedMax;
+            Integer slot = slots.get(sectionY);
+            if (slot != null && shouldEvictLowerSection(sectionY, higherCy, activeMinY, protectedSpawnSection)
+                    && !isLightSlotPinned(slot)) {
+                stale.add(sectionY);
+            }
+        }
+        for (Integer sectionY : stale) {
+            Integer slot = slots.remove(sectionY);
+            if (slot == null || isLightSlotPinned(slot)) continue;
+            world.clearChunkSlot(unpackX(key), sectionY, unpackZ(key));
+            world.clearLightPoolSlot(slot);
+            world.clearDirSdfPoolSlot(slot);
+            lightRebuildPending.remove(slot);
+            freeSlotStack[freeSlotTop++] = slot;
+            dirtySlots.remove(slot);
+            tableDirty.set(true);
+        }
+    }
+
+    /** Compares columns by immediate 3×3 priority, then XZ distance. */
+    private static int compareColumnPriority(long a, long b, int pcx, int pcz) {
+        int adx = (int) (a >> 32) - pcx, adz = (int) a - pcz;
+        int bdx = (int) (b >> 32) - pcx, bdz = (int) b - pcz;
+        boolean aImmediate = isPlayer3x3(adx, adz);
+        boolean bImmediate = isPlayer3x3(bdx, bdz);
+        if (aImmediate != bImmediate) return aImmediate ? -1 : 1;
+        int aDistance = Math.max(Math.abs(adx), Math.abs(adz));
+        int bDistance = Math.max(Math.abs(bdx), Math.abs(bdz));
+        if (aDistance != bDistance) return Integer.compare(aDistance, bDistance);
+        return Long.compare(a, b);
+    }
+
+    /** True for one of the nine player-centered XZ columns. */
+    static boolean isPlayer3x3(int dx, int dz) {
+        return Math.abs(dx) <= 1 && Math.abs(dz) <= 1;
+    }
+
+    /** Higher section coordinates sort before lower coordinates. */
+    static int compareHigherSectionFirst(int a, int b) {
+        return Integer.compare(b, a);
+    }
+
+    /** Pure eviction policy, exposed for focused regression tests. */
+    static boolean shouldEvictLowerSection(int sectionY, int higherY, int activeMinY,
+                                           boolean protectedSpawnSection) {
+        return sectionY < higherY && sectionY < activeMinY && !protectedSpawnSection;
+    }
+
+    static List<Integer> orderedSections(int minY, int maxY) {
+        List<Integer> result = new ArrayList<>();
+        for (int y = minY; y <= maxY; y++) result.add(y);
+        result.sort(ChunkManager::compareHigherSectionFirst);
+        return result;
+    }
+
+    /** Pure policy helper kept package-visible for the bootstrap regression test. */
+    static boolean shouldDeferDecoration(boolean bootstrap, boolean betaGenerator) {
+        return bootstrap && betaGenerator;
+    }
+
+    /**
+     * Beta's population pass is deferred during the initial spawn bootstrap.
+     * Other dimensions retain their existing decoration timing.
+     */
+    private void decorateSectionIfAllowed(int cx, int cy, int cz, int slot) {
+        if (shouldDeferDecoration(spawnBootstrap, generator instanceof BetaWorldGenerator)) {
+            deferredBetaDecoration.add(chunkKey(cx, cz));
+            return;
+        }
+        generator.decorate(cx, cy, cz, slot, world);
+    }
+
+    /** Runs the deferred Beta population pass for the already loaded spawn columns. */
+    private void runDeferredBetaDecoration() {
+        synchronized (this) {
+            deferredBetaDecorationQueued = false;
+            if (!running || spawnBootstrap || deferredBetaDecorationCancelled) return;
+            // Hold the lifecycle lock for the serialized pass. shutdown() then
+            // waits for an already-started pass instead of racing into the
+            // middle of a world mutation or starting it after cancellation.
+            decorateBootstrapColumns();
+        }
+    }
+
+    private void decorateBootstrapColumns() {
+        if (!(generator instanceof BetaWorldGenerator)) return;
+
+        int decorated = 0;
+        for (Long key : new ArrayList<>(deferredBetaDecoration)) {
+            if (!running || deferredBetaDecorationCancelled) break;
+            NavigableMap<Integer, Integer> slots = loadedChunks.get(key);
+            if (slots == null) {
+                deferredBetaDecoration.remove(key);
+                continue;
+            }
+            Integer slot = slots.get(4); // Beta's surface/decorating section.
+            if (slot == null) continue;
+
+            generator.decorate(unpackX(key), 4, unpackZ(key), slot, world);
+            dirtySlots.addAll(slots.values());
+            deferredBetaDecoration.remove(key);
+            decorated++;
+        }
+        if (decorated > 0) {
+            tableDirty.set(true);
+            WorldGenLogger.log("BETA bootstrap decoration deferred complete: "
+                    + decorated + " columns");
         }
     }
 
@@ -1339,6 +1710,19 @@ public class ChunkManager {
                 }
             }
         }
+    }
+
+    /**
+     * The bootstrap only loads the immediate 3x3x3 cube. Keep the initial
+     * origin when that cube fits in the initial buffer; otherwise recenter as
+     * usual so edge spawns are not silently dropped by setChunkSlot().
+     */
+    static boolean canSkipInitialRecenter(boolean bootstrap, int offsetX, int offsetY, int offsetZ,
+                                          int pcx, int pcy, int pcz) {
+        return bootstrap && offsetX == 0 && offsetY == 0 && offsetZ == 0
+                && pcx >= 1 && pcx < World.REGION_SIZE - 1
+                && pcy >= 1 && pcy < World.REGION_SIZE - 1
+                && pcz >= 1 && pcz < World.REGION_SIZE - 1;
     }
 
     private long chunkKey(int x, int z) { return ((long) x << 32) | (z & 0xFFFFFFFFL); }

@@ -55,22 +55,41 @@ public class BiomeManager {
      * @param worldSize The size of the world (e.g., 2048).
      */
     public void generateBiomeData(int worldSize) {
-        this.biomeWorldSize = worldSize;
+        synchronized (biomeLock) {
+            this.biomeWorldSize = worldSize;
 
-        // Free old buffer if it exists
-        if (biomeData != null) MemoryUtil.memFree(biomeData);
+            // Free old buffer if it exists
+            if (biomeData != null) MemoryUtil.memFree(biomeData);
 
-        // Allocate off-heap memory for the map (2 bytes per pixel: Temperature and Humidity).
-        biomeData = MemoryUtil.memAlloc(worldSize * worldSize * 2);
-        for (int z = 0; z < worldSize; z++) {
-            for (int x = 0; x < worldSize; x++) {
-                float[] th = getBiomeTempHumidity(x, z);
-                biomeData.put((byte) (Math.max(0, Math.min(1, th[0])) * 255));
-                biomeData.put((byte) (Math.max(0, Math.min(1, th[1])) * 255));
+            // Allocate off-heap memory for the map (2 bytes per pixel: Temperature and Humidity).
+            biomeData = MemoryUtil.memAlloc(worldSize * worldSize * 2);
+            for (int z = 0; z < worldSize; z++) {
+                for (int x = 0; x < worldSize; x++) {
+                    float[] th = getBiomeTempHumidity(x, z);
+                    biomeData.put((byte) (Math.max(0, Math.min(1, th[0])) * 255));
+                    biomeData.put((byte) (Math.max(0, Math.min(1, th[1])) * 255));
+                }
             }
+            biomeData.flip();
+            // GPU texture creation is deferred to uploadBiomeMap() on the render thread.
         }
-        biomeData.flip();
-        // GPU texture creation is deferred to uploadBiomeMap() on the render thread.
+    }
+
+    /**
+     * Installs a tiny neutral map so the renderer has a valid texture immediately.
+     * The full world-sized map is generated asynchronously after the first terrain
+     * becomes visible, keeping biome noise out of the boot critical path.
+     */
+    public void generateFallbackBiomeData(int worldSize) {
+        synchronized (biomeLock) {
+            this.biomeWorldSize = worldSize;
+            if (biomeData != null) MemoryUtil.memFree(biomeData);
+            biomeData = MemoryUtil.memAlloc(worldSize * worldSize * 2);
+            for (int i = 0; i < worldSize * worldSize; i++) {
+                biomeData.put((byte) 128).put((byte) 128);
+            }
+            biomeData.flip();
+        }
     }
 
     /**

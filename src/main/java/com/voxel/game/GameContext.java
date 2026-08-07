@@ -401,6 +401,13 @@ public class GameContext {
         pendingSpawnZ = Integer.MIN_VALUE;
         spawnLoading = false;
         spawnLoadingMessage = "Spawn ready";
+        // Let the chunk manager expand to the normal render-distance stream only
+        // after the expensive Beta bootstrap has completed.
+        chunkManager.finishSpawnBootstrap();
+        // Generate the full biome noise map only after the first playable frame
+        // is allowed through. The manager keeps the neutral fallback bound while
+        // this runs on its single world-gen thread.
+        chunkManager.queueBiomeMapGeneration();
         return true;
     }
 
