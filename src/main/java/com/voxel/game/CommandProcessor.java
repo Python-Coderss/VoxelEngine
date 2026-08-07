@@ -41,6 +41,7 @@ public class CommandProcessor {
                 ctx.setStatus("Teleported to spawn.");
                 break;
             case "tp": handleTp(parts); break;
+            case "unstuck": handleUnstuck(); break;
             case "setuv": handleSetUv(parts); break;
             case "dimension":
             case "dim": handleDimension(parts); break;
@@ -91,6 +92,17 @@ public class CommandProcessor {
             ctx.setStatus(String.format("Teleported to %.1f, %.1f, %.1f", x, y, z));
         } catch (NumberFormatException e) {
             ctx.setStatus("Invalid coordinates. Usage: /tp <x> <y> <z>");
+        }
+    }
+
+    private void handleUnstuck() {
+        int raised = ctx.player.unstuck(ctx.world, ctx.blockDataManager);
+        if (raised < 0) {
+            ctx.setStatus("Could not get unstuck within the safety limit.");
+        } else if (raised == 0) {
+            ctx.setStatus("You are not stuck.");
+        } else {
+            ctx.setStatus("Moved up " + raised + " block" + (raised == 1 ? "" : "s") + ".");
         }
     }
 
@@ -204,6 +216,7 @@ public class CommandProcessor {
         sb.append("\n  /slotclear [slot] - Clear inventory slot");
         sb.append("\n  /spawn - Teleport to spawn");
         sb.append("\n  /tp <x> <y> <z> - Teleport to coordinates");
+        sb.append("\n  /unstuck - Move upward until the player is clear");
         sb.append("\n  /dimension <overworld|nether|end|aether> - Switch dimension");
         sb.append("\n  /setuv <full|half|empty> <x> <y> [w] [h] - Adjust heart UVs");
         sb.append("\n  /camera <follow|orbit|fixed> - Set camera shot type");

@@ -98,6 +98,16 @@ public class BetaChunkProvider {
 
     // ── Cubic section cache: HashMap<cy, byte[4096]> ──
     private HashMap<Integer, byte[]> columnSections;
+    /** Last section used by the hot voxel-write path. Invalidated when the map is cleared/replaced. */
+    private HashMap<Integer, byte[]> cachedMainSections;
+    private int cachedMainSectionCY = Integer.MIN_VALUE;
+    private byte[] cachedMainSection;
+    /** Last section used by the initial/decorative terrain write path. */
+    private HashMap<Integer, byte[]> cachedGeneratedSections;
+    private int cachedGeneratedSectionCY = Integer.MIN_VALUE;
+    private byte[] cachedGeneratedSection;
+    /** Reused by below-zero density queries to avoid one-element array garbage per noise call. */
+    private final double[] evalNoiseBuffer = new double[1];
     private int columnCX = Integer.MIN_VALUE;
     private int columnCZ = Integer.MIN_VALUE;
     private boolean columnGenerated = false;
@@ -126,6 +136,53 @@ public class BetaChunkProvider {
             if (cy > maxSectionCY) maxSectionCY = cy;
         }
         return sec;
+    }
+
+    private void invalidateSectionCaches() {
+        cachedMainSections = null;
+        cachedMainSectionCY = Integer.MIN_VALUE;
+        cachedMainSection = null;
+        cachedGeneratedSections = null;
+        cachedGeneratedSectionCY = Integer.MIN_VALUE;
+        cachedGeneratedSection = null;
+    }
+
+    private byte getGeneratedBlock(HashMap<Integer, byte[]> sections, int lx, int y, int lz) {
+        int cy = y >> 4;
+        byte[] sec;
+        if (cachedGeneratedSections == sections && cachedGeneratedSectionCY == cy) {
+            sec = cachedGeneratedSection;
+        } else {
+            sec = sections.get(cy);
+            cachedGeneratedSections = sections;
+            cachedGeneratedSectionCY = cy;
+            cachedGeneratedSection = sec;
+        }
+        return sec == null ? 0 : sec[sectionIdx(lx, y & 15, lz)];
+    }
+
+    private void setGeneratedBlock(HashMap<Integer, byte[]> sections,
+                                   int lx, int y, int lz, byte val) {
+        int cy = y >> 4;
+        byte[] sec;
+        if (cachedGeneratedSections == sections && cachedGeneratedSectionCY == cy) {
+            sec = cachedGeneratedSection;
+        } else {
+            sec = sections.get(cy);
+            cachedGeneratedSections = sections;
+            cachedGeneratedSectionCY = cy;
+            cachedGeneratedSection = sec;
+        }
+        if (val == 0) {
+            if (sec != null) sec[sectionIdx(lx, y & 15, lz)] = 0;
+            return;
+        }
+        if (sec == null) {
+            sec = new byte[4096];
+            sections.put(cy, sec);
+            cachedGeneratedSection = sec;
+        }
+        sec[sectionIdx(lx, y & 15, lz)] = val;
     }
 
     static byte getSectionBlock(HashMap<Integer, byte[]> sections, int lx, int ly, int lz) {
@@ -157,13 +214,24 @@ public class BetaChunkProvider {
     }
 
     private void setMainBlock(int lx, int lz, int y, byte val) {
+        int cy = y >> 4;
+        byte[] sec;
+        if (cachedMainSections == columnSections && cachedMainSectionCY == cy) {
+            sec = cachedMainSection;
+        } else {
+            sec = columnSections.get(cy);
+            cachedMainSections = columnSections;
+            cachedMainSectionCY = cy;
+            cachedMainSection = sec;
+        }
         if (val == 0) {
-            int cy = y >> 4;
-            byte[] sec = columnSections.get(cy);
             if (sec != null) sec[sectionIdx(lx, y & 15, lz)] = 0;
             return;
         }
-        byte[] sec = getOrCreateSection(y >> 4);
+        if (sec == null) {
+            sec = getOrCreateSection(cy);
+            cachedMainSection = sec;
+        }
         sec[sectionIdx(lx, y & 15, lz)] = val;
     }
 
@@ -252,6 +320,7 @@ public class BetaChunkProvider {
         } else {
             columnSections.clear();
         }
+        invalidateSectionCaches();
         maxSectionCY = -1;
 
         this.rand.setSeed((long) cx * 341873128712L + (long) cz * 132897987541L);
@@ -327,6 +396,7 @@ public class BetaChunkProvider {
         double[] savedTemps = this.temperatures, savedHums = this.humidities;
 
         this.columnSections = blocks;
+        invalidateSectionCaches();
         this.columnCX = cx; this.columnCZ = cz;
         this.maxSectionCY = -1;
         this.rand.setSeed((long) cx * 341873128712L + (long) cz * 132897987541L);
@@ -340,6 +410,7 @@ public class BetaChunkProvider {
 
         this.columnCX = savedCX; this.columnCZ = savedCZ;
         this.columnSections = savedSections;
+        invalidateSectionCaches();
         this.columnGenerated = savedGenerated;
         this.maxSectionCY = savedMaxCY;
         this.biomesForGeneration = savedBiomes;
@@ -573,10 +644,12 @@ public class BetaChunkProvider {
 
     private boolean evaluateDensity(int x, int y, int z) {
         double nx = x / 4.0, ny = y / 8.0, nz = z / 4.0;
-        double[] t = new double[1];
-        double n1 = field_912_k.generateNoiseOctaves(t, nx, ny, nz, 1, 1, 1, 684.412, 684.412, 684.412)[0];
-        double n2 = field_911_l.generateNoiseOctaves(t, nx, ny, nz, 1, 1, 1, 684.412, 684.412, 684.412)[0];
-        double n3 = field_910_m.generateNoiseOctaves(t, nx, ny, nz, 1, 1, 1, 684.412/80.0, 684.412/160.0, 684.412/80.0)[0];
+        double n1 = field_912_k.generateNoiseOctaves(evalNoiseBuffer, nx, ny, nz, 1, 1, 1,
+                684.412, 684.412, 684.412)[0];
+        double n2 = field_911_l.generateNoiseOctaves(evalNoiseBuffer, nx, ny, nz, 1, 1, 1,
+                684.412, 684.412, 684.412)[0];
+        double n3 = field_910_m.generateNoiseOctaves(evalNoiseBuffer, nx, ny, nz, 1, 1, 1,
+                684.412/80.0, 684.412/160.0, 684.412/80.0)[0];
         double sel = (n3 / 10.0 + 1.0) / 2.0;
         if (sel < 0.0) sel = 0.0; if (sel > 1.0) sel = 1.0;
         return (n1 / 512.0 * (1.0 - sel) + n2 / 512.0 * sel) > 0.0;
@@ -619,6 +692,7 @@ public class BetaChunkProvider {
     // ══════════════════════════════════════════════════════════════════
 
     public void generateTerrain(int var1, int var2, HashMap<Integer, byte[]> var3, int[] var4, double[] var5) {
+        invalidateSectionCaches();
         byte var6 = 4;
         byte var7 = 64;
         int var8 = var6 + 1, var9 = 257, var10 = var6 + 1;
@@ -648,7 +722,7 @@ public class BetaChunkProvider {
                             for (int var52 = 0; var52 < 4; ++var52) {
                                 int lz = var52 + var12 * 4;
                                 for (int var32 = 0; var32 < 8; ++var32) {
-                                    setSectionBlock(var3, lx, yBase + var32, lz, BETA_STONE);
+                                    setGeneratedBlock(var3, lx, yBase + var32, lz, BETA_STONE);
                                 }
                             }
                         }
@@ -679,7 +753,7 @@ public class BetaChunkProvider {
                                     var55 = (var53 < 0.5D && y >= var7 - 1) ? BETA_ICE : BETA_WATER_STILL;
                                 }
                                 if (var48 > 0.0D) var55 = BETA_STONE;
-                                setSectionBlock(var3, lx, y, lz + var52, var55 == 0 ? (byte)0 : (byte)var55);
+                                setGeneratedBlock(var3, lx, y, lz + var52, var55 == 0 ? (byte)0 : (byte)var55);
                                 var48 = d(var48 + var50);
                             }
                             var35 += var39; var37 += var41;
@@ -692,6 +766,7 @@ public class BetaChunkProvider {
     }
 
     public void replaceBlocksForBiome(int var1, int var2, HashMap<Integer, byte[]> var3, int[] var4) {
+        invalidateSectionCaches();
         byte var5 = 64;
         double var6 = 1.0D / 32.0D;
         this.sandNoise = this.field_909_n.generateNoiseOctaves(this.sandNoise,
@@ -720,9 +795,9 @@ public class BetaChunkProvider {
 
                 for (int var17 = topY; var17 >= 0; --var17) {
                     if (var17 <= 0 + this.rand.nextInt(5)) {
-                        setSectionBlock(var3, var8, var17, var9, BETA_BEDROCK);
+                        setGeneratedBlock(var3, var8, var17, var9, BETA_BEDROCK);
                     } else {
-                        byte var19 = getSectionBlock(var3, var8, var17, var9);
+                        byte var19 = getGeneratedBlock(var3, var8, var17, var9);
                         if (var19 == 0) { var14 = -1; }
                         else if (var19 == BETA_STONE) {
                             if (var14 == -1) {
@@ -741,18 +816,18 @@ public class BetaChunkProvider {
                                 if (topBlock != 0) {
                                     boolean airAbove = true;
                                     for (int above = 1; above <= 8; above++) {
-                                        if (getSectionBlock(var3, var8, var17 + above, var9) != 0) {
+                                        if (getGeneratedBlock(var3, var8, var17 + above, var9) != 0) {
                                             airAbove = false;
                                             break;
                                         }
                                     }
                                     if (!airAbove) topBlock = BETA_STONE;
                                 }
-                                setSectionBlock(var3, var8, var17, var9,
+                                setGeneratedBlock(var3, var8, var17, var9,
                                     var17 >= var5 - 1 ? topBlock : var16);
                             } else if (var14 > 0) {
                                 --var14;
-                                setSectionBlock(var3, var8, var17, var9, var16);
+                                setGeneratedBlock(var3, var8, var17, var9, var16);
                                 if (var14 == 0 && var16 == BETA_SAND) {
                                     var14 = this.rand.nextInt(4); var16 = BETA_SANDSTONE;
                                 }
@@ -847,6 +922,7 @@ public class BetaChunkProvider {
     public void clearColumnCache() {
         if (columnSections != null) columnSections.clear();
         columnGenerated = false; columnCX = Integer.MIN_VALUE; columnCZ = Integer.MIN_VALUE;
+        invalidateSectionCaches();
         maxSectionCY = -1;
         neighborBlocks.clear();
         decorationOverlay.clear();
@@ -854,6 +930,7 @@ public class BetaChunkProvider {
 
     public void invalidateCache() {
         columnGenerated = false; columnCX = Integer.MIN_VALUE; columnCZ = Integer.MIN_VALUE;
+        invalidateSectionCaches();
     }
 
     public BetaNumericProfile getNumericProfile() { return numericProfile; }
