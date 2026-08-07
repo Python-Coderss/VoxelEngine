@@ -132,14 +132,18 @@ where is the canonical registry mentioned.
 | Nether | 1 | 0.125× | 8 blocks overworld = 1 nether, cave spawn |
 | End | 2 | — | Fixed spawn island |
 | Aether | 3 | 8.0× | 1 block overworld = 8 aether, island spawn, parachutes |
+| ERROR502 | 4 | 1.0× | Isolated Beta terrain using `BetaNumericProfile.DEFAULT` and the current coordinate-aware precision switches |
 
 ## Key Recent Changes
 
 ### Beta Numeric Precision and Far Lands
-- Beta world generation uses independent configurable short, int, float, and double controls in `com.voxel.world.beta.BetaNumericProfile`.
-- Current default preset: `shortBits=10`, X/Z `intBits=20`, Y `intBits=16`, float `8/11` (exponent/mantissa), and double `11/26` (exponent/mantissa).
-- The independent 16-bit Y lattice control targets a vertical Far Lands threshold of roughly **383 blocks** (the closest standard n-bit setting to 300), while leaving the X/Z terrain threshold unchanged.
-- With the 20-bit X/Z integer precision preset, the empirically observed Beta Far Lands boundary is approximately **3,060–3,061 blocks** from the origin.
+- Beta world generation uses independent configurable short, int, float, and double controls. Edit `src/main/java/com/voxel/world/beta/BetaPrecisionTuning.java`; `BetaNumericProfile` is the compatibility/API wrapper consumed by generators.
+- `/dimension error502` opens a separate saved Beta dimension (`dev/world/error502`) using the current coordinate-aware `BetaNumericProfile.DEFAULT` preset, without changing Overworld terrain. The normal Overworld uses `BetaNumericProfile.STANDARD_BETA` instead.
+- `BetaNumericProfile.STANDARD_BETA` is used by the normal Overworld: `shortBits=10`, X/Z `intBits=20`, Y `intBits=15`, standard float `8/23`, and standard double `11/52` (exponent/mantissa). Only the integer widths are nonstandard, preserving the normal integer-driven Beta Far Lands behavior.
+- The editable `BetaNumericProfile.DEFAULT` preset remains reserved for `error502`: `shortBits=10`, X/Z `intBits=20`, Y `intBits=15`, X/Z float `8/14` and Y float `8/11` (exponent/mantissa), X/Z double `11/26` and Y double `11/11` (exponent/mantissa). Its coordinate-aware floating stages intentionally produce the experimental degradation bands.
+- Derived float values are also quantized with `floatValueAtDistance(...)`: the local angle, sine/cosine, radius, and interpolation value is quantized using the signed dominant world coordinate as its ULP context. For coordinate-specific tuning, edit the X/Y/Z switch functions in `BetaPrecisionTuning.java` (for example `xFloatMantissaBits(x)`, `yIntBits(y)`, or `zDoubleMantissaBits(z)`) and change the return value for the desired coordinate band. Absolute coordinates continue to use `floatValue(...)`; this avoids double-counting the world offset. The same distance-aware routing is used by Perlin/simplex noise, cave shape evolution, and ore-vein geometry.
+- The independent 15-bit Y lattice control targets the observed vertical Far Lands threshold near **188 blocks**. Y float/double precision is independently configurable so higher-coordinate degradation can be tuned without changing X/Z terrain.
+- With the 20-bit X/Z integer precision and X/Z float `8/14` preset, the intended X/Z float degradation/Far Lands range is approximately **8x farther** than the previous ~3,060-block boundary (roughly 24,500 blocks; verify empirically because octave scaling and sampler offsets affect the exact edge).
 - This is an observed terrain/noise boundary, not the legacy `12,550,821` constant; the effective threshold depends on the configured numeric widths and sampler offsets.
 - Beta section generation uses cached bulk section population and does not require a per-voxel `getHeight()` query.
 

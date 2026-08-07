@@ -216,12 +216,14 @@ public class GameContext {
     private static final float SCALE_NETHER = 0.125f;
     private static final float SCALE_OVERWORLD = 1.0f;
     private static final float SCALE_END = 0.0f; // End uses fixed spawn point, not scaled translation
+    private static final float SCALE_ERROR502 = 1.0f; // Isolated Beta world with normal coordinate scale
 
     private static float getScaleFactor(DimensionType dim) {
         switch (dim) {
             case AETHER: return SCALE_AETHER;
             case NETHER: return SCALE_NETHER;
             case END:    return SCALE_END;
+            case ERROR502:return SCALE_ERROR502;
             default:     return SCALE_OVERWORLD;
         }
     }

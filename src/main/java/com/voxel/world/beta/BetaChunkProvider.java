@@ -16,7 +16,26 @@ public class BetaChunkProvider {
     private final BetaNumericProfile numericProfile;
 
     private double d(double value) { return numericProfile.doubleValue(value); }
-    private float f(double value) { return numericProfile.floatValue(value); }
+    private double xDouble(double value) { return numericProfile.xDoubleCoordinate(value); }
+    private double zDouble(double value) { return numericProfile.zDoubleCoordinate(value); }
+    private double xDoubleAtDistance(double value, double x) {
+        return numericProfile.xDoubleValueAtDistance(value, x);
+    }
+    private double zDoubleAtDistance(double value, double z) {
+        return numericProfile.zDoubleValueAtDistance(value, z);
+    }
+    private double yDouble(double value) { return numericProfile.yDoubleValue(value); }
+    private float xFloat(double value) { return numericProfile.xFloatCoordinate(value); }
+    private float zFloat(double value) { return numericProfile.zFloatCoordinate(value); }
+    private float xFloatAtDistance(double value, double x) {
+        return numericProfile.xFloatValueAtDistance(value, x);
+    }
+    private float zFloatAtDistance(double value, double z) {
+        return numericProfile.zFloatValueAtDistance(value, z);
+    }
+    private float yFloatAtDistance(double value, double y) {
+        return numericProfile.yFloatValueAtDistance(value, y);
+    }
     private int i(long value) { return numericProfile.intValue(value); }
     private short s(long value) { return numericProfile.shortPrimitive(value); }
     private NoiseGeneratorOctaves field_912_k;   // octaves=16
@@ -1030,21 +1049,39 @@ public class BetaChunkProvider {
     }
 
     private void genOreVein(com.voxel.World world, int cx, int cy, int cz, int blockId, int count) {
-        float f = this.f(this.rand.nextFloat() * (float)Math.PI);
-        double sinF = this.f(Math.sin(f));
-        double cosF = this.f(Math.cos(f));
-        double dx=d(this.f(cx+8) + this.f(sinF * count / 8.0F));
-        double dy=d(this.f(cx+8) - this.f(sinF * count / 8.0F));
-        double dz=d(this.f(cz+8) + this.f(cosF * count / 8.0F));
-        double dw=d(this.f(cz+8) - this.f(cosF * count / 8.0F));
+        float f = numericProfile.xFloatValueAtDistance(this.rand.nextFloat() * (float)Math.PI, cx + 8);
+        double sinF = xFloatAtDistance(Math.sin(f), cx + 8);
+        double cosF = zFloatAtDistance(Math.cos(f), cz + 8);
+        double dx=xDouble(xFloat(cx + 8)
+                + xFloatAtDistance(sinF * count / 8.0F, cx + 8));
+        double dy=xDouble(xFloat(cx + 8)
+                - xFloatAtDistance(sinF * count / 8.0F, cx + 8));
+        double dz=zDouble(zFloat(cz + 8)
+                + zFloatAtDistance(cosF * count / 8.0F, cz + 8));
+        double dw=zDouble(zFloat(cz + 8)
+                - zFloatAtDistance(cosF * count / 8.0F, cz + 8));
         double ex=(double)(cy+this.rand.nextInt(3)-2), ey=(double)(cy+this.rand.nextInt(3)-2);
-        for (int i=0;i<count;++i){float progress=numericProfile.floatValue((float)i/(float)count);
-            double cx2=d(dx+(dy-dx)*(double)progress), cy2=d(ex+(ey-ex)*(double)progress), cz2=d(dz+(dw-dz)*(double)progress);
-            double radius=d(this.rand.nextDouble()*(double)count/16.0D);
-            float arc = f((float)i*(float)Math.PI/(float)count);
-            double arcSin = f(Math.sin(arc));
-            double rXZ=d((double)(arcSin+1.0F)*radius+1.0D);
-            double rY=d((double)(arcSin+1.0F)*radius+1.0D);
+        for (int i=0;i<count;++i){
+            double contextX = dx + (dy - dx) * i / (double) Math.max(1, count);
+            double contextZ = dz + (dw - dz) * i / (double) Math.max(1, count);
+            double contextY = ex + (ey - ex) * i / (double) Math.max(1, count);
+            float progress = Math.abs(contextX) >= Math.abs(contextZ)
+                    ? xFloatAtDistance((float)i/(float)count, contextX)
+                    : zFloatAtDistance((float)i/(float)count, contextZ);
+            double cx2=xDouble(dx+(dy-dx)*(double)progress);
+            double cy2=yDouble(ex+(ey-ex)*(double)progress);
+            double cz2=zDouble(dz+(dw-dz)*(double)progress);
+            double radius = yFloatAtDistance(this.rand.nextDouble()*(double)count/16.0D, contextY);
+            float arc = Math.abs(contextX) >= Math.abs(contextZ)
+                    ? xFloatAtDistance((float)i*(float)Math.PI/(float)count, contextX)
+                    : zFloatAtDistance((float)i*(float)Math.PI/(float)count, contextZ);
+            double arcSin = Math.abs(cx2) >= Math.abs(cz2)
+                    ? xFloatAtDistance(Math.sin(arc), cx2)
+                    : zFloatAtDistance(Math.sin(arc), cz2);
+            double rXZ = Math.abs(cx2) >= Math.abs(cz2)
+                    ? xFloatAtDistance((double)(arcSin+1.0F)*radius+1.0D, cx2)
+                    : zFloatAtDistance((double)(arcSin+1.0F)*radius+1.0D, cz2);
+            double rY = yFloatAtDistance((double)(arcSin+1.0F)*radius+1.0D, contextY);
             int minX=(int)Math.floor(cx2-rXZ/2.0D),minY=(int)Math.floor(cy2-rY/2.0D),minZ=(int)Math.floor(cz2-rXZ/2.0D);
             int maxX=(int)Math.floor(cx2+rXZ/2.0D),maxY=(int)Math.floor(cy2+rY/2.0D),maxZ=(int)Math.floor(cz2+rXZ/2.0D);
             for(int px=minX;px<=maxX;++px){double dxD=((double)px+0.5D-cx2)/(rXZ/2.0D);if(dxD*dxD>=1.0D)continue;
