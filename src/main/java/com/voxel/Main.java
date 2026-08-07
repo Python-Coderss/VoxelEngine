@@ -115,7 +115,8 @@ public class Main {
     public int craftingItemSSBO;
     public java.util.Iterator<Integer> dirtyUploadIterator;
     public static final int MAX_DIRTY_UPLOADS_PER_FRAME = 48;
-    public int locQuadPass; // Cached quad shader u_Pass uniform
+    public int locQuadPass; // Cached quad shader inputTexture uniform
+    public int locQuadFlipY; // Cached fullscreen texture orientation uniform
 
     // Reusable direct buffer for SDF SSBO sub-uploads (avoid per-frame alloc).
     private java.nio.ByteBuffer reusableSdfBuf;
@@ -283,7 +284,11 @@ public class Main {
     }
 
     public void init() {
+        final long initStartNanos = System.nanoTime();
         GLFWErrorCallback.createPrint(System.err).set();
+        System.out.println("[BOOT] init start");
+        final java.util.function.Consumer<String> bootMark = stage ->
+            System.out.println("[BOOT] " + stage + " " + ((System.nanoTime() - initStartNanos) / 1_000_000L) + " ms");
         if (!glfwInit()) throw new IllegalStateException("Unable to initialize GLFW");
 
         glfwDefaultWindowHints();
@@ -306,21 +311,46 @@ public class Main {
         glfwShowWindow(window);
         GL.createCapabilities();
 
-        // Initialize OpenAL on the render thread. Voice synthesis itself is queued
-        // asynchronously and never runs inside the game loop.
-        villagerAudioManager = new com.voxel.audio.VillagerAudioManager();
-        villagerAudioManager.initialize();
-
+        // Build only the tiny fullscreen path needed for an immediate loading frame.
+        // This runs before OpenAL, compute-shader setup, and asset registration, so
+        // the first swap shows loading artwork instead of a native black window.
         quadProgram = ShaderUtil.createProgram(
             ShaderUtil.compileShader("src/main/resources/shaders/quad.vert", GL_VERTEX_SHADER),
             ShaderUtil.compileShader("src/main/resources/shaders/quad.frag", GL_FRAGMENT_SHADER)
         );
+        locQuadPass = glGetUniformLocation(quadProgram, "inputTexture");
+        locQuadFlipY = glGetUniformLocation(quadProgram, "u_FlipY");
+        setupQuad();
+        int earlyLoadingTexture = 0;
+        File earlyLoadingFile = new File("src/main/resources/ui/loading.png");
+        if (earlyLoadingFile.exists()) {
+            try {
+                earlyLoadingTexture = UIManager.loadTexture(earlyLoadingFile.getPath());
+            } catch (RuntimeException e) {
+                System.err.println("Note: early loading texture unavailable; using fallback color");
+            }
+        }
+        presentEarlyLoadingFrame(earlyLoadingTexture);
+        bootMark.accept("first loading frame presented");
+        bootMark.accept("GL capabilities ready");
+
+        // Initialize OpenAL on the render thread. Voice synthesis itself is queued
+        // asynchronously and never runs inside the game loop.
+        villagerAudioManager = new com.voxel.audio.VillagerAudioManager();
+        villagerAudioManager.initialize();
+        presentEarlyLoadingFrame(earlyLoadingTexture);
+        bootMark.accept("OpenAL ready");
+
         computeProgram = ShaderUtil.createProgram(
             ShaderUtil.compileShader("src/main/resources/shaders/raytracer.comp", GL_COMPUTE_SHADER)
         );
-        locQuadPass = glGetUniformLocation(quadProgram, "u_Pass"); // Cache to avoid per-frame lookup
+        // quad.frag uses inputTexture; keep this cached so both the normal and
+        // early loading passes explicitly bind the texture they draw.
+        locQuadPass = glGetUniformLocation(quadProgram, "inputTexture"); // Cache to avoid per-frame lookup
         cacheUniformLocations();
         // Atmosphere uniforms handled by AtmosphereRenderer (no per-frame glGetUniformLocation)
+        presentEarlyLoadingFrame(earlyLoadingTexture);
+        bootMark.accept("shaders ready");
 
 
 
@@ -332,11 +362,12 @@ public class Main {
         // The spawn pool's water surface is at y=62; player feet should start one block above it.
         player = new Player(1024, 63, 1024); // Spawn above the water pool at y=62
 
-        setupQuad();
         setupTexture();
         // Generate procedural textures BEFORE loading so they're available in the texture array
         generateCapeTexture();
         setupResources();
+        presentEarlyLoadingFrame(earlyLoadingTexture);
+        bootMark.accept("resources ready");
 
         // Create shared game context (world/chunkManager/dimensionManager filled below after init)
         ctx = new GameContext();
@@ -404,6 +435,16 @@ public class Main {
 
         hud = new com.voxel.ui.HudUI(ctx, this, cameraController, playerInventory, textureManager, itemDefinitions, biomeManager);
         setupUi();
+        ctx.initializing = true;
+        ctx.spawnLoadingMessage = "Initializing world...";
+
+        // The UI is now fully initialized, so present the actual loading overlay
+        // before save/log setup and before the logic thread starts allocating the
+        // world pools. This is the first frame users need to see.
+        presentInitialLoadingFrame();
+        if (earlyLoadingTexture != 0) glDeleteTextures(earlyLoadingTexture);
+        bootMark.accept("UI loading frame presented");
+        bootMark.accept("UI ready");
 
         // Initialize world save manager (dev/world folder)
         ctx.worldSaveManager = new com.voxel.world.WorldSaveManager("dev/world");
@@ -425,11 +466,71 @@ public class Main {
         // the spawn-loading overlay is visible immediately instead of after a long
         // blank window. Shader compile/link and GL setup stay here per the user
         // (negligible startup cost).
-        ctx.initializing = true;
-        ctx.spawnLoadingMessage = "Initializing world...";
+        // ctx.initializing and ctx.spawnLoadingMessage were set immediately after
+        // setupUi(), before the loading frame was presented.
 
         updateCursorMode();
         setStatus("Mode: survival. Press E for inventory, / for commands. R to respawn.");
+        bootMark.accept("init complete");
+    }
+
+    /** Draw the loading artwork directly, before the HUD and world exist. */
+    private void presentEarlyLoadingFrame(int loadingTexture) {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, width, height);
+        glClearColor(0.88f, 0.94f, 0.78f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        if (loadingTexture != 0) {
+            glUseProgram(quadProgram);
+            glBindTextureUnit(0, loadingTexture);
+            if (locQuadPass >= 0) glUniform1i(locQuadPass, 0);
+            if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 1);
+            glBindVertexArray(quadVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+        }
+        glfwSwapBuffers(window);
+        // Redraw before the second swap; swapping alone exposes the untouched
+        // back buffer, which is commonly still black.
+        if (loadingTexture != 0) {
+            glUseProgram(quadProgram);
+            glBindTextureUnit(0, loadingTexture);
+            if (locQuadPass >= 0) glUniform1i(locQuadPass, 0);
+            if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 1);
+            glBindVertexArray(quadVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+        }
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+        // Startup callbacks are explicitly null-safe; keep the native event pump
+        // alive while synchronous initialization continues.
+    }
+
+    /**
+     * Draw one UI-only loading frame before world initialization begins. The normal
+     * render loop composites the UI through the ray tracer, but that path requires
+     * world SSBOs. The UI FBO already contains an opaque loading background, so the
+     * fullscreen quad can present it directly without touching world resources.
+     */
+    private void presentInitialLoadingFrame() {
+        hud.updateSpawnLoadingOverlay(glfwGetTime());
+        hud.uiManager.begin();
+        for (UILayer layer : hud.uiLayers) layer.render(hud.uiManager);
+        hud.uiManager.end();
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, width, height);
+        // Use the same bright fallback tone as the real loading background so
+        // this first presented frame is visibly a loading frame, not a black flash.
+        glClearColor(0.88f, 0.94f, 0.78f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(quadProgram);
+        glBindTextureUnit(0, hud.uiManager.getUITexture());
+        if (locQuadPass >= 0) glUniform1i(locQuadPass, 0);
+        if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 0);
+        glBindVertexArray(quadVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glfwSwapBuffers(window);
+        glfwPollEvents();
     }
 
     public void cacheUniformLocations() {
@@ -1404,7 +1505,8 @@ public class Main {
             glClear(GL_COLOR_BUFFER_BIT);
             glUseProgram(quadProgram);
             glBindTextureUnit(0, renderTexture);
-            glUniform1i(locQuadPass, 1);
+            glUniform1i(locQuadPass, 0);
+            if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 0);
             glBindVertexArray(quadVAO);
             glDrawArrays(GL_TRIANGLES, 0, 6);
             } else {
@@ -1416,7 +1518,8 @@ public class Main {
                 glClear(GL_COLOR_BUFFER_BIT);
                 glUseProgram(quadProgram);
                 glBindTextureUnit(0, renderTexture);
-                glUniform1i(locQuadPass, 1);
+                glUniform1i(locQuadPass, 0);
+                if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 0);
                 glBindVertexArray(quadVAO);
                 glDrawArrays(GL_TRIANGLES, 0, 6);
             }
@@ -1432,6 +1535,9 @@ public class Main {
     }
 
     public void handleKeyInput(long win, int key, int scancode, int action, int mods) {
+        // Ignore input callbacks while the early loading frame is being presented.
+        // The normal loop will begin polling once all dependent state exists.
+        if (ctx == null || player == null) return;
         if (action == GLFW_PRESS) {
             if (commandMode) {
                 handleCommandModeKey(key);
@@ -1601,6 +1707,11 @@ public class Main {
             firstMouse = false;
         }
 
+        // GLFW can deliver an initial cursor event during the early loading swap,
+        // before GameContext exists. Keep the raw position, but defer camera sync
+        // until normal gameplay initialization has completed.
+        if (ctx == null) return;
+
         if (inventoryOpen || commandMode) {
             // Track mouse position for inventory UI interactions (slot clicks, item drag)
             lastMouseX = (float) xpos;
@@ -1625,6 +1736,8 @@ public class Main {
     }
 
     public void handleMouseButton(long win, int button, int action, int mods) {
+        // Mouse callbacks may arrive before the game context/UI are ready.
+        if (ctx == null || player == null || blockInteraction == null) return;
         if (button == GLFW_MOUSE_BUTTON_LEFT) {
             if (action == GLFW_PRESS) {
                 leftMouseHeld = true;

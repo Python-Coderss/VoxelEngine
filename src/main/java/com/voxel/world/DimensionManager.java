@@ -31,14 +31,19 @@ public class DimensionManager {
     public void createDimension(DimensionType type, int renderDistance) {
         if (dimensions.containsKey(type)) return;
 
-        // Calculate pool size: (renderDistance*2+1)² * (renderDistance*4+1) sections, doubled for safety margin
-        int yLoadRadius = renderDistance * 2;
-        int sectionsPerCol = yLoadRadius * 2 + 1;
-        int chunksNeeded = (renderDistance * 2 + 1) * (renderDistance * 2 + 1) * sectionsPerCol;
-        int poolSize = Math.max(chunksNeeded * 2, 2048);
+        // Allocate the bounded sliding-window pool, not the entire theoretical
+        // render-distance volume. The spawn bootstrap needs only the immediate
+        // 3x3x3 area; ChunkManager evicts the farthest unpinned columns as the
+        // normal stream expands after spawn. Allocating the old render-distance
+        // estimate here reserved ~850 MB of Java arrays before the first chunk.
+        // 2048 sections leaves ample room for streaming while keeping boot fast.
+        int poolSize = 2048;
 
         System.out.println("Creating dimension: " + type.name + " (pool=" + poolSize + " chunks, ~" + (poolSize * 4096L * 4 / 1024 / 1024) + " MB)");
+        long createStart = System.nanoTime();
         World world = new World(poolSize);
+        System.out.println("[BOOT] world pools ready " + ((System.nanoTime() - createStart) / 1_000_000L) + " ms");
+        System.out.flush();
         WorldGenerator generator;
         if (type == DimensionType.AETHER) {
             generator = new AetherGenerator(0, blockDataManager);
@@ -47,17 +52,25 @@ public class DimensionManager {
         } else {
             generator = new DimensionWorldGenerator(type, blockDataManager);
         }
+        System.out.println("[BOOT] generator ready " + ((System.nanoTime() - createStart) / 1_000_000L) + " ms");
+        System.out.flush();
         LightEngine lightEngine = new LightEngine(world, blockDataManager);
         ChunkManager chunkManager = new ChunkManager(world, generator, lightEngine, renderDistance, saveManager, type, biomeManager, blockDataManager);
+        System.out.println("[BOOT] chunk manager ready " + ((System.nanoTime() - createStart) / 1_000_000L) + " ms");
+        System.out.flush();
 
         // Wire the biome provider into BiomeManager so the tint map reflects actual biomes
         if (biomeManager != null && generator.getBiomeProvider() != null) {
             biomeManager.setBiomeProvider(generator.getBiomeProvider());
-            biomeManager.generateBiomeData(2048);
+            // Use a neutral, full-size fallback immediately. The actual biome noise
+            // map is generated after the first terrain is visible by the gen thread.
+            biomeManager.generateFallbackBiomeData(2048);
             chunkManager.markBiomeMapDirty();
         }
 
         dimensions.put(type, new DimensionInstance(world, chunkManager, generator));
+        System.out.println("[BOOT] dimension ready " + ((System.nanoTime() - createStart) / 1_000_000L) + " ms");
+        System.out.flush();
     }
 
     /**
