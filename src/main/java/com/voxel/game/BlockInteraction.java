@@ -1,5 +1,6 @@
 package com.voxel.game;
 
+import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
 import com.voxel.game.GameContext.ActiveUI;
@@ -13,6 +14,7 @@ import com.voxel.game.ItemDefinitions.ItemStack;
 public class BlockInteraction {
     private static final float PLAYER_HALF_WIDTH = 0.3f;
     private static final float PLAYER_HEIGHT = 1.8f;
+    private static final float SURFACE_CRAFTING_REACH = 6.0f;
 
     private final GameContext ctx;
 
@@ -26,6 +28,9 @@ public class BlockInteraction {
     private static final int BLOCK_FURNACE_ON = 117;
     private static final int BLOCK_CHEST = 118;
     private static final int BLOCK_TV = 274;
+    private static final int BLOCK_COMMAND = CommandBlockManager.BLOCK_COMMAND;
+    private static final int BLOCK_CHAIN_COMMAND = CommandBlockManager.BLOCK_CHAIN_COMMAND;
+    private static final int BLOCK_REPEATING_COMMAND = CommandBlockManager.BLOCK_REPEATING_COMMAND;
     private static final int BLOCK_WATER = 15;
     private static final int BLOCK_WATER_FLOWING_MIN = 150;
     private static final int BLOCK_WATER_FLOWING_MAX = 156;
@@ -47,6 +52,16 @@ public class BlockInteraction {
         ctx.chestBlockX = x;
         ctx.chestBlockY = y;
         ctx.chestBlockZ = z;
+        // The ancient-builder facility's sealed test chest is the lore source of
+        // power fragments. Populate it lazily so it persists through the normal
+        // ChestManager save/load path without coupling world generation to UI state.
+        if (com.voxel.world.AncientBuilderFacility.isPowerFragmentChest(x, y, z)
+                && ctx.chestManager.getInventory(x, y, z) == null) {
+            ItemStack[] inv = new ItemStack[ChestManager.CHEST_SLOTS];
+            inv[0] = new ItemStack(CommandBlockManager.POWER_FRAGMENT, 4);
+            ctx.chestManager.setInventory(x, y, z, inv);
+            ctx.setStatus("Testing-facility archive: power fragments recovered");
+        }
         ctx.chestOpen = true;
         ctx.inventoryOpen = true;
         ctx.activeUI = GameContext.ActiveUI.CHEST;
@@ -140,6 +155,18 @@ public class BlockInteraction {
             ctx.droppedItemManager.onBlockDestroyed(x, y, z);
         }
 
+        // Surface-crafting ingredients belong to any block, not only crafting tables.
+        String[][] surfaceGrid = ctx.surfaceCraftingManager.removeGrid(x, y, z);
+        if (surfaceGrid != null) {
+            for (int r = 0; r < 2; r++) {
+                for (int c = 0; c < 2; c++) {
+                    if (surfaceGrid[r] != null && surfaceGrid[r][c] != null) {
+                        ctx.playerInventory.addItem(surfaceGrid[r][c], 1);
+                    }
+                }
+            }
+        }
+
         // If breaking a crafting table, return items in its grid to the player
         if (blockId == 115) {
             String[][] grid = ctx.craftingTableManager.removeGrid(x, y, z);
@@ -194,20 +221,32 @@ public class BlockInteraction {
 
             String dropItem;
             int dropCount = 1;
-            if (blockId == 26) { // redstone_ore -> drop 4 redstone dust
-                dropItem = "redstone_wire";
-                dropCount = 4;
-            } else if (blockId == 85) { // lapis_ore -> drop 4 lapis
-                dropItem = "lapis_ore";
-                dropCount = 4;
-            } else {
+            dropItem = dropItemForBlock(blockId);
+            if (dropItem == null) {
                 dropItem = ctx.itemDefinitions.getBlockItemByBlockId().get(blockId);
+            }
+            if (blockId == 26 || blockId == 85) {
+                dropCount = 4;
             }
             // Drop into the world; player must walk over to pick up.
             if (dropItem != null && ctx.droppedItemManager != null) {
                 ctx.droppedItemManager.spawn(dropItem, dropCount, x, y, z);
             }
         }
+    }
+
+    /**
+     * Returns a special mined item for blocks whose drop differs from their placed item.
+     * Stone remains the placeable stone block (ID 2), but mining it yields cobblestone.
+     *
+     * Package-private so the drop rule can be regression-tested without constructing the
+     * full OpenGL-backed game context.
+     */
+    static String dropItemForBlock(int blockId) {
+        if (blockId == 2) return "cobblestone";
+        if (blockId == 26) return "redstone_wire";
+        if (blockId == 85) return "lapis_ore";
+        return null;
     }
 
     /** Raycast against entities. Returns {entityIndex, hitDistanceBits} or null. */
@@ -261,6 +300,134 @@ public class BlockInteraction {
         }
     }
 
+    /**
+     * Starts the 2x2 surface-crafting overlay on the block under the cursor.
+     * The target must be a full block with an air-exposed top and a clear,
+     * reachable line from the player's eye to the top surface.
+     */
+    public void attemptSurfaceCrafting() {
+        if (ctx.player.isDead() || ctx.inventoryOpen || ctx.commandMode
+                || ctx.craftingCutsceneActive || ctx.tvCutsceneActive) return;
+
+        int[] hit = raycastBlock(SURFACE_CRAFTING_REACH);
+        if (hit == null) {
+            ctx.setStatus("No reachable block for surface crafting");
+            return;
+        }
+        int blockId = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
+        if (!isReachableExposedTop(hit[0], hit[1], hit[2], blockId)) {
+            ctx.setStatus("The block's top is not exposed or reachable");
+            return;
+        }
+
+        ctx.surfaceCraftingOpen = true;
+        ctx.surfaceCraftingBlockX = hit[0];
+        ctx.surfaceCraftingBlockY = hit[1];
+        ctx.surfaceCraftingBlockZ = hit[2];
+        ctx.inventoryOpen = true;
+        ctx.activeUI = ActiveUI.SURFACE_CRAFTING;
+        ctx.playerInventory.loadSurfaceCraftingGrid(hit[0], hit[1], hit[2]);
+        ctx.setStatus("Surface crafting — use the four top-face quadrants");
+    }
+
+    /** Returns true only when the target is a full block with a clear top and eye ray. */
+    private boolean isReachableExposedTop(int x, int y, int z, int blockId) {
+        if (blockId <= 0 || !ctx.blockDataManager.isFullBlock(blockId)) return false;
+        int above = ctx.world.getVoxel(x, y + 1, z);
+        if (above != 0) return false;
+
+        Vector3f eye = getActiveCameraPosition().set(
+            ctx.player.getPosition().x,
+            ctx.player.getPosition().y + 1.6f,
+            ctx.player.getPosition().z
+        );
+        Vector3f top = new Vector3f(x + 0.5f, y + 1.01f, z + 0.5f);
+        if (eye.distance(top) > SURFACE_CRAFTING_REACH) return false;
+
+        Vector3f delta = new Vector3f(top).sub(eye);
+        float length = delta.length();
+        if (length <= 0.001f) return true;
+        Vector3f dir = delta.normalize();
+        for (float d = 0.05f; d < length - 0.05f; d += 0.05f) {
+            Vector3f sample = new Vector3f(eye).fma(d, dir);
+            int voxel = ctx.world.getVoxel(
+                (int) Math.floor(sample.x),
+                (int) Math.floor(sample.y),
+                (int) Math.floor(sample.z)
+            );
+            if (voxel != 0 && !(voxel == blockId
+                    && Math.floor(sample.x) == x
+                    && Math.floor(sample.y) == y
+                    && Math.floor(sample.z) == z)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Raycasts the mouse cursor onto the active block's top face and returns quadrant 0..3. */
+    public int raycastSurfaceCraftingCell() {
+        if (!ctx.surfaceCraftingOpen) return -1;
+        Vector3f origin = getActiveCameraPosition();
+        Vector3f lookTarget = new Vector3f(origin).add(getLookDirection());
+        Matrix4f projection = new Matrix4f().perspective(
+            (float) Math.toRadians(70.0),
+            (float) ctx.width / Math.max(1, ctx.height),
+            0.1f, 2048.0f
+        );
+        Matrix4f view = new Matrix4f().lookAt(origin, lookTarget, new Vector3f(0, 1, 0));
+        Matrix4f inverse = new Matrix4f(projection).mul(view).invert();
+        float ndcX = (ctx.lastMouseX / Math.max(1, ctx.width)) * 2.0f - 1.0f;
+        float ndcY = 1.0f - (ctx.lastMouseY / Math.max(1, ctx.height)) * 2.0f;
+        Vector3f near = new Vector3f(ndcX, ndcY, -1.0f).mulProject(inverse);
+        Vector3f far = new Vector3f(ndcX, ndcY, 1.0f).mulProject(inverse);
+        Vector3f direction = new Vector3f(far).sub(near).normalize();
+
+        float topY = ctx.surfaceCraftingBlockY + 1.0f;
+        if (Math.abs(direction.y) < 1e-6f) return -1;
+        float t = (topY - near.y) / direction.y;
+        if (t <= 0.0f || t > SURFACE_CRAFTING_REACH) return -1;
+        float x = near.x + direction.x * t;
+        float z = near.z + direction.z * t;
+        float u = x - ctx.surfaceCraftingBlockX;
+        float v = z - ctx.surfaceCraftingBlockZ;
+        if (u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) return -1;
+
+        int col = Math.min(1, (int) (u * 2.0f));
+        int row = Math.min(1, (int) (v * 2.0f));
+        return row * 2 + col;
+    }
+
+    private void openCommandBlockEditor(int x, int y, int z) {
+        CommandBlockManager.CommandBlockState state = ctx.commandBlockManager.getOrCreate(x, y, z);
+        if (state.command == null || state.command.trim().isEmpty()) {
+            state.command = com.voxel.world.AncientBuilderFacility.defaultCommandAt(x, y, z);
+        }
+        ctx.commandBlockEditorX = x;
+        ctx.commandBlockEditorY = y;
+        ctx.commandBlockEditorZ = z;
+        ctx.commandBlockEditorCommand = state.command == null ? "" : state.command;
+        ctx.commandBlockEditorOpen = true;
+        ctx.commandMode = true;
+        ctx.inventoryOpen = true;
+        ctx.activeUI = ActiveUI.COMMAND_BLOCK;
+        if (ctx.updateCursorMode != null) ctx.updateCursorMode.run();
+        ctx.setStatus("Ancient-builder command console — power fragments enable survival programming");
+    }
+
+    public boolean saveCommandBlockEditor() {
+        if (!ctx.commandBlockEditorOpen) return false;
+        String status = ctx.commandBlockManager.program(ctx,
+            ctx.commandBlockEditorX, ctx.commandBlockEditorY, ctx.commandBlockEditorZ,
+            ctx.commandBlockEditorCommand);
+        ctx.setStatus(status);
+        boolean saved = status.equals("Command block programmed.") || status.equals("Command block cleared.");
+        if (saved && ctx.worldSaveManager != null) {
+            ctx.worldSaveManager.saveCommandBlockData(ctx.activeDimension, ctx.commandBlockManager);
+        }
+        return saved;
+    }
+
     public void attemptPlaceBlock() {
         if (ctx.player.isDead()) return;
         int[] hit = raycastBlock(6.0f);
@@ -286,6 +453,12 @@ public class BlockInteraction {
 
         // Right-click on a crafting table block — start cutscene walk to table
         int hitBlock = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
+
+        // Right-click on a command block opens the ancient-builder program editor.
+        if (CommandBlockManager.isCommandBlock(hitBlock) && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
+            openCommandBlockEditor(hit[0], hit[1], hit[2]);
+            return;
+        }
 
         // Right-click on villager TV block — start TV cutscene
         if (hitBlock == BLOCK_TV && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {

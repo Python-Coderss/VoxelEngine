@@ -1,6 +1,7 @@
 package com.voxel.crafting;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,13 +14,26 @@ public class CraftingManager {
     private final List<CraftingRecipe> recipes3x3 = new ArrayList<>();
     
     public static class CraftingRecipe {
-        public final String[][] pattern; // grid of item IDs, null = empty
+        public final String[][] pattern; // shaped grid of item IDs, null = empty
+        public final List<String> ingredients; // unordered inputs for shapeless recipes
+        public final boolean shapeless;
         public final String resultItemId;
         public final int resultCount;
         public final int gridSize; // 2 or 3
         
         public CraftingRecipe(String[][] pattern, String resultItemId, int resultCount, int gridSize) {
             this.pattern = pattern;
+            this.ingredients = null;
+            this.shapeless = false;
+            this.resultItemId = resultItemId;
+            this.resultCount = resultCount;
+            this.gridSize = gridSize;
+        }
+
+        public CraftingRecipe(List<String> ingredients, String resultItemId, int resultCount, int gridSize) {
+            this.pattern = null;
+            this.ingredients = new ArrayList<>(ingredients);
+            this.shapeless = true;
             this.resultItemId = resultItemId;
             this.resultCount = resultCount;
             this.gridSize = gridSize;
@@ -33,11 +47,8 @@ public class CraftingManager {
     private void registerDefaultRecipes() {
         // ===== 2x2 Recipes (inventory crafting) =====
         
-        // Wood Planks from Oak Log
-        addRecipe2x2(new String[][]{
-            {"oak_log", null},
-            {null, null}
-        }, "oak_planks", 4);
+        // Wood planks from logs are shapeless: the log can occupy any slot.
+        addShapeless2x2("oak_planks", 4, "oak_log");
 
         // Stick from planks
         addRecipe2x2(new String[][]{
@@ -50,23 +61,40 @@ public class CraftingManager {
             {"oak_planks", "oak_planks"},
             {"oak_planks", "oak_planks"}
         }, "crafting_table", 1);
+        // Every registered wood plank variant can make a crafting table.
+        addRecipe2x2(new String[][]{
+            {"spruce_planks", "spruce_planks"},
+            {"spruce_planks", "spruce_planks"}
+        }, "crafting_table", 1);
+        addRecipe2x2(new String[][]{
+            {"birch_planks", "birch_planks"},
+            {"birch_planks", "birch_planks"}
+        }, "crafting_table", 1);
+        addRecipe2x2(new String[][]{
+            {"jungle_planks", "jungle_planks"},
+            {"jungle_planks", "jungle_planks"}
+        }, "crafting_table", 1);
+        addRecipe2x2(new String[][]{
+            {"acacia_planks", "acacia_planks"},
+            {"acacia_planks", "acacia_planks"}
+        }, "crafting_table", 1);
+        addRecipe2x2(new String[][]{
+            {"dark_oak_planks", "dark_oak_planks"},
+            {"dark_oak_planks", "dark_oak_planks"}
+        }, "crafting_table", 1);
+        addRecipe2x2(new String[][]{
+            {"skyroot_planks", "skyroot_planks"},
+            {"skyroot_planks", "skyroot_planks"}
+        }, "crafting_table", 1);
         
-        // Wooden tools (pickaxe=full top row, axe=top-left L shape, shovel=center column)
-        addRecipe3x3(new String[][]{
-            {"oak_planks", "oak_planks", "oak_planks"},
-            {null, "stick", null},
-            {null, "stick", null}
-        }, "wood_pickaxe", 1);
-        addRecipe3x3(new String[][]{
-            {"oak_planks", "oak_planks", null},
-            {"oak_planks", "stick", null},
-            {null, "stick", null}
-        }, "wood_axe", 1);
-        addRecipe3x3(new String[][]{
-            {"oak_planks", null, null},
-            {"stick", null, null},
-            {"stick", null, null}
-        }, "wood_shovel", 1);
+        // Wooden tools: every plank variant makes the shared wood-tier tools.
+        registerWoodToolRecipes("oak_planks");
+        registerWoodToolRecipes("spruce_planks");
+        registerWoodToolRecipes("birch_planks");
+        registerWoodToolRecipes("jungle_planks");
+        registerWoodToolRecipes("acacia_planks");
+        registerWoodToolRecipes("dark_oak_planks");
+        registerWoodToolRecipes("skyroot_planks");
 
         // Stone tools
         addRecipe3x3(new String[][]{
@@ -125,17 +153,9 @@ public class CraftingManager {
             {"sand", "sand"}
         }, "glass", 4);
 
-        // Redstone ore -> Redstone dust
-        addRecipe2x2(new String[][]{
-            {"redstone_ore", null},
-            {null, null}
-        }, "redstone_wire", 4);
-
-        // Redstone block -> Redstone dust
-        addRecipe2x2(new String[][]{
-            {"redstone_block", null},
-            {null, null}
-        }, "redstone_wire", 9);
+        // Redstone ore/block -> redstone dust are order-independent conversions.
+        addShapeless2x2("redstone_wire", 4, "redstone_ore");
+        addShapeless2x2("redstone_wire", 9, "redstone_block");
 
         // Brick block from clay (simplified: 4 clay → brick)
         addRecipe2x2(new String[][]{
@@ -287,11 +307,8 @@ public class CraftingManager {
             {null, null, null}
         }, "holystone_bricks", 4);
 
-        // Flint and Steel: flint + iron_ingot
-        addRecipe2x2(new String[][]{
-            {"flint", "iron_ingot"},
-            {null, null}
-        }, "flint_and_steel", 1);
+        // Flint and steel: the two ingredients can be placed in any slots/order.
+        addShapeless2x2("flint_and_steel", 1, "flint", "iron_ingot");
 
         // Bucket: 3 iron ingots in V shape
         addRecipe3x3(new String[][]{
@@ -306,11 +323,8 @@ public class CraftingManager {
             {"iron_ore", "iron_ore"}
         }, "iron_ingot", 1);
 
-        // Flint from Gravel
-        addRecipe2x2(new String[][]{
-            {"gravel", null},
-            {null, null}
-        }, "flint", 1);
+        // Flint from gravel is a one-ingredient shapeless conversion.
+        addShapeless2x2("flint", 1, "gravel");
 
         // Furnace: 8 cobblestone in a ring
         addRecipe3x3(new String[][]{
@@ -328,11 +342,8 @@ public class CraftingManager {
 
         // ===== Redstone extras =====
 
-        // Redstone Torch: dust over stick
-        addRecipe2x2(new String[][]{
-            {"redstone_wire", null},
-            {"stick", null}
-        }, "redstone_torch", 1);
+        // Redstone torch: dust and stick can be placed in any slots/order.
+        addShapeless2x2("redstone_torch", 1, "redstone_wire", "stick");
 
         // Redstone Block: 9 dust
         addRecipe3x3(new String[][]{
@@ -350,11 +361,8 @@ public class CraftingManager {
 
         // ===== Create-inspired recipes =====
 
-        // Andesite from diorite + cobblestone
-        addRecipe2x2(new String[][]{
-            {"diorite", "cobblestone"},
-            {null, null}
-        }, "andesite", 2);
+        // Andesite from diorite + cobblestone is shapeless.
+        addShapeless2x2("andesite", 2, "diorite", "cobblestone");
 
         // Andesite Casing: planks frame + andesite
         addRecipe3x3(new String[][]{
@@ -369,22 +377,116 @@ public class CraftingManager {
             {"iron_ingot", "andesite_casing", "iron_ingot"},
             {"oak_planks", "redstone_wire", "oak_planks"}
         }, "encased_fan", 1);
+
+        // ===== Additional wood variants =====
+
+        // All registered log types can be turned into matching planks shapelessly.
+        addShapeless2x2("birch_planks", 4, "birch_log");
+        addShapeless2x2("spruce_planks", 4, "spruce_log");
+        addShapeless2x2("jungle_planks", 4, "jungle_log");
+        addShapeless2x2("acacia_planks", 4, "acacia_log");
+        addShapeless2x2("dark_oak_planks", 4, "dark_oak_log");
+
+        // Any registered plank type makes four sticks in the same vertical pattern.
+        addRecipe2x2(new String[][]{{"spruce_planks", null}, {"spruce_planks", null}}, "stick", 4);
+        addRecipe2x2(new String[][]{{"birch_planks", null}, {"birch_planks", null}}, "stick", 4);
+        addRecipe2x2(new String[][]{{"jungle_planks", null}, {"jungle_planks", null}}, "stick", 4);
+        addRecipe2x2(new String[][]{{"acacia_planks", null}, {"acacia_planks", null}}, "stick", 4);
+        addRecipe2x2(new String[][]{{"dark_oak_planks", null}, {"dark_oak_planks", null}}, "stick", 4);
+        addRecipe2x2(new String[][]{{"skyroot_planks", null}, {"skyroot_planks", null}}, "stick", 4);
+
+        // ===== Additional compacting and building recipes =====
+
+        // Sand-family building blocks: four sand make four sandstone.
+        addRecipe2x2(new String[][]{
+            {"sand", "sand"},
+            {"sand", "sand"}
+        }, "sandstone", 4);
+        addRecipe2x2(new String[][]{
+            {"sandstone", "sandstone"},
+            {"sandstone", "sandstone"}
+        }, "smooth_sandstone", 4);
+
+        // Four ice blocks make packed ice.
+        addRecipe2x2(new String[][]{
+            {"ice", "ice"},
+            {"ice", "ice"}
+        }, "packed_ice", 1);
+
+        // Nine clay blocks make one hardened clay block.
+        addRecipe3x3(new String[][]{
+            {"clay", "clay", "clay"},
+            {"clay", "clay", "clay"},
+            {"clay", "clay", "clay"}
+        }, "hardened_clay", 1);
+
+        // Aether masonry and natural materials.
+        addRecipe2x2(new String[][]{
+            {"holystone", "holystone"},
+            {"holystone", "holystone"}
+        }, "holystone_bricks", 4);
+        addRecipe2x2(new String[][]{
+            {"brown_mushroom", "brown_mushroom"},
+            {"brown_mushroom", "brown_mushroom"}
+        }, "brown_mushroom_block", 1);
+        addRecipe2x2(new String[][]{
+            {"red_mushroom", "red_mushroom"},
+            {"red_mushroom", "red_mushroom"}
+        }, "red_mushroom_block", 1);
+
+        // ===== Additional metal block conversions =====
+
+        // Compacting/decompacting are shapeless; only the ingredient counts matter.
+        addShapeless3x3("iron_block", 1,
+            "iron_ingot", "iron_ingot", "iron_ingot",
+            "iron_ingot", "iron_ingot", "iron_ingot",
+            "iron_ingot", "iron_ingot", "iron_ingot");
+        addShapeless2x2("iron_ingot", 9, "iron_block");
     }
     
+    private void registerWoodToolRecipes(String plankItemId) {
+        // Pickaxe: three planks across the top and two sticks down the center.
+        addRecipe3x3(new String[][]{
+            {plankItemId, plankItemId, plankItemId},
+            {null, "stick", null},
+            {null, "stick", null}
+        }, "wood_pickaxe", 1);
+        // Axe: two planks across the top, one below on the left, and a handle.
+        addRecipe3x3(new String[][]{
+            {plankItemId, plankItemId, null},
+            {plankItemId, "stick", null},
+            {null, "stick", null}
+        }, "wood_axe", 1);
+        // Shovel: one plank over a two-stick handle.
+        addRecipe3x3(new String[][]{
+            {plankItemId, null, null},
+            {"stick", null, null},
+            {"stick", null, null}
+        }, "wood_shovel", 1);
+    }
+
     private void addRecipe2x2(String[][] pattern, String resultItemId, int resultCount) {
         recipes2x2.add(new CraftingRecipe(pattern, resultItemId, resultCount, 2));
+    }
+
+    private void addShapeless2x2(String resultItemId, int resultCount, String... ingredients) {
+        recipes2x2.add(new CraftingRecipe(Arrays.asList(ingredients), resultItemId, resultCount, 2));
     }
     
     private void addRecipe3x3(String[][] pattern, String resultItemId, int resultCount) {
         recipes3x3.add(new CraftingRecipe(pattern, resultItemId, resultCount, 3));
     }
-    
+
+    private void addShapeless3x3(String resultItemId, int resultCount, String... ingredients) {
+        recipes3x3.add(new CraftingRecipe(Arrays.asList(ingredients), resultItemId, resultCount, 3));
+    }
+
     /**
      * Attempts to match a 2x2 crafting grid against 2x2 recipes.
      */
     public CraftingRecipe matchRecipe(String[][] grid) {
         for (CraftingRecipe recipe : recipes2x2) {
-            if (matchesPattern(grid, recipe.pattern, 2)) {
+            if (matchesRecipe(grid, recipe, 2)) {
                 return recipe;
             }
         }
@@ -392,28 +494,89 @@ public class CraftingManager {
     }
     
     /**
-     * Attempts to match a 3x3 crafting grid against 3x3 recipes.
+     * Attempts to match a 3x3 crafting grid against 3x3 recipes. Shapeless 2x2
+     * recipes are also valid in the larger table because they have no position
+     * requirements.
      */
     public CraftingRecipe matchRecipe3x3(String[][] grid) {
         for (CraftingRecipe recipe : recipes3x3) {
-            if (matchesPattern(grid, recipe.pattern, 3)) {
+            if (matchesRecipe(grid, recipe, 3)) {
+                return recipe;
+            }
+        }
+        for (CraftingRecipe recipe : recipes2x2) {
+            if (recipe.shapeless && matchesRecipe(grid, recipe, 3)) {
                 return recipe;
             }
         }
         return null;
     }
     
-    private boolean matchesPattern(String[][] grid, String[][] pattern, int size) {
+    private boolean matchesRecipe(String[][] grid, CraftingRecipe recipe, int size) {
+        return recipe.shapeless
+            ? matchesShapeless(grid, recipe.ingredients, size)
+            : matchesPattern(grid, recipe.pattern, size);
+    }
+
+    private boolean matchesShapeless(String[][] grid, List<String> ingredients, int size) {
+        List<String> remaining = new ArrayList<>(ingredients);
+        int itemCount = 0;
         for (int r = 0; r < size; r++) {
             for (int c = 0; c < size; c++) {
                 String gridItem = (r < grid.length && c < grid[r].length) ? grid[r][c] : null;
-                String patternItem = pattern[r][c];
-                
+                if (gridItem == null) continue;
+                itemCount++;
+                if (!remaining.remove(gridItem)) return false;
+            }
+        }
+        return itemCount == ingredients.size() && remaining.isEmpty();
+    }
+
+    /**
+     * Matches a shaped recipe in any cardinal rotation. Reflections are not
+     * accepted: rotating a recipe is allowed, mirroring it is a different shape.
+     */
+    private boolean matchesPattern(String[][] grid, String[][] pattern, int size) {
+        for (int rotation = 0; rotation < 4; rotation++) {
+            if (matchesPatternRotation(grid, pattern, size, rotation)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean matchesPatternRotation(String[][] grid, String[][] pattern, int size, int rotation) {
+        for (int r = 0; r < size; r++) {
+            for (int c = 0; c < size; c++) {
+                String gridItem = (r < grid.length && c < grid[r].length) ? grid[r][c] : null;
+                int sourceRow;
+                int sourceCol;
+                switch (rotation) {
+                    case 0:
+                        sourceRow = r;
+                        sourceCol = c;
+                        break;
+                    case 1: // 90 degrees clockwise
+                        sourceRow = size - 1 - c;
+                        sourceCol = r;
+                        break;
+                    case 2: // 180 degrees
+                        sourceRow = size - 1 - r;
+                        sourceCol = size - 1 - c;
+                        break;
+                    case 3: // 270 degrees clockwise
+                        sourceRow = c;
+                        sourceCol = size - 1 - r;
+                        break;
+                    default:
+                        return false;
+                }
+                String patternItem = pattern[sourceRow][sourceCol];
+
                 if (patternItem == null) {
                     if (gridItem != null) return false;
                 } else {
-                    if (gridItem == null) return false;
-                    if (!gridItem.equals(patternItem)) return false;
+                    if (gridItem == null || !gridItem.equals(patternItem)) return false;
                 }
             }
         }

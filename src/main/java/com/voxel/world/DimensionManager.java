@@ -57,6 +57,8 @@ public class DimensionManager {
             // coordinate-aware precision switches.
             generator = new BetaWorldGenerator(0, blockDataManager,
                     com.voxel.world.beta.BetaNumericProfile.DEFAULT);
+        } else if (type == DimensionType.PORTAL_HALL) {
+            generator = new PortalHallGenerator(blockDataManager);
         } else {
             generator = new DimensionWorldGenerator(type, blockDataManager);
         }

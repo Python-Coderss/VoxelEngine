@@ -208,7 +208,23 @@ public class BetaWorldGenerator extends WorldGenerator {
      */
     @Override
     public void decorate(int cx, int cy, int cz, int slot, World world) {
-        // Only decorate once per column, and only in the surface section range
+        // Each Y-precision band gets its own testing facility. Generate upper
+        // facilities while their containing section is being populated so every
+        // block remains inside the currently loaded cubic section. The surface
+        // facility is generated after Beta population below, preventing the
+        // population pass from overwriting its room.
+        int facilityChunkX = Math.floorDiv(com.voxel.world.AncientBuilderFacility.FACILITY_X, 16);
+        int facilityChunkZ = Math.floorDiv(com.voxel.world.AncientBuilderFacility.FACILITY_Z, 16);
+        boolean facilityColumn = cx == facilityChunkX && cz == facilityChunkZ;
+        if (facilityColumn && cy != 4) {
+            for (int facilityY : com.voxel.world.AncientBuilderFacility.FACILITY_YS) {
+                if (com.voxel.world.AncientBuilderFacility.intersectsSection(cy, facilityY)) {
+                    com.voxel.world.AncientBuilderFacility.generate(world, facilityY, cy);
+                }
+            }
+        }
+
+        // Only decorate Beta terrain once per column, and only in the surface section range.
         if (cy != 4) return;
         
         long colKey = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
@@ -219,6 +235,14 @@ public class BetaWorldGenerator extends WorldGenerator {
         
         // Generate structures (villages, mineshafts, etc.) in Beta terrain
         structureGen.generateStructures(world, cx, cz, biomeProvider);
+
+        if (facilityColumn) {
+            for (int facilityY : com.voxel.world.AncientBuilderFacility.FACILITY_YS) {
+                if (com.voxel.world.AncientBuilderFacility.intersectsSection(cy, facilityY)) {
+                    com.voxel.world.AncientBuilderFacility.generate(world, facilityY, cy);
+                }
+            }
+        }
     }
     
     /**

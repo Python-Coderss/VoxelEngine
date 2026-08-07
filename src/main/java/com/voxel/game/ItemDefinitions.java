@@ -222,6 +222,11 @@ public class ItemDefinitions {
         registerBlock("encased_fan", "Encased Fan", 263, "furnace_top");
         // --- Villager TV (block 274) ---
         registerBlock("villager_tv", "Villager TV", 274, "villager_tv_front");
+        // Ancient-builder command blocks and the portable power-fragment key.
+        registerBlock("command_block", "Command Block", 275, "command_block_side");
+        registerBlock("chain_command_block", "Chain Command Block", 276, "chain_command_block_side");
+        registerBlock("repeating_command_block", "Repeating Command Block", 277, "repeating_command_block_side");
+        registerItemBlock("power_fragment", "Power Fragment", "emerald", 278, 278, ToolType.HAND, 1.0f, 16, 0);
         // --- Stair blocks ---
         registerBlock("oak_stairs", "Oak Stairs", 200, "planks_oak");
         registerBlock("cobblestone_stairs", "Cobblestone Stairs", 201, "cobblestone");

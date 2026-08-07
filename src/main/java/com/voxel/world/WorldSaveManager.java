@@ -2,6 +2,8 @@ package com.voxel.world;
 
 import com.voxel.World;
 import com.voxel.game.CraftingTableManager;
+import com.voxel.game.SurfaceCraftingManager;
+import com.voxel.game.CommandBlockManager;
 
 import java.io.*;
 import java.util.zip.GZIPInputStream;
@@ -137,6 +139,50 @@ public class WorldSaveManager {
     }
 
     /** Returns the furnace data file for a dimension. */
+    private File getSurfaceCraftingFile(DimensionType dim) {
+        return new File(getDimensionDir(dim), "surface_crafting.dat");
+    }
+
+    /** Saves persistent command-block programs for a dimension. */
+    public void saveCommandBlockData(DimensionType dim, CommandBlockManager manager) {
+        try {
+            File file = new File(getDimensionDir(dim), "command_blocks.dat");
+            file.getParentFile().mkdirs();
+            manager.saveToFile(file);
+        } catch (IOException e) {
+            System.err.println("Failed to save command-block data for " + dim.name + ": " + e.getMessage());
+        }
+    }
+
+    /** Loads persistent command-block programs for a dimension. */
+    public void loadCommandBlockData(DimensionType dim, CommandBlockManager manager) {
+        try {
+            manager.loadFromFile(new File(getDimensionDir(dim), "command_blocks.dat"));
+        } catch (IOException e) {
+            System.err.println("Failed to load command-block data for " + dim.name + ": " + e.getMessage());
+        }
+    }
+
+    /** Saves arbitrary-block 2x2 surface crafting data for a dimension. */
+    public void saveSurfaceCraftingData(DimensionType dim, SurfaceCraftingManager manager) {
+        try {
+            File file = getSurfaceCraftingFile(dim);
+            file.getParentFile().mkdirs();
+            manager.saveToFile(file);
+        } catch (IOException e) {
+            System.err.println("Failed to save surface crafting data for " + dim.name + ": " + e.getMessage());
+        }
+    }
+
+    /** Loads arbitrary-block 2x2 surface crafting data for a dimension. */
+    public void loadSurfaceCraftingData(DimensionType dim, SurfaceCraftingManager manager) {
+        try {
+            manager.loadFromFile(getSurfaceCraftingFile(dim));
+        } catch (IOException e) {
+            System.err.println("Failed to load surface crafting data for " + dim.name + ": " + e.getMessage());
+        }
+    }
+
     private File getFurnaceFile(DimensionType dim) {
         return new File(getDimensionDir(dim), "furnace.dat");
     }

@@ -58,12 +58,12 @@ public class HudUI {
     public final UILayer.UIElement[] slotCountDigit1      = new UILayer.UIElement[Main.INVENTORY_SIZE];
     public final UILayer.UIElement[] slotCountDigit2      = new UILayer.UIElement[Main.INVENTORY_SIZE];
 
-    public final UILayer.UIElement[] craftingSlotBackgrounds = new UILayer.UIElement[Main.CRAFTING_SLOTS];
-    public final UILayer.UIElement[] craftingSlotItems       = new UILayer.UIElement[Main.CRAFTING_SLOTS];
-
     public final UILayer.UIElement[] crafting3x3SlotBackgrounds = new UILayer.UIElement[9];
     public final UILayer.UIElement[] crafting3x3SlotItems       = new UILayer.UIElement[9];
     public UILayer.UIElement craftingTableBg;
+    public UILayer.UIElement craftingButton;
+    public UILayer.UIElement craftingButtonItem;
+    public UILayer.UITextElement craftingButtonText;
 
     public UILayer.UIElement furnacePanelBg;
     public UILayer.UIElement furnaceInputBg, furnaceFuelBg, furnaceOutputBg;
@@ -205,46 +205,6 @@ public class HudUI {
         float uScaleInset = (float) (Main.SLOT_TEX_W - 1) / uiTextureSize.x;
         float vScaleInset = (float) (Main.SLOT_TEX_H - 1) / uiTextureSize.y;
 
-        // 2x2 crafting grid + result
-        int craftingGridX = Main.HOTBAR_X + 440;
-        int craftingGridY = Main.HOTBAR_Y + 20;
-        for (int index = 0; index < Main.CRAFTING_SLOTS; index++) {
-            boolean isResult = index == Main.CRAFTING_RESULT_SLOT;
-            int row = index / 2;
-            int col = index % 2;
-            float cx = craftingGridX + col * (Main.SLOT_W + 8);
-            float cy = craftingGridY + row * Main.SLOT_H;
-            if (isResult) {
-                cx = craftingGridX + 2 * (Main.SLOT_W + 8) + 16;
-                cy = craftingGridY + Main.SLOT_H / 2;
-            }
-
-            UILayer.UIElement background = new UILayer.UIElement(
-                new Vector2f(cx, cy),
-                new Vector2f(Main.SLOT_W, Main.SLOT_H),
-                new Vector4f(isResult ? 1.0f : 0.9f, isResult ? 0.9f : 0.9f, isResult ? 0.8f : 0.9f, 1)
-            );
-            if (uiTextureId != 0) {
-                background.textureId = uiTextureId;
-                background.uvOffset = new Vector2f(halfU, halfV);
-                background.uvScale = new Vector2f(uScaleInset, vScaleInset);
-            }
-            final int slotIndex = index;
-            background.onClick = () -> { playerInventory.handleCraftingSlotClick(slotIndex); inventoryUiDirty = true; };
-            background.visible = false;
-            craftingSlotBackgrounds[index] = background;
-            layer.addElement(background);
-
-            UILayer.UIElement itemElement = new UILayer.UIElement(
-                new Vector2f(cx + 24, cy + 16),
-                new Vector2f(40, 40),
-                new Vector4f(0, 0, 0, 0)
-            );
-            itemElement.visible = false;
-            craftingSlotItems[index] = itemElement;
-            layer.addElement(itemElement);
-        }
-
         // 3x3 crafting table grid
         float ctGridW = 3 * (Main.SLOT_W + 8) - 8;
         float ctGridH = 3 * Main.SLOT_H;
@@ -285,6 +245,42 @@ public class HudUI {
             crafting3x3SlotItems[i] = itemEl;
             layer.addElement(itemEl);
         }
+
+        // MCSM-style action button. It lives beside the 3x3 grid and is only
+        // made visible when the current ingredient pattern has a valid result.
+        float craftButtonX = ctX + ctGridW + 28;
+        float craftButtonY = ctY + ctGridH / 2f - 28;
+        craftingButton = new UILayer.UIElement(
+            new Vector2f(craftButtonX, craftButtonY),
+            new Vector2f(156, 56),
+            new Vector4f(0.12f, 0.62f, 0.48f, 1.0f)
+        );
+        craftingButton.onClick = () -> {
+            boolean crafted = (ctx.activeUI == ActiveUI.SURFACE_CRAFTING)
+                ? playerInventory.craftSurface2x2()
+                : playerInventory.craft3x3();
+            if (crafted) inventoryUiDirty = true;
+        };
+        craftingButton.visible = false;
+        layer.addElement(craftingButton);
+
+        craftingButtonText = new UILayer.UITextElement(
+            new Vector2f(craftButtonX + 58, craftButtonY + 17),
+            "CRAFT",
+            1.8f,
+            new Vector4f(1, 1, 1, 1),
+            fontTextureId
+        );
+        craftingButtonText.visible = false;
+        layer.addElement(craftingButtonText);
+
+        craftingButtonItem = new UILayer.UIElement(
+            new Vector2f(craftButtonX + 10, craftButtonY + 8),
+            new Vector2f(40, 40),
+            new Vector4f(1, 1, 1, 1)
+        );
+        craftingButtonItem.visible = false;
+        layer.addElement(craftingButtonItem);
 
         // Inventory slots (4 columns × 5 rows)
         for (int index = 0; index < Main.INVENTORY_SIZE; index++) {
@@ -728,8 +724,16 @@ public class HudUI {
             carriedItemElement.size.set(28, 28);
         }
 
-        commandTextElement.visible = main.commandMode;
-        if (main.commandMode) commandTextElement.text = main.commandBuffer.toString() + "_";
+        commandTextElement.visible = main.commandMode || ctx.commandBlockEditorOpen;
+        if (ctx.commandBlockEditorOpen) {
+            commandTextElement.text = "COMMAND CONSOLE > " + ctx.commandBlockEditorCommand + "_";
+            commandTextElement.pos.set(80, main.height / 2f - 30);
+            commandTextElement.color.set(0.55f, 1.0f, 0.8f, 1.0f);
+        } else if (main.commandMode) {
+            commandTextElement.text = main.commandBuffer.toString() + "_";
+            commandTextElement.pos.set(20, main.height - 40);
+            commandTextElement.color.set(1, 1, 1, 1);
+        }
 
         int selSlot = playerInventory.getSelectedSlot();
         float hp = main.player.getHealth();
@@ -749,22 +753,29 @@ public class HudUI {
         hotbarActiveElement.pos.y = Main.HOTBAR_Y + playerInventory.getSelectedSlot() * Main.SLOT_H;
 
         boolean use3x3 = ctx.craftingTableOpen && ctx.activeUI == ActiveUI.CRAFTING_TABLE;
+        boolean useSurface = ctx.surfaceCraftingOpen && ctx.activeUI == ActiveUI.SURFACE_CRAFTING;
+        boolean useCommandBlock = ctx.commandBlockEditorOpen && ctx.activeUI == ActiveUI.COMMAND_BLOCK;
         boolean useFurnace = ctx.furnaceOpen && ctx.activeUI == ActiveUI.FURNACE;
         boolean useChest = ctx.chestOpen && ctx.activeUI == ActiveUI.CHEST;
 
         // Slot/UI updates (inlined from Main.updateInventoryUi)
+        if (useCommandBlock) {
+            craftingTableBg.visible = false;
+            craftingButton.visible = false;
+            craftingButtonText.visible = false;
+            craftingButtonItem.visible = false;
+        }
 // --- Furnace UI ---
         if (useFurnace) {
             // Hide crafting UIs
-            for (int i = 0; i < Main.CRAFTING_SLOTS; i++) {
-                craftingSlotBackgrounds[i].visible = false;
-                craftingSlotItems[i].visible = false;
-            }
             craftingTableBg.visible = false;
             for (int i = 0; i < 9; i++) {
                 crafting3x3SlotBackgrounds[i].visible = false;
                 crafting3x3SlotItems[i].visible = false;
             }
+            craftingButton.visible = false;
+            craftingButtonText.visible = false;
+            craftingButtonItem.visible = false;
             chestPanelBg.visible = false;
             for (int i = 0; i < 20; i++) {
                 chestSlotBackgrounds[i].visible = false;
@@ -867,10 +878,6 @@ public class HudUI {
         // --- Chest UI ---
         if (useChest) {
             // Hide crafting/furnace UIs
-            for (int i = 0; i < Main.CRAFTING_SLOTS; i++) {
-                craftingSlotBackgrounds[i].visible = false;
-                craftingSlotItems[i].visible = false;
-            }
             craftingTableBg.visible = false;
             for (int i = 0; i < 9; i++) {
                 crafting3x3SlotBackgrounds[i].visible = false;
@@ -976,14 +983,24 @@ public class HudUI {
         // --- 3x3 Crafting table UI ---
         if (use3x3) {
             // Hide other UIs
-            for (int i = 0; i < Main.CRAFTING_SLOTS; i++) {
-                craftingSlotBackgrounds[i].visible = false;
-                craftingSlotItems[i].visible = false;
-            }
             craftingTableBg.visible = false;
             for (int i = 0; i < 9; i++) {
                 crafting3x3SlotBackgrounds[i].visible = false;
                 crafting3x3SlotItems[i].visible = false;
+            }
+            craftingButton.visible = main.inventoryOpen && playerInventory.hasCrafting3x3Result();
+            craftingButtonText.visible = craftingButton.visible;
+            craftingButtonItem.visible = craftingButton.visible;
+            if (craftingButton.visible) {
+                ItemDefinition resultDef = itemDefinitions.getDefinition(playerInventory.getCrafting3x3ResultItemId());
+                if (resultDef != null) {
+                    craftingButtonItem.textureId = textureManager.getTextureArrayId();
+                    craftingButtonItem.textureType = 2;
+                    craftingButtonItem.layer = resultDef.iconLayer;
+                    craftingButtonItem.color.set(1, 1, 1, 1);
+                } else {
+                    craftingButtonItem.visible = false;
+                }
             }
             // Hide furnace/chest during crafting table
             furnacePanelBg.visible = false;
@@ -1004,64 +1021,39 @@ public class HudUI {
                 chestCountDigit1[i].visible = false;
                 chestCountDigit2[i].visible = false;
             }
-        } else if (!useFurnace && !useChest) {
-            // Show 2x2 crafting slots (default inventory mode)
+        } else if (useSurface) {
+            // Surface crafting uses the four quadrants on the targeted block's
+            // top face. The world raycast handles the cells; only the action
+            // button is screen-space UI here.
             craftingTableBg.visible = false;
             for (int i = 0; i < 9; i++) {
                 crafting3x3SlotBackgrounds[i].visible = false;
                 crafting3x3SlotItems[i].visible = false;
             }
-            // Hide furnace/chest in default mode
-            furnacePanelBg.visible = false;
-            furnaceInputBg.visible = false;
-            furnaceFuelBg.visible = false;
-            furnaceOutputBg.visible = false;
-            furnaceInputItem.visible = false;
-            furnaceFuelItem.visible = false;
-            furnaceOutputItem.visible = false;
-            furnaceProgressBar.visible = false;
-            furnaceFuelBar.visible = false;
-            furnaceFuelText.visible = false;
-            chestPanelBg.visible = false;
-            for (int i = 0; i < 20; i++) {
-                chestSlotBackgrounds[i].visible = false;
-                chestSlotItems[i].visible = false;
-                chestCountBars[i].visible = false;
-                chestCountDigit1[i].visible = false;
-                chestCountDigit2[i].visible = false;
+            craftingButton.visible = main.inventoryOpen && playerInventory.getSurfaceCraftingPreview() != null;
+            craftingButtonText.visible = craftingButton.visible;
+            craftingButtonItem.visible = craftingButton.visible;
+            if (craftingButton.visible) {
+                ItemDefinition resultDef = itemDefinitions.getDefinition(
+                    playerInventory.getSurfaceCraftingPreview().resultItemId);
+                if (resultDef != null) {
+                    craftingButtonItem.textureId = textureManager.getTextureArrayId();
+                    craftingButtonItem.textureType = 2;
+                    craftingButtonItem.layer = resultDef.iconLayer;
+                    craftingButtonItem.color.set(1, 1, 1, 1);
+                } else {
+                    craftingButtonItem.visible = false;
+                }
             }
-
-            for (int i = 0; i < Main.CRAFTING_SLOTS; i++) {
-                boolean isResult = i == Main.CRAFTING_RESULT_SLOT;
-                boolean slotVisible = main.inventoryOpen;
-                craftingSlotBackgrounds[i].visible = slotVisible;
-
-                UILayer.UIElement itemElement = craftingSlotItems[i];
-                String itemId = null;
-
-                if (isResult) {
-                    CraftingManager.CraftingRecipe match = ctx.craftingManager.matchRecipe(playerInventory.getCraftingGrid());
-                    if (match != null) {
-                        itemId = match.resultItemId;
-                    }
-                } else {
-                    int gridRow = i / 2;
-                    int gridCol = i % 2;
-                    itemId = playerInventory.getCraftingGrid()[gridRow][gridCol];
-                }
-
-                if (slotVisible && itemId != null) {
-                    ItemDefinition definition = itemDefinitions.getDefinition(itemId);
-                    itemElement.visible = true;
-                    itemElement.textureId = textureManager.getTextureArrayId();
-                    itemElement.textureType = 2; // Array
-                    itemElement.layer = definition.iconLayer;
-                    itemElement.color.set(1, 1, 1, 1);
-                    itemElement.pos.set(craftingSlotBackgrounds[i].pos.x + 24, craftingSlotBackgrounds[i].pos.y + 16);
-                    itemElement.size.set(40, 40);
-                } else {
-                    itemElement.visible = false;
-                }
+        } else if (!useFurnace && !useChest) {
+            // No 2x2 crafting grid is shown in the inventory anymore.
+            craftingTableBg.visible = false;
+            craftingButton.visible = false;
+            craftingButtonText.visible = false;
+            craftingButtonItem.visible = false;
+            for (int i = 0; i < 9; i++) {
+                crafting3x3SlotBackgrounds[i].visible = false;
+                crafting3x3SlotItems[i].visible = false;
             }
         }
 

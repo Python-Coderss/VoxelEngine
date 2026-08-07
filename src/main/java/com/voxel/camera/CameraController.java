@@ -185,10 +185,9 @@ public class CameraController {
         int col = (int) Math.floor(uRel / CT_STEP);
         int row = (int) Math.floor(vRel / CT_STEP);
         if (col < 0 || col > 2 || row < 0 || row > 2) return -1;
-        // Center slot is the result slot (index 4) — return -1 to prevent direct placement
-        int idx = row * 3 + col;
-        if (idx == 4) return -1;
-        return idx;
+        // All nine cells are ingredient slots. The result is controlled by the
+        // separate Craft button beside the grid.
+        return row * 3 + col;
     }
 
     /**
