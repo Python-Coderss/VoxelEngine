@@ -137,8 +137,9 @@ where is the canonical registry mentioned.
 
 ### Beta Numeric Precision and Far Lands
 - Beta world generation uses independent configurable short, int, float, and double controls in `com.voxel.world.beta.BetaNumericProfile`.
-- Current default preset: `shortBits=10`, `intBits=20`, float `8/11` (exponent/mantissa), and double `11/26` (exponent/mantissa).
-- With the 20-bit integer precision preset, the empirically observed Beta Far Lands boundary is approximately **3,060–3,061 blocks** from the origin.
+- Current default preset: `shortBits=10`, X/Z `intBits=20`, Y `intBits=16`, float `8/11` (exponent/mantissa), and double `11/26` (exponent/mantissa).
+- The independent 16-bit Y lattice control targets a vertical Far Lands threshold of roughly **383 blocks** (the closest standard n-bit setting to 300), while leaving the X/Z terrain threshold unchanged.
+- With the 20-bit X/Z integer precision preset, the empirically observed Beta Far Lands boundary is approximately **3,060–3,061 blocks** from the origin.
 - This is an observed terrain/noise boundary, not the legacy `12,550,821` constant; the effective threshold depends on the configured numeric widths and sampler offsets.
 - Beta section generation uses cached bulk section population and does not require a per-voxel `getHeight()` query.
 

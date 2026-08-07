@@ -43,17 +43,25 @@ public class NoiseGeneratorPerlin {
     }
 
     public double generateNoise(double var1, double var3, double var5) {
+        return generateNoise(var1, var3, var5, true);
+    }
+
+    private double generateNoise(double var1, double var3, double var5, boolean secondCoordinateIsY) {
         double var7 = d(var1 + this.xCoord);
         double var9 = d(var3 + this.yCoord);
         double var11 = d(var5 + this.zCoord);
         int var13 = numericProfile.intValue(var7);
-        int var14 = numericProfile.intValue(var9);
+        int var14 = secondCoordinateIsY
+                ? numericProfile.yIntValue(var9)
+                : numericProfile.intValue(var9);
         int var15 = numericProfile.intValue(var11);
         if (var7 < (double) var13) {
             var13 = numericProfile.intValue((long) var13 - 1L);
         }
         if (var9 < (double) var14) {
-            var14 = numericProfile.intValue((long) var14 - 1L);
+            var14 = secondCoordinateIsY
+                    ? numericProfile.yIntValue((long) var14 - 1L)
+                    : numericProfile.intValue((long) var14 - 1L);
         }
         if (var11 < (double) var15) {
             var15 = numericProfile.intValue((long) var15 - 1L);
@@ -122,7 +130,8 @@ public class NoiseGeneratorPerlin {
     }
 
     public double func_801_a(double var1, double var3) {
-        return this.generateNoise(var1, var3, 0.0D);
+        // This legacy 2D helper treats its second argument as Z, not Y.
+        return this.generateNoise(var1, var3, 0.0D, false);
     }
 
     public void func_805_a(double[] var1, double var2, double var4, double var6, int var8, int var9, int var10,
@@ -217,9 +226,9 @@ public class NoiseGeneratorPerlin {
 
                     for (int var51 = 0; var51 < var9; ++var51) {
                         double var52 = d((var4 + (double) var51) * var13 + this.yCoord);
-                        int var54 = numericProfile.intValue(var52);
+                        int var54 = numericProfile.yIntValue(var52);
                         if (var52 < (double) var54) {
-                            var54 = numericProfile.intValue((long) var54 - 1L);
+                            var54 = numericProfile.yIntValue((long) var54 - 1L);
                         }
                         int var55 = var54 & 255;
                         var52 -= (double) var54;
