@@ -8,7 +8,8 @@ public final class BetaNumericProfile {
     public static final BetaNumericProfile DEFAULT =
             new BetaNumericProfile(
                     10, // shortBits
-                    20, // intBits
+                    20, // intBits (X/Z)
+                    16, // Y int bits
                     8,  // float exponent bits
                     11, // float mantissa bits
                     11, // double exponent bits
@@ -17,6 +18,7 @@ public final class BetaNumericProfile {
 
     private final int shortBits;
     private final int intBits;
+    private final int yIntBits;
     private final int floatExponentBits;
     private final int floatMantissaBits;
     private final int doubleExponentBits;
@@ -25,12 +27,25 @@ public final class BetaNumericProfile {
     public BetaNumericProfile(int shortBits, int intBits,
                               int floatExponentBits, int floatMantissaBits,
                               int doubleExponentBits, int doubleMantissaBits) {
+        this(shortBits, intBits, intBits, floatExponentBits, floatMantissaBits,
+                doubleExponentBits, doubleMantissaBits);
+    }
+
+    /**
+     * Creates a profile with an independent Y-axis integer width. X and Z use
+     * {@code intBits}; Y uses {@code yIntBits}.
+     */
+    public BetaNumericProfile(int shortBits, int intBits, int yIntBits,
+                              int floatExponentBits, int floatMantissaBits,
+                              int doubleExponentBits, int doubleMantissaBits) {
         NBitInteger.of(shortBits, 0L);
         NBitInteger.of(intBits, 0L);
+        NBitInteger.of(yIntBits, 0L);
         NBitFloat.fromDouble(floatExponentBits, floatMantissaBits, 0.0);
         NBitFloat.fromDouble(doubleExponentBits, doubleMantissaBits, 0.0);
         this.shortBits = shortBits;
         this.intBits = intBits;
+        this.yIntBits = yIntBits;
         this.floatExponentBits = floatExponentBits;
         this.floatMantissaBits = floatMantissaBits;
         this.doubleExponentBits = doubleExponentBits;
@@ -39,6 +54,7 @@ public final class BetaNumericProfile {
 
     public int shortBits() { return shortBits; }
     public int intBits() { return intBits; }
+    public int yIntBits() { return yIntBits; }
     public int floatExponentBits() { return floatExponentBits; }
     public int floatMantissaBits() { return floatMantissaBits; }
     public int doubleExponentBits() { return doubleExponentBits; }
@@ -54,6 +70,16 @@ public final class BetaNumericProfile {
 
     public int intValue(double value) {
         return (int) NBitInteger.ofDouble(intBits, value).signedValue();
+    }
+
+    /** Quantizes a Y-axis lattice coordinate without changing X/Z precision. */
+    public int yIntValue(long value) {
+        return (int) NBitInteger.of(yIntBits, value).signedValue();
+    }
+
+    /** Quantizes a Y-axis floating-point lattice coordinate without changing X/Z precision. */
+    public int yIntValue(double value) {
+        return (int) NBitInteger.ofDouble(yIntBits, value).signedValue();
     }
 
     public float floatValue(double value) {

@@ -11,6 +11,7 @@ public class BetaNumericControlsTest {
         BetaNumericProfile profile = new BetaNumericProfile(5, 9, 5, 4, 8, 12);
         assertEquals(5, profile.shortBits());
         assertEquals(9, profile.intBits());
+        assertEquals(9, profile.yIntBits());
         assertEquals(5, profile.floatExponentBits());
         assertEquals(4, profile.floatMantissaBits());
         assertEquals(8, profile.doubleExponentBits());
@@ -18,8 +19,17 @@ public class BetaNumericControlsTest {
     }
 
     @Test
-    public void defaultPresetUsesTwentyBitIntegers() {
+    public void defaultPresetUsesIndependentTwentyBitXZAndSixteenBitYIntegers() {
         assertEquals(20, BetaNumericProfile.DEFAULT.intBits());
+        assertEquals(16, BetaNumericProfile.DEFAULT.yIntBits());
+    }
+
+    @Test
+    public void yIntegerWidthDoesNotChangeXZWidth() {
+        BetaNumericProfile profile = new BetaNumericProfile(8, 20, 16, 8, 23, 11, 52);
+        assertEquals(32768, profile.intValue(32768));
+        assertEquals(-32768, profile.yIntValue(32768));
+        assertEquals(16, profile.yIntBits());
     }
 
     @Test
@@ -52,6 +62,16 @@ public class BetaNumericControlsTest {
                 Double.doubleToRawLongBits(negativeZero.toDouble()));
         assertTrue(Double.isInfinite(NBitFloat.fromDouble(8, 23, Double.POSITIVE_INFINITY).toDouble()));
         assertTrue(Double.isNaN(NBitFloat.fromDouble(8, 23, Double.NaN).toDouble()));
+    }
+
+    @Test
+    public void yWidthDoesNotAffectTwoDimensionalXZNoise() {
+        java.util.Random seed = new java.util.Random(7L);
+        NoiseGeneratorPerlin wideY = new NoiseGeneratorPerlin(seed, new BetaNumericProfile(10, 20, 16, 8, 11, 11, 26));
+        seed = new java.util.Random(7L);
+        NoiseGeneratorPerlin narrowY = new NoiseGeneratorPerlin(seed, new BetaNumericProfile(10, 20, 8, 8, 11, 11, 26));
+        assertEquals(wideY.func_801_a(32768.25D, 32768.75D),
+                narrowY.func_801_a(32768.25D, 32768.75D), 0.0D);
     }
 
     @Test
