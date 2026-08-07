@@ -112,6 +112,7 @@ public class Main {
     public int locBiomeMap, locGrassColormap, locUITexture, locFoliageColormap, locUISource;
     public int locHeartUVs;
     public int locCraftingItemCount;
+    public int locDestroyStages; // cached u_DestroyStages (was a per-frame glGetUniformLocation)
     public int craftingItemSSBO;
     public java.util.Iterator<Integer> dirtyUploadIterator;
     public static final int MAX_DIRTY_UPLOADS_PER_FRAME = 48;
@@ -134,6 +135,7 @@ public class Main {
     private final float shadowHalfExtent = 48.0f;
     private final float shadowDepth = 192.0f;
     private int shadowFrameCount = 0;
+    private DimensionType cachedPoolDirsDim = null; // pool dirs are dimension-constant; recompute only on dimension switch
     private final float[][] poolDirs = new float[16][3]; // fixed light dir per pool
     private final float[] activeSunDir = new float[3];   // live sun dir for pool pick
     private final float[] activeMoonDir = new float[3];  // live moon dir for pool pick
@@ -154,6 +156,12 @@ public class Main {
     private static final int LOC_MOON_POOL_RIGHT = 34;
     private static final int LOC_MOON_POOL_UP = 35;
     private static final int LOC_MOON_POOL_DIR = 36;
+    private static final int LOC_UNDER_WATER = 37; // 1 when the camera eye is inside a water block
+
+    /** True for any water block id (source 15 + flowing levels 150-164). */
+    private static boolean isWaterId(int id) {
+        return id == 15 || (id >= 150 && id <= 164);
+    }
     public com.voxel.entity.EntityManager entityManager;
     public World world;
     public com.voxel.world.ChunkManager chunkManager;
@@ -553,6 +561,7 @@ public class Main {
         locUISource = glGetUniformLocation(computeProgram, "u_UISource");
         locHeartUVs = glGetUniformLocation(computeProgram, "u_HeartUVs");
         locCraftingItemCount = glGetUniformLocation(computeProgram, "u_CraftingItemCount");
+        locDestroyStages = glGetUniformLocation(computeProgram, "u_DestroyStages");
     }
 
     public void spawnInitialEnemies(Player p) {
@@ -1213,6 +1222,7 @@ public class Main {
         float lastTime = (float) glfwGetTime();
         int frames = 0;
         float fpsTime = 0;
+        boolean wasUiCovered = false; // tracks fullscreen-UI state to refresh light pools on close
 
         while (!glfwWindowShouldClose(window)) {
             float currentTime = (float) glfwGetTime();
@@ -1388,6 +1398,15 @@ public class Main {
                 cfy += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
                 cfz += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
             }
+            // Underwater flag: when the camera eye is clipped inside a water block,
+            // the shader switches to the underwater pass (fog, tint, caustics, no
+            // stretched near-surface texture). Cheap voxel check, uploaded once.
+            int uwx = cbx + wox, uwy = cby + woy, uwz = cbz + woz;
+            boolean underWater = isWaterId(world.getVoxel(uwx, uwy, uwz));
+            if (!underWater && cfy < 0.6f) {
+                underWater = isWaterId(world.getVoxel(uwx, uwy - 1, uwz));
+            }
+            glProgramUniform1i(computeProgram, LOC_UNDER_WATER, underWater ? 1 : 0);
             glProgramUniform3f(computeProgram, 0, cfx, cfy, cfz);
             glProgramUniform3i(computeProgram, 29, cbx, cby, cbz);
 
@@ -1427,7 +1446,7 @@ public class Main {
             // Bind destroy_stage texture array at texture unit 17
             glActiveTexture(GL_TEXTURE17);
             glBindTexture(GL_TEXTURE_2D_ARRAY, textureManager.getDestroyStageArrayId());
-            glUniform1i(glGetUniformLocation(computeProgram, "u_DestroyStages"), 17);
+            if (locDestroyStages >= 0) glUniform1i(locDestroyStages, 17);
 
             glActiveTexture(GL_TEXTURE15);
             glBindTexture(GL_TEXTURE_2D, hud.uiTextureId);
@@ -1452,15 +1471,18 @@ public class Main {
             // active pool index changed; round-robin 2 pools/tick keeps all fresh.
             shadowFrameCount++;
             float camBX = cbx + cfx, camBY = cby + cfy, camBZ = cbz + cfz;
-            // Fixed pool directions: 8 evenly-spaced samples along the day for the
-            // sun trajectory (pools 0-7) and moon trajectory (pools 8-15).
-            for (int i = 0; i < 8; i++) {
-                float sampleT = (i + 0.5f) / 8.0f * 1440.0f;
-                AtmosphereRenderer.computeSunDir(activeDimension, sampleT, poolDirs[i]);
-                if (activeDimension == DimensionType.NETHER) { poolDirs[8+i][0]=0f; poolDirs[8+i][1]=0.5f; poolDirs[8+i][2]=0f; }
-                else if (activeDimension == DimensionType.END) { poolDirs[8+i][0]=0f; poolDirs[8+i][1]=-1f; poolDirs[8+i][2]=0f; }
-                else if (activeDimension == DimensionType.AETHER) { poolDirs[8+i][0]=0f; poolDirs[8+i][1]=-1f; poolDirs[8+i][2]=-0.3f; }
-                else { poolDirs[8+i][0] = -poolDirs[i][0]; poolDirs[8+i][1] = -poolDirs[i][1]; poolDirs[8+i][2] = -poolDirs[i][2]; }
+            // Fixed pool directions are constant per dimension — derive them once
+            // per dimension switch instead of re-running 16 sin/cos pairs every frame.
+            if (cachedPoolDirsDim != activeDimension) {
+                cachedPoolDirsDim = activeDimension;
+                for (int i = 0; i < 8; i++) {
+                    float sampleT = (i + 0.5f) / 8.0f * 1440.0f;
+                    AtmosphereRenderer.computeSunDir(activeDimension, sampleT, poolDirs[i]);
+                    if (activeDimension == DimensionType.NETHER) { poolDirs[8+i][0]=0f; poolDirs[8+i][1]=0.5f; poolDirs[8+i][2]=0f; }
+                    else if (activeDimension == DimensionType.END) { poolDirs[8+i][0]=0f; poolDirs[8+i][1]=-1f; poolDirs[8+i][2]=0f; }
+                    else if (activeDimension == DimensionType.AETHER) { poolDirs[8+i][0]=0f; poolDirs[8+i][1]=-1f; poolDirs[8+i][2]=-0.3f; }
+                    else { poolDirs[8+i][0] = -poolDirs[i][0]; poolDirs[8+i][1] = -poolDirs[i][1]; poolDirs[8+i][2] = -poolDirs[i][2]; }
+                }
             }
             AtmosphereRenderer.computeSunDir(activeDimension, worldTime, activeSunDir);
             if (activeDimension == DimensionType.NETHER) { activeMoonDir[0]=0f; activeMoonDir[1]=0.5f; activeMoonDir[2]=0f; }
@@ -1470,9 +1492,17 @@ public class Main {
             activeSunPool = nearestPool(activeSunDir, 0);
             activeMoonPool = nearestPool(activeMoonDir, 8); // nearestPool already returns the absolute index (8..15)
             float camDX = camBX - shadowCamPosPrev[0], camDY = camBY - shadowCamPosPrev[1], camDZ = camBZ - shadowCamPosPrev[2];
-            boolean poolTick = (shadowFrameCount % 3 == 0); // 20Hz
+            // Fullscreen UI (inventory/crafting/command/TV) hides the god-ray shafts,
+            // so skip the pool-regeneration dispatches entirely until it closes. The
+            // flags stay dirty and re-run on the first visible frame.
+            boolean uiCovered = inventoryOpen || commandMode || ctx.tvWatching;
+            // Refresh the shafts immediately when the fullscreen UI closes (pools
+            // were deliberately skipped while covered).
+            if (wasUiCovered && !uiCovered) lightPoolDirty = true;
+            wasUiCovered = uiCovered;
+            boolean poolTick = !uiCovered && (shadowFrameCount % 5 == 0); // ~12Hz background refresh (was 20Hz)
             boolean activeChanged = (activeSunPool != prevActiveSunPool) || (activeMoonPool != prevActiveMoonPool);
-            boolean activeDirty = lightPoolDirty || (camDX * camDX + camDY * camDY + camDZ * camDZ) > 4.0f || activeChanged;
+            boolean activeDirty = !uiCovered && (lightPoolDirty || (camDX * camDX + camDY * camDY + camDZ * camDZ) > 4.0f || activeChanged);
             int r32f = org.lwjgl.opengl.GL30.GL_R32F;
             if (activeDirty) {
                 regenLightPool(activeSunPool, camBX, camBY, camBZ, r32f);
@@ -1482,7 +1512,7 @@ public class Main {
                 prevActiveSunPool = activeSunPool; prevActiveMoonPool = activeMoonPool;
             }
             if (poolTick) {
-                int rr = (shadowFrameCount / 3) % 16; // round-robin 1 pool per tick (all fresh ~0.8s)
+                int rr = (shadowFrameCount / 5) % 16; // round-robin 1 pool per tick (all fresh ~1.3s)
                 regenLightPool(rr, camBX, camBY, camBZ, r32f);
             }
             glProgramUniform1i(computeProgram, LOC_SHADOW_PASS, 0);

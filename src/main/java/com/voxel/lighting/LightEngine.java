@@ -91,8 +91,13 @@ public class LightEngine {
                 int wz = worldBaseZ + lz;
 
                 // Propagate sky light downward from world ceiling.
-                // Air above the highest block keeps full sky=15.
+                // Air above the highest block keeps full sky=15. Any 16-block
+                // vertical line of air or non-full blocks (water, slabs, leaves,
+                // glass…) counts as THE SUN: once a contiguous clear run reaches
+                // 16, the light resets to full — sunlight flows down shafts and
+                // through water columns instead of dimming through them.
                 int skyLight = MAX_LIGHT;
+                int clearRun = 16; // world ceiling counts as 16 blocks of sky
                 for (int y = bufMaxYRel - 1; y >= 0; y--) {
                     int slot = getSlotForWorldPos(wx, y, wz, ox, oy, oz);
                     if (slot == World.EMPTY) continue;
@@ -109,15 +114,24 @@ public class LightEngine {
 
                     if (skyLight <= 0) break;
 
-                    int opacity = getBlockOpacity(blockId);
-                    skyLight = Math.max(0, skyLight - opacity);
+                    if (blockId > 0 && blockDataManager.isFullBlock(blockId)) {
+                        // Opaque solid: blocks light and restarts the clear run
+                        clearRun = 0;
+                        skyLight = Math.max(0, skyLight - getBlockOpacity(blockId));
+                    } else {
+                        // Air / non-full block: part of a clear vertical line.
+                        // 16 consecutive = the sun is considered visible here.
+                        clearRun++;
+                        if (clearRun >= 16) skyLight = MAX_LIGHT;
+                    }
                 }
             }
         }
 
         // Phase 2: Horizontal sky light spread
-        // After vertical sweep, propagate sky light horizontally in 4 directions.
-        // Decay: 50% brightness every 4 blocks of horizontal travel.
+        // After vertical sweep, propagate sky light outward in a 5×5 grid
+        // (all 24 cells within ±2), skipping blocked cells. Decay: ~13%
+        // brightness reduction per hop (ring-1 = 1 hop, ring-2 = 2 hops).
         int hChanged = propagateSkyLightHorizontal(cx, cz, slots, dirtySlots);
 
         WorldGenLogger.logChunk("LIGHT_SKY", cx, -1, cz,
@@ -127,10 +141,16 @@ public class LightEngine {
     }
 
     /**
-     * Horizontal sky light spread: BFS queue from sky-lit voxels
-     * outward in 4 horizontal directions (N/S/E/W).
-     * Brightness halves every 4 blocks using approx per-block decay (×21/25 ≈ 0.84).
-     * After 4 horizontal steps: 15→12→10→8→6 ≈ 50%. After 8: →3 ≈ 25%.
+     * Horizontal sky light spread: BFS queue from sky-lit voxels outward in a
+     * full 5×5 grid (all 24 cells within ±2 in X/Z) so sunlight fans into
+     * overhangs, 2-deep pockets, and jagged Far Lands terrain. Brightness
+     * loses ~13% per hop (×28/30 ≈ 0.933): ring-1 cells get one hop, ring-2
+     * cells get two — the total decay stays distance-consistent, but cells up
+     * to 2 blocks away light in a single hop, so light bends around corners.
+     * Blocking rule ("if it's not blocked"): the target cell must not be
+     * opaque, and ring-2 cardinal cells also need their straight intermediate
+     * cell passable — light never punches straight through a 1-block wall,
+     * but it does bend around single pillars and thin corners.
      */
     private int propagateSkyLightHorizontal(int cx, int cz, java.util.NavigableMap<Integer, Integer> slots,
                                              Set<Integer> dirtySlots) {
@@ -163,8 +183,17 @@ public class LightEngine {
             }
         }
 
-        // 4 horizontal direction offsets (N/S/E/W)
-        int[][] horizDirs = {{0, 0, 1}, {0, 0, -1}, {1, 0, 0}, {-1, 0, 0}};
+        // 5×5 fan: all 24 offsets in the ±2 square around a lit voxel.
+        int[][] fan5x5 = new int[24][2];
+        int fi = 0;
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                if (dx == 0 && dz == 0) continue;
+                fan5x5[fi][0] = dx;
+                fan5x5[fi][1] = dz;
+                fi++;
+            }
+        }
         int totalChanges = 0;
 
         // Process horizontal spread via BFS
@@ -173,15 +202,28 @@ public class LightEngine {
             int rx = nodeX(node), ry = nodeY(node), rz = nodeZ(node);
             int cur = nodeIntensityScalar(node);
 
-            // Decay: approx 50% brightness every 4 blocks (cur * 21 / 25 ≈ cur * 0.84)
-            int next = (cur * 21) / 25;
-            if (next <= 0) continue;
+            // Decay: ~13% per hop (×28/30 ≈ 0.933). Ring-1 cells take one hop,
+            // ring-2 cells two — same total decay as before, just wider reach.
+            int next1 = (cur * 28) / 30;
+            if (next1 <= 0) continue;
+            int next2 = (next1 * 28) / 30;
 
-            for (int[] dir : horizDirs) {
-                int nx = rx + dir[0];
-                int nz = rz + dir[2];
+            for (int[] off : fan5x5) {
+                int dx = off[0], dz = off[1];
+                int nx = rx + dx;
+                int nz = rz + dz;
 
                 if (nx < 0 || nz < 0 || ry < 0 || nx > maxRel || nz > maxRel || ry > maxRel) continue;
+
+                int cheb = Math.max(Math.abs(dx), Math.abs(dz)); // 1 = ring-1, 2 = ring-2
+                int next = (cheb == 1) ? next1 : next2;
+
+                // Blocking: a straight 2-hop run can't pass through an opaque wall.
+                if (cheb == 2 && (dx == 0 || dz == 0)) {
+                    int midX = rx + dx / 2, midZ = rz + dz / 2;
+                    int midOpacity = getBlockOpacity(world.getVoxel(midX + ox, ry + oy, midZ + oz));
+                    if (midOpacity >= MAX_LIGHT) continue;
+                }
 
                 int nSlot = world.getIndirectionTable()[(nx >> 4) + (ry >> 4) * World.REGION_SIZE + (nz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
                 if (nSlot == World.EMPTY) continue;

@@ -79,6 +79,7 @@ layout(location = 33) uniform vec3 u_MoonPoolOrigin; // ACTIVE MOON pool near-pl
 layout(location = 34) uniform vec3 u_MoonPoolRight;  // ACTIVE MOON pool right basis
 layout(location = 35) uniform vec3 u_MoonPoolUp;     // ACTIVE MOON pool up basis
 layout(location = 36) uniform vec3 u_MoonPoolDir;    // ACTIVE MOON pool light direction
+layout(location = 37) uniform int u_UnderWater;       // 1 = camera eye inside a water block
 
 // Entities
 struct EntityData { vec3 position; float health; vec3 rotation; float maxHealth; int partCount; int partOffset; float hitFlash; float tintR; float tintG; float tintB; float tintAmount; float padding; };
@@ -177,12 +178,59 @@ Atmosphere GetAtmosphere(float t) {
 
 vec3 ACESFilm(vec3 x) { return clamp((x*(2.51*x + 0.03))/(x*(2.43*x + 0.59) + 0.14), 0.0, 1.0); }
 
+// ── Cartoon-style helpers ──
+// Deterministic screen-space hash (dither + volumetric shaft detail).
+float hash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+// 3-tone cel ramp for directional light: shadow / mid / lit bands with soft
+// transitions (smoothstep instead of hard steps — keeps the toon look without
+// harsh "deep-fried" band edges). Light INTENSITY only — albedo, transparency
+// and reflection factors are untouched, so glass/water/reflections keep their
+// current look.
+float celRamp(float x) {
+    float s = smoothstep(0.05, 0.18, x);
+    float m = smoothstep(0.35, 0.55, x);
+    return mix(mix(0.24, 0.66, s), 1.0, m);
+}
+
+// Animated caustic pattern (wave interference) — Minecraft-shader style light
+// patterns that shimmer on sunlit floors beneath water.
+float causticAt(vec3 p) {
+    float t = u_Time * 1.1;
+    vec2 uv = p.xz * 1.6;
+    float c = sin(uv.x * 2.1 + t * 1.4) * sin(uv.y * 1.7 - t * 1.1)
+            + sin((uv.x + uv.y) * 2.7 + t * 0.8) * 0.5;
+    return smoothstep(0.4, 1.9, c * 0.9 + 0.5);
+}
+
 vec3 GetSky(vec3 rd, Atmosphere at) {
     float d = max(0.0, rd.y);
-    vec3 sky = mix(at.skyHorizon, at.skyZenith, pow(d, 0.7));
-    sky += pow(max(0.0, dot(rd, at.sunDir)), 1500.0) * at.sunColor * 5.0;
-    sky += pow(max(0.0, dot(rd, at.moonDir)), 1000.0) * at.moonColor * 2.0;
+    // Cartoon sky: 5 horizontal color bands with soft edges (keeps the horizon
+    // warm/cool split, but flat and posterized instead of a smooth gradient).
+    float h = pow(d, 0.7) * 5.0;
+    float bandF = fract(h);
+    float blend = clamp((floor(h) + smoothstep(0.0, 0.14, bandF)) / 5.0, 0.0, 1.0);
+    vec3 sky = mix(at.skyHorizon, at.skyZenith, blend);
+    // Crisp cartoon sun disc + gentle warm halo (kept from blowing out)
+    float sd = dot(rd, at.sunDir);
+    sky += at.sunColor * (smoothstep(0.9993, 0.9997, sd) * 3.5 + pow(max(sd, 0.0), 10.0) * 0.22);
+    // Moon disc
+    float md = dot(rd, at.moonDir);
+    sky += at.moonColor * smoothstep(0.9993, 0.9997, md) * 3.0;
     return sky;
+}
+
+// Volumetric haze: banded sky color with a sun-facing scattering boost so
+// light beams read as glowing air (cartoon volumetric atmosphere).
+vec3 hazeColor(vec3 rd, Atmosphere at) {
+    vec3 haze = GetSky(rd, at);
+    float sunF = pow(max(0.0, dot(rd, at.sunDir)), 3.0);
+    haze = mix(haze, at.sunColor + at.skyHorizon, sunF * 0.35);
+    return haze;
 }
 
 bool intersectAABB(vec3 ro, vec3 rd, vec3 bMin, vec3 bMax, out float tn, out float tf) {
@@ -381,6 +429,21 @@ uint getVoxelOcclusion(ivec3 p) {
     return (voxelIdx & 1) == 0 ? (packedv & 0xFFFFu) : (packedv >> 16);
 }
 
+// True when the voxel at buffer-relative p is liquid water (not lava). Uses the
+// block-data LIQUID effect tag, so it covers every water id (15, flowing 150-164).
+bool isWaterVoxel(vec3 p) {
+    ivec3 rel = ivec3(floor(p));
+    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(WORLD_SIZE)))) return false;
+    uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
+    if (slot == EMPTY) return false;
+    int bi = (rel.x & 15) | ((rel.y & 15) << 4) | ((rel.z & 15) << 8);
+    uint v = voxelPool[(slot << 12) | bi] & 0xFFFFu;
+    if (v == 0u) return false;
+    ivec4 d1 = texelFetch(u_BlockData, int(v) * 3 + 1);
+    int eff = (d1.w >> 10) & 0xF;
+    return eff == 2 && v != 21u;
+}
+
 // ── Ambient Occlusion ──
 // Checks if a world-space voxel contains any solid geometry (contributes to occlusion).
 bool isBlockSolidAO(ivec3 p) {
@@ -391,56 +454,63 @@ bool isBlockSolidAO(ivec3 p) {
     return isBitSolid(slot, rel);
 }
 
-// Vertex-based ambient occlusion.
-// Checks the 8 blocks one step ALONG the face normal (the blocks that actually
-// cast shadows onto this face). Blocks parallel/co-planar with the face are not
-// considered. Each of the 4 face vertices checks 3 adjacent blocks
-// (2 side + 1 corner) in the plane one step along the normal.
-// Vertex AO values are bilinearly interpolated across the face.
+// Vertex-based ambient occlusion (cartoon).
+// The classic 12-sample vertex pattern shares side/corner blocks between the 4
+// vertices, so the UNIQUE set is 8 blocks (4 side + 4 corner) — sampling those
+// directly removes 4 redundant SSBO indirections per AO. Vertex values stay
+// identical to the classic formula, then the result is quantized to 3 cel tones
+// for the flat, chunky toon shadow look.
 float computeAmbientOcclusion(vec3 hp, vec3 n) {
     ivec3 blockPos = ivec3(floor(hp - n * 0.5));
     vec3 fracPos = hp - vec3(blockPos);
     ivec3 ns = ivec3(round(n)); // normal step: (0,±1,0) for Y faces, etc.
 
-    // Face-local coordinates (u, v) and vertex neighbor blocks
+    // Face-local coordinates (u, v) and the unique neighbor blocks
     float u, v;
-    ivec3 v00_s1, v00_s2, v00_c; // vertex (u=0,v=0): 2 side neighbors + corner
-    ivec3 v10_s1, v10_s2, v10_c; // vertex (u=1,v=0)
-    ivec3 v01_s1, v01_s2, v01_c; // vertex (u=0,v=1)
-    ivec3 v11_s1, v11_s2, v11_c; // vertex (u=1,v=1)
+    ivec3 s1, s2, s3, s4; // 4 side neighbors (u/v axis-aligned)
+    ivec3 c1, c2, c3, c4; // 4 corner neighbors
 
     if (abs(n.y) > 0.5) {
         // Top/Bottom face: u=x, v=z. Check blocks at Y+ns.y level.
         u = fracPos.x; v = fracPos.z;
-        v00_s1 = blockPos + ivec3(-1, ns.y, 0);  v00_s2 = blockPos + ivec3(0, ns.y, -1);  v00_c = blockPos + ivec3(-1, ns.y, -1);
-        v10_s1 = blockPos + ivec3(1, ns.y, 0);   v10_s2 = blockPos + ivec3(0, ns.y, -1);  v10_c = blockPos + ivec3(1, ns.y, -1);
-        v01_s1 = blockPos + ivec3(-1, ns.y, 0);  v01_s2 = blockPos + ivec3(0, ns.y, 1);   v01_c = blockPos + ivec3(-1, ns.y, 1);
-        v11_s1 = blockPos + ivec3(1, ns.y, 0);   v11_s2 = blockPos + ivec3(0, ns.y, 1);   v11_c = blockPos + ivec3(1, ns.y, 1);
+        s1 = blockPos + ivec3(-1, ns.y, 0);  s2 = blockPos + ivec3(1, ns.y, 0);
+        s3 = blockPos + ivec3(0, ns.y, -1);  s4 = blockPos + ivec3(0, ns.y, 1);
+        c1 = blockPos + ivec3(-1, ns.y, -1); c2 = blockPos + ivec3(1, ns.y, -1);
+        c3 = blockPos + ivec3(-1, ns.y, 1);  c4 = blockPos + ivec3(1, ns.y, 1);
     } else if (abs(n.x) > 0.5) {
         // East/West face: u=z, v=y. Check blocks at X+ns.x level.
         u = fracPos.z; v = fracPos.y;
-        v00_s1 = blockPos + ivec3(ns.x, 0, -1);  v00_s2 = blockPos + ivec3(ns.x, -1, 0);  v00_c = blockPos + ivec3(ns.x, -1, -1);
-        v10_s1 = blockPos + ivec3(ns.x, 0, 1);   v10_s2 = blockPos + ivec3(ns.x, -1, 0);  v10_c = blockPos + ivec3(ns.x, -1, 1);
-        v01_s1 = blockPos + ivec3(ns.x, 0, -1);  v01_s2 = blockPos + ivec3(ns.x, 1, 0);   v01_c = blockPos + ivec3(ns.x, 1, -1);
-        v11_s1 = blockPos + ivec3(ns.x, 0, 1);   v11_s2 = blockPos + ivec3(ns.x, 1, 0);   v11_c = blockPos + ivec3(ns.x, 1, 1);
+        s1 = blockPos + ivec3(ns.x, 0, -1);  s2 = blockPos + ivec3(ns.x, 0, 1);
+        s3 = blockPos + ivec3(ns.x, -1, 0);  s4 = blockPos + ivec3(ns.x, 1, 0);
+        c1 = blockPos + ivec3(ns.x, -1, -1); c2 = blockPos + ivec3(ns.x, -1, 1);
+        c3 = blockPos + ivec3(ns.x, 1, -1);  c4 = blockPos + ivec3(ns.x, 1, 1);
     } else {
         // North/South face: u=x, v=y. Check blocks at Z+ns.z level.
         u = fracPos.x; v = fracPos.y;
-        v00_s1 = blockPos + ivec3(-1, 0, ns.z);  v00_s2 = blockPos + ivec3(0, -1, ns.z);  v00_c = blockPos + ivec3(-1, -1, ns.z);
-        v10_s1 = blockPos + ivec3(1, 0, ns.z);   v10_s2 = blockPos + ivec3(0, -1, ns.z);  v10_c = blockPos + ivec3(1, -1, ns.z);
-        v01_s1 = blockPos + ivec3(-1, 0, ns.z);  v01_s2 = blockPos + ivec3(0, 1, ns.z);   v01_c = blockPos + ivec3(-1, 1, ns.z);
-        v11_s1 = blockPos + ivec3(1, 0, ns.z);   v11_s2 = blockPos + ivec3(0, 1, ns.z);   v11_c = blockPos + ivec3(1, 1, ns.z);
+        s1 = blockPos + ivec3(-1, 0, ns.z);  s2 = blockPos + ivec3(1, 0, ns.z);
+        s3 = blockPos + ivec3(0, -1, ns.z);  s4 = blockPos + ivec3(0, 1, ns.z);
+        c1 = blockPos + ivec3(-1, -1, ns.z); c2 = blockPos + ivec3(1, -1, ns.z);
+        c3 = blockPos + ivec3(-1, 1, ns.z);  c4 = blockPos + ivec3(1, 1, ns.z);
     }
 
-    // Per-vertex occlusion: 3 adjacent blocks, each solid → 1/3 reduction
-    float ao00 = 1.0 - (float(isBlockSolidAO(v00_s1)) + float(isBlockSolidAO(v00_s2)) + float(isBlockSolidAO(v00_c))) / 3.0;
-    float ao10 = 1.0 - (float(isBlockSolidAO(v10_s1)) + float(isBlockSolidAO(v10_s2)) + float(isBlockSolidAO(v10_c))) / 3.0;
-    float ao01 = 1.0 - (float(isBlockSolidAO(v01_s1)) + float(isBlockSolidAO(v01_s2)) + float(isBlockSolidAO(v01_c))) / 3.0;
-    float ao11 = 1.0 - (float(isBlockSolidAO(v11_s1)) + float(isBlockSolidAO(v11_s2)) + float(isBlockSolidAO(v11_c))) / 3.0;
+    float s1f = float(isBlockSolidAO(s1)), s2f = float(isBlockSolidAO(s2));
+    float s3f = float(isBlockSolidAO(s3)), s4f = float(isBlockSolidAO(s4));
+    float c1f = float(isBlockSolidAO(c1)), c2f = float(isBlockSolidAO(c2));
+    float c3f = float(isBlockSolidAO(c3)), c4f = float(isBlockSolidAO(c4));
 
-    // Bilinear interpolation across the face
+    // Per-vertex occlusion (identical math to the classic 12-sample pattern:
+    // each vertex sums its 2 side + 1 corner neighbor, 1/3 reduction per solid)
+    float ao00 = 1.0 - (s1f + s3f + c1f) / 3.0;
+    float ao10 = 1.0 - (s2f + s3f + c2f) / 3.0;
+    float ao01 = 1.0 - (s1f + s4f + c3f) / 3.0;
+    float ao11 = 1.0 - (s2f + s4f + c4f) / 3.0;
+
+    // Bilinear interpolation across the face, then quantize to 3 cel tones
+    // (soft transitions — hard steps read as "deep-fried" bands on slopes)
     float ao = mix(mix(ao00, ao10, u), mix(ao01, ao11, u), v);
-    return clamp(ao, 0.2, 1.0);
+    ao = clamp(ao, 0.2, 1.0);
+    float aoBand = mix(0.35, 0.66, smoothstep(0.5, 0.62, ao));
+    return mix(aoBand, 1.0, smoothstep(0.8, 0.9, ao));
 }
 
 // Sample RGB lightmap at world position.
@@ -915,11 +985,14 @@ void genLightPool() {
 
 // Sample the ACTIVE sun or moon pool at world point p: 1.0 if light from the pool's
 // direction reaches p (depth test in the pool's ortho space), 0.0 if terrain blocks.
-float poolVis(vec3 p, vec3 origin, vec3 right, vec3 up, vec3 dir, sampler2D tex) {
+// inBounds is set when p projects inside the pool's ortho plane — used by the shaft
+// march to early-out once both pools are out of coverage.
+float poolVis(vec3 p, vec3 origin, vec3 right, vec3 up, vec3 dir, sampler2D tex, out bool inBounds) {
     vec3 d = p - origin;
     vec2 uvw = vec2(dot(d, right) / (2.0 * u_ShadowExtent.x) + 0.5,
                     dot(d, up) / (2.0 * u_ShadowExtent.x) + 0.5);
-    if (uvw.x < 0.0 || uvw.y < 0.0 || uvw.x > 1.0 || uvw.y > 1.0) return 0.0;
+    inBounds = (uvw.x >= 0.0 && uvw.y >= 0.0 && uvw.x <= 1.0 && uvw.y <= 1.0);
+    if (!inBounds) return 0.0;
     float pDepth = -dot(d, dir) / u_ShadowExtent.y;
     return (pDepth <= texture(tex, uvw).r + 0.004) ? 1.0 : 0.0;
 }
@@ -934,19 +1007,30 @@ vec3 marchLightShafts(vec3 ro, vec3 rd, float tMax, Atmosphere at) {
     float sunLit = (at.sunColor.x + at.sunColor.y + at.sunColor.z);
     float moonLit = (at.moonColor.x + at.moonColor.y + at.moonColor.z);
     if ((sunDot <= 0.05 || sunLit <= 0.001) && (moonDot <= 0.05 || moonLit <= 0.001)) return acc;
+    bool sunActive = sunDot > 0.05 && sunLit > 0.001;
+    bool moonActive = moonDot > 0.05 && moonLit > 0.001;
     const int STEPS = 14;
     float step = tMax / float(STEPS);
     float t = step * 0.5;
     for (int i = 0; i < STEPS; i++) {
         vec3 p = ro + rd * t;
-        if (sunDot > 0.05 && sunLit > 0.001) {
-            float vis = poolVis(p, u_ShadowOrigin, u_ShadowRight, u_ShadowUp, u_ShadowSunDir, u_SunPoolTex);
-            acc += at.sunColor * vis * sunDot * step * 0.008;
+        // Inactive sources count as out-of-bounds so the break below also fires
+        // when only ONE pool is active (e.g. daytime sun-only shafts).
+        bool sunOob = !sunActive, moonOob = !moonActive;
+        if (sunActive) {
+            float vis = poolVis(p, u_ShadowOrigin, u_ShadowRight, u_ShadowUp, u_ShadowSunDir, u_SunPoolTex, sunOob);
+            // Deterministic world-space density + distance decay: shafts read as
+            // soft glowing air instead of uniform slices (cartoon volumetric).
+            float density = 0.6 + 0.4 * hash12(p.xz * 0.25);
+            acc += at.sunColor * vis * sunDot * step * 0.010 * density * exp(-t * 0.012);
         }
-        if (moonDot > 0.05 && moonLit > 0.001) {
-            float vis = poolVis(p, u_MoonPoolOrigin, u_MoonPoolRight, u_MoonPoolUp, u_MoonPoolDir, u_MoonPoolTex);
+        if (moonActive) {
+            float vis = poolVis(p, u_MoonPoolOrigin, u_MoonPoolRight, u_MoonPoolUp, u_MoonPoolDir, u_MoonPoolTex, moonOob);
             acc += at.moonColor * vis * moonDot * step * 0.008;
         }
+        // Beyond both pools' ortho coverage every remaining sample is 0 — stop
+        // marching instead of burning the tail steps on guaranteed misses.
+        if (sunOob && moonOob) break;
         t += step;
     }
     return acc;
@@ -968,7 +1052,10 @@ vec3 pointLightContrib(vec3 p, vec3 n) {
         float ndl = max(0.0, dot(n, ldir));
         float att = 1.0 - d / L.radius; att *= att;
         if (fastShadow(p + n * 0.02, ldir, d) > 0.5) {
-            acc += L.color * (L.intensity * ndl * att);
+            // Cartoon 2-tone point light: lit face = full color, grazing/shadowed
+            // faces = nothing (soft shadows from fastShadow are preserved; both
+            // transitions are smooth so the light never "pops" or fries).
+            acc += L.color * (L.intensity * smoothstep(0.15, 0.4, ndl) * smoothstep(0.0, 0.15, att));
         }
     }
     return acc;
@@ -993,6 +1080,7 @@ void main() {
     at.skyZenith = u_SkyZenith;
     at.skyHorizon = u_SkyHorizon;
     at.ambient = u_Ambient;
+    bool underWater = u_UnderWater != 0; // camera eye clipped inside a water block
     vec3 final = vec3(0.0), throu = vec3(1.0), ro = camPos; bool skip = false;
     vec3 godRd = rd; float godT = 96.0; // primary ray for god-ray marching
     uint lastMediumTag = 0xFFFFFFFFu; // Track last translucent medium tag to skip same-medium faces
@@ -1002,7 +1090,12 @@ void main() {
     for (int b = 0; b < 2; b++) {  // reduced from 4 → 2 bounces for perf
         float t; vec3 n; uint voxel, eTex, wirePower, wireConn; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx; ivec4 blockData1;
         if (!traceAll(ro, rd, skip, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx, blockData1)) { final += throu * GetSky(rd, at); break; }
-        if (b == 0) godT = t; // primary-ray hit distance bounds the shaft march
+        int waterEff = (blockData1.w >> 10) & 0xF;
+        bool waterHit = !isEnt && craftingIdx < 0 && waterEff == 2 && voxel != 21u;
+        bool skipNearWater = underWater && b == 0 && waterHit;
+        // Nearest NON-water surface bounds god-ray marching + underwater fog (the
+        // camera's own water voxel face at t≈0 is skipped, as is a water surface).
+        if (!waterHit && t < godT) godT = t;
         
         vec3 hp = ro + rd * t, alb; float trans = 0, refl = 0;
         vec3 beam = vec3(0.0); // hoisted — assigned in each hit-type path below
@@ -1064,10 +1157,10 @@ void main() {
                 // Sun diffuse (no shadow ray — light pools only feed god rays)
                 float sunVisC = max(0.0, dot(n, at.sunDir));
                 beam = at.ambient * 1.0;
-                if (sunVisC > 0.0) beam += at.sunColor * sunVisC;
+                if (sunVisC > 0.0) beam += at.sunColor * celRamp(sunVisC);
                 beam += pointLightContrib(hp, n);
                 vec3 bc = alb * beam * (1.0 - trans);
-                float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, GetSky(rd, at), fog);
+                float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, hazeColor(rd, at), fog);
                 final += throu * bc;
             }
             if (trans <= 0.0) break;
@@ -1097,8 +1190,8 @@ void main() {
                 refl = 0.0;
                 float sunVisH = max(0.0, dot(n, at.sunDir));
                 beam = at.ambient;
-                if (sunVisH > 0.0) beam += at.sunColor * sunVisH;
-                beam += at.moonColor * max(0.0, dot(n, at.moonDir)) * 0.5;
+                if (sunVisH > 0.0) beam += at.sunColor * celRamp(sunVisH);
+                beam += at.moonColor * celRamp(max(0.0, dot(n, at.moonDir))) * 0.5;
                 beam += pointLightContrib(hp, n);
             } else {
                 vec4 entTex = texture(u_EntityTextures, vec3(eUv, float(eTex)));
@@ -1118,8 +1211,8 @@ void main() {
                 // No sun shadow ray — light pools only feed god rays.
                 float sunVisE = max(0.0, dot(n, at.sunDir));
                 beam = at.ambient;
-                if (sunVisE > 0.0) beam += at.sunColor * sunVisE;
-                beam += at.moonColor * max(0.0, dot(n, at.moonDir)) * 0.5;
+                if (sunVisE > 0.0) beam += at.sunColor * celRamp(sunVisE);
+                beam += at.moonColor * celRamp(max(0.0, dot(n, at.moonDir))) * 0.5;
                 beam += pointLightContrib(hp, n);
             }
         } else {
@@ -1219,9 +1312,18 @@ void main() {
                 if (liquidTint.r > liquidTint.b * 1.5) { // Likely Lava
                     trans = 0.0; refl = 0.05;
                     alb = mix(alb, liquidTint, 0.3);
-                } else { // Likely Water
-                    trans = 0.6; refl = 0.15;
+                } else { // Likely Water — Minecraft-shader style surface
+                    trans = 0.55; refl = 0.15;
                     alb = mix(alb, liquidTint, 0.5);
+                    // Fresnel: see-through straight-on, reflective at grazing
+                    // angles (real reflection ray, chosen in the continuation).
+                    float fres = pow(1.0 - max(0.0, dot(n, -rd)), 3.0);
+                    refl = mix(0.04, 0.65, fres);
+                    if (!underWater) {
+                        // Gentle animated shimmer on the visible surface
+                        float shimmer = 0.5 + 0.5 * sin(hp.x * 5.0 + u_Time * 2.2) * sin(hp.z * 4.0 + u_Time * 1.7);
+                        alb = mix(alb, alb * (0.82 + 0.36 * shimmer), 0.4);
+                    }
                 }
             } else if (effectId == 3) { // WIRE (Redstone)
                 if (texSample.a >= 0.1) {
@@ -1279,7 +1381,7 @@ void main() {
                 lightMap = sampleLightmap(lightSamplePos);
             }
             if (lightMap.x < 0.0) lightMap = vec4(0.0);
-            float skyContrib = lightMap.x / 255.0;
+            float skyContrib = (lightMap.x / 255.0) * 1.12; // brighter sunlight
             // Block light: RGB channels with intensity + color tint
             float blockR = lightMap.y, blockG = lightMap.z, blockB = lightMap.w;
             float blockIntensity = max(max(blockR, blockG), blockB);
@@ -1296,7 +1398,7 @@ void main() {
             float sunVis = max(0.0, dot(n, at.sunDir));
             beam = at.ambient * 1.0;
             if (sunVis > 0.0 && skyContrib > 0.03) {
-                beam += at.sunColor * sunVis;
+                beam += at.sunColor * celRamp(sunVis);
             }
             beam *= totalLightContrib * mix(vec3(1.0), blockTint, blockContrib * 0.8);
             beam += at.ambient * 0.3;
@@ -1305,6 +1407,14 @@ void main() {
             // Ambient occlusion: darken face edges/corners based on neighboring blocks
             float ao = computeAmbientOcclusion(hp, n);
             beam *= ao;
+
+            // Water caustics: sunlit upward faces with water directly above get
+            // animated light patterns (seafloor and underwater terrain shimmer).
+            // +0.5 (not +1.0) so 1-block-deep water still triggers: hp sits on the
+            // face plane, and +0.5 lands inside the voxel directly above it.
+            if (n.y > 0.5 && skyContrib > 0.5 && isWaterVoxel(hp + vec3(0.0, 0.5, 0.0))) {
+                beam *= 1.0 + causticAt(hp) * 0.35;
+            }
 
             // ── Block break overlay: Minecraft destroy_stage texture on all 6 faces ──
             // The fix for "only 1 face shows the overlay": use floor(hp - n * 0.5)
@@ -1344,8 +1454,14 @@ void main() {
             }
         }
 
-        vec3 bc = alb * beam * (1.0 - trans - refl);
-        float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, GetSky(rd, at), fog);
+        // Camera clipped inside water: the primary hit is the water voxel we're
+        // inside at t≈0 — drop its shading entirely (no stretched near-surface
+        // texture). The medium tag below still switches to water, so the next
+        // trace skips the whole water column and fog/tint carry the look.
+        if (skipNearWater) { trans = 1.0; alb = vec3(1.0); refl = 0.0; }
+
+        vec3 bc = alb * beam * max(0.0, 1.0 - trans - refl);
+        float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, hazeColor(rd, at), fog);
         // Compute medium tag for face culling between same-medium translucent blocks.
         // Groups all water variants (15, 150-156) as tag 1, lava (21) as tag 2,
         // and uses block ID as tag for all other translucent blocks (e.g., glass).
@@ -1370,8 +1486,10 @@ void main() {
         }
         final += throu * bc;
 
-        // Transmission/refl: set up next ray
-        if (trans > 0.0) {
+        // Transmission/refl: set up next ray. Only LIQUID surfaces whose reflection
+        // exceeds transmission (water at grazing angles) reflect; other transparent
+        // blocks (glass/ice) keep the classic transmit path.
+        if (trans > 0.0 && (refl <= trans || waterEff != 2)) {
             if (!isEnt) lastMediumTag = mediumTag;
             ro = hp + rd * 0.01; skip = true;
         }
@@ -1382,8 +1500,36 @@ void main() {
     // God rays: volumetric shafts from the ACTIVE sun/moon light pools. March the
     // primary ray up to its first hit; shafts only accumulate in air gaps.
     if (godT > 0.5) final += marchLightShafts(camPos, godRd, min(godT, 96.0), at);
+
+    // Underwater: distance fog into deep blue — a shader-style post-pass that
+    // makes the view readable when the camera is clipped inside water.
+    if (underWater) {
+        float fogDist = godT;
+        if (godT >= 95.0 && godRd.y > 0.001) {
+            // Looking up through the surface: fog by the water thickness above
+            // the eye, not the (infinite) sky distance, so the surface stays bright.
+            fogDist = max(0.2, (ceil(camPos.y + 0.001) - camPos.y) / godRd.y);
+        }
+        float vis = 1.0 - exp(-fogDist * 0.05);
+        vec3 waterFog = vec3(0.015, 0.16, 0.26);
+        final = mix(final, waterFog, clamp(0.12 + vis * 0.85, 0.0, 0.94));
+    }
     
     vec3 result = ACESFilm(final);
+    // Cartoon grade on the scene only (UI alpha-blended afterwards, fullscreen
+    // UI early-outs before this): saturation boost + 12-level posterize.
+    // Band edges use a narrow smoothstep blend instead of a hash dither — the
+    // old dither showed up as grain on dark surfaces, this stays clean.
+    float lum = dot(result, vec3(0.299, 0.587, 0.114));
+    result = mix(vec3(lum), result, 1.06); // subtle pop; 1.18 oversaturated ("deep-fried")
+    if (uiCol.a < 0.5) {
+        // 12-level posterize with a wider soft blend at the band edges
+        vec3 scaled = clamp(result * 12.0, 0.0, 11.0);
+        vec3 lo = floor(scaled);
+        vec3 frac = scaled - lo;
+        vec3 hi = min(lo + 1.0, 11.0);
+        result = mix(lo, hi, smoothstep(0.38, 0.62, frac)) / 12.0;
+    }
     if (uiCol.a > 0.0) result = mix(result, uiCol.rgb, uiCol.a);
     imageStore(imgOutput, px, vec4(pow(result, vec3(1.0/2.2)), 1.0));
 }
