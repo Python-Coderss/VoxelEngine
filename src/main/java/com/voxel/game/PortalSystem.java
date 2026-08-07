@@ -33,7 +33,15 @@ public class PortalSystem {
         if (now - ctx.lastPortalTeleportTime < 1.0) return;
 
         DimensionType target;
-        if (voxel == PORTAL_NETHER) {
+        if (ctx.activeDimension == DimensionType.PORTAL_HALL) {
+            // Portal Hall endpoints are laid out west-to-east: Nether, Aether,
+            // End, and Overworld. Their voxel IDs intentionally reuse the normal
+            // portal textures, so the hall coordinate selects the destination.
+            if (px < -14) target = DimensionType.NETHER;
+            else if (px < 0) target = DimensionType.AETHER;
+            else if (px < 14) target = DimensionType.END;
+            else target = DimensionType.OVERWORLD;
+        } else if (voxel == PORTAL_NETHER) {
             target = ctx.activeDimension == DimensionType.NETHER ? DimensionType.OVERWORLD : DimensionType.NETHER;
         } else {
             target = ctx.activeDimension == DimensionType.AETHER ? DimensionType.OVERWORLD : DimensionType.AETHER;

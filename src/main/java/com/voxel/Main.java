@@ -252,6 +252,8 @@ public class Main {
         // Save data on shutdown
         if (ctx.worldSaveManager != null) {
             ctx.worldSaveManager.saveCraftingData(ctx.activeDimension, ctx.craftingTableManager);
+            ctx.worldSaveManager.saveSurfaceCraftingData(ctx.activeDimension, ctx.surfaceCraftingManager);
+            ctx.worldSaveManager.saveCommandBlockData(ctx.activeDimension, ctx.commandBlockManager);
             ctx.worldSaveManager.saveFurnaceData(ctx.activeDimension, ctx.furnaceManager);
             ctx.worldSaveManager.saveChestData(ctx.activeDimension, ctx.chestManager);
         }
@@ -373,6 +375,7 @@ public class Main {
         ctx = new GameContext();
         cameraController = new CameraController(ctx, this);
         ctx.activeDimension = activeDimension;
+        ctx.commandBlockManager.beginDimension(activeDimension.id);
         ctx.entityManager = entityManager;
         ctx.blockDataManager = blockDataManager;
         ctx.blockRegistry = blockRegistry;
@@ -384,6 +387,8 @@ public class Main {
         ctx.cameraMode = cameraMode;
         ctx.width = width;
         ctx.height = height;
+        ctx.lastMouseX = lastMouseX;
+        ctx.lastMouseY = lastMouseY;
         // Defer world GPU upload to render thread (avoid GL calls from LogicThread)
         ctx.uploadWorldToGpu = () -> { needsWorldUpload = true; };
         ctx.updateCursorMode = this::updateCursorMode;
@@ -415,6 +420,7 @@ public class Main {
         blockInteraction = new BlockInteraction(ctx);
         portalSystem = new PortalSystem(ctx, blockInteraction);
         commandProcessor = new CommandProcessor(ctx);
+        ctx.commandProcessor = commandProcessor;
         atmosphereRenderer = new AtmosphereRenderer(computeProgram);
 
         // Initialize villager TV and village systems
@@ -604,6 +610,8 @@ public class Main {
         chunkManager.setFluidManager(ctx.fluidManager);
 
         playerEntity = new com.voxel.entity.PlayerEntity(10_000, new Vector3f(player.getPosition()), textureManager);
+        ctx.worldSaveManager.loadCommandBlockData(activeDimension, ctx.commandBlockManager);
+        ctx.worldSaveManager.loadSurfaceCraftingData(activeDimension, ctx.surfaceCraftingManager);
         playerEntity.dimension = activeDimension;
         entityManager.addEntity(playerEntity);
 
@@ -961,6 +969,7 @@ public class Main {
         if (redstoneManager != null) {
             redstoneManager.setPlayerPosition(pPosForRS.x, pPosForRS.y, pPosForRS.z);
             redstoneManager.tickLamps();
+            ctx.commandBlockManager.tick(ctx, dt);
         }
 
         // Tick fluid flow (process up to 64 pending fluid blocks per tick)
@@ -1676,6 +1685,29 @@ public class Main {
     }
 
     public void handleCommandModeKey(int key) {
+        if (ctx != null && ctx.commandBlockEditorOpen) {
+            if (key == GLFW_KEY_ESCAPE) {
+                ctx.commandBlockEditorOpen = false;
+                ctx.commandMode = false;
+                commandMode = false;
+                setInventoryOpen(false);
+                return;
+            }
+            if (key == GLFW_KEY_BACKSPACE && ctx.commandBlockEditorCommand.length() > 0) {
+                ctx.commandBlockEditorCommand = ctx.commandBlockEditorCommand.substring(0, ctx.commandBlockEditorCommand.length() - 1);
+                hud.inventoryUiDirty = true;
+                return;
+            }
+            if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) {
+                blockInteraction.saveCommandBlockEditor();
+                ctx.commandBlockEditorOpen = false;
+                ctx.commandMode = false;
+                commandMode = false;
+                setInventoryOpen(false);
+                return;
+            }
+            return;
+        }
         if (key == GLFW_KEY_ESCAPE) {
             cancelCommandMode();
             return;
@@ -1695,6 +1727,13 @@ public class Main {
     }
 
     public void handleCharInput(long win, int codepoint) {
+        if (ctx != null && ctx.commandBlockEditorOpen) {
+            if (codepoint >= 32 && codepoint <= 126 && ctx.commandBlockEditorCommand.length() < 512) {
+                ctx.commandBlockEditorCommand += (char) codepoint;
+                hud.inventoryUiDirty = true;
+            }
+            return;
+        }
         if (!commandMode) return;
         if (codepoint < 32 || codepoint > 126) return;
         commandBuffer.append((char) codepoint);
@@ -1716,11 +1755,15 @@ public class Main {
             // Track mouse position for inventory UI interactions (slot clicks, item drag)
             lastMouseX = (float) xpos;
             lastMouseY = (float) ypos;
+            ctx.lastMouseX = lastMouseX;
+            ctx.lastMouseY = lastMouseY;
             return;
         }
 
         float xoffset = (float) xpos - lastMouseX;
         float yoffset = lastMouseY - (float) ypos;
+        ctx.lastMouseX = (float) xpos;
+        ctx.lastMouseY = (float) ypos;
         lastMouseX = (float) xpos;
         lastMouseY = (float) ypos;
 
@@ -1753,6 +1796,23 @@ public class Main {
 
         if (action != GLFW_PRESS) return;
 
+        // Explicit HUD controls take priority over the world/table raycast. This
+        // lets the MCSM Craft button consume the click instead of treating it as
+        // a miss and continuing into inventory/world input.
+        if (ctx.craftingTableOpen && inventoryOpen && hud.handleMouseClick(lastMouseX, lastMouseY)) {
+            return;
+        }
+
+        // Surface crafting uses the four quadrants of the targeted block's top face.
+        if (ctx.surfaceCraftingOpen && inventoryOpen) {
+            int cell = blockInteraction.raycastSurfaceCraftingCell();
+            if (cell >= 0) {
+                playerInventory.handleCraftingSlotClick(cell);
+                hud.inventoryUiDirty = true;
+                return;
+            }
+        }
+
         // Crafting table drag-and-drop via 3D raycast
         if (ctx.craftingTableOpen && inventoryOpen) {
             System.out.println("Crafting: mouse click at screen (" + lastMouseX + "," + lastMouseY + ")");
@@ -1777,10 +1837,19 @@ public class Main {
         if (commandMode) return;
 
         if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-            if ((mods & GLFW_MOD_SHIFT) != 0) {
+            if ((mods & GLFW_MOD_ALT) != 0) {
+                blockInteraction.attemptSurfaceCrafting();
+            } else if ((mods & GLFW_MOD_SHIFT) != 0) {
                 portalSystem.attemptActivate();
             } else {
                 blockInteraction.attemptPlaceBlock();
+                // A command-block editor is opened by BlockInteraction, but the
+                // keyboard callback is owned by Main. Mirror the modal state
+                // immediately so Enter/Escape/Backspace are captured this frame.
+                if (ctx.commandBlockEditorOpen) {
+                    commandMode = true;
+                    updateCursorMode();
+                }
             }
         }
     }
@@ -1829,6 +1898,14 @@ public class Main {
             ctx.leftMousePressedThisFrame = false; // prevent stale press from world
         }
         if (!open) {
+            // Save surface-crafting grid before closing. Its ingredients remain
+            // stored on the targeted block and can be reopened later.
+            if (ctx.surfaceCraftingOpen) {
+                playerInventory.returnSurfaceCraftingItems();
+                if (ctx.worldSaveManager != null) {
+                    ctx.worldSaveManager.saveSurfaceCraftingData(ctx.activeDimension, ctx.surfaceCraftingManager);
+                }
+            }
             // Save crafting grid back to CraftingTableManager before closing
             if (ctx.craftingTableOpen) {
                 playerInventory.saveToCraftingTable(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ);
@@ -1846,6 +1923,9 @@ public class Main {
             }
             playerInventory.setCarriedStack(null);
             ctx.craftingTableOpen = false;
+            ctx.surfaceCraftingOpen = false;
+            ctx.commandBlockEditorOpen = false;
+            ctx.commandMode = false;
             ctx.furnaceOpen = false;
             ctx.chestOpen = false;
             ctx.activeUI = GameContext.ActiveUI.NONE;
@@ -1913,29 +1993,42 @@ public class Main {
         int count = 0;
         int craftCount = 0;
 
-        // ---- Crafting-grid items (existing behaviour) ----
+        // ---- Crafting-grid items (3x3 table or 2x2 exposed surface) ----
         String[][] grid = null;
+        boolean surfaceGrid = ctx.surfaceCraftingOpen && ctx.activeUI == GameContext.ActiveUI.SURFACE_CRAFTING;
         if (ctx.craftingTableOpen) {
             grid = playerInventory.getCraftingGrid3x3();
+        } else if (surfaceGrid) {
+            grid = playerInventory.getCraftingGrid();
         } else if (ctx.craftingTableManager.hasGrid(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ)) {
             grid = ctx.craftingTableManager.getGrid(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ);
         }
 
         if (grid != null) {
-            // Buffer-relative positions (camera + entities are also relative to worldOffset)
             float woxf = (float)world.getOffsetX(), woyf = (float)world.getOffsetY(), wozf = (float)world.getOffsetZ();
-            float bx = ctx.craftingTableBlockX - woxf;
-            float bz = ctx.craftingTableBlockZ - wozf;
-            float by = ctx.craftingTableBlockY - woyf + 1.0f + CRAFTING_ITEM_SCALE * 0.5f;
+            int gridSize = surfaceGrid ? 2 : 3;
+            int blockX = surfaceGrid ? ctx.surfaceCraftingBlockX : ctx.craftingTableBlockX;
+            int blockY = surfaceGrid ? ctx.surfaceCraftingBlockY : ctx.craftingTableBlockY;
+            int blockZ = surfaceGrid ? ctx.surfaceCraftingBlockZ : ctx.craftingTableBlockZ;
+            float bx = blockX - woxf;
+            float bz = blockZ - wozf;
+            float by = blockY - woyf + 1.0f + CRAFTING_ITEM_SCALE * 0.5f;
 
-            for (int r = 0; r < 3; r++) {
-                for (int c = 0; c < 3; c++) {
+            for (int r = 0; r < gridSize; r++) {
+                for (int c = 0; c < gridSize; c++) {
                     String itemId = grid[r][c];
                     if (itemId == null) continue;
                     ItemDefinitions.ItemDefinition def = itemDefinitions.getDefinition(itemId);
                     if (def == null || def.blockId <= 0) continue;
-                    float pz = bz + CT_MARGIN + c * CT_STEP + CT_HALF_CELL;
-                    float px = bx + (1.0f - CT_MARGIN) - r * CT_STEP - CT_HALF_CELL;
+                    float px;
+                    float pz;
+                    if (surfaceGrid) {
+                        px = bx + (c + 0.5f) / 2.0f;
+                        pz = bz + (r + 0.5f) / 2.0f;
+                    } else {
+                        pz = bz + CT_MARGIN + c * CT_STEP + CT_HALF_CELL;
+                        px = bx + (1.0f - CT_MARGIN) - r * CT_STEP - CT_HALF_CELL;
+                    }
                     int idx = count * 8;
                     reusableItemDataBuf[idx] = px;
                     reusableItemDataBuf[idx + 1] = by;
@@ -2503,6 +2596,21 @@ public class Main {
         blockRegistry.register("villager_tv", 274);
         shaderBlockRegistry.register(274, 274);
         blockDataManager.registerBlock(274, "villager_tv", textureManager, mcModels);
+
+        // --- Ancient-builder command blocks and power-fragment block ---
+        blockRegistry.register("command_block", 275);
+        shaderBlockRegistry.register(275, 275);
+        blockDataManager.registerBlock(275, "command_block", textureManager, mcModels);
+        blockRegistry.register("chain_command_block", 276);
+        shaderBlockRegistry.register(276, 276);
+        blockDataManager.registerBlock(276, "chain_command_block", textureManager, mcModels);
+        blockRegistry.register("repeating_command_block", 277);
+        shaderBlockRegistry.register(277, 277);
+        blockDataManager.registerBlock(277, "repeating_command_block", textureManager, mcModels);
+        blockRegistry.register("power_fragment_block", 278);
+        shaderBlockRegistry.register(278, 278);
+        blockDataManager.registerBlock(278, "power_fragment_block", textureManager, mcModels);
+
         shaderBlockRegistry.registerDirectional(263, com.voxel.utils.Direction.DOWN, 263, 0);
         shaderBlockRegistry.registerDirectional(263, com.voxel.utils.Direction.UP, 263, 1);
         shaderBlockRegistry.registerDirectional(263, com.voxel.utils.Direction.NORTH, 263, 2);

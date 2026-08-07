@@ -48,6 +48,7 @@ public class GameContext {
 
     // --- Core managers ---
     public ItemDefinitions itemDefinitions;
+    public CommandProcessor commandProcessor;
     /** Deduplicated canonical block/item registry — one entry per logical item. */
     public CanonicalRegistry canonicalRegistry;
     public PlayerInventory playerInventory;
@@ -115,8 +116,18 @@ public class GameContext {
 
     // --- Crafting ---
     public CraftingTableManager craftingTableManager = new CraftingTableManager();
+    public SurfaceCraftingManager surfaceCraftingManager = new SurfaceCraftingManager();
+    /** Persistent command-block programs for the active dimension. */
+    public CommandBlockManager commandBlockManager = new CommandBlockManager();
+    public boolean commandBlockEditorOpen = false;
+    public int commandBlockEditorX, commandBlockEditorY, commandBlockEditorZ;
+    public String commandBlockEditorCommand = "";
     public boolean craftingTableOpen = false;
     public int craftingTableBlockX, craftingTableBlockY, craftingTableBlockZ;
+    /** Alt-right-click surface crafting target and interaction state. */
+    public boolean surfaceCraftingOpen = false;
+    public int surfaceCraftingBlockX, surfaceCraftingBlockY, surfaceCraftingBlockZ;
+    public String[][] surfaceCraftingGrid = new String[2][2];
 
     // --- Furnace ---
     public FurnaceManager furnaceManager = new FurnaceManager();
@@ -173,7 +184,7 @@ public class GameContext {
     public com.voxel.world.FluidManager fluidManager;
 
     // --- Active UI state (which overlay is shown) ---
-    public enum ActiveUI { NONE, INVENTORY, CHEST, FURNACE, CRAFTING_TABLE, TV }
+    public enum ActiveUI { NONE, INVENTORY, CHEST, FURNACE, CRAFTING_TABLE, SURFACE_CRAFTING, COMMAND_BLOCK, TV }
     public ActiveUI activeUI = ActiveUI.NONE;
 
     // --- Villager TV ---
@@ -271,6 +282,8 @@ public class GameContext {
         // Save crafting/furnace/chest data for the current dimension before switching
         if (worldSaveManager != null && previous != null) {
             worldSaveManager.saveCraftingData(previous, craftingTableManager);
+            worldSaveManager.saveSurfaceCraftingData(previous, surfaceCraftingManager);
+            worldSaveManager.saveCommandBlockData(previous, commandBlockManager);
             worldSaveManager.saveFurnaceData(previous, furnaceManager);
             worldSaveManager.saveChestData(previous, chestManager);
         }
@@ -284,6 +297,7 @@ public class GameContext {
         dimensionManager.ensureDimension(target, renderDistance);
         dimensionManager.switchTo(target);
         activeDimension = target;
+        commandBlockManager.beginDimension(target.id);
         world = dimensionManager.getActiveWorld();
         chunkManager = dimensionManager.getActiveChunkManager();
         redstoneManager = new RedstoneManager(world, chunkManager);
@@ -298,13 +312,15 @@ public class GameContext {
         // --- Determine spawn position with coordinate translation ---
         float tx = translateCoordinate(sourcePosition.x, previous, target);
         float tz = translateCoordinate(sourcePosition.z, previous, target);
-        int spawnX = Math.round(tx);
-        int spawnZ = Math.round(tz);
+        int spawnX = target == DimensionType.PORTAL_HALL ? 0 : Math.round(tx);
+        int spawnZ = target == DimensionType.PORTAL_HALL ? 0 : Math.round(tz);
         // Do not scan terrain here: the target world's spawn chunks may not exist yet.
         // Use a harmless fallback while the loading overlay is shown, then resolve the
         // actual surface after ChunkManager confirms the spawn area is generated.
         int spawnY;
-        if (target == DimensionType.NETHER) {
+        if (target == DimensionType.PORTAL_HALL) {
+            spawnY = 67;
+        } else if (target == DimensionType.NETHER) {
             spawnY = 32;
         } else if (target == DimensionType.AETHER) {
             // Start near the configured Aether terrain height so the immediate
@@ -328,6 +344,8 @@ public class GameContext {
         // Load crafting/furnace/chest data for the new dimension
         if (worldSaveManager != null) {
             worldSaveManager.loadCraftingData(target, craftingTableManager);
+            worldSaveManager.loadSurfaceCraftingData(target, surfaceCraftingManager);
+            worldSaveManager.loadCommandBlockData(target, commandBlockManager);
             worldSaveManager.loadFurnaceData(target, furnaceManager);
             worldSaveManager.loadChestData(target, chestManager);
         }

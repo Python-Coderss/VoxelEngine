@@ -61,7 +61,7 @@ public class CommandProcessor {
 
     private void handleDimension(String[] parts) {
         if (parts.length < 2) {
-            ctx.setStatus("Usage: /dimension <overworld|nether|end|aether|error502>");
+            ctx.setStatus("Usage: /dimension <overworld|nether|end|aether|error502|portal_hall>");
             return;
         }
         String dimName = parts[1].toLowerCase(Locale.ROOT);
@@ -71,6 +71,9 @@ public class CommandProcessor {
             case "end": target = DimensionType.END; break;
             case "aether": target = DimensionType.AETHER; break;
             case "error502": target = DimensionType.ERROR502; break;
+            case "portal_hall":
+            case "portalhall":
+            case "hall": target = DimensionType.PORTAL_HALL; break;
             default: target = DimensionType.OVERWORLD; break;
         }
         if (target == ctx.activeDimension) {
@@ -86,14 +89,38 @@ public class CommandProcessor {
             return;
         }
         try {
-            double x = Double.parseDouble(parts[1]);
-            double y = Double.parseDouble(parts[2]);
-            double z = Double.parseDouble(parts[3]);
+            boolean relative = parts[1].startsWith("~") && parts[2].startsWith("~") && parts[3].startsWith("~");
+            if (ctx.gameMode == GameMode.SURVIVAL && !relative) {
+                ctx.setStatus("Survival /tp requires relative coordinates (use ~). ");
+                return;
+            }
+            Vector3f current = ctx.player.getPosition();
+            double x = parseCoordinate(parts[1], current.x);
+            double y = parseCoordinate(parts[2], current.y);
+            double z = parseCoordinate(parts[3], current.z);
             ctx.player.teleport(x, y, z);
-            ctx.setStatus(String.format("Teleported to %.1f, %.1f, %.1f", x, y, z));
+            ctx.setStatus(String.format(Locale.ROOT, "Teleported to %.1f, %.1f, %.1f", x, y, z));
         } catch (NumberFormatException e) {
             ctx.setStatus("Invalid coordinates. Usage: /tp <x> <y> <z>");
         }
+    }
+
+    private double parseCoordinate(String token, float current) {
+        if (token.startsWith("~")) {
+            String offset = token.substring(1);
+            return current + (offset.isEmpty() ? 0.0 : Double.parseDouble(offset));
+        }
+        return Double.parseDouble(token);
+    }
+
+    /** Executes a command block with its origin and macro context. */
+    public void executeCommandBlock(String raw, int blockX, int blockY, int blockZ) {
+        String command = CommandBlockManager.expandMacros(raw, ctx, blockX, blockY, blockZ);
+        if (ctx.gameMode == GameMode.SURVIVAL && !CommandBlockManager.isAllowedInSurvival(command)) {
+            ctx.setStatus("Command block rejected an unsafe survival command.");
+            return;
+        }
+        execute(command);
     }
 
     private void handleUnstuck() {
@@ -218,10 +245,10 @@ public class CommandProcessor {
         sb.append("\n  /spawn - Teleport to spawn");
         sb.append("\n  /tp <x> <y> <z> - Teleport to coordinates");
         sb.append("\n  /unstuck - Move upward until the player is clear");
-        sb.append("\n  /dimension <overworld|nether|end|aether|error502> - Switch dimension");
+        sb.append("\n  /dimension <overworld|nether|end|aether|error502|portal_hall> - Switch dimension");
         sb.append("\n  /setuv <full|half|empty> <x> <y> [w] [h] - Adjust heart UVs");
         sb.append("\n  /camera <follow|orbit|fixed> - Set camera shot type");
-        sb.append("\n  /locate <village> - Find nearest village");
+        sb.append("\n  /locate <village|testing_facility> - Find a nearby structure");
         sb.append("\n  /tv <channel> - Change TV channel (0=Static,1=Shopping,2=Weather,3=VNN)");
         sb.append("\n  /screenshot - Save a screenshot to screenshots/");
         sb.append("\n  /light <r> <g> <b> - Place a point light (RGB 0-255, radius 32) at your position (/light clear)");
@@ -312,7 +339,7 @@ public class CommandProcessor {
 
     private void handleLocate(String[] parts) {
         if (parts.length < 2) {
-            ctx.setStatus("Usage: /locate <village>");
+            ctx.setStatus("Usage: /locate <village|testing_facility>");
             return;
         }
         String structure = parts[1].toLowerCase(Locale.ROOT);
@@ -328,8 +355,23 @@ public class CommandProcessor {
             } else {
                 ctx.setStatus("No village found nearby. Try exploring more!");
             }
+        } else if (structure.equals("testing_facility")
+                || structure.equals("testingfacility")
+                || structure.equals("testing")
+                || structure.equals("facility")) {
+            int fx = com.voxel.world.AncientBuilderFacility.FACILITY_X;
+            int fy = com.voxel.world.AncientBuilderFacility.closestFacilityYAbove(ctx.player.getPosition().y);
+            int fz = com.voxel.world.AncientBuilderFacility.FACILITY_Z;
+            float px = ctx.player.getPosition().x;
+            float py = ctx.player.getPosition().y;
+            float pz = ctx.player.getPosition().z;
+            int dist = (int)Math.sqrt((fx - px) * (fx - px)
+                    + (fy - py) * (fy - py)
+                    + (fz - pz) * (fz - pz));
+            ctx.setStatus("Ancient-builder testing facility: " + fx + ", " + fy + ", " + fz
+                    + " (" + dist + " blocks away)");
         } else {
-            ctx.setStatus("Unknown structure: " + structure + ". Available: village");
+            ctx.setStatus("Unknown structure: " + structure + ". Available: village, testing_facility");
         }
     }
 

@@ -11,7 +11,7 @@ public class PlayerInventory {
     public static final int INVENTORY_SIZE = 20;
     public static final int CRAFTING_SLOTS = 5;
     public static final int CRAFTING_RESULT_SLOT = 4;
-    public static final int CRAFTING_3X3_SLOTS = 9;   // 3x3 grid, center slot (index 4) is result
+    public static final int CRAFTING_3X3_SLOTS = 9;   // 3x3 ingredient grid
 
     private final ItemDefinitions.ItemStack[] inventory = new ItemDefinitions.ItemStack[INVENTORY_SIZE];
     private String[][] craftingGrid = new String[2][2];
@@ -19,8 +19,9 @@ public class PlayerInventory {
     private int selectedSlot = 0;
     private ItemDefinitions.ItemStack carriedStack;
 
-    // Crafting table result tracking
+    // Crafting table preview state. Inputs stay in the grid until the Craft button is pressed.
     private boolean crafting3x3HasResult = false;
+    private String crafting3x3ResultItemId;
     private int crafting3x3ResultCount = 0;
 
     private final GameContext ctx;
@@ -37,9 +38,11 @@ public class PlayerInventory {
     public void setSlot(int i, ItemDefinitions.ItemStack stack) { inventory[i] = stack; }
     public ItemDefinitions.ItemStack getCarriedStack() { return carriedStack; }
     public void setCarriedStack(ItemDefinitions.ItemStack stack) { this.carriedStack = stack; }
+    /** Legacy 2x2 recipe buffer used by surface crafting; not rendered in inventory. */
     public String[][] getCraftingGrid() { return craftingGrid; }
     public String[][] getCraftingGrid3x3() { return craftingGrid3x3; }
     public boolean hasCrafting3x3Result() { return crafting3x3HasResult; }
+    public String getCrafting3x3ResultItemId() { return crafting3x3ResultItemId; }
     public int getCrafting3x3ResultCount() { return crafting3x3ResultCount; }
 
     public void clearSlot(int i) {
@@ -77,7 +80,7 @@ public class PlayerInventory {
     // --- Item management ---
     public boolean addItem(String itemId, int count) {
         ItemDefinitions.ItemDefinition def = ctx.itemDefinitions.getDefinition(itemId);
-        if (def == null) return false;
+        if (def == null || count <= 0) return false;
         int remaining = count;
 
         // Stack onto existing stacks first
@@ -101,6 +104,23 @@ public class PlayerInventory {
             }
         }
         return remaining == 0;
+    }
+
+    /** Returns whether the entire stack can fit without partially mutating inventory. */
+    private boolean canAddItem(String itemId, int count) {
+        ItemDefinitions.ItemDefinition def = ctx.itemDefinitions.getDefinition(itemId);
+        if (def == null || count <= 0) return false;
+        int capacity = 0;
+        for (int i = 0; i < INVENTORY_SIZE; i++) {
+            ItemDefinitions.ItemStack stack = inventory[i];
+            if (stack == null) {
+                capacity += def.maxStack;
+            } else if (stack.itemId.equals(itemId) && stack.count < def.maxStack) {
+                capacity += def.maxStack - stack.count;
+            }
+            if (capacity >= count) return true;
+        }
+        return false;
     }
 
     public void populateStarting() {
@@ -145,7 +165,7 @@ public class PlayerInventory {
     }
 
     public void handleCraftingSlotClick(int slotIndex) {
-        if (!ctx.inventoryOpen) return;
+        if (!ctx.inventoryOpen || ctx.activeUI != GameContext.ActiveUI.SURFACE_CRAFTING) return;
         if (slotIndex == CRAFTING_RESULT_SLOT) {
             CraftingManager.CraftingRecipe match = ctx.craftingManager.matchRecipe(craftingGrid);
             if (match != null) {
@@ -170,27 +190,77 @@ public class PlayerInventory {
                 }
             }
         }
+        // Keep the ingredients attached to the targeted block immediately. Do
+        // not wait for the overlay to close: dimension switches, interruptions,
+        // or another UI transition can otherwise discard the temporary buffer.
+        saveSurfaceCraftingGrid();
+        if (ctx.worldSaveManager != null) {
+            ctx.worldSaveManager.saveSurfaceCraftingData(ctx.activeDimension, ctx.surfaceCraftingManager);
+        }
+    }
+
+    /** Opens/refreshes the 2x2 surface-crafting buffer for a target block. */
+    public void loadSurfaceCraftingGrid(int x, int y, int z) {
+        ctx.surfaceCraftingBlockX = x;
+        ctx.surfaceCraftingBlockY = y;
+        ctx.surfaceCraftingBlockZ = z;
+        String[][] saved = ctx.surfaceCraftingManager.getGrid(x, y, z);
+        for (int r = 0; r < 2; r++) {
+            for (int c = 0; c < 2; c++) {
+                craftingGrid[r][c] = saved != null ? saved[r][c] : null;
+            }
+        }
+    }
+
+    public void saveSurfaceCraftingGrid() {
+        ctx.surfaceCraftingManager.setGrid(ctx.surfaceCraftingBlockX, ctx.surfaceCraftingBlockY,
+            ctx.surfaceCraftingBlockZ, craftingGrid);
+    }
+
+    /** Returns the currently valid surface-crafting recipe, if any. */
+    public CraftingManager.CraftingRecipe getSurfaceCraftingPreview() {
+        return ctx.craftingManager.matchRecipe(craftingGrid);
+    }
+
+    /** Crafts the surface 2x2 recipe after the explicit Craft button is pressed. */
+    public boolean craftSurface2x2() {
+        if (!ctx.inventoryOpen || ctx.activeUI != GameContext.ActiveUI.SURFACE_CRAFTING) return false;
+        CraftingManager.CraftingRecipe match = getSurfaceCraftingPreview();
+        if (match == null || !canAddItem(match.resultItemId, match.resultCount)) return false;
+        addItem(match.resultItemId, match.resultCount);
+        ctx.craftingManager.consumeItems(craftingGrid);
+        saveSurfaceCraftingGrid();
+        ctx.setStatus("Crafted " + match.resultItemId.replace('_', ' '));
+        return true;
+    }
+
+    /**
+     * Persists surface ingredients and safely returns the cursor-carried stack
+     * when the overlay closes. The four grid ingredients stay on the block.
+     */
+    public void returnSurfaceCraftingItems() {
+        if (ctx.activeUI != GameContext.ActiveUI.SURFACE_CRAFTING) return;
+        saveSurfaceCraftingGrid();
+        returnCarriedStackToInventory();
+    }
+
+    /** Never silently destroys a stack held by the inventory cursor. */
+    public void returnCarriedStackToInventory() {
+        if (carriedStack == null) return;
+        ItemDefinitions.ItemStack held = carriedStack;
+        carriedStack = null;
+        if (canAddItem(held.itemId, held.count)) {
+            addItem(held.itemId, held.count);
+        } else if (ctx.droppedItemManager != null && ctx.player != null) {
+            ctx.droppedItemManager.spawn(held.itemId, held.count,
+                (int) Math.floor(ctx.player.getPosition().x),
+                (int) Math.floor(ctx.player.getPosition().y),
+                (int) Math.floor(ctx.player.getPosition().z));
+        }
     }
 
     public void handleCrafting3x3SlotClick(int slotIndex) {
         if (!ctx.inventoryOpen) return;
-
-        // Center slot (index 4) acts as result slot when a recipe is matched
-        if (slotIndex == 4 && crafting3x3HasResult) {
-            // Collect the result from the center slot
-            String resultItemId = craftingGrid3x3[1][1];
-            if (resultItemId != null && addItem(resultItemId, crafting3x3ResultCount)) {
-                // Clear entire grid and reset result state
-                for (int r = 0; r < 3; r++) {
-                    for (int c = 0; c < 3; c++) {
-                        craftingGrid3x3[r][c] = null;
-                    }
-                }
-                crafting3x3HasResult = false;
-                crafting3x3ResultCount = 0;
-            }
-            return;
-        }
 
         int gridRow = slotIndex / 3;
         int gridCol = slotIndex % 3;
@@ -201,11 +271,6 @@ public class PlayerInventory {
             if (gridItem != null) {
                 carriedStack = new ItemDefinitions.ItemStack(gridItem, 1);
                 craftingGrid3x3[gridRow][gridCol] = null;
-                // Clear result state if center slot was modified
-                if (slotIndex == 4) {
-                    crafting3x3HasResult = false;
-                    crafting3x3ResultCount = 0;
-                }
             }
         } else {
             // Place item into slot
@@ -216,7 +281,8 @@ public class PlayerInventory {
             }
         }
 
-        // After modifying non-center slots, auto-check for recipe match
+        // Refresh the preview without consuming any ingredients. The Craft button
+        // performs the actual consume-and-give operation.
         checkCrafting3x3Recipe();
     }
 
@@ -233,39 +299,59 @@ public class PlayerInventory {
             }
         }
         crafting3x3HasResult = false;
+        crafting3x3ResultItemId = null;
         crafting3x3ResultCount = 0;
         checkCrafting3x3Recipe();
     }
 
     /**
-     * Saves the current 3x3 grid back to the CraftingTableManager.
-     * Clears the result slot before saving (result is virtual, not actual items).
+     * Saves only the real ingredient grid. A recipe preview is derived state and
+     * must never replace or clear the center ingredient while persisting.
      */
     public void saveToCraftingTable(int x, int y, int z) {
-        // Clear the virtual result slot before persisting
-        if (crafting3x3HasResult) {
-            craftingGrid3x3[1][1] = null;
-            crafting3x3HasResult = false;
-            crafting3x3ResultCount = 0;
-        }
         ctx.craftingTableManager.setGrid(x, y, z, craftingGrid3x3);
     }
 
     /**
-     * Auto-checks if the current 3x3 grid matches a recipe.
-     * If so, consumes the input items and places the result in the center slot.
+     * Attempts the currently previewed 3x3 recipe. Inputs are consumed only after
+     * the result has been accepted by the player's inventory.
+     *
+     * @return true when a result was added and the ingredient grid was consumed
      */
-    private void checkCrafting3x3Recipe() {
-        if (crafting3x3HasResult) return; // Already have a result, don't override
+    public boolean craft3x3() {
+        if (!ctx.inventoryOpen) return false;
 
         CraftingManager.CraftingRecipe match = ctx.craftingManager.matchRecipe3x3(craftingGrid3x3);
-        if (match != null) {
-            // Consume all input slots (clear them)
-            ctx.craftingManager.consumeItems3x3(craftingGrid3x3);
-            // Place result in center slot
-            craftingGrid3x3[1][1] = match.resultItemId;
-            crafting3x3HasResult = true;
-            crafting3x3ResultCount = match.resultCount;
+        if (match == null) {
+            checkCrafting3x3Recipe();
+            return false;
         }
+        // Check capacity before mutating either side. addItem intentionally keeps
+        // its historical partial-stack behavior for non-crafting callers.
+        if (!canAddItem(match.resultItemId, match.resultCount)) {
+            ctx.setStatus("Inventory is full");
+            return false;
+        }
+        addItem(match.resultItemId, match.resultCount);
+        ctx.craftingManager.consumeItems3x3(craftingGrid3x3);
+        ctx.craftingTableManager.setGrid(ctx.craftingTableBlockX, ctx.craftingTableBlockY,
+            ctx.craftingTableBlockZ, craftingGrid3x3);
+        checkCrafting3x3Recipe();
+        if (ctx.worldSaveManager != null) {
+            ctx.worldSaveManager.saveCraftingData(ctx.activeDimension, ctx.craftingTableManager);
+        }
+        crafting3x3HasResult = false;
+        crafting3x3ResultItemId = null;
+        crafting3x3ResultCount = 0;
+        ctx.setStatus("Crafted " + match.resultItemId.replace('_', ' '));
+        return true;
+    }
+
+    /** Refreshes the preview state without mutating the ingredient grid. */
+    private void checkCrafting3x3Recipe() {
+        CraftingManager.CraftingRecipe match = ctx.craftingManager.matchRecipe3x3(craftingGrid3x3);
+        crafting3x3HasResult = match != null;
+        crafting3x3ResultItemId = match != null ? match.resultItemId : null;
+        crafting3x3ResultCount = match != null ? match.resultCount : 0;
     }
 }
