@@ -48,6 +48,34 @@ public class BetaMapGenCaves {
         }
     }
 
+    /**
+     * Selects the precision switch for the dominant world-space axis. Cave
+     * angles and radii are derived values rather than absolute coordinates,
+     * so their ULP context is the largest relevant coordinate.
+     */
+    private float floatAtDistance(double value, double x, double y, double z) {
+        if (Math.abs(y) > Math.abs(x) && Math.abs(y) > Math.abs(z)) {
+            return numericProfile.yFloatValueAtDistance(value, y);
+        }
+        return numericProfile.xzFloatValueAtDistance(value, x, z);
+    }
+
+    private double xCoordinate(double value) {
+        return numericProfile.xDoubleCoordinate(numericProfile.xFloatCoordinate(value));
+    }
+
+    private double yCoordinate(double value) {
+        return numericProfile.yDoubleValue(numericProfile.yFloatValue(value));
+    }
+
+    private double zCoordinate(double value) {
+        return numericProfile.zDoubleCoordinate(numericProfile.zFloatCoordinate(value));
+    }
+
+    private float yFloatAtDistance(double value, double y) {
+        return numericProfile.yFloatValueAtDistance(value, y);
+    }
+
     protected void func_868_a(int var1, int var2, int var3, int var4, byte[] var5) {
         int var7 = this.rand.nextInt(this.rand.nextInt(this.rand.nextInt(40) + 1) + 1);
         if (this.rand.nextInt(15) != 0) {
@@ -65,9 +93,12 @@ public class BetaMapGenCaves {
             }
 
             for (int var16 = 0; var16 < var15; ++var16) {
-                float var17 = numericProfile.floatValue(this.rand.nextFloat() * (float) Math.PI * 2.0F);
-                float var18 = numericProfile.floatValue((this.rand.nextFloat() - 0.5F) * 2.0F / 8.0F);
-                float var19 = numericProfile.floatValue(this.rand.nextFloat() * 2.0F + this.rand.nextFloat());
+                float var17 = floatAtDistance(this.rand.nextFloat() * (float) Math.PI * 2.0F,
+                        var9, var11, var13);
+                float var18 = floatAtDistance((this.rand.nextFloat() - 0.5F) * 2.0F / 8.0F,
+                        var9, var11, var13);
+                float var19 = floatAtDistance(this.rand.nextFloat() * 2.0F + this.rand.nextFloat(),
+                        var9, var11, var13);
                 this.releaseEntitySkin(var3, var4, var5, var9, var11, var13, var19, var17, var18, 0, 0, 0.5D);
             }
         }
@@ -84,8 +115,10 @@ public class BetaMapGenCaves {
                                       int var13, int var14, double var15) {
         double var17 = (double) (var1 * 16 + 8);
         double var19 = (double) (var2 * 16 + 8);
-        float var21 = numericProfile.floatValue(0.0F);
-        float var22 = numericProfile.floatValue(0.0F);
+        var4 = xCoordinate(var4);
+        var8 = zCoordinate(var8);
+        float var21 = floatAtDistance(0.0F, var4, var6, var8);
+        float var22 = floatAtDistance(0.0F, var4, var6, var8);
         Random var23 = new Random(this.rand.nextLong());
         if (var14 <= 0) {
             int var24 = this.field_1306_a * 16 - 16;
@@ -102,38 +135,43 @@ public class BetaMapGenCaves {
         boolean var26 = var23.nextInt(6) == 0;
 
         for (; var13 < var14; ++var13) {
-            double var27 = numericProfile.doubleValue(1.5D
-                    + (double) numericProfile.floatValue(Math.sin((float) var13 * (float) Math.PI / (float) var14)
-                    * var10 * 1.0F));
+            double var27 = numericProfile.xzDoubleValueAtDistance(1.5D
+                    + (double) floatAtDistance(Math.sin((float) var13 * (float) Math.PI / (float) var14)
+                    * var10 * 1.0F, var4, var6, var8), var4, var8);
             double var29 = var27 * var15;
-            float var31 = numericProfile.floatValue(Math.cos(var12));
-            float var32 = numericProfile.floatValue(Math.sin(var12));
-            var4 = numericProfile.doubleValue(var4
-                    + (double) numericProfile.floatValue(Math.cos(var11) * var31));
-            var6 = numericProfile.doubleValue(var6 + (double) var32);
-            var8 = numericProfile.doubleValue(var8
-                    + (double) numericProfile.floatValue(Math.sin(var11) * var31));
+            float var31 = floatAtDistance(Math.cos(var12), var4, var6, var8);
+            float var32 = floatAtDistance(Math.sin(var12), var4, var6, var8);
+            var4 = xCoordinate(var4
+                    + (double) floatAtDistance(Math.cos(var11) * var31, var4, var6, var8));
+            var6 = yCoordinate(var6
+                    + (double) yFloatAtDistance(var32, var6));
+            var8 = zCoordinate(var8
+                    + (double) floatAtDistance(Math.sin(var11) * var31, var4, var6, var8));
             if (var26) {
-                var12 = numericProfile.floatValue(var12 * 0.92F);
+                var12 = floatAtDistance(var12 * 0.92F, var4, var6, var8);
             } else {
-                var12 = numericProfile.floatValue(var12 * 0.7F);
+                var12 = floatAtDistance(var12 * 0.7F, var4, var6, var8);
             }
-            var12 = numericProfile.floatValue(var12 + var22 * 0.1F);
-            var11 = numericProfile.floatValue(var11 + var21 * 0.1F);
-            var22 = numericProfile.floatValue(var22 * 0.9F);
-            var21 = numericProfile.floatValue(var21 * (12.0F / 16.0F));
-            var22 = numericProfile.floatValue(var22
-                    + (var23.nextFloat() - var23.nextFloat()) * var23.nextFloat() * 2.0F);
-            var21 = numericProfile.floatValue(var21
-                    + (var23.nextFloat() - var23.nextFloat()) * var23.nextFloat() * 4.0F);
+            var12 = floatAtDistance(var12 + var22 * 0.1F, var4, var6, var8);
+            var11 = floatAtDistance(var11 + var21 * 0.1F, var4, var6, var8);
+            var22 = floatAtDistance(var22 * 0.9F, var4, var6, var8);
+            var21 = floatAtDistance(var21 * (12.0F / 16.0F), var4, var6, var8);
+            var22 = floatAtDistance(var22
+                    + (var23.nextFloat() - var23.nextFloat()) * var23.nextFloat() * 2.0F,
+                    var4, var6, var8);
+            var21 = floatAtDistance(var21
+                    + (var23.nextFloat() - var23.nextFloat()) * var23.nextFloat() * 4.0F,
+                    var4, var6, var8);
 
             if (!var52 && var13 == var25 && var10 > 1.0F) {
                 this.releaseEntitySkin(var1, var2, var3, var4, var6, var8,
-                        var23.nextFloat() * 0.5F + 0.5F,
-                        var11 - (float) Math.PI * 0.5F, var12 / 3.0F, var13, var14, 1.0D);
+                        floatAtDistance(var23.nextFloat() * 0.5F + 0.5F, var4, var6, var8),
+                        floatAtDistance(var11 - (float) Math.PI * 0.5F, var4, var6, var8),
+                        floatAtDistance(var12 / 3.0F, var4, var6, var8), var13, var14, 1.0D);
                 this.releaseEntitySkin(var1, var2, var3, var4, var6, var8,
-                        var23.nextFloat() * 0.5F + 0.5F,
-                        var11 + (float) Math.PI * 0.5F, var12 / 3.0F, var13, var14, 1.0D);
+                        floatAtDistance(var23.nextFloat() * 0.5F + 0.5F, var4, var6, var8),
+                        floatAtDistance(var11 + (float) Math.PI * 0.5F, var4, var6, var8),
+                        floatAtDistance(var12 / 3.0F, var4, var6, var8), var13, var14, 1.0D);
                 return;
             }
 

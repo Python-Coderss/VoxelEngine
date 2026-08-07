@@ -7,7 +7,8 @@ public enum DimensionType {
     OVERWORLD(0, "overworld", 64),      // Grass plains, standard terrain
     NETHER(1, "nether", 32),             // Cave-like, low ceiling, red fog
     END(2, "end", 48),                   // Floating islands, dark with purple fog
-    AETHER(3, "aether", 128);            // Continuous columnar terrain matching original Aether NoiseSettings(0,128,2,1)
+    AETHER(3, "aether", 128),            // Continuous columnar terrain matching original Aether NoiseSettings(0,128,2,1)
+    ERROR502(4, "error502", 64);          // Beta terrain using the current coordinate-aware precision preset
     
     public final int id;
     public final String name;

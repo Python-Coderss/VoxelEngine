@@ -61,7 +61,7 @@ public class CommandProcessor {
 
     private void handleDimension(String[] parts) {
         if (parts.length < 2) {
-            ctx.setStatus("Usage: /dimension <overworld|nether|end|aether>");
+            ctx.setStatus("Usage: /dimension <overworld|nether|end|aether|error502>");
             return;
         }
         String dimName = parts[1].toLowerCase(Locale.ROOT);
@@ -70,6 +70,7 @@ public class CommandProcessor {
             case "nether": target = DimensionType.NETHER; break;
             case "end": target = DimensionType.END; break;
             case "aether": target = DimensionType.AETHER; break;
+            case "error502": target = DimensionType.ERROR502; break;
             default: target = DimensionType.OVERWORLD; break;
         }
         if (target == ctx.activeDimension) {
@@ -217,7 +218,7 @@ public class CommandProcessor {
         sb.append("\n  /spawn - Teleport to spawn");
         sb.append("\n  /tp <x> <y> <z> - Teleport to coordinates");
         sb.append("\n  /unstuck - Move upward until the player is clear");
-        sb.append("\n  /dimension <overworld|nether|end|aether> - Switch dimension");
+        sb.append("\n  /dimension <overworld|nether|end|aether|error502> - Switch dimension");
         sb.append("\n  /setuv <full|half|empty> <x> <y> [w] [h] - Adjust heart UVs");
         sb.append("\n  /camera <follow|orbit|fixed> - Set camera shot type");
         sb.append("\n  /locate <village> - Find nearest village");

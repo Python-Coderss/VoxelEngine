@@ -58,6 +58,10 @@ public class NoiseGenerator2 {
         return numericProfile.shortValue(field_4295_e[wrappedIndex]) & 255;
     }
 
+    private double floatAtDistance(double value, double x, double z) {
+        return numericProfile.xzFloatValueAtDistance(value, x, z);
+    }
+
     private static double func_4156_a(int[] var0, double var1, double var3) {
         return (double) var0[0] * var1 + (double) var0[1] * var3;
     }
@@ -73,19 +77,22 @@ public class NoiseGenerator2 {
         var10 = numericProfile.doubleValue(var10);
         var12 = numericProfile.doubleValue(var12);
 
-        for (int var15 = 0; var15 < var6; ++var15) {
-            double var16 = numericProfile.doubleValue((var2 + (double) var15) * var8 + this.field_4292_a);
+        for (int var15 = 0; var15 < var6; ++var15) {                double worldX = var2 + (double) var15;
+                double var16 = numericProfile.doubleValue(
+                        numericProfile.xFloatCoordinate(worldX * var8 + this.field_4292_a));
 
             for (int var18 = 0; var18 < var7; ++var18) {
-                double var19 = numericProfile.doubleValue((var4 + (double) var18) * var10 + this.field_4291_b);
-                double var27 = numericProfile.floatValue((var16 + var19) * field_4294_f);
+                double worldZ = var4 + (double) var18;
+                double var19 = numericProfile.doubleValue(
+                        numericProfile.zFloatCoordinate(worldZ * var10 + this.field_4291_b));
+                double var27 = floatAtDistance((var16 + var19) * field_4294_f, worldX, worldZ);
                 int var29 = wrap(var16 + var27);
                 int var30 = wrap(var19 + var27);
                 double var31 = (double) (var29 + var30) * field_4293_g;
                 double var33 = (double) var29 - var31;
                 double var35 = (double) var30 - var31;
-                double var37 = numericProfile.floatValue(var16 - var33);
-                double var39 = numericProfile.floatValue(var19 - var35);
+                double var37 = floatAtDistance(var16 - var33, worldX, worldZ);
+                double var39 = floatAtDistance(var19 - var35, worldX, worldZ);
                 byte var41;
                 byte var42;
                 if (var37 > var39) {
@@ -96,10 +103,10 @@ public class NoiseGenerator2 {
                     var42 = 1;
                 }
 
-                double var43 = numericProfile.floatValue(var37 - (double) var41 + field_4293_g);
-                double var45 = numericProfile.floatValue(var39 - (double) var42 + field_4293_g);
-                double var47 = numericProfile.floatValue(var37 - 1.0D + 2.0D * field_4293_g);
-                double var49 = numericProfile.floatValue(var39 - 1.0D + 2.0D * field_4293_g);
+                double var43 = floatAtDistance(var37 - (double) var41 + field_4293_g, worldX, worldZ);
+                double var45 = floatAtDistance(var39 - (double) var42 + field_4293_g, worldX, worldZ);
+                double var47 = floatAtDistance(var37 - 1.0D + 2.0D * field_4293_g, worldX, worldZ);
+                double var49 = floatAtDistance(var39 - 1.0D + 2.0D * field_4293_g, worldX, worldZ);
                 int var51 = var29 & 255;
                 int var52 = var30 & 255;
                 int var53 = permutation(var51 + permutation(var52)) % 12;
