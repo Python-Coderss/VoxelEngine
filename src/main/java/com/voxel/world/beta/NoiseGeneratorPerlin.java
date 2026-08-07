@@ -9,7 +9,10 @@ import java.util.Random;
  */
 public class NoiseGeneratorPerlin {
     private int[] permutations;
-    private BetaNumericProfile numericProfile;
+    /** Cached profile-aware permutation results for the normal 10+ bit path. */
+    private volatile int[] permutationCache;
+    private volatile BetaNumericProfile numericProfile;
+    private volatile boolean permutationCacheEnabled;
     public double xCoord;
     public double yCoord;
     public double zCoord;
@@ -34,15 +37,17 @@ public class NoiseGeneratorPerlin {
         }
 
         for (var2 = 0; var2 < 256; ++var2) {
-            int var3 = numericProfile.intValue(var1.nextInt(256 - var2) + var2) & 255;
+            int var3 = this.numericProfile.intValue(var1.nextInt(256 - var2) + var2) & 255;
             int var4 = numericProfile.shortValue(this.permutations[var2]);
             this.permutations[var2] = this.numericProfile.shortValue(this.permutations[var3]);
             this.permutations[var3] = this.numericProfile.shortValue(var4);
             this.permutations[var2 + 256] = this.numericProfile.shortValue(this.permutations[var2]);
         }
+        rebuildPermutationCache();
+        permutationCacheEnabled = this.numericProfile.intBits() >= 10;
     }
 
-    public double generateNoise(double var1, double var3, double var5) {
+    public synchronized double generateNoise(double var1, double var3, double var5) {
         return generateNoise(var1, var3, var5, true);
     }
 
@@ -98,8 +103,13 @@ public class NoiseGeneratorPerlin {
         return d(var3 + var1 * (var5 - var3));
     }
 
-    public void setNumericProfile(BetaNumericProfile numericProfile) {
+    public synchronized void setNumericProfile(BetaNumericProfile numericProfile) {
+        // Disable the cache first so a concurrent sampler falls back to the
+        // profile-aware path while the new state is being published.
+        permutationCacheEnabled = false;
         this.numericProfile = numericProfile == null ? BetaNumericProfile.DEFAULT : numericProfile;
+        rebuildPermutationCache();
+        permutationCacheEnabled = this.numericProfile.intBits() >= 10;
     }
 
     public BetaNumericProfile getNumericProfile() {
@@ -111,8 +121,24 @@ public class NoiseGeneratorPerlin {
     }
 
     private int permutation(int index) {
+        // All normal Beta profiles use at least 10 integer bits, so the
+        // profile-aware index is already equivalent to index & 511. Keep the
+        // old conversion for narrow custom profiles to preserve their exact
+        // wrapping behavior.
+        if (permutationCacheEnabled) {
+            return permutationCache[index & 511];
+        }
         int wrappedIndex = numericProfile.intValue(index) & 511;
         return numericProfile.shortValue(permutations[wrappedIndex]) & 255;
+    }
+
+    private void rebuildPermutationCache() {
+        int[] cache = new int[512];
+        for (int index = 0; index < cache.length; ++index) {
+            int wrappedIndex = numericProfile.intValue(index) & 511;
+            cache[index] = numericProfile.shortValue(permutations[wrappedIndex]) & 255;
+        }
+        this.permutationCache = cache;
     }
 
     public final double func_4110_a(int var1, double var2, double var4) {
@@ -129,12 +155,12 @@ public class NoiseGeneratorPerlin {
         return d(((var8 & 1) == 0 ? var9 : -var9) + ((var8 & 2) == 0 ? var11 : -var11));
     }
 
-    public double func_801_a(double var1, double var3) {
+    public synchronized double func_801_a(double var1, double var3) {
         // This legacy 2D helper treats its second argument as Z, not Y.
         return this.generateNoise(var1, var3, 0.0D, false);
     }
 
-    public void func_805_a(double[] var1, double var2, double var4, double var6, int var8, int var9, int var10,
+    public synchronized void func_805_a(double[] var1, double var2, double var4, double var6, int var8, int var9, int var10,
                            double var11, double var13, double var15, double var17) {
         int var10001;
         int var19;
