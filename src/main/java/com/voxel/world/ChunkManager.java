@@ -78,6 +78,15 @@ public class ChunkManager {
     private int lastPlayerCX = -1000, lastPlayerCZ = -1000, lastPlayerCY = -1000;
     private float lastYaw = 0;
 
+    // ── Center-ray look-ahead preload ──
+    // Last column queued by requestLookAhead + when, so turning toward a boundary
+    // can't spam the gen queue with identical tasks. volatile: written by the
+    // logic thread, read by the same thread only (kept simple).
+    private volatile long lastLookAheadKey = Long.MIN_VALUE;
+    private volatile long lastLookAheadTime = 0;
+    private static final long LOOK_AHEAD_THROTTLE_MS = 1000;           // max ~1 column/sec
+    private static final long LOOK_AHEAD_REQUEUE_COOLDOWN_MS = 5000;   // retry same column after queue prune
+
     // ── Lighting ──
     private volatile boolean lightsNeedUpload = false;
 
@@ -260,6 +269,112 @@ public class ChunkManager {
             float yawFinal = yaw;
             taskQueue.addFirst(() -> manageChunks(pcxFinal, pcyFinal, pczFinal, yawFinal));
         }
+    }
+
+    /**
+     * Center-pixel look-ahead chunk loading.
+     *
+     * Casts the camera's center ray (from yaw/pitch) out through chunk space and
+     * finds the FIRST column beyond the player's own that is not yet loaded.
+     * That column is queued ahead of the render-distance stream — second priority
+     * behind the player's current 3×3 grid, which manageChunks always sync-loads
+     * first — so the terrain the player is actually looking at is generated before
+     * they reach it.
+     *
+     * Called from the logic thread every tick. Internally throttled and the task
+     * is idempotent (no-ops if a manage cycle loaded the column in the meantime),
+     * so it can never flood the gen queue. Skipped entirely during the spawn
+     * bootstrap so it cannot delay spawn resolution.
+     */
+    public void requestLookAhead(Vector3f playerPos, float yaw, float pitch) {
+        if (spawnBootstrap) return;
+
+        int pcx = (int) Math.floor(playerPos.x) >> 4;
+        int pcy = (int) Math.floor(playerPos.y) >> 4;
+        int pcz = (int) Math.floor(playerPos.z) >> 4;
+
+        // Forward unit vector — same convention as CameraController.getLookDirection()
+        // (reduces to the yaw-only 2D look direction used by the ring sort when pitch == 0).
+        double yr = Math.toRadians(yaw);
+        double pr = Math.toRadians(pitch);
+        double dx = Math.cos(yr) * Math.cos(pr);
+        double dy = Math.sin(pr);
+        double dz = Math.sin(yr) * Math.cos(pr);
+
+        // 3D grid DDA over section cells, starting in the player's own section.
+        // Cells inside the player's (loaded) column are skipped automatically;
+        // the first cell whose COLUMN is not loaded is the look-ahead target.
+        // tMax is initialized from the exact position inside the starting section
+        // (not a full cell-width for every axis), so axis-crossing order matches
+        // the true center ray — a naive 1/|d| init would mis-order crossings and
+        // pick a column diagonally off the line the player is actually looking at.
+        int sx = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
+        int sy = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
+        int sz = dz > 0 ? 1 : (dz < 0 ? -1 : 0);
+        double ox = playerPos.x / 16.0 - pcx; // fractional position inside the starting section
+        double oy = playerPos.y / 16.0 - pcy;
+        double oz = playerPos.z / 16.0 - pcz;
+        double tMaxX = sx > 0 ? (1.0 - ox) / Math.abs(dx) : (sx < 0 ? ox / Math.abs(dx) : Double.POSITIVE_INFINITY);
+        double tMaxY = sy > 0 ? (1.0 - oy) / Math.abs(dy) : (sy < 0 ? oy / Math.abs(dy) : Double.POSITIVE_INFINITY);
+        double tMaxZ = sz > 0 ? (1.0 - oz) / Math.abs(dz) : (sz < 0 ? oz / Math.abs(dz) : Double.POSITIVE_INFINITY);
+        double tDeltaX = sx != 0 ? 1.0 / Math.abs(dx) : Double.POSITIVE_INFINITY;
+        double tDeltaY = sy != 0 ? 1.0 / Math.abs(dy) : Double.POSITIVE_INFINITY;
+        double tDeltaZ = sz != 0 ? 1.0 / Math.abs(dz) : Double.POSITIVE_INFINITY;
+
+        int cx = pcx, cy = pcy, cz = pcz;
+        int maxChunks = renderDistance * 2; // keep-zone edge: beyond this a preload is pointless
+        for (int i = 0; i < 256; i++) {
+            if (tMaxX < tMaxY && tMaxX < tMaxZ) { cx += sx; tMaxX += tDeltaX; }
+            else if (tMaxY < tMaxZ)              { cy += sy; tMaxY += tDeltaY; }
+            else                                 { cz += sz; tMaxZ += tDeltaZ; }
+            // Don't march past the keep radius (looking straight up/down keeps
+            // the XZ distance at 0 and simply exhausts the iteration cap).
+            if (Math.max(Math.abs(cx - pcx), Math.abs(cz - pcz)) > maxChunks) return;
+            long key = chunkKey(cx, cz);
+            if (!loadedChunks.containsKey(key)) {
+                queueLookAheadColumn(key, cx, cz, pcx, pcy, pcz);
+                return;
+            }
+        }
+    }
+
+    /**
+     * Queues a single column for priority-2 generation via the center-ray look-ahead.
+     * Throttled: at most one request per LOOK_AHEAD_THROTTLE_MS, and the same column
+     * is not re-queued within LOOK_AHEAD_REQUEUE_COOLDOWN_MS (covers the window where
+     * a manage cycle's queue clear() pruned our task before it ran).
+     */
+    private void queueLookAheadColumn(long key, int cx, int cz, int pcx, int pcy, int pcz) {
+        long now = System.currentTimeMillis();
+        if (now - lastLookAheadTime < LOOK_AHEAD_THROTTLE_MS) return;
+        if (key == lastLookAheadKey && now - lastLookAheadTime < LOOK_AHEAD_REQUEUE_COOLDOWN_MS) return;
+        lastLookAheadKey = key;
+        lastLookAheadTime = now;
+
+        // addFirst: runs before any pending render-distance section tasks (second
+        // priority — the player's own 3×3 grid is sync-loaded inside every manage).
+        taskQueue.addFirst(() -> {
+            if (!running || spawnBootstrap) return;
+            if (loadedChunks.containsKey(key)) return; // a manage cycle won the race
+            // Strict second priority: never preempt the player's own section. On
+            // the tick the player crosses into a new chunk, update() queued a
+            // manage BEHIND this task — if that section is missing/mid-generation,
+            // yield to it and allow an immediate retry once it is ready.
+            if (!isPlayerSectionGenerated(pcx, pcy, pcz)) {
+                lastLookAheadKey = Long.MIN_VALUE;
+                lastLookAheadTime = 0;
+                return;
+            }
+            WorldGenLogger.logChunk("LOOKAHEAD", cx, -1, cz, "center-ray priority-2 preload");
+            int yMin = lastPlayerCY - yLoadRadius;
+            int yMax = lastPlayerCY + yLoadRadius;
+            // First loadOneSection call creates the column and generates the whole
+            // Y-range (incl. lighting/fluids); the rest are no-ops.
+            for (int cy : orderedSections(yMin, yMax)) {
+                loadOneSection(cx, cy, cz);
+            }
+            tableDirty.set(true);
+        });
     }
 
     /**
