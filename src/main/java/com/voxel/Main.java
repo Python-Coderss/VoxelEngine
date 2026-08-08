@@ -715,8 +715,16 @@ public class Main {
         }
 
         int pcx = (int) Math.floor(player.getPosition().x) >> 4;
+        int pcy = (int) Math.floor(player.getPosition().y) >> 4;
         int pcz = (int) Math.floor(player.getPosition().z) >> 4;
         boolean chunksReady = chunkManager.isChunkLoaded(pcx, pcz);
+
+        // Freeze the player while any of the 27 sections of the 3×3×3 grid around
+        // them is missing or still generating. Missing/generating sections read
+        // as air, so letting the player move into them is how they fall through
+        // the world (the gen thread fills them a moment later, embedding the
+        // player in solid rock).
+        ctx.waitingForChunks = !chunkManager.arePlayerChunksGenerated(pcx, pcy, pcz);
 
         // Resolve the final surface only after ChunkManager reports that all immediate
         // spawn columns have finished generation/loading.
@@ -724,7 +732,7 @@ public class Main {
             ctx.resolveSpawnAfterChunksGenerated();
         }
 
-        if (chunksReady && !ctx.spawnLoading) {
+        if (chunksReady && !ctx.spawnLoading && !ctx.waitingForChunks) {
             // Compatibility call; resolution is already complete by this point.
             ctx.adjustSpawnYAfterChunkLoad();
 
@@ -786,12 +794,20 @@ public class Main {
             playerEntity.syncFromPlayer(player, playerYaw, pitch, cameraMode != CameraMode.FIRST_PERSON, dt);
         }
 
-        // Keep chunk streaming alive while the loading screen is visible, but do not
-        // run movement, combat, AI, fluids, or other gameplay simulation yet.
-        if (ctx.spawnLoading) {
-            // Keep retrying the immediate spawn area if the first pass could not
-            // allocate every section; ChunkManager coalesces these requests.
-            chunkManager.retrySpawnGeneration(player.getPosition(), yaw);
+        // Keep chunk streaming alive while the loading screen or the runtime
+        // terrain freeze is active, but do not run movement, combat, AI, fluids,
+        // or other gameplay simulation yet.
+        if (ctx.spawnLoading || ctx.waitingForChunks) {
+            if (ctx.spawnLoading) {
+                // Keep retrying the immediate spawn area if the first pass could
+                // not allocate every section; ChunkManager coalesces these requests.
+                chunkManager.retrySpawnGeneration(player.getPosition(), yaw);
+            } else {
+                // Re-run manageChunks until the 3×3×3 grid is complete. Unlike
+                // update(), this fires even when the player has not changed
+                // chunks, so a degraded grid cannot freeze the game forever.
+                chunkManager.retryGridGeneration(player.getPosition(), yaw);
+            }
             chunkManager.update(player.getPosition(), yaw);
             lastLogicTickNanos = System.nanoTime();
             return;

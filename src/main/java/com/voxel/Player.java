@@ -274,14 +274,14 @@ public class Player {
 
         // X movement
         posX += stepVelX;
-        if (checkCollision(world, blockDataManager)) {
+        if (checkCollision(world, blockDataManager) || !isFeetChunkLoaded(world)) {
             posX -= stepVelX;
             velocity.x = 0;
         }
 
         // Z movement
         posZ += stepVelZ;
-        if (checkCollision(world, blockDataManager)) {
+        if (checkCollision(world, blockDataManager) || !isFeetChunkLoaded(world)) {
             posZ -= stepVelZ;
             velocity.z = 0;
         }
@@ -291,7 +291,15 @@ public class Player {
         onGround = false;
         long stepVelY = FixedPoint.fromDouble(velocity.y);
         posY += stepVelY;
-        if (checkCollision(world, blockDataManager)) {
+        if (!isFeetChunkLoaded(world)) {
+            // Destination feet chunk isn't generated yet: hold the player at the
+            // top of the loaded region instead of falling through the map. This
+            // is a soft stop (no fall damage) while terrain streams in below.
+            posY -= stepVelY;
+            velocity.y = 0;
+            fallDistance = 0;
+            onGround = prevYVel <= 0; // resting on the void edge when falling
+        } else if (checkCollision(world, blockDataManager)) {
             if (prevYVel < 0) {
                 onGround = true;
                 if (!parachuteDeployed) {
@@ -303,6 +311,20 @@ public class Player {
             posY -= stepVelY;
             velocity.y = 0;
         }
+    }
+
+    /**
+     * True when the chunk containing the player's feet has been allocated.
+     * Unloaded chunks read as air (World.getVoxel returns 0), so without this
+     * check gravity pulls the player straight through the map wherever terrain
+     * has not generated yet (e.g. below the sync-loaded spawn sections or
+     * ahead of the async chunk stream).
+     */
+    private boolean isFeetChunkLoaded(World world) {
+        return world.getChunkSlot(
+                FixedPoint.blockX(posX),
+                FixedPoint.blockX(posY),
+                FixedPoint.blockX(posZ)) != World.EMPTY;
     }
 
     private boolean wouldCollideAtOffset(double dx, double dy, double dz, World world, BlockDataManager blockDataManager) {

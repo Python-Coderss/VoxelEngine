@@ -1189,14 +1189,23 @@ public class HudUI {
      * while the logic thread intentionally pauses gameplay.
      */
     public void updateSpawnLoadingOverlay(double time) {
-        boolean loading = ctx.spawnLoading;
+        boolean loading = ctx.spawnLoading || ctx.waitingForChunks;
         spawnLoadingBackground.visible = loading;
         spawnLoadingTitle.visible = loading;
         spawnLoadingSpinner.visible = loading;
         spawnLoadingStatus.visible = loading;
         if (!loading) return;
 
-        String message = ctx.spawnLoadingMessage;
+        if (ctx.waitingForChunks && !ctx.spawnLoading) {
+            // Runtime terrain freeze: same overlay, re-labelled so it reads as
+            // "waiting for chunks" rather than world initialization.
+            spawnLoadingTitle.text = "LOADING TERRAIN";
+        } else {
+            spawnLoadingTitle.text = "WORLD INITIALIZING";
+        }
+
+        String message = (ctx.waitingForChunks && !ctx.spawnLoading)
+            ? ctx.waitingForChunksMessage : ctx.spawnLoadingMessage;
         spawnLoadingStatus.text = (message == null || message.isEmpty())
             ? "Preparing spawn..." : message;
 
