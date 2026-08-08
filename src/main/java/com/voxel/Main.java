@@ -1022,6 +1022,10 @@ public class Main {
 
         chunkManager.update(player.getPosition(), yaw);
 
+        // Center-ray look-ahead: preload the first unloaded chunk the camera is
+        // looking at (second priority behind the player's own chunk).
+        chunkManager.requestLookAhead(player.getPosition(), yaw, pitch);
+
         // Record wall-clock time for render-thread interpolation
         lastLogicTickNanos = System.nanoTime();
     }
