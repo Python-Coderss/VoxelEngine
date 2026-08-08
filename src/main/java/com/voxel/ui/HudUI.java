@@ -46,6 +46,8 @@ public class HudUI {
     public int fontTextureId = 0;
     public Vector2i fontTextureSize = new Vector2i(1, 1);
     public int loadingTextureId = 0;
+    // Compact top-right loading-popup panel (loading_popup.png, 256x64).
+    public int loadingPopupTextureId = 0;
 
     public UILayer.UIElement crosshairElement;
     public UILayer.UIElement hotbarActiveElement;
@@ -93,6 +95,7 @@ public class HudUI {
     // ── Spawn loading overlay ──
     // These are appended last so the overlay is composited above the normal HUD.
     public UILayer.UIElement spawnLoadingBackground;
+    public UILayer.UIElement loadingPopupBackground; // top-right toast panel
     public UILayer.UITextElement spawnLoadingTitle;
     public UILayer.UITextElement spawnLoadingStatus;
     public UILayer.UITextElement spawnLoadingSpinner;
@@ -158,6 +161,7 @@ public class HudUI {
         tryLoadUiTexture();
         tryLoadFontTexture();
         tryLoadLoadingTexture();
+        tryLoadLoadingPopupTexture();
         buildInventoryUi(hudLayer);
         uiLayers.add(hudLayer);
     }
@@ -196,6 +200,19 @@ public class HudUI {
             }
         } catch (Exception e) {
             System.err.println("Note: loading.png could not be loaded; using the bright fallback color");
+        }
+    }
+
+    public void tryLoadLoadingPopupTexture() {
+        try {
+            java.io.File popupFile = new java.io.File("src/main/resources/ui/loading_popup.png");
+            if (popupFile.exists()) {
+                loadingPopupTextureId = UIManager.loadTexture(popupFile.getPath());
+            } else {
+                System.err.println("Note: loading_popup.png not found; using the flat fallback panel");
+            }
+        } catch (Exception e) {
+            System.err.println("Note: loading_popup.png could not be loaded; using the flat fallback panel");
         }
     }
 
@@ -556,6 +573,25 @@ public class HudUI {
         spawnLoadingBackground.onClick = () -> { };
         spawnLoadingBackground.visible = false;
         layer.addElement(spawnLoadingBackground);
+
+        // ── Top-right loading popup (runtime terrain streaming) ──
+        // A compact toast panel shown while spawn chunks generate or the player's
+        // current section is being generated. Rendered above the world so the game
+        // stays visible; replaces the old full-screen loading overlay at runtime.
+        loadingPopupBackground = new UILayer.UIElement(
+            new Vector2f(main.width - 268, 12),
+            new Vector2f(256, 64),
+            new Vector4f(1, 1, 1, 1)
+        );
+        if (loadingPopupTextureId != 0) {
+            // Textured panel: white vertex color shows the artwork un-tinted.
+            loadingPopupBackground.textureId = loadingPopupTextureId;
+        } else {
+            // Flat fallback panel so the popup still reads over any world.
+            loadingPopupBackground.color.set(0.10f, 0.12f, 0.16f, 0.92f);
+        }
+        loadingPopupBackground.visible = false;
+        layer.addElement(loadingPopupBackground);
 
         spawnLoadingTitle = new UILayer.UITextElement(
             new Vector2f(main.width / 2f - 175, main.height / 2f - 70),
@@ -1187,22 +1223,26 @@ public class HudUI {
      * Always update the spawn overlay regardless of inventory UI dirty state.
      * Called from Main.loop() so generation and surface detection remain visible
      * while the logic thread intentionally pauses gameplay.
+     *
+     * Two presentations:
+     *  - Pre-world init (ctx.initializing): nothing renders yet, so the full-screen
+     *    artwork overlay stays up.
+     *  - Runtime (spawn generation + per-section terrain freeze): a compact toast
+     *    panel in the top-right corner, leaving the world visible behind it.
      */
     public void updateSpawnLoadingOverlay(double time) {
         boolean loading = ctx.spawnLoading || ctx.waitingForChunks;
-        spawnLoadingBackground.visible = loading;
+        boolean preWorld = ctx.initializing;
+        spawnLoadingBackground.visible = loading && preWorld;
+        loadingPopupBackground.visible = loading && !preWorld;
         spawnLoadingTitle.visible = loading;
         spawnLoadingSpinner.visible = loading;
         spawnLoadingStatus.visible = loading;
         if (!loading) return;
 
-        if (ctx.waitingForChunks && !ctx.spawnLoading) {
-            // Runtime terrain freeze: same overlay, re-labelled so it reads as
-            // "waiting for chunks" rather than world initialization.
-            spawnLoadingTitle.text = "LOADING TERRAIN";
-        } else {
-            spawnLoadingTitle.text = "WORLD INITIALIZING";
-        }
+        String title = (ctx.waitingForChunks && !ctx.spawnLoading)
+            ? "LOADING TERRAIN" : "WORLD INITIALIZING";
+        spawnLoadingTitle.text = title;
 
         String message = (ctx.waitingForChunks && !ctx.spawnLoading)
             ? ctx.waitingForChunksMessage : ctx.spawnLoadingMessage;
@@ -1214,6 +1254,37 @@ public class HudUI {
         spawnLoadingSpinner.text = new String[] { "|", "/", "-", "\\" }[spinnerFrame];
         float pulse = 0.72f + 0.28f * (float) Math.abs(Math.sin(time * 3.0));
         spawnLoadingSpinner.color.w = pulse;
+
+        if (preWorld) {
+            // Centered layout on the full-screen loading artwork.
+            spawnLoadingTitle.pos.set(main.width / 2f - 175, main.height / 2f - 70);
+            spawnLoadingTitle.scale = 3.0f;
+            spawnLoadingTitle.color.set(0.06f, 0.22f, 0.32f, 1.0f);
+            spawnLoadingTitle.charLineLimit = 40;
+            spawnLoadingSpinner.pos.set(main.width / 2f - 12, main.height / 2f - 10);
+            spawnLoadingSpinner.scale = 3.0f;
+            spawnLoadingSpinner.color.set(0.06f, 0.48f, 0.48f, pulse);
+            spawnLoadingStatus.pos.set(main.width / 2f - 230, main.height / 2f + 55);
+            spawnLoadingStatus.scale = 1.8f;
+            spawnLoadingStatus.color.set(0.10f, 0.28f, 0.34f, 1.0f);
+            spawnLoadingStatus.charLineLimit = 52;
+        } else {
+            // Top-right toast: panel at (width-268, 12) sized 256x64.
+            float popupX = main.width - 268f;
+            float popupY = 12f;
+            loadingPopupBackground.pos.set(popupX, popupY);
+            spawnLoadingTitle.pos.set(popupX + 42f, popupY + 12f);
+            spawnLoadingTitle.scale = 1.3f;
+            spawnLoadingTitle.color.set(0.92f, 0.95f, 1.0f, 1.0f);
+            spawnLoadingTitle.charLineLimit = 22;
+            spawnLoadingSpinner.pos.set(popupX + 222f, popupY + 12f);
+            spawnLoadingSpinner.scale = 1.4f;
+            spawnLoadingSpinner.color.set(0.98f, 0.78f, 0.36f, pulse);
+            spawnLoadingStatus.pos.set(popupX + 42f, popupY + 38f);
+            spawnLoadingStatus.scale = 1.0f;
+            spawnLoadingStatus.color.set(0.72f, 0.78f, 0.88f, 1.0f);
+            spawnLoadingStatus.charLineLimit = 26;
+        }
     }
 
     /** Always update TV overlay regardless of dirty flag. Called from Main.loop(). */

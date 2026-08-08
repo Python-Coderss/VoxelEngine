@@ -208,10 +208,11 @@ public class GameContext {
     public volatile boolean spawnLoading = true;
     public volatile String spawnLoadingMessage = "Generating spawn chunks...";
 
-    // Runtime freeze: true while any of the 27 sections of the player's 3×3×3
-    // chunk grid is missing or still generating. Movement/simulation is skipped
-    // and the loading overlay is shown until the grid completes. This is what
-    // prevents falling through terrain that has not generated yet.
+    // Runtime freeze: true while the SINGLE section the player is standing in is
+    // missing or still generating. Movement/simulation is skipped and the
+    // top-right loading popup is shown until that section completes. This is
+    // what prevents falling through terrain that has not generated yet — the
+    // column must be loaded and the current 16³ section allocated + generated.
     public volatile boolean waitingForChunks = false;
     public volatile String waitingForChunksMessage = "Loading terrain...";
 
