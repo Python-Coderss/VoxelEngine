@@ -313,6 +313,23 @@ public class ChunkManager {
     }
 
     /**
+     * True when the single 16³ section the player is currently standing in is
+     * allocated AND fully generated (not mid-generation). This is the lightweight
+     * runtime freeze gate: unlike {@link #arePlayerChunksGenerated} (the whole
+     * 3×3×3 grid), only the player's own chunk blocks movement, so terrain can
+     * stream in around them without freezing gameplay.
+     *
+     * Thread-safe: reads ConcurrentHashMaps and the world indirection table.
+     */
+    public boolean isPlayerSectionGenerated(int pcx, int pcy, int pcz) {
+        long key = chunkKey(pcx, pcz);
+        if (!loadedChunks.containsKey(key)) return false;
+        if (world.getChunkSlot(pcx << 4, pcy << 4, pcz << 4) == World.EMPTY) return false;
+        Set<Integer> loading = columnSectionsLoaded.get(key);
+        return loading == null || !loading.contains(pcy);
+    }
+
+    /**
      * Re-runs manageChunks immediately (front of queue) while the player is
      * frozen waiting for the 3×3×3 grid. Unlike update(), this fires even when
      * the player has not changed chunks — needed when the grid degraded while

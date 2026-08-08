@@ -41,6 +41,13 @@ layout(location = 29) uniform ivec3 _camBlock;
 // float32 sub-block precision at any world coordinate (Far Lands safe).
 vec3 camPos = vec3(_camBlock) + _camFrac;
 
+// Camera eye voxel (buffer-relative) solidity — recomputed per invocation in
+// main() from the GPU pools (same bitmask the per-voxel DDA uses), so no CPU→GPU
+// uniform handoff can go stale and silently disable the camera-clip fix.
+// True when the eye sits inside ANY bit-solid voxel (solid block, water, lava);
+// that one voxel is then treated as air on the first bounce (see airVoxel).
+bool camClipped = false;
+
 // Chunk-level SDF pool for sphere-trace acceleration.
 // 4096 SDF cells packed 4-per-uint, indexed as sdfPool[(slot << 10) | (cellIdx>>2)].
 // Each uint holds 4 bytes of distance values, value = round(dist_voxels * 8),
@@ -575,7 +582,7 @@ float fastShadow(vec3 ro, vec3 rd, float maxDist) {
     return 1.0;
 }
 
-bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out ivec4 resBlockData1) {
+bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out ivec4 resBlockData1) {
     ivec3 bufMin = ivec3(0);
     ivec3 bufMax = ivec3(WORLD_SIZE);
     float tn, tf; if (!intersectAABB(ro, rd, vec3(bufMin), vec3(bufMax), tn, tf)) return false;
@@ -658,7 +665,16 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float 
             ivec3 cc = mp >> 4; uint maskBase = slot << 7;
             for (int j = 0; j < 32; j++) {
                 int bi = (mp.x&15)|((mp.y&15)<<4)|((mp.z&15)<<8);
-                if ((bitmasks[maskBase | (bi >> 5)] & (1u << (bi & 31))) != 0) {
+                // Camera-clipped voxel (eye stuck inside a solid block): treat that
+                // voxel as air until the first real hit — the ray passes through it
+                // and hits the next surface at its true distance, so its interior
+                // faces never paint the stretched block texture across the view.
+                // airVoxel is the sentinel ivec3(0x7FFFFFFF) on every other trace
+                // (never matches), so only the clipped bounce-0 ray is affected.
+                // Gated on camClipped (warp-coherent) so the compare costs
+                // nothing on the non-clipped hot path.
+                bool camAirCell = camClipped && all(equal(mp, airVoxel));
+                if (!camAirCell && (bitmasks[maskBase | (bi >> 5)] & (1u << (bi & 31))) != 0) {
                     uint rawVoxel = voxelPool[(slot << 12) | bi];
                     uint voxelType = rawVoxel & 0xFFFFu;
                     uint wirePower = (rawVoxel >> 16) & 0xFu;
@@ -728,10 +744,10 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float 
     return false;
 }
 
-bool traceAll(vec3 ro, vec3 rd, bool skipFirst, uint lastMediumTag, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out int resEntIdx, out int resCraftingIdx, out ivec4 resBlockData1) {
+bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out int resEntIdx, out int resCraftingIdx, out ivec4 resBlockData1) {
     resT = 1e30; resEntUv = vec2(0.5); isEnt = false; isHpBar = false; hpRatio = 1.0; resWirePower = 0u; resWireConn = 0u; resAabbIdx = -1; resEntIdx = -1; resCraftingIdx = -1; resBlockData1 = ivec4(0);
     float tV; int sideV; uint voxelV, wirePowerV, wireConnV; int aabbIdxV;
-    if (traceWorld(ro, rd, skipFirst, lastMediumTag, tV, sideV, voxelV, wirePowerV, wireConnV, aabbIdxV, resBlockData1)) {
+    if (traceWorld(ro, rd, skipFirst, airVoxel, lastMediumTag, tV, sideV, voxelV, wirePowerV, wireConnV, aabbIdxV, resBlockData1)) {
         resT = tV; resVoxel = voxelV;
         resWirePower = wirePowerV;
         resWireConn = wireConnV;
@@ -1081,6 +1097,20 @@ void main() {
     at.skyHorizon = u_SkyHorizon;
     at.ambient = u_Ambient;
     bool underWater = u_UnderWater != 0; // camera eye clipped inside a water block
+    // Camera-clipped flag: the eye voxel is bit-solid — read directly from the
+    // GPU pools using the IDENTICAL expression the per-voxel DDA uses to test
+    // solidity. Self-consistent by construction: the stretched interior-face
+    // planes appear exactly when the DDA hits this voxel at t≈0, i.e. exactly
+    // when this bit is set — so the fix can never silently fail to engage.
+    camClipped = false;
+    {
+        ivec3 eb = _camBlock;
+        uint es = chunkSlots[(eb.x >> 4) | ((eb.y >> 4) << 7) | ((eb.z >> 4) << 14)];
+        if (es != EMPTY) {
+            int ebi = (eb.x & 15) | ((eb.y & 15) << 4) | ((eb.z & 15) << 8);
+            camClipped = (bitmasks[(es << 7u) | uint(ebi >> 5)] & (1u << (ebi & 31))) != 0u;
+        }
+    }
     vec3 final = vec3(0.0), throu = vec3(1.0), ro = camPos; bool skip = false;
     vec3 godRd = rd; float godT = 96.0; // primary ray for god-ray marching
     uint lastMediumTag = 0xFFFFFFFFu; // Track last translucent medium tag to skip same-medium faces
@@ -1089,7 +1119,16 @@ void main() {
 
     for (int b = 0; b < 2; b++) {  // reduced from 4 → 2 bounces for perf
         float t; vec3 n; uint voxel, eTex, wirePower, wireConn; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx; ivec4 blockData1;
-        if (!traceAll(ro, rd, skip, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx, blockData1)) { final += throu * GetSky(rd, at); break; }
+        // Camera eye clipped inside a solid voxel: treat that voxel (buffer-relative
+        // _camBlock, the cell the eye is in) as air until the first real hit — the
+        // ray passes through it and hits the next surface at its true distance, so
+        // its interior faces never paint the stretched block texture across the
+        // view: a normal-scale wall when buried, or the outside when the voxel sits
+        // at the terrain surface. No ray offset; the airVoxel sentinel restores
+        // normal solidity on every later trace. Water has its own skipNearWater pass.
+        bool skipFirstBounce = skip;
+        ivec3 airVoxel = (b == 0 && camClipped) ? _camBlock : ivec3(0x7FFFFFFF);
+        if (!traceAll(ro, rd, skipFirstBounce, airVoxel, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx, blockData1)) { final += throu * GetSky(rd, at); break; }
         int waterEff = (blockData1.w >> 10) & 0xF;
         bool waterHit = !isEnt && craftingIdx < 0 && waterEff == 2 && voxel != 21u;
         bool skipNearWater = underWater && b == 0 && waterHit;

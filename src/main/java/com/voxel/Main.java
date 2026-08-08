@@ -719,12 +719,12 @@ public class Main {
         int pcz = (int) Math.floor(player.getPosition().z) >> 4;
         boolean chunksReady = chunkManager.isChunkLoaded(pcx, pcz);
 
-        // Freeze the player while any of the 27 sections of the 3×3×3 grid around
-        // them is missing or still generating. Missing/generating sections read
-        // as air, so letting the player move into them is how they fall through
-        // the world (the gen thread fills them a moment later, embedding the
-        // player in solid rock).
-        ctx.waitingForChunks = !chunkManager.arePlayerChunksGenerated(pcx, pcy, pcz);
+        // Freeze the player only while the SINGLE section they are standing in is
+        // missing or still generating. Missing/generating sections read as air, so
+        // standing on one is how they fall through the world (the gen thread fills
+        // them a moment later, embedding the player in solid rock). Neighboring
+        // chunks stream in around them without freezing gameplay.
+        ctx.waitingForChunks = !chunkManager.isPlayerSectionGenerated(pcx, pcy, pcz);
 
         // Resolve the final surface only after ChunkManager reports that all immediate
         // spawn columns have finished generation/loading.
@@ -1418,11 +1418,15 @@ public class Main {
             // the shader switches to the underwater pass (fog, tint, caustics, no
             // stretched near-surface texture). Cheap voxel check, uploaded once.
             int uwx = cbx + wox, uwy = cby + woy, uwz = cbz + woz;
-            boolean underWater = isWaterId(world.getVoxel(uwx, uwy, uwz));
+            int eyeVoxel = world.getVoxel(uwx, uwy, uwz);
+            boolean underWater = isWaterId(eyeVoxel);
             if (!underWater && cfy < 0.6f) {
                 underWater = isWaterId(world.getVoxel(uwx, uwy - 1, uwz));
             }
             glProgramUniform1i(computeProgram, LOC_UNDER_WATER, underWater ? 1 : 0);
+            // No camera-clipped uniform: the raytracer now detects the eye voxel
+            // itself (reads _camBlock's solidity straight from the GPU pools) and
+            // treats it as air on the first bounce — no CPU→GPU handoff to go stale.
             glProgramUniform3f(computeProgram, 0, cfx, cfy, cfz);
             glProgramUniform3i(computeProgram, 29, cbx, cby, cbz);
 
