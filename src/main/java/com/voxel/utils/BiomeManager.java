@@ -9,7 +9,9 @@ import org.lwjgl.system.MemoryUtil;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE;
@@ -29,9 +31,30 @@ public class BiomeManager {
     private BiomeProvider biomeProvider;
 
     // CPU-side biome map data for sliding window support.
-    // 2 bytes per pixel (R=temp, G=humidity). Kept in off-heap memory for direct GPU upload.
+    // 2 bytes per texel (R=temp, G=humidity). Kept in off-heap memory for direct GPU upload.
     private ByteBuffer biomeData;
     private int biomeWorldSize;
+
+    // ── Per-chunk incremental fill state ──
+    // The map is populated one chunk column at a time (as chunks generate):
+    // each 16×16-block column covers a TILE_TEXELS×TILE_TEXELS texel region
+    // (4×4 at BIOME_MAP_SCALE=4). dirtyTiles holds the tile indices written
+    // since the last upload so uploadBiomeMap() only re-sends those 4×4 regions
+    // via glTextureSubImage2D instead of re-uploading the entire 512×512 map.
+    private static final int TILE_TEXELS = 4;
+    private final Set<Integer> dirtyTiles = new HashSet<>();
+    private boolean fullMapDirty = false;
+    private ByteBuffer tileScratch; // lazily allocated 4×4×2 scratch for per-tile uploads
+
+    /**
+     * Each biome-map texel covers a BIOME_MAP_SCALE × BIOME_MAP_SCALE block
+     * region. The underlying temperature/humidity climate noise is low
+     * frequency (features span tens to hundreds of blocks), so a 4× coarser
+     * map is visually identical after the GPU's bilinear filtering while
+     * costing 16× fewer climate lookups to generate and slide.
+     * Must stay in sync with the shader's u_BiomeMap UV divisor.
+     */
+    private static final int BIOME_MAP_SCALE = 4;
 
     // Lock to synchronize slideBiomeMap() (gen thread) and uploadBiomeMap() (render thread).
     private final Object biomeLock = new Object();
@@ -49,29 +72,82 @@ public class BiomeManager {
     }
 
     /**
-     * Generates CPU-side biome data for the given world size.
+     * Generates CPU-side biome data for the given world size (full-map bake,
+     * world offset 0). Used for reference/tests; the runtime path fills the map
+     * incrementally per chunk via fillBiomeDataForChunk().
      * Safe to call from any thread (no OpenGL calls).
-     * The GPU texture is created lazily by uploadBiomeMap() on the render thread.
      * @param worldSize The size of the world (e.g., 2048).
      */
     public void generateBiomeData(int worldSize) {
         synchronized (biomeLock) {
-            this.biomeWorldSize = worldSize;
+            int texels = worldSize / BIOME_MAP_SCALE;
+            this.biomeWorldSize = texels;
 
             // Free old buffer if it exists
             if (biomeData != null) MemoryUtil.memFree(biomeData);
 
-            // Allocate off-heap memory for the map (2 bytes per pixel: Temperature and Humidity).
-            biomeData = MemoryUtil.memAlloc(worldSize * worldSize * 2);
-            for (int z = 0; z < worldSize; z++) {
-                for (int x = 0; x < worldSize; x++) {
-                    float[] th = getBiomeTempHumidity(x, z);
+            // Allocate off-heap memory for the map (2 bytes per texel: Temperature and Humidity).
+            biomeData = MemoryUtil.memAlloc(texels * texels * 2);
+            for (int tz = 0; tz < texels; tz++) {
+                for (int tx = 0; tx < texels; tx++) {
+                    float[] th = getBiomeTempHumidity(
+                            tx * BIOME_MAP_SCALE + BIOME_MAP_SCALE / 2,
+                            tz * BIOME_MAP_SCALE + BIOME_MAP_SCALE / 2);
                     biomeData.put((byte) (Math.max(0, Math.min(1, th[0])) * 255));
                     biomeData.put((byte) (Math.max(0, Math.min(1, th[1])) * 255));
                 }
             }
             biomeData.flip();
+            fullMapDirty = true;
+            dirtyTiles.clear();
             // GPU texture creation is deferred to uploadBiomeMap() on the render thread.
+        }
+    }
+
+    /**
+     * Fills the biome-map tile for one chunk column (16×16 blocks = a
+     * TILE_TEXELS×TILE_TEXELS texel region in buffer-relative space). Called
+     * from the gen thread as each column is created, so the tint map is
+     * populated incrementally alongside terrain instead of being baked up
+     * front. Any tile not yet covered by a generated chunk stays neutral
+     * (128,128) — the renderer never sees those texels anyway because no
+     * voxels exist there.
+     *
+     * @param cx      absolute chunk X
+     * @param cz      absolute chunk Z
+     * @param offsetX current buffer origin X (block coords)
+     * @param offsetZ current buffer origin Z (block coords)
+     */
+    public void fillBiomeDataForChunk(int cx, int cz, int offsetX, int offsetZ) {
+        synchronized (biomeLock) {
+            if (biomeData == null || biomeWorldSize == 0 || biomeProvider == null) return;
+            int relCX = cx - (offsetX >> 4); // buffer-relative chunk coords
+            int relCZ = cz - (offsetZ >> 4);
+            int tx0 = relCX * TILE_TEXELS;
+            int tz0 = relCZ * TILE_TEXELS;
+            if (tx0 < 0 || tz0 < 0 || tx0 + TILE_TEXELS > biomeWorldSize || tz0 + TILE_TEXELS > biomeWorldSize) return;
+
+            for (int lz = 0; lz < TILE_TEXELS; lz++) {
+                for (int lx = 0; lx < TILE_TEXELS; lx++) {
+                    int tx = tx0 + lx, tz = tz0 + lz;
+                    int wx = offsetX + tx * BIOME_MAP_SCALE + BIOME_MAP_SCALE / 2;
+                    int wz = offsetZ + tz * BIOME_MAP_SCALE + BIOME_MAP_SCALE / 2;
+                    float[] th = getBiomeTempHumidity(wx, wz);
+                    int idx = (tx + tz * biomeWorldSize) * 2;
+                    biomeData.put(idx, (byte) (Math.max(0, Math.min(1, th[0])) * 255));
+                    biomeData.put(idx + 1, (byte) (Math.max(0, Math.min(1, th[1])) * 255));
+                }
+            }
+            dirtyTiles.add((tz0 / TILE_TEXELS) * (biomeWorldSize / TILE_TEXELS) + (tx0 / TILE_TEXELS));
+        }
+    }
+
+    /** Package-private readback for tests: raw byte pair (temp, humidity) at a texel. */
+    byte[] getBiomeTexelBytes(int tx, int tz) {
+        synchronized (biomeLock) {
+            if (biomeData == null || tx < 0 || tz < 0 || tx >= biomeWorldSize || tz >= biomeWorldSize) return new byte[]{0, 0};
+            int idx = (tx + tz * biomeWorldSize) * 2;
+            return new byte[]{biomeData.get(idx), biomeData.get(idx + 1)};
         }
     }
 
@@ -82,21 +158,25 @@ public class BiomeManager {
      */
     public void generateFallbackBiomeData(int worldSize) {
         synchronized (biomeLock) {
-            this.biomeWorldSize = worldSize;
+            int texels = worldSize / BIOME_MAP_SCALE;
+            this.biomeWorldSize = texels;
             if (biomeData != null) MemoryUtil.memFree(biomeData);
-            biomeData = MemoryUtil.memAlloc(worldSize * worldSize * 2);
-            for (int i = 0; i < worldSize * worldSize; i++) {
+            biomeData = MemoryUtil.memAlloc(texels * texels * 2);
+            for (int i = 0; i < texels * texels; i++) {
                 biomeData.put((byte) 128).put((byte) 128);
             }
             biomeData.flip();
+            fullMapDirty = true;
+            dirtyTiles.clear();
         }
     }
 
     /**
      * Slides the biome map to match the new buffer offset.
-     * Copies overlapping pixel data from the old region, and generates fresh
-     * Perlin noise for newly exposed areas.
-     * Must be called on the render thread after this (or before uploading to GPU).
+     * Copies overlapping pixel data from the old region; newly exposed areas
+     * stay neutral until their chunks generate and fill them via
+     * fillBiomeDataForChunk(). The whole map is re-uploaded once (fullMapDirty).
+     * Must be called on the gen thread; uploadBiomeMap() runs on the render thread.
      *
      * @param oldOffsetX Previous buffer origin X (block coords)
      * @param oldOffsetZ Previous buffer origin Z (block coords)
@@ -108,9 +188,11 @@ public class BiomeManager {
             if (biomeData == null || biomeWorldSize == 0) return;
             if (oldOffsetX == newOffsetX && oldOffsetZ == newOffsetZ) return;
 
-        int ws = biomeWorldSize;
-        int shiftX = newOffsetX - oldOffsetX; // in block coords
-        int shiftZ = newOffsetZ - oldOffsetZ;
+        int ws = biomeWorldSize; // texels per side
+        // Texel-space shift (recenters move in chunk-aligned steps, so these
+        // divide evenly; any remainder is handled by the overlap test below).
+        int shiftX = (newOffsetX - oldOffsetX) / BIOME_MAP_SCALE;
+        int shiftZ = (newOffsetZ - oldOffsetZ) / BIOME_MAP_SCALE;
 
         // Take a snapshot of the old data before we overwrite it
         ByteBuffer oldData = MemoryUtil.memAlloc(ws * ws * 2);
@@ -119,7 +201,8 @@ public class BiomeManager {
         oldData.flip();
         biomeData.rewind();
 
-        // Fill the new buffer by either copying overlapping old data or generating fresh
+        // Fill the new buffer by copying overlapping old data; exposed strips
+        // stay neutral until their chunks generate and call fillBiomeDataForChunk.
         for (int dz = 0; dz < ws; dz++) {
             for (int dx = 0; dx < ws; dx++) {
                 int oldDx = dx + shiftX;
@@ -132,17 +215,16 @@ public class BiomeManager {
                     biomeData.put(newIdx, oldData.get(oldIdx));
                     biomeData.put(newIdx + 1, oldData.get(oldIdx + 1));
                 } else {
-                    // Generate new biome data for the exposed area from BiomeProvider
-                    int wx = newOffsetX + dx;
-                    int wz = newOffsetZ + dz;
-                    float[] th = getBiomeTempHumidity(wx, wz);
-                    biomeData.put(newIdx, (byte) (Math.max(0, Math.min(1, th[0])) * 255));
-                    biomeData.put(newIdx + 1, (byte) (Math.max(0, Math.min(1, th[1])) * 255));
+                    // Exposed: neutral until the chunk covering it generates.
+                    biomeData.put(newIdx, (byte) 128);
+                    biomeData.put(newIdx + 1, (byte) 128);
                 }
             }
         }
 
         MemoryUtil.memFree(oldData);
+        fullMapDirty = true; // every texel moved; re-upload the whole map once
+        dirtyTiles.clear();
         }
     }
 
@@ -153,7 +235,6 @@ public class BiomeManager {
     public void uploadBiomeMap() {
         synchronized (biomeLock) {
             if (biomeData == null) return;
-            biomeData.rewind();
 
             // Lazy texture creation: deferred from generateBiomeData() to avoid GL calls off-thread
             if (biomeMapId == 0) {
@@ -165,7 +246,34 @@ public class BiomeManager {
                 glTextureParameteri(biomeMapId, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             }
 
-            glTextureSubImage2D(biomeMapId, 0, 0, 0, biomeWorldSize, biomeWorldSize, GL_RG, GL_UNSIGNED_BYTE, biomeData);
+            if (fullMapDirty) {
+                // One-shot full upload (boot fallback, dimension switch, recenter slide).
+                biomeData.rewind();
+                glTextureSubImage2D(biomeMapId, 0, 0, 0, biomeWorldSize, biomeWorldSize, GL_RG, GL_UNSIGNED_BYTE, biomeData);
+                fullMapDirty = false;
+                dirtyTiles.clear();
+                return;
+            }
+
+            // Incremental: upload only the 4×4 texel tiles written since the last frame.
+            if (dirtyTiles.isEmpty()) return;
+            if (tileScratch == null) tileScratch = MemoryUtil.memAlloc(TILE_TEXELS * TILE_TEXELS * 2);
+            int tilesPerSide = biomeWorldSize / TILE_TEXELS;
+            for (int tile : dirtyTiles) {
+                int tx0 = (tile % tilesPerSide) * TILE_TEXELS;
+                int tz0 = (tile / tilesPerSide) * TILE_TEXELS;
+                tileScratch.clear();
+                for (int lz = 0; lz < TILE_TEXELS; lz++) {
+                    int rowBase = ((tz0 + lz) * biomeWorldSize + tx0) * 2;
+                    for (int lx = 0; lx < TILE_TEXELS; lx++) {
+                        tileScratch.put(biomeData.get(rowBase + lx * 2));
+                        tileScratch.put(biomeData.get(rowBase + lx * 2 + 1));
+                    }
+                }
+                tileScratch.flip();
+                glTextureSubImage2D(biomeMapId, 0, tx0, tz0, TILE_TEXELS, TILE_TEXELS, GL_RG, GL_UNSIGNED_BYTE, tileScratch);
+            }
+            dirtyTiles.clear();
         }
     }
 

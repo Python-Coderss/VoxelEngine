@@ -1367,6 +1367,11 @@ void main() {
             { int ti = (d1.w >> 22) & 3;
               int tintFaceMask = (d1.w >> 24) & 0x3F;
               if (ti > 0 && ((tintFaceMask >> face) & 1) == 1 && texSample.a > 0.5) {
+                // Biome tint map is 1 texel per 4 blocks (BiomeManager.BIOME_MAP_SCALE)
+                // over a 2048-block world -> 512 texels. hp is buffer-relative in
+                // [0,2048], so the UV divisor stays the WORLD size (2048.0), mapping
+                // the whole buffer onto the 512-texel texture. Bilinear filtering
+                // makes the coarse map indistinguishable from the old 1-per-block one.
                 vec2 bp = texture(u_BiomeMap, hp.xz / 2048.0).rg;
                 vec2 cmUV = vec2(1.0-bp.x, 1.0-bp.y);
                 if (ti == 1) alb *= texture(u_GrassColormap, cmUV).rgb;

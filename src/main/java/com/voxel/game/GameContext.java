@@ -208,6 +208,13 @@ public class GameContext {
     public volatile boolean spawnLoading = true;
     public volatile String spawnLoadingMessage = "Generating spawn chunks...";
 
+    // Runtime freeze: true while any of the 27 sections of the player's 3×3×3
+    // chunk grid is missing or still generating. Movement/simulation is skipped
+    // and the loading overlay is shown until the grid completes. This is what
+    // prevents falling through terrain that has not generated yet.
+    public volatile boolean waitingForChunks = false;
+    public volatile String waitingForChunksMessage = "Loading terrain...";
+
     // --- Heavy init phase (deferred from Main.init() to the loading screen) ---
     // True while Main hasn't yet created the Overworld dimension / chunkManager /
     // redstoneManager / fluidManager / playerEntity / initial enemies. The
@@ -300,6 +307,15 @@ public class GameContext {
         commandBlockManager.beginDimension(target.id);
         world = dimensionManager.getActiveWorld();
         chunkManager = dimensionManager.getActiveChunkManager();
+        // The biome tint-map texture is shared across dimensions. Re-point the
+        // provider to the newly active world's generator and repopulate the tiles
+        // for its already-loaded columns (an existing dimension does not re-run
+        // chunk generation, so without this its tint map would be stale).
+        if (biomeManager != null) {
+            com.voxel.biome.BiomeProvider targetProvider = dimensionManager.getActiveGenerator().getBiomeProvider();
+            if (targetProvider != null) biomeManager.setBiomeProvider(targetProvider);
+            chunkManager.refreshBiomeMap();
+        }
         redstoneManager = new RedstoneManager(world, chunkManager);
         com.voxel.world.RedstoneLogger.log("DIMENSION SWITCH: created new RedstoneManager for " + target.name + " (was " + previous.name + ")");
 
@@ -424,10 +440,6 @@ public class GameContext {
         // Let the chunk manager expand to the normal render-distance stream only
         // after the expensive Beta bootstrap has completed.
         chunkManager.finishSpawnBootstrap();
-        // Generate the full biome noise map only after the first playable frame
-        // is allowed through. The manager keeps the neutral fallback bound while
-        // this runs on its single world-gen thread.
-        chunkManager.queueBiomeMapGeneration();
         return true;
     }
 

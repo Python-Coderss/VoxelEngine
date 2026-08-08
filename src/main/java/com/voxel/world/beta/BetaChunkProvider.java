@@ -419,8 +419,12 @@ public class BetaChunkProvider {
         this.columnCX = cx; this.columnCZ = cz;
         this.maxSectionCY = -1;
         this.rand.setSeed((long) cx * 341873128712L + (long) cz * 132897987541L);
+        // Use a fresh array for the copy's biome map: loadBlockGeneratorData
+        // writes its output in place, and reusing the caller's biomesForGeneration
+        // array would silently overwrite the current column's biome map with the
+        // neighbor's (breaking all later biome-dependent decoration).
         this.biomesForGeneration = this.worldChunkManager.loadBlockGeneratorData(
-                this.biomesForGeneration, cx * 16, cz * 16, 16, 16);
+                new int[256], cx * 16, cz * 16, 16, 16);
         this.temperatures = this.worldChunkManager.temperature;
         this.humidities = this.worldChunkManager.humidity;
         this.generateTerrain(cx, cz, blocks, this.biomesForGeneration, this.temperatures);
@@ -945,6 +949,7 @@ public class BetaChunkProvider {
         maxSectionCY = -1;
         neighborBlocks.clear();
         decorationOverlay.clear();
+        worldChunkManager.clearCache();
     }
 
     public void invalidateCache() {
@@ -964,6 +969,10 @@ public class BetaChunkProvider {
     public void populateColumn(com.voxel.World world, int cx, int cz) {
         if (!columnGenerated || columnCX != cx || columnCZ != cz) generateColumn(cx, cz);
 
+        // Capture the current column's biome BEFORE the neighbor prefetch:
+        // getColumnBlocks regenerates neighbor copies which (even with the
+        // fresh-array fix) reassign biomesForGeneration to neighbor data.
+        int biomeId = this.biomesForGeneration[8 + 8 * 16];
         neighborBlocks.clear();
         for (int dx = -1; dx <= 1; dx++)
             for (int dz = -1; dz <= 1; dz++)
@@ -974,7 +983,6 @@ public class BetaChunkProvider {
         long var7 = this.rand.nextLong() / 2L * 2L + 1L;
         long var9 = this.rand.nextLong() / 2L * 2L + 1L;
         this.rand.setSeed((long)cx * var7 + (long)cz * var9 ^ worldSeed);
-        int biomeId = this.biomesForGeneration[8 + 8 * 16];
 
         for (int i = 0; i < 20; ++i) { genOreVein(world, var4+rand.nextInt(16), rand.nextInt(128), var5+rand.nextInt(16), veDirt, 32); }
         for (int i = 0; i < 10; ++i) { genOreVein(world, var4+rand.nextInt(16), rand.nextInt(128), var5+rand.nextInt(16), veGravel, 32); }
@@ -990,12 +998,23 @@ public class BetaChunkProvider {
 
         double var11 = 0.5D;
         int treeBase = (int)((this.mobSpawnerNoise.func_806_a((double)var4*var11, (double)var5*var11)/8.0D+rand.nextDouble()*4.0D+4.0D)/3.0D);
+        // Vanilla clamps the noise-derived base at 0 so a negative swing can't
+        // erase the biome budget entirely (which left most chunks treeless).
+        if (treeBase < 0) treeBase = 0;
         int treeCount = rand.nextInt(10)==0 ? 1 : 0;
         switch (biomeId) {
-            case BetaBiomeGenBase.FOREST: case BetaBiomeGenBase.RAINFOREST: case BetaBiomeGenBase.TAIGA: treeCount+=treeBase+5; break;
-            case BetaBiomeGenBase.SEASONAL_FOREST: treeCount+=treeBase+2; break;
-            case BetaBiomeGenBase.DESERT: case BetaBiomeGenBase.TUNDRA: case BetaBiomeGenBase.PLAINS: treeCount-=20; break;
-            default: treeCount+=treeBase; break;
+            case BetaBiomeGenBase.FOREST: case BetaBiomeGenBase.RAINFOREST: case BetaBiomeGenBase.TAIGA:
+                treeCount+=treeBase+5; break;
+            case BetaBiomeGenBase.SEASONAL_FOREST:
+                treeCount+=treeBase+3; break;
+            case BetaBiomeGenBase.SWAMPLAND: case BetaBiomeGenBase.SAVANNA: case BetaBiomeGenBase.SHRUBLAND:
+                treeCount+=treeBase+1; break;
+            case BetaBiomeGenBase.PLAINS:
+                treeCount+=treeBase/2+1; break; // sparse lone trees, as in vanilla
+            case BetaBiomeGenBase.DESERT: case BetaBiomeGenBase.TUNDRA: case BetaBiomeGenBase.ICE_DESERT:
+                treeCount=0; break;
+            default:
+                treeCount+=treeBase; break;
         }
         for (int i=0; i<treeCount; ++i) {
             int tx=var4+rand.nextInt(16)+8, tz=var5+rand.nextInt(16)+8, ty=worldGetTopY(tx,tz);
@@ -1092,12 +1111,16 @@ public class BetaChunkProvider {
                     }}}
             }
         }
-    }
-
-    private int worldGetTopY(int x, int z) {
-        HashMap<Integer,byte[]> blocks=getColumnBlocks(x>>4,z>>4);
+    }    private int worldGetTopY(int x,int z){
+        HashMap<Integer,byte[]>blocks=getColumnBlocks(x>>4,z>>4);
         int lx=x&15,lz=z&15,topCY=-1;
         for(int cy:blocks.keySet())if(cy>topCY)topCY=cy;
+        // Vanilla rule: the growable surface only exists within the classic
+        // height range. Above y≈127 the Y-Far-Lands degradation band fills the
+        // column with packed terrain whose top (y=2047) must never be mistaken
+        // for the ground — otherwise every tree attempt lands on that mass and
+        // fails its ground check. Scan only down to y=127 like vanilla.
+        if(topCY > 7) topCY = 7;
         for(int cy=topCY;cy>=0;cy--){byte[]sec=blocks.get(cy);if(sec==null)continue;
             for(int ly=15;ly>=0;ly--)if(sec[sectionIdx(lx,ly,lz)]!=0)return(cy<<4)|ly;}
         return 0;
@@ -1124,7 +1147,15 @@ public class BetaChunkProvider {
         // is the water surface — without this check trees spawn on water.
         // Checked BEFORE any RNG consumption so rejected trees don't waste rand().
         byte ground=getSectionBlock(tb,lx,y-1,lz);
-        if(ground!=BETA_GRASS&&ground!=BETA_DIRT)return;
+        if(ground!=BETA_GRASS&&ground!=BETA_DIRT){
+            // Exposed rock counts as growable ground too: on slopes the
+            // 8-block-air check in replaceBlocksForBiome converts the surface
+            // to bare stone, which the strict grass/dirt rule then rejected.
+            // Only accept a genuine rock surface (air above, solid below).
+            if(ground!=BETA_STONE)return;
+            if(getSectionBlock(tb,lx,y,lz)!=0)return;
+            if(getSectionBlock(tb,lx,y-2,lz)==0)return;
+        }
         int height;boolean isBig=false;
         if((biomeId==BetaBiomeGenBase.FOREST||biomeId==BetaBiomeGenBase.RAINFOREST)&&rand.nextInt(10)==0){isBig=true;height=5+rand.nextInt(11);}
         else height=4+rand.nextInt(3);

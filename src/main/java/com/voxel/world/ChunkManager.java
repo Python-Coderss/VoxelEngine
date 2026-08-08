@@ -49,6 +49,8 @@ public class ChunkManager {
     private boolean deferredBetaDecorationQueued = false;
     private volatile boolean deferredBetaDecorationCancelled = false;
     private final AtomicBoolean spawnRetryQueued = new AtomicBoolean(false);
+    // Coalesces the freeze-driven manage re-runs while the 3×3×3 grid loads.
+    private final AtomicBoolean gridRetryQueued = new AtomicBoolean(false);
     // The first manage cycle only needs the immediate spawn cube. Do not queue
     // thousands of render-distance sections before the player can leave the
     // loading screen; the full stream is enabled after spawn resolution.
@@ -105,11 +107,12 @@ public class ChunkManager {
     // thread will not release these slots until the Lighting worker finishes.
     private final ConcurrentHashMap<Integer, AtomicInteger> lightPinnedSlots = new ConcurrentHashMap<>();
 
-    // ── Per-column section load tracking (gen thread only) ──
-    // Track which sections of a column are currently being generated.
-    // A column has an entry here while its first section is being generated;
-    // it's removed when the column's load cycle is complete.
-    private final Map<Long, Set<Integer>> columnSectionsLoaded = new HashMap<>();
+    // ── Per-column section load tracking ──
+    // Track which sections of a column are currently being generated. Written
+    // only by the gen thread, but thread-safe so the logic thread can read it
+    // for the player-grid freeze check (a section is "not ready" while it is
+    // in this set, even though its slot is already allocated).
+    private final Map<Long, Set<Integer>> columnSectionsLoaded = new ConcurrentHashMap<>();
     private static final int LIGHT_GRID_RADIUS = 5; // 11×11 player zone: which chunks to light
     private static final int BFS_WAIT_RADIUS = 2;   // 5×5 BFS wait zone: 24 neighbors must be loaded before BFS runs
 
@@ -283,6 +286,54 @@ public class ChunkManager {
     }
 
     /**
+     * True when all 27 sections of the 3×3×3 grid around the player's chunk are
+     * allocated AND fully generated (no section is still mid-generation).
+     *
+     * Thread-safe: reads ConcurrentHashMaps and the world indirection table.
+     * This is the gate used to freeze the player while terrain streams in. Slot
+     * allocation alone is NOT sufficient — a slot is published before its voxels
+     * are written, which is exactly how players used to fall through; the
+     * loading set covers that generate-in-progress window.
+     */
+    public boolean arePlayerChunksGenerated(int pcx, int pcy, int pcz) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                int cx = pcx + dx;
+                int cz = pcz + dz;
+                long key = chunkKey(cx, cz);
+                if (!loadedChunks.containsKey(key)) return false;
+                for (int cy = pcy - 1; cy <= pcy + 1; cy++) {
+                    if (world.getChunkSlot(cx << 4, cy << 4, cz << 4) == World.EMPTY) return false;
+                    Set<Integer> loading = columnSectionsLoaded.get(key);
+                    if (loading != null && loading.contains(cy)) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Re-runs manageChunks immediately (front of queue) while the player is
+     * frozen waiting for the 3×3×3 grid. Unlike update(), this fires even when
+     * the player has not changed chunks — needed when the grid degraded while
+     * standing still (e.g. slot-pressure eviction) or the manage that queued
+     * the grid was cleared by a newer manage.
+     */
+    public void retryGridGeneration(Vector3f playerPos, float yaw) {
+        int pcx = (int) Math.floor(playerPos.x) >> 4;
+        int pcy = (int) Math.floor(playerPos.y) >> 4;
+        int pcz = (int) Math.floor(playerPos.z) >> 4;
+        if (!gridRetryQueued.compareAndSet(false, true)) return;
+        taskQueue.addFirst(() -> {
+            try {
+                manageChunks(pcx, pcy, pcz, yaw);
+            } finally {
+                gridRetryQueued.set(false);
+            }
+        });
+    }
+
+    /**
      * Requeues the immediate spawn-area generation when the initial pass could
      * not allocate every required section. The guard prevents a loading frame
      * from flooding the generation queue while the worker is still busy.
@@ -443,19 +494,31 @@ public class ChunkManager {
     public void markBiomeMapDirty() { biomeMapDirty.set(true); }
 
     /**
-     * Generates the full biome noise map after the spawn bootstrap task. The
-     * neutral fallback remains bound while this runs, so biome generation never
-     * delays the first playable frame and still stays on the single world-gen
-     * worker rather than introducing another generator thread.
+     * Fills the biome tint-map tile for one chunk column as it is created.
+     * This is the entire runtime biome-map population path — no boot-time
+     * full-map bake. The tile stays neutral until its chunk generates, which
+     * is fine because the renderer only samples texels where voxels exist.
      */
-    public void queueBiomeMapGeneration() {
-        taskQueue.addLast(() -> {
-            if (!running || biomeManager == null || biomeManager.getBiomeProvider() == null) return;
-            long t0 = System.currentTimeMillis();
-            biomeManager.generateBiomeData(World.REGION_SIZE * World.CHUNK_SIZE);
-            biomeMapDirty.set(true);
-            System.out.println("[BOOT] biome map ready " + (System.currentTimeMillis() - t0) + " ms");
-        });
+    private void fillBiomeColumn(int cx, int cz) {
+        if (biomeManager == null) return;
+        biomeManager.fillBiomeDataForChunk(cx, cz, world.getOffsetX(), world.getOffsetZ());
+        biomeMapDirty.set(true);
+    }
+
+    /**
+     * Re-fills the biome tint-map tiles for every currently loaded column.
+     * Used on dimension switch: the BiomeManager (and its texture) is shared
+     * across dimensions, and an already-loaded dimension does not regenerate
+     * its columns, so its tiles must be repopulated with the active provider.
+     */
+    public void refreshBiomeMap() {
+        if (biomeManager == null) return;
+        int offX = world.getOffsetX();
+        int offZ = world.getOffsetZ();
+        for (Long key : loadedChunks.keySet()) {
+            biomeManager.fillBiomeDataForChunk(unpackX(key), unpackZ(key), offX, offZ);
+        }
+        biomeMapDirty.set(true);
     }
 
     public boolean needsLightUpload() { return lightsNeedUpload; }
@@ -1104,10 +1167,13 @@ public class ChunkManager {
                     loadedChunks.put(colKey, slots);
                     cancelledLightTasks.remove(colKey);
                     columnsCreated++;
+                    fillBiomeColumn(cx, cz);
 
-                    // Try disk load
-                    boolean fromDisk = saveManager != null && saveManager.loadChunk(dimension, cx, cz, world);
-
+                    // Register the immediate sections FIRST so a disk load can
+                    // write into them. World.setVoxel silently drops writes to
+                    // unregistered sections — without this, disk reloads come
+                    // back as empty-but-"loaded" columns and the player falls
+                    // straight through them.
                     int[] immediateSections = {pcy + 1, pcy, pcy - 1};
                     for (int cy : immediateSections) {
                         if (freeSlotTop < 1) break;
@@ -1115,8 +1181,17 @@ public class ChunkManager {
                         slots.put(cy, slot);
                         world.clearChunkPoolSlot(slot);
                         world.setChunkSlot(cx, cy, cz, slot);
+                    }
+
+                    // Try disk load — voxels land in the registered slots above.
+                    boolean fromDisk = saveManager != null && saveManager.loadChunk(dimension, cx, cz, world);
+
+                    for (int cy : immediateSections) {
+                        Integer slot = slots.get(cy);
+                        if (slot == null) continue;
 
                         if (!fromDisk) {
+                            markGenerating(colKey, cy);
                             generateBaseTerrain(cx, cy, cz, slot);
                             decorateSectionIfAllowed(cx, cy, cz, slot);
 
@@ -1126,6 +1201,7 @@ public class ChunkManager {
                                 if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
                             }
                             if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
+                            unmarkGenerating(colKey, cy);
                         }
                         mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
                         dirtySlots.add(slot);
@@ -1166,6 +1242,7 @@ public class ChunkManager {
                         slots.put(cy, slot);
                         world.clearChunkPoolSlot(slot);
                         world.setChunkSlot(cx, cy, cz, slot);
+                        markGenerating(colKey, cy);
                         generateBaseTerrain(cx, cy, cz, slot);
                         decorateSectionIfAllowed(cx, cy, cz, slot);
 
@@ -1175,6 +1252,7 @@ public class ChunkManager {
                             if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
                         }
                         if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
+                        unmarkGenerating(colKey, cy);
                         mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
                         dirtySlots.add(slot);
                         tableDirty.set(true);
@@ -1273,25 +1351,29 @@ public class ChunkManager {
         NavigableMap<Integer, Integer> slots = new TreeMap<>();
         loadedChunks.put(colKey, slots);
         cancelledLightTasks.remove(colKey);
+        fillBiomeColumn(cx, cz);
 
         int yMin = lastPlayerCY - yLoadRadius;
         int yMax = lastPlayerCY + yLoadRadius;
 
-        // Try disk load first
-        boolean fromDisk = saveManager != null && saveManager.loadChunk(dimension, cx, cz, world);
-
+        // Register the Y-range sections FIRST so a disk load can write into
+        // them (World.setVoxel silently drops writes to unregistered sections).
         for (int cy : orderedSections(yMin, yMax)) {
             int slot = allocateSlot();
             slots.put(cy, slot);
             world.clearChunkPoolSlot(slot);
+            world.setChunkSlot(cx, cy, cz, slot);
+        }
 
-            if (fromDisk) {
-                world.setChunkSlot(cx, cy, cz, slot);
-                mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
-                dirtySlots.add(slot);
-            } else {
-                world.setChunkSlot(cx, cy, cz, slot);
-                world.clearChunkPoolSlot(slot);
+        // Try disk load first — voxels land in the registered slots above.
+        boolean fromDisk = saveManager != null && saveManager.loadChunk(dimension, cx, cz, world);
+
+        for (int cy : orderedSections(yMin, yMax)) {
+            Integer slot = slots.get(cy);
+            if (slot == null) continue;
+
+            if (!fromDisk) {
+                markGenerating(colKey, cy);
                 generateBaseTerrain(cx, cy, cz, slot);
                 decorateSectionIfAllowed(cx, cy, cz, slot);
 
@@ -1301,9 +1383,10 @@ public class ChunkManager {
                     if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
                 }
                 if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
-                mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
-                dirtySlots.add(slot);
+                unmarkGenerating(colKey, cy);
             }
+            mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
+            dirtySlots.add(slot);
         }
 
         tableDirty.set(true);
@@ -1321,6 +1404,20 @@ public class ChunkManager {
         return freeSlotStack[--freeSlotTop];
     }
 
+    /** Marks a section as mid-generation so the freeze check holds the player. */
+    private void markGenerating(long colKey, int cy) {
+        columnSectionsLoaded.computeIfAbsent(colKey, k -> ConcurrentHashMap.newKeySet()).add(cy);
+    }
+
+    /** Marks a section as fully generated (terrain written, ready for physics). */
+    private void unmarkGenerating(long colKey, int cy) {
+        Set<Integer> loading = columnSectionsLoaded.get(colKey);
+        if (loading != null) {
+            loading.remove(cy);
+            if (loading.isEmpty()) columnSectionsLoaded.remove(colKey, loading);
+        }
+    }
+
     /**
      * Load a single 16³ section at the given (cx, cy, cz).
      * The column's NavigableMap is created lazily on first access.
@@ -1336,35 +1433,67 @@ public class ChunkManager {
             slots = new TreeMap<>();
             loadedChunks.put(colKey, slots);
             cancelledLightTasks.remove(colKey);
-            columnSectionsLoaded.put(colKey, new HashSet<>());
+            columnSectionsLoaded.put(colKey, ConcurrentHashMap.newKeySet());
+            fillBiomeColumn(cx, cz);
 
-            // Try disk load — if successful, all Y-range sections are instantly done
+            int yMin = lastPlayerCY - yLoadRadius;
+            int yMax = lastPlayerCY + yLoadRadius;
+
+            // Register the Y-range sections FIRST so a disk load can write into
+            // them. World.setVoxel silently drops writes to unregistered sections
+            // — without this, disk reloads come back as empty-but-"loaded"
+            // columns and the player falls straight through them.
+            for (int scy : orderedSections(yMin, yMax)) {
+                if (freeSlotTop < 1 && scy > lastPlayerCY) {
+                    trimLowerSectionsAfterHigherLoad(colKey, slots, scy);
+                }
+                if (freeSlotTop < 1) break;
+                int slot = allocateSlot();
+                slots.put(scy, slot);
+                world.clearChunkPoolSlot(slot);
+                world.setChunkSlot(cx, scy, cz, slot);
+            }
+
+            // Try disk load — voxels land in the registered slots above. If no
+            // save exists, generate terrain for every registered section so the
+            // column completes in one task.
             if (saveManager != null && saveManager.loadChunk(dimension, cx, cz, world)) {
-                int yMin = lastPlayerCY - yLoadRadius;
-                int yMax = lastPlayerCY + yLoadRadius;
                 for (int scy : orderedSections(yMin, yMax)) {
-                    if (freeSlotTop < 1 && scy > lastPlayerCY) {
-                        trimLowerSectionsAfterHigherLoad(colKey, slots, scy);
-                    }
-                    if (freeSlotTop < 1) return;
-                    int slot = allocateSlot();
-                    slots.put(scy, slot);
-                    world.setChunkSlot(cx, scy, cz, slot);
+                    Integer slot = slots.get(scy);
+                    if (slot == null) continue;
                     mcLightEngine.bakeChunkOcclusion(slot, cx, scy, cz);
                     dirtySlots.add(slot);
                 }
-                tableDirty.set(true);
-                scheduleFluidsInColumn(cx, cz, slots);
-                scheduleColumnLighting(cx, cz, colKey, slots);
-                columnSectionsLoaded.remove(colKey);
-                fullyGeneratedColumns.add(colKey);
-                if (slots.size() > 1) {
-                    int highest = slots.lastKey();
-                    trimLowerSectionsAfterHigherLoad(colKey, slots, highest);
-                    scheduleNeighborSectionRelight(cx, highest, cz, colKey, slots);
+            } else {
+                for (int scy : orderedSections(yMin, yMax)) {
+                    Integer slot = slots.get(scy);
+                    if (slot == null) continue;
+                    markGenerating(colKey, scy);
+                    generateBaseTerrain(cx, scy, cz, slot);
+                    decorateSectionIfAllowed(cx, scy, cz, slot);
+
+                    int bmBase = slot << 7;
+                    boolean anySolid = false;
+                    for (int w = 0; w < 128; w++) {
+                        if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
+                    }
+                    if (!anySolid) { computeChunkDirSDF(slot, cx, scy, cz); dirtySlots.add(slot); }
+                    unmarkGenerating(colKey, scy);
+                    mcLightEngine.bakeChunkOcclusion(slot, cx, scy, cz);
+                    dirtySlots.add(slot);
                 }
-                return;
             }
+            tableDirty.set(true);
+            scheduleFluidsInColumn(cx, cz, slots);
+            scheduleColumnLighting(cx, cz, colKey, slots);
+            columnSectionsLoaded.remove(colKey);
+            fullyGeneratedColumns.add(colKey);
+            if (slots.size() > 1) {
+                int highest = slots.lastKey();
+                trimLowerSectionsAfterHigherLoad(colKey, slots, highest);
+                scheduleNeighborSectionRelight(cx, highest, cz, colKey, slots);
+            }
+            return;
 
             // Start procedural-gen tracking
             // Mark cy as being generated (in the loading set), NOT yet loaded
@@ -1382,7 +1511,7 @@ public class ChunkManager {
         if (freeSlotTop < 1) return;
         int slot = allocateSlot();
         slots.put(cy, slot);
-        if (loading != null) loading.add(cy);
+        markGenerating(colKey, cy);
 
         world.clearChunkPoolSlot(slot);
         world.setChunkSlot(cx, cy, cz, slot);
@@ -1411,12 +1540,7 @@ public class ChunkManager {
             scheduleColumnLighting(cx, cz, colKey, slots);
         }
 
-        if (loading != null) {
-            loading.remove(cy);
-            if (loading.isEmpty()) {
-                columnSectionsLoaded.remove(colKey);
-            }
-        }
+        unmarkGenerating(colKey, cy);
 
         // A section arriving next to an existing section changes the vertical
         // sky-light path. Queue one complete-column rebuild on the dedicated
