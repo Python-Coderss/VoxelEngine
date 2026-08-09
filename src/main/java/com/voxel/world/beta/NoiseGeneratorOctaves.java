@@ -31,6 +31,16 @@ public class NoiseGeneratorOctaves {
         for (NoiseGeneratorPerlin generator : generatorCollection) generator.setNumericProfile(this.numericProfile);
     }
 
+    /**
+     * Pushes the chunk-aligned block offsets (corner closest to 0,0,0) into
+     * every Perlin octave so the whole chain anchors precision to the chunk.
+     */
+    public void setChunkOffset(double blockX, double blockY, double blockZ) {
+        for (NoiseGeneratorPerlin generator : generatorCollection) {
+            generator.setChunkOffset(blockX, blockY, blockZ);
+        }
+    }
+
     public double func_806_a(double var1, double var3) {
         double var5 = numericProfile.doubleValue(0.0D);
         double var7 = numericProfile.doubleValue(1.0D);

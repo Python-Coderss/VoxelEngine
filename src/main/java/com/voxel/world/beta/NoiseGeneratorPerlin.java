@@ -13,6 +13,15 @@ public class NoiseGeneratorPerlin {
     private volatile int[] permutationCache;
     private volatile BetaNumericProfile numericProfile;
     private volatile boolean permutationCacheEnabled;
+    /**
+     * Chunk-aligned block offsets of the chunk being generated (corner closest
+     * to 0,0,0). Set once per chunk by the chunk provider; every precision
+     * decision in this sampler anchors to these offsets instead of the scaled
+     * noise-frame coordinates, so degradation is chunk-consistent.
+     */
+    private volatile double chunkOffsetX;
+    private volatile double chunkOffsetY;
+    private volatile double chunkOffsetZ;
     public double xCoord;
     public double yCoord;
     public double zCoord;
@@ -53,12 +62,16 @@ public class NoiseGeneratorPerlin {
 
     private double generateNoise(double var1, double var3, double var5, boolean secondCoordinateIsY) {
         double worldX = var1 + this.xCoord;
-        double worldY = var3 + this.yCoord;
+        // The legacy 2D helper (func_801_a) treats its second argument as Z, so
+        // the Z precision selectors must receive var3 + zCoord — offsetting by
+        // yCoord (as in the 3D sampler) would hand them a coordinate shifted by
+        // up to (zCoord - yCoord) blocks from the true Z position.
+        double worldSecond = secondCoordinateIsY ? var3 + this.yCoord : var3 + this.zCoord;
         double worldZ = var5 + this.zCoord;
         double var7 = xCoordinate(worldX);
         double var9 = secondCoordinateIsY
-                ? yCoordinate(worldY)
-                : zCoordinate(worldY);
+                ? yCoordinate(worldSecond)
+                : zCoordinate(worldSecond);
         double var11 = zCoordinate(worldZ);
         int var13 = numericProfile.xIntValue(var7);
         int var14 = secondCoordinateIsY
@@ -79,16 +92,16 @@ public class NoiseGeneratorPerlin {
         int var16 = var13 & 255;
         int var17 = var14 & 255;
         int var18 = var15 & 255;
-        var7 = xAtDistance(var7 - (double) var13, worldX);
+        var7 = xAtDistance(var7 - (double) var13);
         var9 = secondCoordinateIsY
-                ? yAtDistance(var9 - (double) var14, worldY)
-                : zAtDistance(var9 - (double) var14, worldY);
-        var11 = zAtDistance(var11 - (double) var15, worldZ);
-        double var19 = xAtDistance(var7 * var7 * var7 * (var7 * (var7 * 6.0D - 15.0D) + 10.0D), worldX);
+                ? yAtDistance(var9 - (double) var14)
+                : zAtDistance(var9 - (double) var14);
+        var11 = zAtDistance(var11 - (double) var15);
+        double var19 = xAtDistance(var7 * var7 * var7 * (var7 * (var7 * 6.0D - 15.0D) + 10.0D));
         double var21 = secondCoordinateIsY
-                ? yAtDistance(var9 * var9 * var9 * (var9 * (var9 * 6.0D - 15.0D) + 10.0D), worldY)
-                : zAtDistance(var9 * var9 * var9 * (var9 * (var9 * 6.0D - 15.0D) + 10.0D), worldY);
-        double var23 = zAtDistance(var11 * var11 * var11 * (var11 * (var11 * 6.0D - 15.0D) + 10.0D), worldZ);
+                ? yAtDistance(var9 * var9 * var9 * (var9 * (var9 * 6.0D - 15.0D) + 10.0D))
+                : zAtDistance(var9 * var9 * var9 * (var9 * (var9 * 6.0D - 15.0D) + 10.0D));
+        double var23 = zAtDistance(var11 * var11 * var11 * (var11 * (var11 * 6.0D - 15.0D) + 10.0D));
         int var25 = numericProfile.intValue(permutation(var16) + var17);
         int var26 = numericProfile.intValue(permutation(var25) + var18);
         int var27 = numericProfile.intValue(permutation(var25 + 1) + var18);
@@ -121,6 +134,17 @@ public class NoiseGeneratorPerlin {
         permutationCacheEnabled = this.numericProfile.intBits() >= 10;
     }
 
+    /**
+     * Sets the chunk-aligned block offsets (corner of the chunk closest to
+     * 0,0,0) used as the precision context for band selection and at-distance
+     * quantization. Set once per chunk generation.
+     */
+    public synchronized void setChunkOffset(double blockX, double blockY, double blockZ) {
+        this.chunkOffsetX = blockX;
+        this.chunkOffsetY = blockY;
+        this.chunkOffsetZ = blockZ;
+    }
+
     public BetaNumericProfile getNumericProfile() {
         return numericProfile;
     }
@@ -130,30 +154,30 @@ public class NoiseGeneratorPerlin {
     }
 
     private double xCoordinate(double value) {
-        return numericProfile.xDoubleCoordinate(numericProfile.xFloatCoordinate(value));
+        return numericProfile.xDoubleCoordinate(numericProfile.xFloatCoordinate(value, chunkOffsetX));
     }
 
     private double zCoordinate(double value) {
-        return numericProfile.zDoubleCoordinate(numericProfile.zFloatCoordinate(value));
+        return numericProfile.zDoubleCoordinate(numericProfile.zFloatCoordinate(value, chunkOffsetZ));
     }
 
-    private double xAtDistance(double value, double worldX) {
-        return numericProfile.xDoubleValueAtDistance(value, worldX);
+    private double xAtDistance(double value) {
+        return numericProfile.xDoubleValueAtDistance(value, chunkOffsetX);
     }
 
-    private double zAtDistance(double value, double worldZ) {
-        return numericProfile.zDoubleValueAtDistance(value, worldZ);
+    private double zAtDistance(double value) {
+        return numericProfile.zDoubleValueAtDistance(value, chunkOffsetZ);
     }
 
     /** Quantize an absolute Y coordinate through the independent Y stages. */
     private double yCoordinate(double value) {
-        return numericProfile.yDoubleValue(numericProfile.yFloatValue(value));
+        return numericProfile.yDoubleValue(numericProfile.yFloatValue(value, chunkOffsetY));
     }
 
-    /** Quantize a Y-derived local value using the world-space Y distance as its ULP context. */
-    private double yAtDistance(double value, double worldY) {
+    /** Quantize a Y-derived local value using the chunk-aligned Y offset as its ULP context. */
+    private double yAtDistance(double value) {
         return numericProfile.yDoubleValueAtDistance(
-                numericProfile.yFloatValueAtDistance(value, worldY), worldY);
+                numericProfile.yFloatValueAtDistance(value, chunkOffsetY), chunkOffsetY);
     }
 
     private int permutation(int index) {
@@ -227,8 +251,8 @@ public class NoiseGeneratorPerlin {
                     var78 = numericProfile.xIntValue((double) var78 - 1.0D);
                 }
                 int var34 = var78 & 255;
-                var31 = xAtDistance(var31 - (double) var78, worldX);
-                var35 = xAtDistance(var31 * var31 * var31 * (var31 * (var31 * 6.0D - 15.0D) + 10.0D), worldX);
+                var31 = xAtDistance(var31 - (double) var78);
+                var35 = xAtDistance(var31 * var31 * var31 * (var31 * (var31 * 6.0D - 15.0D) + 10.0D));
 
                 for (var37 = 0; var37 < var10; ++var37) {
                     double worldZ = (var6 + (double) var37) * var15 + this.zCoord;
@@ -238,8 +262,8 @@ public class NoiseGeneratorPerlin {
                         var40 = numericProfile.zIntValue((double) var40 - 1.0D);
                     }
                     var41 = var40 & 255;
-                    var38 = zAtDistance(var38 - (double) var40, worldZ);
-                    var42 = zAtDistance(var38 * var38 * var38 * (var38 * (var38 * 6.0D - 15.0D) + 10.0D), worldZ);
+                    var38 = zAtDistance(var38 - (double) var40);
+                    var42 = zAtDistance(var38 * var38 * var38 * (var38 * (var38 * 6.0D - 15.0D) + 10.0D));
                     var19 = permutation(var34) + 0;
                     int var66 = numericProfile.intValue(permutation(var19) + var41);
                     int var67 = numericProfile.intValue(permutation(var34 + 1) + 0);
@@ -276,8 +300,8 @@ public class NoiseGeneratorPerlin {
                     var40 = numericProfile.xIntValue((double) var40 - 1.0D);
                 }
                 var41 = var40 & 255;
-                var38 = xAtDistance(var38 - (double) var40, worldX);
-                var42 = xAtDistance(var38 * var38 * var38 * (var38 * (var38 * 6.0D - 15.0D) + 10.0D), worldX);
+                var38 = xAtDistance(var38 - (double) var40);
+                var42 = xAtDistance(var38 * var38 * var38 * (var38 * (var38 * 6.0D - 15.0D) + 10.0D));
 
                 for (int var44 = 0; var44 < var10; ++var44) {
                     double worldZ = (var6 + (double) var44) * var15 + this.zCoord;
@@ -287,8 +311,8 @@ public class NoiseGeneratorPerlin {
                         var47 = numericProfile.zIntValue((double) var47 - 1.0D);
                     }
                     int var48 = var47 & 255;
-                    var45 = zAtDistance(var45 - (double) var47, worldZ);
-                    double var49 = zAtDistance(var45 * var45 * var45 * (var45 * (var45 * 6.0D - 15.0D) + 10.0D), worldZ);
+                    var45 = zAtDistance(var45 - (double) var47);
+                    double var49 = zAtDistance(var45 * var45 * var45 * (var45 * (var45 * 6.0D - 15.0D) + 10.0D));
 
                     for (int var51 = 0; var51 < var9; ++var51) {
                         double var52 = yCoordinate((var4 + (double) var51) * var13 + this.yCoord);
@@ -297,9 +321,8 @@ public class NoiseGeneratorPerlin {
                             var54 = numericProfile.yIntValue((long) var54 - 1L);
                         }
                         int var55 = var54 & 255;
-                        var52 = yAtDistance(var52 - (double) var54, (var4 + (double) var51) * var13 + this.yCoord);
-                        double var56 = yAtDistance(var52 * var52 * var52 * (var52 * (var52 * 6.0D - 15.0D) + 10.0D),
-                                (var4 + (double) var51) * var13 + this.yCoord);
+                        var52 = yAtDistance(var52 - (double) var54);
+                        double var56 = yAtDistance(var52 * var52 * var52 * (var52 * (var52 * 6.0D - 15.0D) + 10.0D));
                         if (var51 == 0 || var55 != var22) {
                             var22 = var55;
                             int var69 = numericProfile.intValue(permutation(var41) + var55);

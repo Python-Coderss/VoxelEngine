@@ -25,10 +25,6 @@ public class BetaWorldGenerator extends WorldGenerator {
     private final BetaChunkProvider betaProvider;
     private final BetaNumericProfile numericProfile;
     
-    // Cache the last column to avoid regenerating
-    private int lastCX = Integer.MIN_VALUE;
-    private int lastCZ = Integer.MIN_VALUE;
-    
     // Track which columns have been decorated (seed-once-per-column)
     private final Set<Long> decoratedColumns = new HashSet<>();
     
@@ -148,12 +144,8 @@ public class BetaWorldGenerator extends WorldGenerator {
     
     @Override
     public int getHeight(int x, int y, int z) {
-        int cx = x >> 4;
-        int cz = z >> 4;
-        
-        // Ensure column is generated
-        ensureColumn(cx, cz);
-        
+        // The provider's per-section path generates only the requested cubic
+        // section — no full-column batching needed here.
         return betaProvider.getHeight(x, y, z);
     }
     
@@ -189,16 +181,9 @@ public class BetaWorldGenerator extends WorldGenerator {
 
     @Override
     public int getBlockType(int x, int y, int z, int height) {
-        int cx = x >> 4;
-        int cz = z >> 4;
-        
-        // Ensure column is generated
-        ensureColumn(cx, cz);
-        
-        // Get Beta 1.7.3 block ID
+        // The provider's per-section path generates only the requested cubic
+        // section — no full-column batching needed here.
         int betaId = betaProvider.getBetaBlock(x, z, y);
-        
-        // Map to VoxelEngine block ID
         return betaProvider.mapToVeBlock(betaId);
     }
     
@@ -230,11 +215,19 @@ public class BetaWorldGenerator extends WorldGenerator {
         long colKey = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
         if (decoratedColumns.contains(colKey)) return;
         
-        decoratedColumns.add(colKey);
-        betaProvider.populateColumn(world, cx, cz);
-        
-        // Generate structures (villages, mineshafts, etc.) in Beta terrain
-        structureGen.generateStructures(world, cx, cz, biomeProvider);
+        // Do not publish completion until every population step succeeds. If a
+        // transient generation failure occurs, ChunkManager's pending stage can
+        // then retry this column instead of being hidden by a premature marker.
+        try {
+            betaProvider.populateColumn(world, cx, cz);
+
+            // Generate structures (villages, mineshafts, etc.) in Beta terrain
+            structureGen.generateStructures(world, cx, cz, biomeProvider);
+            decoratedColumns.add(colKey);
+        } catch (RuntimeException failure) {
+            decoratedColumns.remove(colKey);
+            throw failure;
+        }
 
         if (facilityColumn) {
             for (int facilityY : com.voxel.world.AncientBuilderFacility.FACILITY_YS) {
@@ -242,18 +235,6 @@ public class BetaWorldGenerator extends WorldGenerator {
                     com.voxel.world.AncientBuilderFacility.generate(world, facilityY, cy);
                 }
             }
-        }
-    }
-    
-    /**
-     * Ensure the column for (cx, cz) is generated.
-     * Only regenerates if the column changed.
-     */
-    private void ensureColumn(int cx, int cz) {
-        if (cx != lastCX || cz != lastCZ) {
-            betaProvider.generateColumn(cx, cz);
-            lastCX = cx;
-            lastCZ = cz;
         }
     }
     

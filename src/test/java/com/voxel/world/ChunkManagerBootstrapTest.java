@@ -40,4 +40,12 @@ public class ChunkManagerBootstrapTest {
         assertFalse(ChunkManager.shouldEvictLowerSection(2, 5, 3, true));
         assertFalse(ChunkManager.shouldEvictLowerSection(6, 5, 3, false));
     }
+
+    @Test
+    public void pendingDecorationPriorityPrefersNearbyColumns() {
+        long nearby = ((long) 1 << 32) | 1L;
+        long distant = ((long) 8 << 32) | 8L;
+        assertTrue(ChunkManager.compareGenerationPriority(nearby, distant, 0, 0) < 0);
+        assertTrue(ChunkManager.compareGenerationPriority(distant, nearby, 0, 0) > 0);
+    }
 }

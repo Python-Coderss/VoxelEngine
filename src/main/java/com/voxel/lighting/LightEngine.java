@@ -50,6 +50,14 @@ public class LightEngine {
     /** Maximum light value (both sky and block). */
     public static final int MAX_LIGHT = 15;
 
+    /**
+     * Vertical run of clear (air / non-full) blocks that counts as direct sun.
+     * Any contiguous run of at least this many transparent voxels relights to
+     * full sky light — even when a block covers the top of the run, so shafts
+     * and 8-tall rooms under thin roofs still read as sunlit.
+     */
+    public static final int SUN_CLEAR_RUN = 8;
+
     /** Height limit for sky light computation (now dynamic via buffer size). */
     public static final int WORLD_HEIGHT = 2048;
 
@@ -91,13 +99,16 @@ public class LightEngine {
                 int wz = worldBaseZ + lz;
 
                 // Propagate sky light downward from world ceiling.
-                // Air above the highest block keeps full sky=15. Any 16-block
-                // vertical line of air or non-full blocks (water, slabs, leaves,
-                // glass…) counts as THE SUN: once a contiguous clear run reaches
-                // 16, the light resets to full — sunlight flows down shafts and
-                // through water columns instead of dimming through them.
+                // Air above the highest block keeps full sky=15. Any
+                // SUN_CLEAR_RUN block vertical line of air or non-full blocks
+                // (water, slabs, leaves, glass…) counts as THE SUN: once a
+                // contiguous clear run reaches SUN_CLEAR_RUN, the light resets
+                // to full — sunlight flows down shafts, through water columns,
+                // and into rooms under thin roofs instead of dimming through
+                // them. The run keeps counting below a full block, so 8 clear
+                // voxels under a cover still count as the sun.
                 int skyLight = MAX_LIGHT;
-                int clearRun = 16; // world ceiling counts as 16 blocks of sky
+                int clearRun = SUN_CLEAR_RUN; // world ceiling counts as a full clear run
                 for (int y = bufMaxYRel - 1; y >= 0; y--) {
                     int slot = getSlotForWorldPos(wx, y, wz, ox, oy, oz);
                     if (slot == World.EMPTY) continue;
@@ -112,17 +123,18 @@ public class LightEngine {
                         changedVoxels++;
                     }
 
-                    if (skyLight <= 0) break;
-
                     if (blockId > 0 && blockDataManager.isFullBlock(blockId)) {
-                        // Opaque solid: blocks light and restarts the clear run
+                        // Opaque solid: blocks light and restarts the clear run.
+                        // Deliberately NOT followed by a break — air below can
+                        // still accumulate SUN_CLEAR_RUN clear voxels and relight.
                         clearRun = 0;
                         skyLight = Math.max(0, skyLight - getBlockOpacity(blockId));
                     } else {
                         // Air / non-full block: part of a clear vertical line.
-                        // 16 consecutive = the sun is considered visible here.
+                        // SUN_CLEAR_RUN consecutive = the sun is visible here,
+                        // even when a block covers the top of the run.
                         clearRun++;
-                        if (clearRun >= 16) skyLight = MAX_LIGHT;
+                        if (clearRun >= SUN_CLEAR_RUN) skyLight = MAX_LIGHT;
                     }
                 }
             }

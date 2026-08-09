@@ -43,14 +43,32 @@ public class ChunkManager {
     private final Map<Long, NavigableMap<Integer, Integer>> loadedChunks = new ConcurrentHashMap<>();
     // Columns whose immediate 3-section spawn area has finished generation/loading.
     private final Set<Long> fullyGeneratedColumns = ConcurrentHashMap.newKeySet();
-    // Procedurally generated Beta columns whose decoration was skipped during
-    // bootstrap. Gen-thread confined; consumed after spawn is released.
+
+    /**
+     * Durable-in-memory column generation stages. This is intentionally separate
+     * from loadedChunks: a column can be terrain-ready while its surface section
+     * is still queued, and queue pruning must not erase that work.
+     */
+    public enum GenerationStage {
+        TERRAIN_PENDING,
+        TERRAIN_READY,
+        DECORATION_PENDING,
+        DECORATED
+    }
+    private final Map<Long, GenerationStage> generationStages = new ConcurrentHashMap<>();
+
+    // Beta columns waiting for their surface (cy=4) section to be available for
+    // the population pass. The set is a retry queue, not the source of truth;
+    // generationStages remains pending until decoration actually completes.
     private final Set<Long> deferredBetaDecoration = new HashSet<>();
     private boolean deferredBetaDecorationQueued = false;
+    // Gen-thread guard: loading cy=4 as a decoration prerequisite must build
+    // terrain only, otherwise loadOneSection would recursively request decoration.
+    private boolean loadingDecorationPrerequisite = false;
+    // Keep decoration incremental so aggressive terrain generation stays responsive.
+    private static final int DECORATION_BATCH_SIZE = 4;
     private volatile boolean deferredBetaDecorationCancelled = false;
     private final AtomicBoolean spawnRetryQueued = new AtomicBoolean(false);
-    // Coalesces the freeze-driven manage re-runs while the 3×3×3 grid loads.
-    private final AtomicBoolean gridRetryQueued = new AtomicBoolean(false);
     // The first manage cycle only needs the immediate spawn cube. Do not queue
     // thousands of render-distance sections before the player can leave the
     // loading screen; the full stream is enabled after spawn resolution.
@@ -118,9 +136,10 @@ public class ChunkManager {
 
     // ── Per-column section load tracking ──
     // Track which sections of a column are currently being generated. Written
-    // only by the gen thread, but thread-safe so the logic thread can read it
-    // for the player-grid freeze check (a section is "not ready" while it is
-    // in this set, even though its slot is already allocated).
+    // only by the gen thread; read by manageChunks (to avoid re-queueing a
+    // mid-generation section) and by isPlayerSectionGenerated (the look-ahead
+    // priority gate). A section stays in this set until its voxels are written,
+    // even though its slot is already allocated.
     private final Map<Long, Set<Integer>> columnSectionsLoaded = new ConcurrentHashMap<>();
     private static final int LIGHT_GRID_RADIUS = 5; // 11×11 player zone: which chunks to light
     private static final int BFS_WAIT_RADIUS = 2;   // 5×5 BFS wait zone: 24 neighbors must be loaded before BFS runs
@@ -401,38 +420,10 @@ public class ChunkManager {
     }
 
     /**
-     * True when all 27 sections of the 3×3×3 grid around the player's chunk are
-     * allocated AND fully generated (no section is still mid-generation).
-     *
-     * Thread-safe: reads ConcurrentHashMaps and the world indirection table.
-     * This is the gate used to freeze the player while terrain streams in. Slot
-     * allocation alone is NOT sufficient — a slot is published before its voxels
-     * are written, which is exactly how players used to fall through; the
-     * loading set covers that generate-in-progress window.
-     */
-    public boolean arePlayerChunksGenerated(int pcx, int pcy, int pcz) {
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dz = -1; dz <= 1; dz++) {
-                int cx = pcx + dx;
-                int cz = pcz + dz;
-                long key = chunkKey(cx, cz);
-                if (!loadedChunks.containsKey(key)) return false;
-                for (int cy = pcy - 1; cy <= pcy + 1; cy++) {
-                    if (world.getChunkSlot(cx << 4, cy << 4, cz << 4) == World.EMPTY) return false;
-                    Set<Integer> loading = columnSectionsLoaded.get(key);
-                    if (loading != null && loading.contains(cy)) return false;
-                }
-            }
-        }
-        return true;
-    }
-
-    /**
-     * True when the single 16³ section the player is currently standing in is
-     * allocated AND fully generated (not mid-generation). This is the lightweight
-     * runtime freeze gate: unlike {@link #arePlayerChunksGenerated} (the whole
-     * 3×3×3 grid), only the player's own chunk blocks movement, so terrain can
-     * stream in around them without freezing gameplay.
+     * True when the single 16³ section at (pcx, pcy, pcz) is allocated AND fully
+     * generated (not mid-generation). Used by the center-ray look-ahead to keep
+     * its preload strictly second-priority behind the player's own section — it
+     * is NOT a player freeze gate: gameplay never waits on it.
      *
      * Thread-safe: reads ConcurrentHashMaps and the world indirection table.
      */
@@ -442,27 +433,6 @@ public class ChunkManager {
         if (world.getChunkSlot(pcx << 4, pcy << 4, pcz << 4) == World.EMPTY) return false;
         Set<Integer> loading = columnSectionsLoaded.get(key);
         return loading == null || !loading.contains(pcy);
-    }
-
-    /**
-     * Re-runs manageChunks immediately (front of queue) while the player is
-     * frozen waiting for the 3×3×3 grid. Unlike update(), this fires even when
-     * the player has not changed chunks — needed when the grid degraded while
-     * standing still (e.g. slot-pressure eviction) or the manage that queued
-     * the grid was cleared by a newer manage.
-     */
-    public void retryGridGeneration(Vector3f playerPos, float yaw) {
-        int pcx = (int) Math.floor(playerPos.x) >> 4;
-        int pcy = (int) Math.floor(playerPos.y) >> 4;
-        int pcz = (int) Math.floor(playerPos.z) >> 4;
-        if (!gridRetryQueued.compareAndSet(false, true)) return;
-        taskQueue.addFirst(() -> {
-            try {
-                manageChunks(pcx, pcy, pcz, yaw);
-            } finally {
-                gridRetryQueued.set(false);
-            }
-        });
     }
 
     /**
@@ -863,10 +833,13 @@ public class ChunkManager {
             }
         }
 
-        if (!spawnBootstrap && !deferredBetaDecoration.isEmpty()
+        if (!spawnBootstrap && hasActionablePendingGenerationStages()
                 && !deferredBetaDecorationQueued) {
             deferredBetaDecorationQueued = true;
-            taskQueue.addLast(deferredBetaDecorationTask);
+            // Stage advancement is intentionally ahead of the broad render-distance
+            // queue. Terrain remains aggressive, but nearby missed decoration gets
+            // a chance before another large batch of distant sections.
+            taskQueue.addFirst(deferredBetaDecorationTask);
         }
 
         if (!chunksToLoad.isEmpty() || expandedCount > 0) {
@@ -997,6 +970,8 @@ public class ChunkManager {
         cancelledLightTasks.add(key);
         columnSectionsLoaded.remove(key);
         fullyGeneratedColumns.remove(key);
+        // Do not discard a pending stage on unload. The next load must retry
+        // decoration; a queue index is disposable, the stage map is not.
         deferredBetaDecoration.remove(key);
         queuedColumnRelights.remove(key);
         relightAgain.remove(key);
@@ -1317,6 +1292,7 @@ public class ChunkManager {
 
                     // Try disk load — voxels land in the registered slots above.
                     boolean fromDisk = saveManager != null && saveManager.loadChunk(dimension, cx, cz, world);
+                    if (fromDisk) markDiskLoaded(cx, cz);
 
                     for (int cy : immediateSections) {
                         Integer slot = slots.get(cy);
@@ -1499,6 +1475,7 @@ public class ChunkManager {
 
         // Try disk load first — voxels land in the registered slots above.
         boolean fromDisk = saveManager != null && saveManager.loadChunk(dimension, cx, cz, world);
+        if (fromDisk) markDiskLoaded(cx, cz);
 
         for (int cy : orderedSections(yMin, yMax)) {
             Integer slot = slots.get(cy);
@@ -1536,7 +1513,7 @@ public class ChunkManager {
         return freeSlotStack[--freeSlotTop];
     }
 
-    /** Marks a section as mid-generation so the freeze check holds the player. */
+    /** Marks a section as mid-generation until its voxels are fully written. */
     private void markGenerating(long colKey, int cy) {
         columnSectionsLoaded.computeIfAbsent(colKey, k -> ConcurrentHashMap.newKeySet()).add(cy);
     }
@@ -1589,7 +1566,9 @@ public class ChunkManager {
             // Try disk load — voxels land in the registered slots above. If no
             // save exists, generate terrain for every registered section so the
             // column completes in one task.
-            if (saveManager != null && saveManager.loadChunk(dimension, cx, cz, world)) {
+            boolean fromDisk = saveManager != null && saveManager.loadChunk(dimension, cx, cz, world);
+            if (fromDisk) markDiskLoaded(cx, cz);
+            if (fromDisk) {
                 for (int scy : orderedSections(yMin, yMax)) {
                     Integer slot = slots.get(scy);
                     if (slot == null) continue;
@@ -1855,21 +1834,81 @@ public class ChunkManager {
      * Other dimensions retain their existing decoration timing.
      */
     private void decorateSectionIfAllowed(int cx, int cy, int cz, int slot) {
-        if (shouldDeferDecoration(spawnBootstrap, generator instanceof BetaWorldGenerator)) {
-            deferredBetaDecoration.add(chunkKey(cx, cz));
+        if (!(generator instanceof BetaWorldGenerator)) {
+            generator.decorate(cx, cy, cz, slot, world);
             return;
         }
-        generator.decorate(cx, cy, cz, slot, world);
+
+        // The prerequisite section is being generated by attemptBetaDecoration;
+        // do not recursively start another attempt from its terrain load.
+        if (loadingDecorationPrerequisite && cy == 4) return;
+
+        long key = chunkKey(cx, cz);
+        // Never regress a completed column when a later Y section arrives.
+        if (generationStages.get(key) != GenerationStage.DECORATED) {
+            // This transition is made only after generateBaseTerrain returned, so
+            // a queue prune can never confuse terrain with completed decoration.
+            generationStages.put(key, GenerationStage.DECORATION_PENDING);
+            deferredBetaDecoration.add(key);
+        }
+
+        if (spawnBootstrap) return;
+
+        if (cy == 4) {
+            attemptBetaDecoration(key);
+        } else {
+            // Beta's population pass is column-wide and belongs to cy=4, but
+            // the generator also owns fixed test facilities in upper sections.
+            // Preserve those per-section hooks after bootstrap.
+            generator.decorate(cx, cy, cz, slot, world);
+        }
     }
 
-    /** Runs the deferred Beta population pass for the already loaded spawn columns. */
+    /**
+     * Attempts the column-wide Beta population pass. Pending state is retained
+     * when the surface section is absent or slot pressure prevents allocation.
+     */
+    private boolean attemptBetaDecoration(long key) {
+        if (!(generator instanceof BetaWorldGenerator)) return true;
+        if (generationStages.get(key) == GenerationStage.DECORATED) {
+            deferredBetaDecoration.remove(key);
+            return true;
+        }
+
+        int cx = unpackX(key), cz = unpackZ(key);
+        NavigableMap<Integer, Integer> slots = loadedChunks.get(key);
+        if (slots == null) return false; // Keep the stage for the next reload.
+
+        Integer slot = slots.get(4);
+        if (slot == null) {
+            // Decoration is intentionally allowed to pull in the surface section
+            // even when aggressive streaming was centered at another Y level.
+            // Suppress the callback from that terrain load to avoid recursion.
+            loadingDecorationPrerequisite = true;
+            try {
+                loadOneSection(cx, 4, cz);
+            } finally {
+                loadingDecorationPrerequisite = false;
+            }
+            slots = loadedChunks.get(key);
+            if (slots == null) return false;
+            slot = slots.get(4);
+        }
+        if (slot == null) return false;
+
+        generator.decorate(cx, 4, cz, slot, world);
+        generationStages.put(key, GenerationStage.DECORATED);
+        deferredBetaDecoration.remove(key);
+        dirtySlots.addAll(slots.values());
+        tableDirty.set(true);
+        return true;
+    }
+
+    /** Runs pending decoration nearest to the player first. */
     private void runDeferredBetaDecoration() {
         synchronized (this) {
             deferredBetaDecorationQueued = false;
             if (!running || spawnBootstrap || deferredBetaDecorationCancelled) return;
-            // Hold the lifecycle lock for the serialized pass. shutdown() then
-            // waits for an already-started pass instead of racing into the
-            // middle of a world mutation or starting it after cancellation.
             decorateBootstrapColumns();
         }
     }
@@ -1877,30 +1916,45 @@ public class ChunkManager {
     private void decorateBootstrapColumns() {
         if (!(generator instanceof BetaWorldGenerator)) return;
 
-        int decorated = 0;
-        for (Long key : new ArrayList<>(deferredBetaDecoration)) {
-            if (!running || deferredBetaDecorationCancelled) break;
-            NavigableMap<Integer, Integer> slots = loadedChunks.get(key);
-            if (slots == null) {
-                deferredBetaDecoration.remove(key);
-                continue;
+        // The set is only a retry index. Rebuild it from the stage map so a
+        // pruned task or an interrupted pass can never lose a pending column.
+        // Drop unloaded keys before batching: they remain represented by the
+        // stage map and will be re-indexed when they stream back in.
+        deferredBetaDecoration.clear();
+        for (Map.Entry<Long, GenerationStage> entry : generationStages.entrySet()) {
+            if (entry.getValue() == GenerationStage.DECORATION_PENDING
+                    && loadedChunks.containsKey(entry.getKey())) {
+                deferredBetaDecoration.add(entry.getKey());
             }
-            Integer slot = slots.get(4); // Beta's surface/decorating section.
-            if (slot == null) continue;
+        }
 
-            generator.decorate(unpackX(key), 4, unpackZ(key), slot, world);
-            dirtySlots.addAll(slots.values());
-            deferredBetaDecoration.remove(key);
-            decorated++;
+        List<Long> pending = new ArrayList<>(deferredBetaDecoration);
+        pending.sort((a, b) -> compareGenerationPriority(a, b, lastPlayerCX, lastPlayerCZ));
+
+        int decorated = 0;
+        int examined = 0;
+        for (Long key : pending) {
+            if (!running || deferredBetaDecorationCancelled || examined >= DECORATION_BATCH_SIZE) break;
+            examined++;
+            if (attemptBetaDecoration(key)) decorated++;
         }
         if (decorated > 0) {
-            tableDirty.set(true);
-            WorldGenLogger.log("BETA bootstrap decoration deferred complete: "
-                    + decorated + " columns");
+            WorldGenLogger.log("BETA decoration stages advanced: " + decorated + " columns");
+        }
+        // Yield between bounded batches so newly queued terrain gets a chance.
+        // If this pass made no progress (for example, temporary slot pressure),
+        // wait for the next manage/load event instead of spinning the gen thread.
+        if (decorated > 0 && hasActionablePendingGenerationStages()
+                && running && !deferredBetaDecorationCancelled) {
+            deferredBetaDecorationQueued = true;
+            taskQueue.addLast(deferredBetaDecorationTask);
         }
     }
 
     private int generateBaseTerrain(int cx, int cy, int cz, int slot) {
+        if (generator instanceof BetaWorldGenerator) {
+            generationStages.putIfAbsent(chunkKey(cx, cz), GenerationStage.TERRAIN_PENDING);
+        }
         world.clearChunkPoolSlot(slot);
         int worldX = cx << 4;
         int worldY = cy << 4;
@@ -1910,14 +1964,20 @@ public class ChunkManager {
         // caches complete 16³ sections, so copying that cache avoids a second
         // 4,096-call per-voxel traversal during startup.
         int bulkCount = generator.populateSection(cx, cy, cz, world, slot);
-        if (bulkCount >= 0) return bulkCount;
+        if (bulkCount >= 0) {
+            markTerrainReady(cx, cz);
+            return bulkCount;
+        }
 
         int solidCount = 0;
 
         // Let direct 3D generators cheaply reject known-empty sections. This
         // replaces the old getHeight-based early-out without making section
         // generation depend on a column-height query.
-        if (!generator.prepareSection(cx, cy, cz)) return 0;
+        if (!generator.prepareSection(cx, cy, cz)) {
+            markTerrainReady(cx, cz);
+            return 0;
+        }
 
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
@@ -1935,7 +1995,34 @@ public class ChunkManager {
                 }
             }
         }
+        markTerrainReady(cx, cz);
         return solidCount;
+    }
+
+    private void markTerrainReady(int cx, int cz) {
+        if (!(generator instanceof BetaWorldGenerator)) return;
+        long key = chunkKey(cx, cz);
+        generationStages.compute(key, (ignored, current) -> {
+            // A later Y-section arriving must never regress an already completed
+            // column, nor erase a population pass that is waiting for cy=4.
+            if (current == GenerationStage.DECORATED
+                    || current == GenerationStage.DECORATION_PENDING) return current;
+            return GenerationStage.TERRAIN_READY;
+        });
+    }
+
+    private void markDiskLoaded(int cx, int cz) {
+        if (!(generator instanceof BetaWorldGenerator)) return;
+        long key = chunkKey(cx, cz);
+        // Preserve an interrupted in-memory population. Otherwise a saved,
+        // already-decorated column is complete and must not be repopulated.
+        generationStages.compute(key, (ignored, current) ->
+                current == GenerationStage.DECORATION_PENDING
+                        ? current : GenerationStage.DECORATED);
+        if (generationStages.get(key) == GenerationStage.DECORATED) {
+            generationStages.remove(key);
+            deferredBetaDecoration.remove(key);
+        }
     }
 
     /**
@@ -1979,6 +2066,29 @@ public class ChunkManager {
                 && pcx >= 1 && pcx < World.REGION_SIZE - 1
                 && pcy >= 1 && pcy < World.REGION_SIZE - 1
                 && pcz >= 1 && pcz < World.REGION_SIZE - 1;
+    }
+
+    private boolean hasActionablePendingGenerationStages() {
+        for (Map.Entry<Long, GenerationStage> entry : generationStages.entrySet()) {
+            if (entry.getValue() == GenerationStage.DECORATION_PENDING
+                    && loadedChunks.containsKey(entry.getKey())) return true;
+        }
+        return false;
+    }
+
+    /** Nearest columns win; ties are stable by packed key. */
+    static int compareGenerationPriority(long a, long b, int pcx, int pcz) {
+        int ax = (int) (a >> 32), az = (int) a;
+        int bx = (int) (b >> 32), bz = (int) b;
+        int ad = Math.max(Math.abs(ax - pcx), Math.abs(az - pcz));
+        int bd = Math.max(Math.abs(bx - pcx), Math.abs(bz - pcz));
+        if (ad != bd) return Integer.compare(ad, bd);
+        return Long.compare(a, b);
+    }
+
+    /** Snapshot for diagnostics/tests; safe for callers on the logic thread. */
+    public GenerationStage getGenerationStage(int cx, int cz) {
+        return generationStages.getOrDefault(chunkKey(cx, cz), GenerationStage.TERRAIN_PENDING);
     }
 
     private long chunkKey(int x, int z) { return ((long) x << 32) | (z & 0xFFFFFFFFL); }
