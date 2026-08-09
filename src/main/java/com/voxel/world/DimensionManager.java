@@ -48,13 +48,15 @@ public class DimensionManager {
         if (type == DimensionType.AETHER) {
             generator = new AetherGenerator(0, blockDataManager);
         } else if (type == DimensionType.OVERWORLD) {
-            // The normal Overworld retains Beta's integer-only Far Lands behavior:
-            // 10-bit short, 20-bit X/Z int, 15-bit Y int, standard float/double.
+            // The normal Overworld uses the coordinate-tuned far-lands policy:
+            // classic integer-only far lands (~3,060 blocks) with standard
+            // float/double precision — distance degradation is off by default
+            // and editable in OverworldBetaPrecision.
             generator = new BetaWorldGenerator(0, blockDataManager,
-                    com.voxel.world.beta.BetaNumericProfile.STANDARD_BETA);
+                    com.voxel.world.beta.BetaNumericProfile.OVERWORLD);
         } else if (type == DimensionType.ERROR502) {
-            // ERROR502 remains the isolated experimental world using the editable,
-            // coordinate-aware precision switches.
+            // ERROR502 remains the isolated experimental world using the
+            // coordinate-aware degradation switches (Error502BetaPrecision).
             generator = new BetaWorldGenerator(0, blockDataManager,
                     com.voxel.world.beta.BetaNumericProfile.DEFAULT);
         } else if (type == DimensionType.PORTAL_HALL) {

@@ -13,9 +13,12 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Tests the player-grid freeze gate: {@link ChunkManager#arePlayerChunksGenerated}
- * must report false while any of the 27 sections of the player's 3×3×3 grid is
- * missing or still mid-generation, and true once everything has generated.
+ * Tests the single-section readiness gate {@link ChunkManager#isPlayerSectionGenerated}.
+ * It must report false while the player's own section is missing or still
+ * mid-generation, and true once it has fully generated. This is the gate the
+ * center-ray look-ahead uses to keep its preloads second-priority behind the
+ * player's own section — it is NOT a player freeze gate anymore (gameplay
+ * never waits on it).
  *
  * The mid-generation case is the critical one: a chunk slot is published BEFORE
  * its voxels are written, so a "loaded" check alone passes while the section is
@@ -49,10 +52,10 @@ public class ChunkManagerGridReadyTest {
 
             assertTrue("gen thread never started generating a section",
                     started.await(15, TimeUnit.SECONDS));
-            // The first section is blocked mid-populateSection: its slot is
-            // already allocated, so the grid MUST NOT be reported ready.
-            assertFalse("grid reported ready while a section is still generating",
-                    cm.arePlayerChunksGenerated(PCX, PCY, PCZ));
+            // The player's section is blocked mid-populateSection: its slot is
+            // already allocated, so the section MUST NOT be reported ready.
+            assertFalse("section reported ready while still generating",
+                    cm.isPlayerSectionGenerated(PCX, PCY, PCZ));
         } finally {
             release.countDown();
             cm.shutdown();
@@ -63,44 +66,47 @@ public class ChunkManagerGridReadyTest {
     public void reportsFalseBeforeAnyChunksExist() {
         ChunkManager cm = newChunkManager(fastEmptyGenerator());
         try {
-            assertFalse(cm.arePlayerChunksGenerated(PCX, PCY, PCZ));
+            assertFalse(cm.isPlayerSectionGenerated(PCX, PCY, PCZ));
         } finally {
             cm.shutdown();
         }
     }
 
     @Test
-    public void playerGridBecomesReadyAfterUpdateQueuesManage() throws Exception {
+    public void playerSectionBecomesReadyAfterUpdateQueuesManage() throws Exception {
         ChunkManager cm = newChunkManager(fastEmptyGenerator());
         try {
             cm.update(new Vector3f(8f, 88f, 8f), 0f);
-            waitForGridReady(cm);
-            assertTrue(cm.arePlayerChunksGenerated(PCX, PCY, PCZ));
+            waitForSectionReady(cm, PCX, PCY, PCZ);
+            assertTrue(cm.isPlayerSectionGenerated(PCX, PCY, PCZ));
         } finally {
             cm.shutdown();
         }
     }
 
     @Test
-    public void retryGridGenerationDrivesGridToReady() throws Exception {
+    public void playerSectionReadyForAdjacentLoadedColumn() throws Exception {
         ChunkManager cm = newChunkManager(fastEmptyGenerator());
         try {
-            // No update() call: retryGridGeneration must fire manageChunks on its own.
-            cm.retryGridGeneration(new Vector3f(8f, 88f, 8f), 0f);
-            waitForGridReady(cm);
-            assertTrue(cm.arePlayerChunksGenerated(PCX, PCY, PCZ));
+            cm.update(new Vector3f(8f, 88f, 8f), 0f);
+            waitForSectionReady(cm, PCX, PCY, PCZ);
+            // An adjacent column is streamed without ever freezing the player;
+            // its own section becomes ready independently of the player's.
+            cm.update(new Vector3f(24f, 88f, 8f), 0f);
+            waitForSectionReady(cm, 1, PCY, 0);
+            assertTrue(cm.isPlayerSectionGenerated(1, PCY, 0));
         } finally {
             cm.shutdown();
         }
     }
 
-    private static void waitForGridReady(ChunkManager cm) throws InterruptedException {
+    private static void waitForSectionReady(ChunkManager cm, int cx, int cy, int cz) throws InterruptedException {
         long deadline = System.currentTimeMillis() + 20_000;
-        while (System.currentTimeMillis() < deadline && !cm.arePlayerChunksGenerated(PCX, PCY, PCZ)) {
+        while (System.currentTimeMillis() < deadline && !cm.isPlayerSectionGenerated(cx, cy, cz)) {
             Thread.sleep(10);
         }
-        assertTrue("3×3×3 player grid never became fully generated",
-                cm.arePlayerChunksGenerated(PCX, PCY, PCZ));
+        assertTrue("section (" + cx + "," + cy + "," + cz + ") never became fully generated",
+                cm.isPlayerSectionGenerated(cx, cy, cz));
     }
 
     private static WorldGenerator fastEmptyGenerator() {

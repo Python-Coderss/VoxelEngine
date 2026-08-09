@@ -5,14 +5,33 @@ public final class BetaNumericProfile {
     public static final int CLASSIC_FAR_LANDS_BLOCKS = BetaPrecisionTuning.CLASSIC_FAR_LANDS_BLOCKS;
 
     /**
-     * Standard Beta numeric behavior used by the normal Overworld Far Lands.
-     * Only the integer widths are reduced: short=10, X/Z int=20, Y int=15.
-     * Java-standard float and double widths are retained on every axis.
+     * Legacy fixed-width Beta profile (no distance tuning): short=10, X/Z
+     * int=20, Y int=15, standard float 8/23 and double 11/52 on every axis.
+     * Retained for tests and reference — the overworld now uses the
+     * coordinate-tuned {@link #OVERWORLD} profile.
      */
     public static final BetaNumericProfile STANDARD_BETA =
             new BetaNumericProfile(10, 20, 15, 8, 23, 11, 52);
 
-    /** Default profile backed by the editable {@link BetaPrecisionTuning} file. */
+    /**
+     * Overworld profile: coordinate-tuned via {@link Error502BetaPrecision}
+     * (the error502 and overworld presets were swapped). Integer far lands
+     * (~3,060 blocks) with the error502-style float/double degradation layered
+     * on top in block space: float 23→16→12→8→6→4, X/Z double fixed at 26,
+     * Y double 52→40→18→16→14→11.
+     */
+    public static final BetaNumericProfile OVERWORLD =
+            new BetaNumericProfile(
+                    10, 20, 15,
+                    8, 23, 8, 23,
+                    11, 52, 11, 52,
+                    new Error502BetaPrecision());
+
+    /**
+     * ERROR502 profile: coordinate-tuned via {@link OverworldBetaPrecision}
+     * (the error502 and overworld presets were swapped). Aggressive block-space
+     * degradation: float 23→16→11→6→4→2, X/Z and Y double 52→40→30→18→11→6.
+     */
     public static final BetaNumericProfile DEFAULT =
             new BetaNumericProfile(
                     BetaPrecisionTuning.SHORT_BITS,
@@ -26,7 +45,7 @@ public final class BetaNumericProfile {
                     BetaPrecisionTuning.XZ_DOUBLE_MANTISSA_BITS,
                     BetaPrecisionTuning.Y_DOUBLE_EXPONENT_BITS,
                     BetaPrecisionTuning.Y_DOUBLE_MANTISSA_BITS,
-                    true
+                    new OverworldBetaPrecision()
             );
 
     private final int shortBits;
@@ -41,6 +60,11 @@ public final class BetaNumericProfile {
     private final int yDoubleExponentBits;
     private final int yDoubleMantissaBits;
     private final boolean coordinateTuned;
+    // Per-dimension coordinate-aware precision policy (null = fixed widths).
+    private final BetaPrecisionTuning tuning;
+    // Fallback instance for helper-only calls (quantizeAtDistance/worldDistance)
+    // on fixed-width profiles. Results are independent of which instance runs them.
+    private static final BetaPrecisionTuning HELPER_TUNING = new OverworldBetaPrecision();
 
     public BetaNumericProfile(int shortBits, int intBits,
                               int floatExponentBits, int floatMantissaBits,
@@ -77,7 +101,7 @@ public final class BetaNumericProfile {
                               int yDoubleExponentBits, int yDoubleMantissaBits) {
         this(shortBits, intBits, yIntBits, floatExponentBits, floatMantissaBits,
                 yFloatExponentBits, yFloatMantissaBits, doubleExponentBits, doubleMantissaBits,
-                yDoubleExponentBits, yDoubleMantissaBits, false);
+                yDoubleExponentBits, yDoubleMantissaBits, null);
     }
 
     BetaNumericProfile(int shortBits, int intBits, int yIntBits,
@@ -85,7 +109,7 @@ public final class BetaNumericProfile {
                        int yFloatExponentBits, int yFloatMantissaBits,
                        int doubleExponentBits, int doubleMantissaBits,
                        int yDoubleExponentBits, int yDoubleMantissaBits,
-                       boolean coordinateTuned) {
+                       BetaPrecisionTuning tuning) {
         NBitInteger.of(shortBits, 0L);
         NBitInteger.of(intBits, 0L);
         NBitInteger.of(yIntBits, 0L);
@@ -104,8 +128,22 @@ public final class BetaNumericProfile {
         this.doubleMantissaBits = doubleMantissaBits;
         this.yDoubleExponentBits = yDoubleExponentBits;
         this.yDoubleMantissaBits = yDoubleMantissaBits;
-        this.coordinateTuned = coordinateTuned;
+        this.tuning = tuning;
+        this.coordinateTuned = tuning != null;
     }
+
+    /**
+     * The active precision policy: the coordinate-tuned subclass, or the
+     * overworld policy as an instance fallback for helper-only calls
+     * (quantizeAtDistance/worldDistance) on fixed-width profiles. Their results
+     * are independent of which instance handles them.
+     */
+    private BetaPrecisionTuning activeTuning() {
+        return tuning != null ? tuning : HELPER_TUNING;
+    }
+
+    /** The coordinate-tuned policy backing this profile (null = fixed widths). */
+    BetaPrecisionTuning tuning() { return tuning; }
 
     public int shortBits() { return shortBits; }
     public int intBits() { return intBits; }
@@ -132,7 +170,7 @@ public final class BetaNumericProfile {
     }
 
     public int xIntValue(double value) {
-        int bits = coordinateTuned ? BetaPrecisionTuning.xIntBits(value) : intBits;
+        int bits = coordinateTuned ? tuning.xIntBits(value) : intBits;
         return (int) NBitInteger.ofDouble(bits, value).signedValue();
     }
 
@@ -141,13 +179,21 @@ public final class BetaNumericProfile {
     }
 
     public int yIntValue(double value) {
-        int bits = coordinateTuned ? BetaPrecisionTuning.yIntBits(value) : yIntBits;
+        int bits = coordinateTuned ? tuning.yIntBits(value) : yIntBits;
         return (int) NBitInteger.ofDouble(bits, value).signedValue();
     }
 
     public int zIntValue(double value) {
-        int bits = coordinateTuned ? BetaPrecisionTuning.zIntBits(value) : intBits;
+        int bits = coordinateTuned ? tuning.zIntBits(value) : intBits;
         return (int) NBitInteger.ofDouble(bits, value).signedValue();
+    }
+
+    /**
+     * Rounds a block coordinate to the corner of its 16-block chunk closest
+     * to 0,0,0 (see {@link BetaPrecisionTuning#chunkOffset(double)}).
+     */
+    public static double chunkOffset(double coordinate) {
+        return BetaPrecisionTuning.chunkOffset(coordinate);
     }
 
     /** Quantizes an absolute X/Z coordinate through the X/Z float stage. */
@@ -155,18 +201,28 @@ public final class BetaNumericProfile {
         return floatValue(value);
     }
 
-    public float xFloatCoordinate(double value) {
+    /** X float stage with precision selected by an explicit chunk-aligned block offset. */
+    public float xFloatCoordinate(double value, double contextX) {
         if (!coordinateTuned) return floatValue(value);
         return (float) NBitFloat.fromDouble(
-                BetaPrecisionTuning.xFloatExponentBits(value),
-                BetaPrecisionTuning.xFloatMantissaBits(value), value).toDouble();
+                tuning.xFloatExponentBits(contextX),
+                tuning.xFloatMantissaBits(contextX), value).toDouble();
+    }
+
+    public float xFloatCoordinate(double value) {
+        return xFloatCoordinate(value, value);
+    }
+
+    /** Z float stage with precision selected by an explicit chunk-aligned block offset. */
+    public float zFloatCoordinate(double value, double contextZ) {
+        if (!coordinateTuned) return floatValue(value);
+        return (float) NBitFloat.fromDouble(
+                tuning.zFloatExponentBits(contextZ),
+                tuning.zFloatMantissaBits(contextZ), value).toDouble();
     }
 
     public float zFloatCoordinate(double value) {
-        if (!coordinateTuned) return floatValue(value);
-        return (float) NBitFloat.fromDouble(
-                BetaPrecisionTuning.zFloatExponentBits(value),
-                BetaPrecisionTuning.zFloatMantissaBits(value), value).toDouble();
+        return zFloatCoordinate(value, value);
     }
 
     public float floatValue(double value) {
@@ -181,20 +237,20 @@ public final class BetaNumericProfile {
      * distance. Use {@link #floatValue(double)} for absolute coordinates.
      */
     public float floatValueAtDistance(double value, double distance) {
-        return (float) BetaPrecisionTuning.quantizeAtDistance(
+        return (float) activeTuning().quantizeAtDistance(
                 floatExponentBits, floatMantissaBits, value, distance);
     }
 
     public float xFloatValueAtDistance(double value, double x) {
-        int exponent = coordinateTuned ? BetaPrecisionTuning.xFloatExponentBits(x) : floatExponentBits;
-        int mantissa = coordinateTuned ? BetaPrecisionTuning.xFloatMantissaBits(x) : floatMantissaBits;
-        return (float) BetaPrecisionTuning.quantizeAtDistance(exponent, mantissa, value, x);
+        int exponent = coordinateTuned ? tuning.xFloatExponentBits(x) : floatExponentBits;
+        int mantissa = coordinateTuned ? tuning.xFloatMantissaBits(x) : floatMantissaBits;
+        return (float) activeTuning().quantizeAtDistance(exponent, mantissa, value, x);
     }
 
     public float zFloatValueAtDistance(double value, double z) {
-        int exponent = coordinateTuned ? BetaPrecisionTuning.zFloatExponentBits(z) : floatExponentBits;
-        int mantissa = coordinateTuned ? BetaPrecisionTuning.zFloatMantissaBits(z) : floatMantissaBits;
-        return (float) BetaPrecisionTuning.quantizeAtDistance(exponent, mantissa, value, z);
+        int exponent = coordinateTuned ? tuning.zFloatExponentBits(z) : floatExponentBits;
+        int mantissa = coordinateTuned ? tuning.zFloatMantissaBits(z) : floatMantissaBits;
+        return (float) activeTuning().quantizeAtDistance(exponent, mantissa, value, z);
     }
 
     /** Select X or Z precision for a derived value using the dominant context axis. */
@@ -204,17 +260,22 @@ public final class BetaNumericProfile {
                 : zFloatValueAtDistance(value, z);
     }
 
-    public float yFloatValue(double value) {
-        int exponent = coordinateTuned ? BetaPrecisionTuning.yFloatExponentBits(value) : yFloatExponentBits;
-        int mantissa = coordinateTuned ? BetaPrecisionTuning.yFloatMantissaBits(value) : yFloatMantissaBits;
+    /** Y float stage with precision selected by an explicit chunk-aligned block offset. */
+    public float yFloatValue(double value, double contextY) {
+        int exponent = coordinateTuned ? tuning.yFloatExponentBits(contextY) : yFloatExponentBits;
+        int mantissa = coordinateTuned ? tuning.yFloatMantissaBits(contextY) : yFloatMantissaBits;
         return (float) NBitFloat.fromDouble(exponent, mantissa, value).toDouble();
+    }
+
+    public float yFloatValue(double value) {
+        return yFloatValue(value, value);
     }
 
     /** Y-axis equivalent of {@link #floatValueAtDistance(double, double)}. */
     public float yFloatValueAtDistance(double value, double distance) {
-        int exponent = coordinateTuned ? BetaPrecisionTuning.yFloatExponentBits(distance) : yFloatExponentBits;
-        int mantissa = coordinateTuned ? BetaPrecisionTuning.yFloatMantissaBits(distance) : yFloatMantissaBits;
-        return (float) BetaPrecisionTuning.quantizeAtDistance(exponent, mantissa, value, distance);
+        int exponent = coordinateTuned ? tuning.yFloatExponentBits(distance) : yFloatExponentBits;
+        int mantissa = coordinateTuned ? tuning.yFloatMantissaBits(distance) : yFloatMantissaBits;
+        return (float) activeTuning().quantizeAtDistance(exponent, mantissa, value, distance);
     }
 
     public short shortPrimitive(long value) {
@@ -225,41 +286,56 @@ public final class BetaNumericProfile {
         return NBitFloat.fromDouble(doubleExponentBits, doubleMantissaBits, value).toDouble();
     }
 
+    /** X double stage with precision selected by an explicit chunk-aligned block offset. */
+    public double xDoubleCoordinate(double value, double contextX) {
+        int exponent = coordinateTuned ? tuning.xDoubleExponentBits(contextX) : doubleExponentBits;
+        int mantissa = coordinateTuned ? tuning.xDoubleMantissaBits(contextX) : doubleMantissaBits;
+        return NBitFloat.fromDouble(exponent, mantissa, value).toDouble();
+    }
+
     public double xDoubleCoordinate(double value) {
-        int exponent = coordinateTuned ? BetaPrecisionTuning.xDoubleExponentBits(value) : doubleExponentBits;
-        int mantissa = coordinateTuned ? BetaPrecisionTuning.xDoubleMantissaBits(value) : doubleMantissaBits;
+        return xDoubleCoordinate(value, value);
+    }
+
+    /** Z double stage with precision selected by an explicit chunk-aligned block offset. */
+    public double zDoubleCoordinate(double value, double contextZ) {
+        int exponent = coordinateTuned ? tuning.zDoubleExponentBits(contextZ) : doubleExponentBits;
+        int mantissa = coordinateTuned ? tuning.zDoubleMantissaBits(contextZ) : doubleMantissaBits;
         return NBitFloat.fromDouble(exponent, mantissa, value).toDouble();
     }
 
     public double zDoubleCoordinate(double value) {
-        int exponent = coordinateTuned ? BetaPrecisionTuning.zDoubleExponentBits(value) : doubleExponentBits;
-        int mantissa = coordinateTuned ? BetaPrecisionTuning.zDoubleMantissaBits(value) : doubleMantissaBits;
+        return zDoubleCoordinate(value, value);
+    }
+
+    /** Y double stage with precision selected by an explicit chunk-aligned block offset. */
+    public double yDoubleValue(double value, double contextY) {
+        int exponent = coordinateTuned ? tuning.yDoubleExponentBits(contextY) : yDoubleExponentBits;
+        int mantissa = coordinateTuned ? tuning.yDoubleMantissaBits(contextY) : yDoubleMantissaBits;
         return NBitFloat.fromDouble(exponent, mantissa, value).toDouble();
     }
 
     public double yDoubleValue(double value) {
-        int exponent = coordinateTuned ? BetaPrecisionTuning.yDoubleExponentBits(value) : yDoubleExponentBits;
-        int mantissa = coordinateTuned ? BetaPrecisionTuning.yDoubleMantissaBits(value) : yDoubleMantissaBits;
-        return NBitFloat.fromDouble(exponent, mantissa, value).toDouble();
+        return yDoubleValue(value, value);
     }
 
     /** Y-axis double equivalent for distance-aware derived calculations. */
     public double yDoubleValueAtDistance(double value, double distance) {
-        int exponent = coordinateTuned ? BetaPrecisionTuning.yDoubleExponentBits(distance) : yDoubleExponentBits;
-        int mantissa = coordinateTuned ? BetaPrecisionTuning.yDoubleMantissaBits(distance) : yDoubleMantissaBits;
-        return BetaPrecisionTuning.quantizeAtDistance(exponent, mantissa, value, distance);
+        int exponent = coordinateTuned ? tuning.yDoubleExponentBits(distance) : yDoubleExponentBits;
+        int mantissa = coordinateTuned ? tuning.yDoubleMantissaBits(distance) : yDoubleMantissaBits;
+        return activeTuning().quantizeAtDistance(exponent, mantissa, value, distance);
     }
 
     public double xDoubleValueAtDistance(double value, double distance) {
-        int exponent = coordinateTuned ? BetaPrecisionTuning.xDoubleExponentBits(distance) : doubleExponentBits;
-        int mantissa = coordinateTuned ? BetaPrecisionTuning.xDoubleMantissaBits(distance) : doubleMantissaBits;
-        return BetaPrecisionTuning.quantizeAtDistance(exponent, mantissa, value, distance);
+        int exponent = coordinateTuned ? tuning.xDoubleExponentBits(distance) : doubleExponentBits;
+        int mantissa = coordinateTuned ? tuning.xDoubleMantissaBits(distance) : doubleMantissaBits;
+        return activeTuning().quantizeAtDistance(exponent, mantissa, value, distance);
     }
 
     public double zDoubleValueAtDistance(double value, double distance) {
-        int exponent = coordinateTuned ? BetaPrecisionTuning.zDoubleExponentBits(distance) : doubleExponentBits;
-        int mantissa = coordinateTuned ? BetaPrecisionTuning.zDoubleMantissaBits(distance) : doubleMantissaBits;
-        return BetaPrecisionTuning.quantizeAtDistance(exponent, mantissa, value, distance);
+        int exponent = coordinateTuned ? tuning.zDoubleExponentBits(distance) : doubleExponentBits;
+        int mantissa = coordinateTuned ? tuning.zDoubleMantissaBits(distance) : doubleMantissaBits;
+        return activeTuning().quantizeAtDistance(exponent, mantissa, value, distance);
     }
 
     /** Select X or Z double precision for a derived value using the dominant horizontal axis. */
@@ -274,11 +350,11 @@ public final class BetaNumericProfile {
      * makes quantization symmetric when a generator crosses the origin.
      */
     public double worldDistance(double x, double y, double z) {
-        return BetaPrecisionTuning.worldDistance(x, y, z);
+        return activeTuning().worldDistance(x, y, z);
     }
 
     public double worldDistance(double x, double z) {
-        return BetaPrecisionTuning.worldDistance(x, z);
+        return activeTuning().worldDistance(x, z);
     }
 
     public double distanceIndependent(double value) {

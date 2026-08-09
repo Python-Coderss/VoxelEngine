@@ -574,10 +574,10 @@ public class HudUI {
         spawnLoadingBackground.visible = false;
         layer.addElement(spawnLoadingBackground);
 
-        // ── Top-right loading popup (runtime terrain streaming) ──
-        // A compact toast panel shown while spawn chunks generate or the player's
-        // current section is being generated. Rendered above the world so the game
-        // stays visible; replaces the old full-screen loading overlay at runtime.
+        // ── Top-right loading popup ──
+        // A compact toast panel shown while spawn chunks generate (world boot /
+        // dimension switch). Rendered above the world so the game stays visible;
+        // replaces the old full-screen loading overlay at runtime.
         loadingPopupBackground = new UILayer.UIElement(
             new Vector2f(main.width - 268, 12),
             new Vector2f(256, 64),
@@ -1227,11 +1227,11 @@ public class HudUI {
      * Two presentations:
      *  - Pre-world init (ctx.initializing): nothing renders yet, so the full-screen
      *    artwork overlay stays up.
-     *  - Runtime (spawn generation + per-section terrain freeze): a compact toast
-     *    panel in the top-right corner, leaving the world visible behind it.
+     *  - Runtime (spawn generation): a compact toast panel in the top-right
+     *    corner, leaving the world visible behind it.
      */
     public void updateSpawnLoadingOverlay(double time) {
-        boolean loading = ctx.spawnLoading || ctx.waitingForChunks;
+        boolean loading = ctx.spawnLoading;
         boolean preWorld = ctx.initializing;
         spawnLoadingBackground.visible = loading && preWorld;
         loadingPopupBackground.visible = loading && !preWorld;
@@ -1240,12 +1240,10 @@ public class HudUI {
         spawnLoadingStatus.visible = loading;
         if (!loading) return;
 
-        String title = (ctx.waitingForChunks && !ctx.spawnLoading)
-            ? "LOADING TERRAIN" : "WORLD INITIALIZING";
+        String title = "WORLD INITIALIZING";
         spawnLoadingTitle.text = title;
 
-        String message = (ctx.waitingForChunks && !ctx.spawnLoading)
-            ? ctx.waitingForChunksMessage : ctx.spawnLoadingMessage;
+        String message = ctx.spawnLoadingMessage;
         spawnLoadingStatus.text = (message == null || message.isEmpty())
             ? "Preparing spawn..." : message;
 

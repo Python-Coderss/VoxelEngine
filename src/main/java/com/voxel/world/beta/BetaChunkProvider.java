@@ -1,8 +1,11 @@
 package com.voxel.world.beta;
 
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 /**
  * Beta 1.7.3 terrain generator adapted for cubic chunks with infinite Y.
@@ -38,6 +41,30 @@ public class BetaChunkProvider {
     }
     private int i(long value) { return numericProfile.intValue(value); }
     private short s(long value) { return numericProfile.shortPrimitive(value); }
+
+    /**
+     * Block offset of the corner of the given 16-block chunk that lies closest
+     * to 0,0,0: positive chunks use their start, negative chunks their end.
+     */
+    private static int chunkCorner(int chunkIndex) {
+        return chunkIndex >= 0 ? chunkIndex * 16 : (chunkIndex + 1) * 16;
+    }
+
+    /**
+     * Pushes the chunk-aligned block offset into every noise octave chain so
+     * all precision decisions (band selection and at-distance quantization)
+     * anchor to this chunk instead of the scaled noise-frame coordinates.
+     */
+    private void applyNoiseContext(int blockX, int blockY, int blockZ) {
+        field_912_k.setChunkOffset(blockX, blockY, blockZ);
+        field_911_l.setChunkOffset(blockX, blockY, blockZ);
+        field_910_m.setChunkOffset(blockX, blockY, blockZ);
+        field_909_n.setChunkOffset(blockX, blockY, blockZ);
+        field_908_o.setChunkOffset(blockX, blockY, blockZ);
+        field_922_a.setChunkOffset(blockX, blockY, blockZ);
+        field_921_b.setChunkOffset(blockX, blockY, blockZ);
+        mobSpawnerNoise.setChunkOffset(blockX, blockY, blockZ);
+    }
     private NoiseGeneratorOctaves field_912_k;   // octaves=16
     private NoiseGeneratorOctaves field_911_l;   // octaves=16
     private NoiseGeneratorOctaves field_910_m;   // octaves=8
@@ -129,17 +156,54 @@ public class BetaChunkProvider {
     private final double[] evalNoiseBuffer = new double[1];
     private int columnCX = Integer.MIN_VALUE;
     private int columnCZ = Integer.MIN_VALUE;
+    /** True when the FULL column (0..2047) was built by generateColumn (tests only). */
     private boolean columnGenerated = false;
+    /** True when the per-column generation context is loaded (noise offsets, biomes, rand seed). */
+    private boolean columnContextReady = false;
+    /** Classic Beta band [0,8) fully generated for the current column (density + dressing + caves). */
+    private boolean band08Generated = false;
+    /** High sections (cy >= 8) that already ran the full density + surface pass. */
+    private final Set<Integer> highSectionsGenerated = new HashSet<>();
     private int maxSectionCY = -1;
 
-    // During decoration, neighbor columns use the same section-based storage
-    private final Map<Long, HashMap<Integer, byte[]>> neighborBlocks = new HashMap<>();
+    // During decoration, neighbor columns use the same section-based storage.
+    // This cache is PERSISTENT across populateColumn calls (bounded LRU) so that
+    // contiguous chunk streaming reuses a neighbor's terrain instead of
+    // regenerating all 8 neighbors from scratch for every decorated column — the
+    // dominant cost of Beta worldgen. Neighbor copies are deterministic per
+    // (cx,cz), and decoration writes into the engine world anyway, so caching
+    // only changes which border blocks survive, never the base terrain.
+    private static final int NEIGHBOR_CACHE_CAPACITY = 96;
+    private final Map<Long, HashMap<Integer, byte[]>> neighborBlocks =
+            new LinkedHashMap<Long, HashMap<Integer, byte[]>>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<Long, HashMap<Integer, byte[]>> eldest) {
+                    return size() > NEIGHBOR_CACHE_CAPACITY;
+                }
+            };
     private final Map<Long, HashMap<Integer, byte[]>> decorationOverlay = new HashMap<>();
+    // Neighbor keys fetched during the CURRENT populateColumn pass. The overlay
+    // flush at the end of populateColumn must only revisit the neighbors THIS
+    // column's decoration touched — never the whole persistent cache (which
+    // would scan up to NEIGHBOR_CACHE_CAPACITY columns per decorated column).
+    private final Set<Long> decorationTouchedNeighbors = new HashSet<>();
 
     private byte[] caveTempArray = new byte[32768];
 
     private static final int SEA_LEVEL = 64;
     private static final double BETA_Y_SAMPLES = 17.0;
+
+    // ── Far-lands fade-out ceiling ────────────────────────────────────────
+    // At degraded coordinates the collapsed noise outputs astronomically large
+    // positive densities that overwhelm the vanilla height falloff and pack the
+    // column solid all the way to the buffer top (y=2047) — starving the chunk
+    // pool and leaving the far lands with no sky. The ceiling is enforced in
+    // func_4061_a, the single density source for both the initial column fill
+    // and on-demand section generation, so every Beta dimension fades back to
+    // air by y≈2000.
+    private static final double FAR_LANDS_CEILING_Y = 2000.0D;      // block Y: nothing solid at/above
+    private static final double FAR_LANDS_FADE_START_Y = 1890.0D;   // block Y: fade zone begins
+    private static final double FAR_LANDS_FADE_SLOPE = 1.0e12D;     // >> any noise magnitude (int32-bounded, ~2e9)
 
     /** Index into a 16³ section: lx|(ly<<4)|(lz<<8) */
     private static int sectionIdx(int lx, int ly, int lz) {
@@ -329,11 +393,17 @@ public class BetaChunkProvider {
     //  COLUMN GENERATION
     // ══════════════════════════════════════════════════════════════════
 
-    public void generateColumn(int cx, int cz) {
-        if (columnGenerated && columnCX == cx && columnCZ == cz) return;
-        
+    /**
+     * Loads the per-column generation context: noise offsets, biome/temperature
+     * arrays, and the per-column rand seed. This is the shared head of both the
+     * full-column path ({@link #generateColumn}) and the cubic per-section path
+     * ({@link #ensureSection}) — it runs exactly once per (cx,cz) column.
+     */
+    private void loadColumnContext(int cx, int cz) {
+        if (columnContextReady && columnCX == cx && columnCZ == cz) return;
         columnCX = cx;
         columnCZ = cz;
+        applyNoiseContext(chunkCorner(cx), 0, chunkCorner(cz));
         if (columnSections == null) {
             columnSections = new HashMap<>();
         } else {
@@ -341,12 +411,25 @@ public class BetaChunkProvider {
         }
         invalidateSectionCaches();
         maxSectionCY = -1;
+        band08Generated = false;
+        highSectionsGenerated.clear();
 
         this.rand.setSeed((long) cx * 341873128712L + (long) cz * 132897987541L);
         this.biomesForGeneration = this.worldChunkManager.loadBlockGeneratorData(
                 this.biomesForGeneration, cx * 16, cz * 16, 16, 16);
         this.temperatures = this.worldChunkManager.temperature;
         this.humidities = this.worldChunkManager.humidity;
+        columnContextReady = true;
+    }
+
+    /**
+     * Full-column generation, retained for the tree-density tests. The runtime
+     * path uses {@link #ensureSection}, which generates only the requested
+     * cubic section instead of batching the entire 0..2047 column.
+     */
+    public void generateColumn(int cx, int cz) {
+        if (columnGenerated && columnCX == cx && columnCZ == cz) return;
+        loadColumnContext(cx, cz);
 
         this.generateTerrain(cx, cz, columnSections, this.biomesForGeneration, this.temperatures);
         this.replaceBlocksForBiome(cx, cz, columnSections, this.biomesForGeneration);
@@ -357,20 +440,25 @@ public class BetaChunkProvider {
             if (cy > maxSectionCY) maxSectionCY = cy;
         }
 
-        Long key = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
-        HashMap<Integer, byte[]> overlay = decorationOverlay.get(key);
-        if (overlay != null) {
-            for (Map.Entry<Integer, byte[]> entry : overlay.entrySet()) {
-                int ocy = entry.getKey();
-                byte[] os = entry.getValue();
-                byte[] cs = getOrCreateSection(ocy);
-                for (int i = 0; i < 4096; i++) {
-                    if (os[i] != 0) cs[i] = os[i];
-                }
-            }
-        }
+        mergeDecorationOverlay(cx, cz);
 
         columnGenerated = true;
+        band08Generated = true;
+    }
+
+    /** Merges the recorded decoration overlay (cross-column trees) into the current column's sections. */
+    private void mergeDecorationOverlay(int cx, int cz) {
+        Long key = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
+        HashMap<Integer, byte[]> overlay = decorationOverlay.get(key);
+        if (overlay == null) return;
+        for (Map.Entry<Integer, byte[]> entry : overlay.entrySet()) {
+            int ocy = entry.getKey();
+            byte[] os = entry.getValue();
+            byte[] cs = getOrCreateSection(ocy);
+            for (int i = 0; i < 4096; i++) {
+                if (os[i] != 0) cs[i] = os[i];
+            }
+        }
     }
 
     private void carveCavesFromSections(long worldSeed, int cx, int cz, HashMap<Integer, byte[]> sections) {
@@ -417,6 +505,7 @@ public class BetaChunkProvider {
         this.columnSections = blocks;
         invalidateSectionCaches();
         this.columnCX = cx; this.columnCZ = cz;
+        applyNoiseContext(chunkCorner(cx), 0, chunkCorner(cz));
         this.maxSectionCY = -1;
         this.rand.setSeed((long) cx * 341873128712L + (long) cz * 132897987541L);
         // Use a fresh array for the copy's biome map: loadBlockGeneratorData
@@ -427,11 +516,20 @@ public class BetaChunkProvider {
                 new int[256], cx * 16, cz * 16, 16, 16);
         this.temperatures = this.worldChunkManager.temperature;
         this.humidities = this.worldChunkManager.humidity;
-        this.generateTerrain(cx, cz, blocks, this.biomesForGeneration, this.temperatures);
+        // Decoration only ever probes the classic surface (worldGetTopY caps at
+        // y=127) and ore veins stay inside the band, so the neighbor copy only
+        // needs the band + surface dressing + caves — never the whole column.
+        // Section 8 (y 128..143) is included as headroom for the surface pass's
+        // 8-air-above check at the band top.
+        this.generateSectionRange(0, 9);
         this.replaceBlocksForBiome(cx, cz, blocks, this.biomesForGeneration);
         carveCavesFromSections(worldSeed, cx, cz, blocks);
 
         this.columnCX = savedCX; this.columnCZ = savedCZ;
+        // Restore the main column's noise context; guard the never-generated
+        // sentinel so chunkCorner can't overflow on Integer.MIN_VALUE.
+        applyNoiseContext(savedCX == Integer.MIN_VALUE ? 0 : chunkCorner(savedCX), 0,
+                savedCZ == Integer.MIN_VALUE ? 0 : chunkCorner(savedCZ));
         this.columnSections = savedSections;
         invalidateSectionCaches();
         this.columnGenerated = savedGenerated;
@@ -451,15 +549,9 @@ public class BetaChunkProvider {
      * still require direct density evaluation.
      */
     public int populateSection(int cx, int cy, int cz, com.voxel.World world, int slot) {
-        if (!columnGenerated || columnCX != cx || columnCZ != cz) {
-            generateColumn(cx, cz);
-        }
+        ensureSection(cx, cy, cz);
         if (cy < 0) return -1;
         byte[] sec = columnSections.get(cy);
-        if (sec == null) {
-            generateSectionRange(cy, cy + 1);
-            sec = columnSections.get(cy);
-        }
         if (sec == null) return 0;
         int solidCount = 0;
         for (int i = 0; i < sec.length; i++) {
@@ -480,19 +572,13 @@ public class BetaChunkProvider {
      * sections are generated once and then cached.
      */
     public boolean prepareSection(int cx, int cy, int cz) {
-        if (!columnGenerated || columnCX != cx || columnCZ != cz) {
-            generateColumn(cx, cz);
-        }
+        ensureSection(cx, cy, cz);
         if (cy < 0) {
             // Below the generated Beta column, density is evaluated directly
             // per voxel; do not claim the section is empty without sampling it.
             return true;
         }
         byte[] sec = columnSections.get(cy);
-        if (sec == null) {
-            generateSectionRange(cy, cy + 1);
-            sec = columnSections.get(cy);
-        }
         if (sec == null) return false;
         for (byte block : sec) {
             if (block != 0) return true;
@@ -501,24 +587,15 @@ public class BetaChunkProvider {
     }
 
     public int getBetaBlock(int x, int z, int y) {
-        int cx = x >> 4, cz = z >> 4;
-        if (!columnGenerated || columnCX != cx || columnCZ != cz) {
-            generateColumn(cx, cz);
-        }
+        int cx = x >> 4, cz = z >> 4, cy = y >> 4;
+        ensureSection(cx, cy, cz);
         if (y < 0) {
             if (y <= -64) return BETA_BEDROCK;
             return evaluateDensity(x, y, z) ? BETA_STONE : BETA_AIR;
         }
-        int lx = x & 15, lz = z & 15, ly = y & 15, cy = y >> 4;
+        int lx = x & 15, lz = z & 15, ly = y & 15;
         byte[] sec = columnSections.get(cy);
-        if (sec == null) {
-            // Section not yet generated — batch generate it via the full pipeline.
-            // generateSectionRange handles this single-section case efficiently
-            // (one func_4061_a call for just 3 Y samples).
-            generateSectionRange(cy, cy + 1);
-            sec = columnSections.get(cy);
-            if (sec == null) return 0;
-        }
+        if (sec == null) return 0;
         return sec[sectionIdx(lx, ly, lz)] & 0xFF;
     }
 
@@ -528,7 +605,7 @@ public class BetaChunkProvider {
 
     public int getHeight(int x, int y, int z) {
         int cx = x >> 4, cz = z >> 4, cy = y >> 4;
-        if (!columnGenerated || columnCX != cx || columnCZ != cz) generateColumn(cx, cz);
+        ensureSection(cx, cy, cz);
 
         // Far Lands: terrain is infinite at extreme coordinates.
         // Skip the scan entirely — there is no "top" to find.
@@ -557,6 +634,178 @@ public class BetaChunkProvider {
     }
 
     // ══════════════════════════════════════════════════════════════════
+    //  CUBIC SECTION GENERATION — one 16³ section per request
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Ensures the requested 16³ section exists in the column cache, generating
+     * ONLY that section — never the whole 0..2047 column. This is the single
+     * entry point for every per-section query (populateSection, prepareSection,
+     * getBetaBlock, getHeight).
+     *
+     * <p>Sections below zero are evaluated per-voxel by {@link #evaluateDensity}
+     * and are never generated. Sections 0..7 form the classic Beta band and are
+     * generated as one unit (density + surface dressing + caves). Sections 8+
+     * are generated one at a time with a section-local surface pass that
+     * relies on ChunkManager's top-down ordering (higher sections stream in
+     * first, so a solid section above means this (x,z) is underground).
+     */
+    private void ensureSection(int cx, int cy, int cz) {
+        loadColumnContext(cx, cz);
+        if (cy < 0) return;
+
+        if (cy < 8) {
+            if (band08Generated) return;
+            band08Generated = true;
+
+            // The classic Beta band: one density call covers sections 0..7.
+            generateSectionRange(0, 8);
+            // Probe band: detect a surface above y=127 (tall mountains / the
+            // far-lands mass) that would make the band dressing wrong. Skipped
+            // when higher sections already exist (e.g. top-down streaming).
+            boolean probed = false;
+            if (!hasAnySectionAbove(7)) {
+                generateSectionRange(8, 12);
+                probed = true;
+            }
+            // Surface dressing is column-wide and only valid when the real
+            // surface is inside the band. If anything solid exists above the
+            // band (probe or already-streamed sections), the band is buried —
+            // leave it as raw stone; the surface sections dress themselves.
+            if (!hasSolidAboveSection(7)) {
+                replaceBlocksForBiome(cx, cz, columnSections, biomesForGeneration);
+                if (probed) {
+                    // The probe sections 8..11 are all air and can never become
+                    // solid — record them as fully generated so a later section
+                    // request (e.g. spawn yLoadRadius overlapping the probe)
+                    // doesn't regenerate them for nothing.
+                    for (int scy = 8; scy <= 11; scy++) highSectionsGenerated.add(scy);
+                }
+            }
+            carveCavesFromSections(worldSeed, cx, cz, columnSections);
+            mergeDecorationOverlay(cx, cz);
+            return;
+        }
+
+        if (highSectionsGenerated.contains(cy)) return;
+        highSectionsGenerated.add(cy);
+
+        generateSectionRange(cy, cy + 1);
+        applyHighSectionSurfacePass(cx, cy, cz);
+        mergeDecorationOverlay(cx, cz);
+    }
+
+    /** True when any section above the given cy exists in the column cache. */
+    private boolean hasAnySectionAbove(int cy) {
+        for (int scy = cy + 1; scy <= maxSectionCY; scy++) {
+            if (columnSections.containsKey(scy)) return true;
+        }
+        return false;
+    }
+
+    /** True when any section above the given cy contains at least one solid voxel. */
+    private boolean hasSolidAboveSection(int cy) {
+        for (int scy = cy + 1; scy <= maxSectionCY; scy++) {
+            byte[] sec = columnSections.get(scy);
+            if (sec == null) continue;
+            for (int i = 0; i < 4096; i++) {
+                if (sec[i] != 0) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True when the current column has a solid voxel above this section in the
+     * (lx, lz) column — i.e. this (x,z) is underground mass, not a surface
+     * column. Missing sections (not yet streamed) count as air: top-down
+     * ordering guarantees the sections above are cached before this runs.
+     */
+    private boolean hasSolidAboveColumn(int lx, int lz, int cy) {
+        for (int scy = cy + 1; scy <= maxSectionCY; scy++) {
+            byte[] sec = columnSections.get(scy);
+            if (sec == null) continue;
+            for (int ly = 0; ly < 16; ly++) {
+                if (sec[sectionIdx(lx, ly, lz)] != 0) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Section-local surface pass for high sections (cy >= 8). Replicates the
+     * vanilla replaceBlocksForBiome dressing but restricted to the single
+     * section's Y range. Columns with solid terrain above are underground mass
+     * and are left as raw stone; only real surface columns (air above) are
+     * dressed. Relies on ChunkManager's top-down section ordering so the
+     * section above is already cached when this runs.
+     */
+    private void applyHighSectionSurfacePass(int cx, int cy, int cz) {
+        int minY = cy << 4;
+        int maxY = minY + 15;
+        byte var5 = 64;
+        double var6 = 1.0D / 32.0D;
+        this.sandNoise = this.field_909_n.generateNoiseOctaves(this.sandNoise,
+                (double)(cx*16), (double)(cz*16), 0.0D, 16, 16, 1, var6, var6, 1.0D);
+        this.gravelNoise = this.field_909_n.generateNoiseOctaves(this.gravelNoise,
+                (double)(cx*16), 109.0134D, (double)(cz*16), 16, 1, 16, var6, 1.0D, var6);
+        this.stoneNoise = this.field_908_o.generateNoiseOctaves(this.stoneNoise,
+                (double)(cx*16), (double)(cz*16), 0.0D, 16, 16, 1, var6*2.0D, var6*2.0D, var6*2.0D);
+
+        for (int var8 = 0; var8 < 16; ++var8) {
+            for (int var9 = 0; var9 < 16; ++var9) {
+                if (hasSolidAboveColumn(var8, var9, cy)) continue; // underground mass
+                int biomeId = biomesForGeneration[var8 + var9 * 16];
+                boolean var11 = this.sandNoise[var8 + var9 * 16] + this.rand.nextDouble() * 0.2D > 0.0D;
+                boolean var12 = this.gravelNoise[var8 + var9 * 16] + this.rand.nextDouble() * 0.2D > 3.0D;
+                int var13 = (int)(this.stoneNoise[var8 + var9 * 16] / 3.0D + 3.0D + this.rand.nextDouble() * 0.25D);
+                int var14 = -1;
+                byte var15 = (byte)BetaBiomeGenBase.TOP_BLOCKS[biomeId];
+                byte var16 = (byte)BetaBiomeGenBase.FILLER_BLOCKS[biomeId];
+
+                for (int var17 = maxY; var17 >= minY; --var17) {
+                    byte var19 = getGeneratedBlock(columnSections, var8, var17, var9);
+                    if (var19 == 0) { var14 = -1; }
+                    else if (var19 == BETA_STONE) {
+                        if (var14 == -1) {
+                            if (var13 <= 0) { var15 = 0; var16 = BETA_STONE; }
+                            else if (var17 >= var5 - 4 && var17 <= var5 + 1) {
+                                var15 = (byte)BetaBiomeGenBase.TOP_BLOCKS[biomeId];
+                                var16 = (byte)BetaBiomeGenBase.FILLER_BLOCKS[biomeId];
+                                if (var12) { var15 = 0; var16 = BETA_GRAVEL; }
+                                if (var11) { var15 = BETA_SAND; var16 = BETA_SAND; }
+                            }
+                            if (var17 < var5 && var15 == 0) var15 = BETA_WATER_STILL;
+                            var14 = var13;
+                            // Require 8 blocks of air above for a proper surface.
+                            // If terrain is too close above, leave it as bare stone.
+                            byte topBlock = var15;
+                            if (topBlock != 0) {
+                                boolean airAbove = true;
+                                for (int above = 1; above <= 8; above++) {
+                                    if (getGeneratedBlock(columnSections, var8, var17 + above, var9) != 0) {
+                                        airAbove = false;
+                                        break;
+                                    }
+                                }
+                                if (!airAbove) topBlock = BETA_STONE;
+                            }
+                            setGeneratedBlock(columnSections, var8, var17, var9,
+                                var17 >= var5 - 1 ? topBlock : var16);
+                        } else if (var14 > 0) {
+                            --var14;
+                            setGeneratedBlock(columnSections, var8, var17, var9, var16);
+                            if (var14 == 0 && var16 == BETA_SAND) {
+                                var14 = this.rand.nextInt(4); var16 = BETA_SANDSTONE;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
     //  BATCH SECTION GENERATION — one func_4061_a call = column-cache speed
     // ══════════════════════════════════════════════════════════════════
 
@@ -581,6 +830,7 @@ public class BetaChunkProvider {
         int var10 = var6 + 1;      // 5
 
         double[] densityField = new double[var8 * var9 * var10];
+        applyNoiseContext(chunkCorner(columnCX), chunkCorner(fromCY), chunkCorner(columnCZ));
         densityField = func_4061_a(densityField, columnCX * var6, yStart, columnCZ * var6, var8, var9, var10);
         interpolateDensityToSections(densityField, var8, var9, var10, yStart);
     }
@@ -666,6 +916,8 @@ public class BetaChunkProvider {
     }
 
     private boolean evaluateDensity(int x, int y, int z) {
+        if (y >= FAR_LANDS_CEILING_Y) return false; // far-lands ceiling: nothing above y≈2000
+        applyNoiseContext(chunkCorner(x >> 4), chunkCorner(y >> 4), chunkCorner(z >> 4));
         double nx = x / 4.0, ny = y / 8.0, nz = z / 4.0;
         double n1 = field_912_k.generateNoiseOctaves(evalNoiseBuffer, nx, ny, nz, 1, 1, 1,
                 684.412, 684.412, 684.412)[0];
@@ -927,6 +1179,19 @@ public class BetaChunkProvider {
                     else if (var42 > 1.0D) var34 = var40;
                     else var34 = var38 + (var40 - var38) * var42;
                     var34 -= var36;
+                    // Far-lands ceiling: absolute block Y for this sample
+                    // (sample index × 8-block noise resolution). Force density
+                    // negative above the fade start so the degraded fill can
+                    // never extend past y≈2000; the quadratic ramp makes the
+                    // top of the far-lands mass taper instead of shearing off.
+                    double varCeilingY = (double)(var33 + var3) * 8.0D;
+                    if (varCeilingY >= FAR_LANDS_CEILING_Y) {
+                        var34 = -FAR_LANDS_FADE_SLOPE;
+                    } else if (varCeilingY >= FAR_LANDS_FADE_START_Y) {
+                        double varFade = (varCeilingY - FAR_LANDS_FADE_START_Y)
+                                / (FAR_LANDS_CEILING_Y - FAR_LANDS_FADE_START_Y);
+                        var34 -= varFade * varFade * FAR_LANDS_FADE_SLOPE;
+                    }
                     var1[var14] = var34; ++var14;
                 }
             }
@@ -939,22 +1204,29 @@ public class BetaChunkProvider {
     // ══════════════════════════════════════════════════════════════════
 
     public boolean isColumnCached(int cx, int cz) {
-        return columnGenerated && columnCX == cx && columnCZ == cz;
+        return columnContextReady && columnCX == cx && columnCZ == cz;
     }
 
     public void clearColumnCache() {
         if (columnSections != null) columnSections.clear();
-        columnGenerated = false; columnCX = Integer.MIN_VALUE; columnCZ = Integer.MIN_VALUE;
+        columnContextReady = false; columnGenerated = false;
+        columnCX = Integer.MIN_VALUE; columnCZ = Integer.MIN_VALUE;
         invalidateSectionCaches();
         maxSectionCY = -1;
+        band08Generated = false;
+        highSectionsGenerated.clear();
         neighborBlocks.clear();
+        decorationTouchedNeighbors.clear();
         decorationOverlay.clear();
         worldChunkManager.clearCache();
     }
 
     public void invalidateCache() {
-        columnGenerated = false; columnCX = Integer.MIN_VALUE; columnCZ = Integer.MIN_VALUE;
+        columnContextReady = false; columnGenerated = false;
+        columnCX = Integer.MIN_VALUE; columnCZ = Integer.MIN_VALUE;
         invalidateSectionCaches();
+        band08Generated = false;
+        highSectionsGenerated.clear();
     }
 
     public BetaNumericProfile getNumericProfile() { return numericProfile; }
@@ -967,13 +1239,22 @@ public class BetaChunkProvider {
     // ══════════════════════════════════════════════════════════════════
 
     public void populateColumn(com.voxel.World world, int cx, int cz) {
-        if (!columnGenerated || columnCX != cx || columnCZ != cz) generateColumn(cx, cz);
+        // Decoration needs the classic band present so ore veins / lakes / trees
+        // can probe real stone. ensureSection(cx, 0, cz) is a cheap no-op when
+        // the section loader already generated it — the normal case, since
+        // decorate() only fires for the cy==4 section.
+        if (!columnContextReady || columnCX != cx || columnCZ != cz) {
+            loadColumnContext(cx, cz);
+        }
+        ensureSection(cx, 0, cz);
 
         // Capture the current column's biome BEFORE the neighbor prefetch:
         // getColumnBlocks regenerates neighbor copies which (even with the
         // fresh-array fix) reassign biomesForGeneration to neighbor data.
         int biomeId = this.biomesForGeneration[8 + 8 * 16];
-        neighborBlocks.clear();
+        decorationTouchedNeighbors.clear();
+        // Warm the persistent neighbor cache: already-cached neighbors are
+        // reused, only missing ones are regenerated (once each, not per column).
         for (int dx = -1; dx <= 1; dx++)
             for (int dz = -1; dz <= 1; dz++)
                 if (dx != 0 || dz != 0) getColumnBlocks(cx + dx, cz + dz);
@@ -993,6 +1274,8 @@ public class BetaChunkProvider {
         for (int i = 0; i < 1; ++i)  { genOreVein(world, var4+rand.nextInt(16), rand.nextInt(16), var5+rand.nextInt(16), veDiamondOre, 7); }
         for (int i = 0; i < 1; ++i)  { genOreVein(world, var4+rand.nextInt(16), rand.nextInt(16)+rand.nextInt(16), var5+rand.nextInt(16), veLapisOre, 6); }
         // Glowstone ore: copious amounts across the full column for Far Lands lighting
+        // The fade-out ceiling keeps maxSectionCY ≤ ~124, so veins stay under
+        // the y≈2000 ceiling (and veins only replace stone anyway).
         int glowMaxY = Math.max(128, (maxSectionCY + 1) << 4);
         for (int i = 0; i < 60; ++i) { genOreVein(world, var4+rand.nextInt(16), rand.nextInt(glowMaxY), var5+rand.nextInt(16), veGlowstone, 12); }
 
@@ -1038,10 +1321,12 @@ public class BetaChunkProvider {
         for (int i=0;i<sugarAttempts;++i){int sx=var4+rand.nextInt(16)+8,sz=var5+rand.nextInt(16)+8;int topY=worldGetTopY(sx,sz);if(topY>0)generateSugarCanePatch(world,sx,topY+1,sz);}
         generateSnow(world,cx,cz);
 
-        for (Map.Entry<Long, HashMap<Integer, byte[]>> entry : neighborBlocks.entrySet()) {
-            long key = entry.getKey();
+        // Flush only the neighbors this column's decoration actually touched
+        // (the 3×3 prefetch plus any ore/tree probes that strayed further).
+        for (long key : decorationTouchedNeighbors) {
+            HashMap<Integer, byte[]> nb = neighborBlocks.get(key);
+            if (nb == null) continue;
             int ncx = (int)(key>>32), ncz = (int)(key & 0xFFFFFFFFL);
-            HashMap<Integer, byte[]> nb = entry.getValue();
             int bx = ncx*16, bz = ncz*16;
             HashMap<Integer, byte[]> overlay = new HashMap<>();
             boolean hasDeco = false;
@@ -1064,7 +1349,7 @@ public class BetaChunkProvider {
             }
             if (hasDeco) decorationOverlay.put(key, overlay);
         }
-        neighborBlocks.clear();
+        // Keep the neighbor cache warm for the next decorated column.
     }
 
     private void genOreVein(com.voxel.World world, int cx, int cy, int cz, int blockId, int count) {
@@ -1127,8 +1412,9 @@ public class BetaChunkProvider {
     }
 
     private HashMap<Integer,byte[]> getColumnBlocks(int cx,int cz){
-        if(columnGenerated&&columnCX==cx&&columnCZ==cz)return columnSections;
+        if(columnContextReady&&columnCX==cx&&columnCZ==cz)return columnSections;
         long key=((long)cx<<32)|(cz&0xFFFFFFFFL);
+        decorationTouchedNeighbors.add(key);
         HashMap<Integer,byte[]>blocks=neighborBlocks.get(key);
         if(blocks==null){blocks=generateColumnCopy(cx,cz);neighborBlocks.put(key,blocks);}
         return blocks;

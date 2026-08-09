@@ -87,7 +87,8 @@ public class BetaTreeDensityTest {
 
     @Test
     public void treesSpawnInForestBiomes() {
-        for (BetaNumericProfile profile : new BetaNumericProfile[]{BetaNumericProfile.STANDARD_BETA, BetaNumericProfile.DEFAULT}) {
+        for (BetaNumericProfile profile : new BetaNumericProfile[]{
+                BetaNumericProfile.OVERWORLD, BetaNumericProfile.STANDARD_BETA, BetaNumericProfile.DEFAULT}) {
             long seed = 12345L;
             BetaChunkProvider provider = makeProvider(seed, profile);
 
@@ -122,7 +123,9 @@ public class BetaTreeDensityTest {
                             .append(" wood=").append(w).append(" leaves=").append(l).append('\n');
                 }
             }
-            System.out.println("=== Profile: " + (profile == BetaNumericProfile.STANDARD_BETA ? "STANDARD_BETA (overworld)" : "DEFAULT (error502)") + " ===");
+            String profileName = profile == BetaNumericProfile.OVERWORLD ? "OVERWORLD"
+                    : (profile == BetaNumericProfile.STANDARD_BETA ? "STANDARD_BETA (legacy fixed)" : "DEFAULT (error502)");
+            System.out.println("=== Profile: " + profileName + " ===");
             System.out.println("Biome distribution over 64×64 chunk scan (stride 2):");
             for (int b = 0; b < 13; b++) {
                 if (biomeCounts[b] > 0) System.out.println("  " + BetaBiomeGenBase.NAMES[b] + "=" + biomeCounts[b]);

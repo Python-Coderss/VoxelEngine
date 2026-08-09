@@ -68,15 +68,74 @@ public class BetaNumericControlsTest {
 
     @Test
     public void coordinateBandsSelectIndependentAxisPrecision() {
-        assertEquals(0, BetaPrecisionTuning.coordinateBand(128.0D));
-        assertEquals(0, BetaPrecisionTuning.coordinateBand(-2048.0D));
-        assertEquals(23, BetaPrecisionTuning.xFloatMantissaBits(2048.0D));
-        assertEquals(4, BetaPrecisionTuning.yFloatMantissaBits(2048.0D));
-        assertEquals(26, BetaPrecisionTuning.zDoubleMantissaBits(20_000.0D));
+        BetaPrecisionTuning error502 = new Error502BetaPrecision();
+        assertEquals(0, error502.coordinateBand(128.0D));
+        assertEquals(0, error502.coordinateBand(-2048.0D));
+        assertEquals(23, error502.xFloatMantissaBits(2048.0D));
+        assertEquals(4, error502.yFloatMantissaBits(2048.0D));
+        assertEquals(26, error502.zDoubleMantissaBits(20_000.0D));
         assertEquals(BetaPrecisionTuning.Axis.X,
-                BetaPrecisionTuning.dominantXZAxis(3000.0D, 100.0D));
+                error502.dominantXZAxis(3000.0D, 100.0D));
         assertEquals(BetaPrecisionTuning.Axis.Z,
-                BetaPrecisionTuning.dominantXZAxis(100.0D, -3000.0D));
+                error502.dominantXZAxis(100.0D, -3000.0D));
+    }
+
+    @Test
+    public void overworldPolicyClassDegradesWithDistance() {
+        // OverworldBetaPrecision now backs the ERROR502 preset (after the
+        // preset swap) and deliberately degrades float/double mantissas with
+        // distance while integer widths stay at the far-lands baseline.
+        OverworldBetaPrecision ow = new OverworldBetaPrecision();
+        assertEquals(20, ow.xIntBits(100_000.0D));
+        assertEquals(20, ow.zIntBits(100_000.0D));
+        assertEquals(15, ow.yIntBits(10_000.0D));
+        assertEquals(23, ow.xFloatMantissaBits(0.0D));
+        assertEquals(2, ow.xFloatMantissaBits(100_000.0D));
+        assertEquals(52, ow.xDoubleMantissaBits(0.0D));
+        assertEquals(6, ow.xDoubleMantissaBits(100_000.0D));
+        assertTrue(ow.xFloatMantissaBits(4000.0D) < ow.xFloatMantissaBits(0.0D));
+        assertTrue(ow.yDoubleMantissaBits(1500.0D) < ow.yDoubleMantissaBits(0.0D));
+    }
+
+    @Test
+    public void tunedPresetsUseSwappedPoliciesAndDegradeAtDistance() {
+        // The error502 and overworld precision policies were swapped between
+        // the two presets; both presets are coordinate-tuned (STANDARD_BETA
+        // is the fixed-width reference and has no tuning policy).
+        assertTrue(BetaNumericProfile.OVERWORLD.tuning() instanceof Error502BetaPrecision);
+        assertTrue(BetaNumericProfile.DEFAULT.tuning() instanceof OverworldBetaPrecision);
+        assertTrue(BetaNumericProfile.STANDARD_BETA.tuning() == null);
+
+        // At 4,000 blocks (band 1) both swapped policies use a 16-bit float
+        // mantissa, so both presets lose precision there (chunk-aligned to
+        // 3,984).
+        double ow = BetaNumericProfile.OVERWORLD.xFloatValueAtDistance(0.1D, 4000.0D);
+        double ew = BetaNumericProfile.DEFAULT.xFloatValueAtDistance(0.1D, 4000.0D);
+        assertTrue(Math.abs(ow - 0.1D) > 0.005D);
+        assertTrue(Math.abs(ew - 0.1D) > 0.005D);
+    }
+
+    @Test
+    public void overworldProfileTracksStandardBetaTerrainNearSpawn() {
+        // After the preset swap the overworld runs the error502-style policy,
+        // whose X/Z doubles stay at 26 bits, so near-spawn terrain matches the
+        // legacy fixed-width profile only within that double-quantization
+        // tolerance. Far-lands terrain intentionally diverges once the
+        // float/double degradation bands kick in.
+        BetaNumericProfile legacy = BetaNumericProfile.STANDARD_BETA;
+        BetaNumericProfile overworld = BetaNumericProfile.OVERWORLD;
+        double[][] samples = {
+                {0.0D, 32.0D, 0.0D},
+                {3000.25D, 64.25D, 3001.75D},
+        };
+        for (double[] s : samples) {
+            NoiseGeneratorPerlin legacyNoise = new NoiseGeneratorPerlin(new java.util.Random(42L), legacy);
+            NoiseGeneratorPerlin overworldNoise = new NoiseGeneratorPerlin(new java.util.Random(42L), overworld);
+            assertEquals(legacyNoise.generateNoise(s[0], s[1], s[2]),
+                    overworldNoise.generateNoise(s[0], s[1], s[2]), 1.0E-3D);
+            assertEquals(legacyNoise.func_801_a(s[0], s[2]),
+                    overworldNoise.func_801_a(s[0], s[2]), 1.0E-3D);
+        }
     }
 
     @Test
@@ -137,11 +196,13 @@ public class BetaNumericControlsTest {
     }
 
     @Test
-    public void worldDistanceUsesSignedDominantAxis() {
+    public void worldDistanceUsesSignedDominantAxisRoundedToChunkCorner() {
+        // The ULP context is the corner of the dominant axis' 16-block chunk
+        // closest to 0,0,0 (positive chunks round down, negative round up).
         BetaNumericProfile profile = BetaNumericProfile.DEFAULT;
-        assertEquals(-3000.0D, profile.worldDistance(-3000.0D, 100.0D, 200.0D), 0.0D);
-        assertEquals(3000.0D, profile.worldDistance(100.0D, -200.0D, 3000.0D), 0.0D);
-        assertEquals(-2048.0D, profile.worldDistance(-2048.0D, 1024.0D), 0.0D);
+        assertEquals(-2992.0D, profile.worldDistance(-3000.0D, 100.0D, 200.0D), 0.0D);
+        assertEquals(2992.0D, profile.worldDistance(100.0D, -200.0D, 3000.0D), 0.0D);
+        assertEquals(-2032.0D, profile.worldDistance(-2048.0D, 1024.0D), 0.0D);
     }
 
     @Test
