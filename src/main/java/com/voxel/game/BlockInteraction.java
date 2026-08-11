@@ -37,7 +37,7 @@ public class BlockInteraction {
     private static final int BLOCK_LAVA = 21;
 
     /** Opens the furnace UI for the given block position. */
-    private void openFurnace(int x, int y, int z) {
+    public void openFurnace(int x, int y, int z) {
         ctx.furnaceBlockX = x;
         ctx.furnaceBlockY = y;
         ctx.furnaceBlockZ = z;
@@ -68,8 +68,67 @@ public class BlockInteraction {
         ctx.setStatus("Chest");
     }
 
+    /**
+     * Start the furnace walk-up cutscene. The player steps toward the side of the
+     * furnace they clicked while the camera pans to frame it; when the animation
+     * finishes, Main.tick() calls openFurnace() to show the UI.
+     */
+    private void startFurnaceCutscene(int[] hit) {
+        int fx = hit[0], fy = hit[1], fz = hit[2];
+        ctx.furnaceBlockX = fx;
+        ctx.furnaceBlockY = fy;
+        ctx.furnaceBlockZ = fz;
+
+        Vector3f playerPos = ctx.player.getPosition();
+
+        // Approach direction: the adjacent block on the clicked face (hit[3]/hit[5]).
+        // If the top/bottom face was clicked, fall back to the player's approach.
+        int dx = hit[3] - fx;
+        int dz = hit[5] - fz;
+        if (dx == 0 && dz == 0) {
+            dx = (int) Math.signum(playerPos.x - (fx + 0.5f));
+            dz = (int) Math.signum(playerPos.z - (fz + 0.5f));
+            if (dx == 0 && dz == 0) dz = 1;
+        }
+
+        // Walk target: one block away from the furnace on the approach side
+        ctx.furnaceCutsceneStartPos.set(playerPos);
+        ctx.furnaceCutsceneTargetPos.set(fx + 0.5f + dx, fy, fz + 0.5f + dz);
+
+        // Camera: behind the walk target, slightly elevated, looking at the furnace
+        float camX = fx + 0.5f + dx * 2.0f;
+        float camY = fy + 0.8f;
+        float camZ = fz + 0.5f + dz * 2.0f;
+
+        // Step the camera further back until it clears any solid blocks
+        float[] distances = {2.0f, 2.5f, 3.0f, 3.5f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+        for (float dist : distances) {
+            float cx = fx + 0.5f + dx * dist;
+            float cz = fz + 0.5f + dz * dist;
+            int voxel = ctx.world.getVoxel((int) Math.floor(cx), (int) Math.floor(camY), (int) Math.floor(cz));
+            if (voxel == 0 || !ctx.blockDataManager.isFullBlock(voxel)) {
+                camX = cx;
+                camZ = cz;
+                break;
+            }
+        }
+
+        ctx.furnaceCutsceneCameraStart.set(playerPos.x, playerPos.y + 1.6f, playerPos.z);
+        ctx.furnaceCutsceneCameraTarget.set(camX, camY, camZ);
+        ctx.furnaceCutsceneStartYaw = ctx.yaw;
+        ctx.furnaceCutsceneStartPitch = ctx.pitch;
+        // Look from the camera back toward the furnace center
+        ctx.furnaceCutsceneTargetYaw = (float) Math.toDegrees(Math.atan2(fx + 0.5f - camX, fz + 0.5f - camZ));
+        ctx.furnaceCutsceneTargetPitch = -15;
+
+        ctx.furnaceCutsceneActive = true;
+        ctx.furnaceCutsceneTimer = 0.0f;
+        ctx.setStatus("Walking to furnace...");
+    }
+
     public void updateMining(float dt) {
-        if (ctx.inventoryOpen || ctx.commandMode || !ctx.leftMouseHeld || ctx.player.isDead()) {
+        if (ctx.inventoryOpen || ctx.commandMode || !ctx.leftMouseHeld || ctx.player.isDead()
+                || ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive || ctx.tvCutsceneActive) {
             resetMining();
             return;
         }
@@ -143,6 +202,9 @@ public class BlockInteraction {
         }
         ctx.redstoneManager.onBlockChanged(x, y, z);
         ctx.redstoneManager.notifyNeighbors(x, y, z);
+        if (ctx.kineticManager != null) {
+            ctx.kineticManager.onBlockChanged(x, y, z);
+        }
         if (ctx.encasedFanSystem != null) {
             ctx.encasedFanSystem.onBlockChanged(x, y, z);
         }
@@ -246,7 +308,33 @@ public class BlockInteraction {
         if (blockId == 2) return "cobblestone";
         if (blockId == 26) return "redstone_wire";
         if (blockId == 85) return "lapis_ore";
+        // Proper progression: coal and diamond ores drop their material, not the block
+        if (blockId == 61) return "coal";
+        if (blockId == 83) return "diamond";
         return null;
+    }
+
+    /**
+     * Picks the rail orientation (RAIL_NS vs RAIL_EW) for a rail being placed at
+     * (px, py, pz). Existing rail neighbours take precedence; a free-standing
+     * rail runs perpendicular to the player's dominant look axis.
+     * Public static so it can be regression-tested without GL.
+     */
+    public static int chooseRailAxis(com.voxel.World world, int px, int py, int pz, float lookDx, float lookDz) {
+        boolean ns = isRailAt(world, px, py, pz - 1) || isRailAt(world, px, py, pz + 1);
+        boolean ew = isRailAt(world, px - 1, py, pz) || isRailAt(world, px + 1, py, pz);
+        if (ns != ew) {
+            return ns ? com.voxel.entity.MinecartEntity.RAIL_NS : com.voxel.entity.MinecartEntity.RAIL_EW;
+        }
+        // No rail neighbours (or a cross): align with the player's look.
+        return Math.abs(lookDz) >= Math.abs(lookDx)
+                ? com.voxel.entity.MinecartEntity.RAIL_NS
+                : com.voxel.entity.MinecartEntity.RAIL_EW;
+    }
+
+    private static boolean isRailAt(com.voxel.World world, int x, int y, int z) {
+        int b = world.getVoxel(x, y, z);
+        return com.voxel.entity.MinecartEntity.isRail(b);
     }
 
     /** Raycast against entities. Returns {entityIndex, hitDistanceBits} or null. */
@@ -297,6 +385,15 @@ public class BlockInteraction {
                     ? ctx.villagerAudioManager.requestVillagerDialogue(v, ctx.worldTime)
                     : "Hmm...";
             ctx.setStatus("Villager (" + name + ") — \"" + dialogue + "\"");
+        } else if (e instanceof com.voxel.entity.MinecartEntity) {
+            // Right-click a cart: ride it, or get off if already riding.
+            if (ctx.ridingMinecart == e) {
+                if (ctx.dismountMinecart != null) ctx.dismountMinecart.run();
+                ctx.setStatus("Dismounted minecart");
+            } else {
+                ctx.ridingMinecart = e;
+                ctx.setStatus("Riding minecart — W/S to move, E to dismount");
+            }
         }
     }
 
@@ -433,7 +530,7 @@ public class BlockInteraction {
         int[] hit = raycastBlock(6.0f);
 
         // Check for entity interaction — if player looks at a villager (even through no block)
-        if (!ctx.inventoryOpen && !ctx.commandMode && !ctx.tvCutsceneActive && !ctx.craftingCutsceneActive) {
+        if (!ctx.inventoryOpen && !ctx.commandMode && !ctx.tvCutsceneActive && !ctx.craftingCutsceneActive && !ctx.furnaceCutsceneActive) {
             int[] entityHit = raycastEntity(6.0f);
             if (entityHit != null) {
                 float entDist = Float.intBitsToFloat(entityHit[1]);
@@ -466,15 +563,35 @@ public class BlockInteraction {
             return;
         }
 
-        // Right-click on furnace
-        if ((hitBlock == BLOCK_FURNACE || hitBlock == BLOCK_FURNACE_ON) && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.furnaceOpen) {
-            openFurnace(hit[0], hit[1], hit[2]);
+        // Right-click on furnace — walk-up cutscene, then the furnace UI opens
+        if ((hitBlock == BLOCK_FURNACE || hitBlock == BLOCK_FURNACE_ON) && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive && !ctx.furnaceCutsceneActive && !ctx.furnaceOpen) {
+            startFurnaceCutscene(hit);
             return;
         }
 
         // Right-click on chest
         if (hitBlock == BLOCK_CHEST && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.chestOpen) {
             openChest(hit[0], hit[1], hit[2]);
+            return;
+        }
+
+        // Right-click on a repeater cycles its delay; on a comparator toggles mode
+        if (com.voxel.world.RedstoneManager.isRepeater(hitBlock) || com.voxel.world.RedstoneManager.isComparator(hitBlock)) {
+            if (ctx.inventoryOpen || ctx.craftingCutsceneActive || ctx.tvCutsceneActive || ctx.furnaceCutsceneActive || ctx.chestOpen) {
+                return;
+            }
+            int raw = ctx.world.getRawVoxel(hit[0], hit[1], hit[2]);
+            if (com.voxel.world.RedstoneManager.isRepeater(hitBlock)) {
+                int delay = ((raw >> 16) & 0xF);
+                if (delay < 1 || delay > 4) delay = 1;
+                delay = (delay % 4) + 1;
+                ctx.chunkManager.setVoxelWithData(hit[0], hit[1], hit[2], hitBlock, delay);
+                ctx.setStatus("Repeater delay set to " + delay + (delay == 1 ? " tick" : " ticks"));
+            } else {
+                int newId = hitBlock ^ 8;
+                ctx.chunkManager.setVoxelWithData(hit[0], hit[1], hit[2], newId, 0);
+                ctx.setStatus(newId >= 345 ? "Comparator mode: subtract" : "Comparator mode: compare");
+            }
             return;
         }
 
@@ -646,6 +763,27 @@ public class BlockInteraction {
         }
         // ── End bucket interaction ──
 
+        // ── Minecart item: spawn a cart entity on the target rail (not a block) ──
+        if (def.id.equals("minecart")) {
+            int px = hit[3], py = hit[4], pz = hit[5];
+            int target = ctx.world.getVoxel(px, py, pz);
+            if (!com.voxel.entity.MinecartEntity.isRail(target)) {
+                ctx.setStatus("Place minecarts on rails");
+                return;
+            }
+            if (ctx.minecartSpawnQueue != null) {
+                ctx.minecartSpawnQueue.add(new Vector3f(
+                        px + 0.5f, py + com.voxel.entity.MinecartEntity.RAIL_TOP, pz + 0.5f));
+            }
+            if (ctx.gameMode == GameMode.SURVIVAL) {
+                selected.count--;
+                if (selected.count <= 0) ctx.playerInventory.setSlot(ctx.playerInventory.getSelectedSlot(), null);
+            }
+            if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
+            ctx.setStatus("Placed minecart");
+            return;
+        }
+
         if (def.kind != ItemDefinitions.ItemKind.BLOCK) {
             ctx.setStatus("Select a block item to place");
             return;
@@ -661,6 +799,23 @@ public class BlockInteraction {
             int ldx = hit[0] - px, ldz = hit[2] - pz;
             if (ldx != 0) placeBlockId = 260;
             else if (ldz != 0) placeBlockId = 261;
+        }
+        // Orientable shafts: same rule -> 291 (Y axis), 292 (X axis), 293 (Z axis)
+        if (placeBlockId == 291) {
+            int ldx = hit[0] - px, ldz = hit[2] - pz;
+            if (ldx != 0) placeBlockId = 292;
+            else if (ldz != 0) placeBlockId = 293;
+        }
+        // Rails: need a full solid block underneath; choose N-S or E-W axis from
+        // neighbouring rails (or the player's look direction when free-standing).
+        if (placeBlockId == com.voxel.entity.MinecartEntity.RAIL_NS) {
+            int below = ctx.world.getVoxel(px, py - 1, pz);
+            if (below == 0 || ctx.blockDataManager.isLiquid(below) || !ctx.blockDataManager.isFullBlock(below)) {
+                ctx.setStatus("Rails need a solid block below");
+                return;
+            }
+            Vector3f look = getLookDirection();
+            placeBlockId = chooseRailAxis(ctx.world, px, py, pz, look.x, look.z);
         }
         if (placeBlockId == 31 || placeBlockId == 32) {
             // Directional piston: place the correct directional variant block ID
@@ -691,12 +846,23 @@ public class BlockInteraction {
                 direction = dz > 0 ? 3 : 2;
             }
             if (!ctx.chunkManager.setVoxelWithData(px, py, pz, placeBlockId, direction)) return;
+        } else if (placeBlockId >= 329 && placeBlockId <= 336) {
+            // Repeater: horizontal facing from the clicked face, default 1-tick delay
+            int dir = horizontalFacing(hit, px, py, pz);
+            if (!ctx.chunkManager.setVoxelWithData(px, py, pz, 329 + dir - 2, 1)) return;
+        } else if (placeBlockId >= 337 && placeBlockId <= 352) {
+            // Comparator: horizontal facing from the clicked face, compare mode
+            int dir = horizontalFacing(hit, px, py, pz);
+            if (!ctx.chunkManager.setVoxelWithData(px, py, pz, 337 + dir - 2, 0)) return;
         } else {
             if (!ctx.chunkManager.setVoxel(px, py, pz, placeBlockId)) return;
         }
 
         ctx.redstoneManager.onBlockChanged(px, py, pz);
         ctx.redstoneManager.notifyNeighbors(px, py, pz);
+        if (ctx.kineticManager != null) {
+            ctx.kineticManager.onBlockChanged(px, py, pz);
+        }
         if (ctx.encasedFanSystem != null) {
             ctx.encasedFanSystem.onBlockChanged(px, py, pz);
         }
@@ -717,6 +883,20 @@ public class BlockInteraction {
         ctx.breakTargetY = Integer.MIN_VALUE;
         ctx.breakTargetZ = Integer.MIN_VALUE;
         ctx.breakProgress = 0.0f;
+    }
+
+    /**
+     * Horizontal facing for repeater/comparator placement from the clicked face
+     * normal: 2=north, 3=south, 4=west, 5=east. Clicking a top/bottom face
+     * defaults to north (like Minecraft).
+     */
+    private int horizontalFacing(int[] hit, int px, int py, int pz) {
+        int dx = hit[0] - px, dz = hit[2] - pz;
+        if (dx > 0) return 5;
+        if (dx < 0) return 4;
+        if (dz > 0) return 3;
+        if (dz < 0) return 2;
+        return 2;
     }
 
     public int[] raycastBlock(float maxDist) {

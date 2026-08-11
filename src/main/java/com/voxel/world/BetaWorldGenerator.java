@@ -122,8 +122,10 @@ public class BetaWorldGenerator extends WorldGenerator {
             @Override
             public com.voxel.biome.Biome getBiome(int x, int z) {
                 int betaId = betaProvider.getBetaBiomeId(x, z);
-                int veId = BETA_TO_VE_BIOME[betaId];
-                return BiomeRegistry.getBiome(veId);
+                if (betaId < 0 || betaId >= BETA_TO_VE_BIOME.length) {
+                    return BiomeRegistry.getBiome(BiomeRegistry.PLAINS);
+                }
+                return BiomeRegistry.getBiome(BETA_TO_VE_BIOME[betaId]);
             }
         };
     }

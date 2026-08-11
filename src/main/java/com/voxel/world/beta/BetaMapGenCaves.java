@@ -263,6 +263,39 @@ public class BetaMapGenCaves {
         }
     }
 
+    /**
+     * Surface-cave pass: extra worm caves biased toward the upper terrain band
+     * (y ≈ 16-71) with wide radii and a flatter pitch so they punch through
+     * hillsides and cliff faces, giving the surface visible cave mouths.
+     * Runs in addition to the faithful Beta 1.7.3 pass (func_867_a) and writes
+     * into the same Beta-format block array.
+     */
+    public void generateSurfaceCaves(long worldSeed, int cx, int cz, byte[] blocks) {
+        int range = this.field_1306_a;
+        this.rand.setSeed(worldSeed);
+        long a = this.rand.nextLong() / 2L * 2L + 1L;
+        long b = this.rand.nextLong() / 2L * 2L + 1L;
+
+        for (int x = cx - range; x <= cx + range; ++x) {
+            for (int z = cz - range; z <= cz + range; ++z) {
+                this.rand.setSeed((long) x * a + (long) z * b ^ worldSeed);
+                // ~1/3 of columns get surface caves (classic pass only reaches
+                // 1/15, which is why surface mouths are so rare).
+                if (this.rand.nextInt(3) != 0) continue;
+                int count = 1 + this.rand.nextInt(2);
+                for (int i = 0; i < count; ++i) {
+                    double sx = x * 16 + this.rand.nextInt(16);
+                    double sy = 16 + this.rand.nextInt(56);
+                    double sz = z * 16 + this.rand.nextInt(16);
+                    float yaw = floatAtDistance(this.rand.nextFloat() * (float) Math.PI * 2.0F, sx, sy, sz);
+                    float pitch = floatAtDistance((this.rand.nextFloat() - 0.5F) * 2.0F / 6.0F, sx, sy, sz);
+                    float radius = floatAtDistance(2.0F + this.rand.nextFloat() * 3.0F, sx, sy, sz);
+                    this.releaseEntitySkin(cx, cz, blocks, sx, sy, sz, radius, yaw, pitch, 0, 0, 0.6D);
+                }
+            }
+        }
+    }
+
     /** Accessor for the noise field range. */
     public int getField1306a() {
         return field_1306_a;

@@ -1,0 +1,25 @@
+{
+  "textures": {
+    "up": "repeater_on_east",
+    "down": "stone_slab_top",
+    "north": "stone_slab_side",
+    "south": "stone_slab_side",
+    "west": "stone_slab_side",
+    "east": "stone_slab_side",
+    "particle": "repeater_on_east"
+  },
+  "elements": [
+    {
+      "from": [
+        0,
+        0,
+        0
+      ],
+      "to": [
+        16,
+        2,
+        16
+      ]
+    }
+  ]
+}

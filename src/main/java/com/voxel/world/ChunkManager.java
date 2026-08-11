@@ -632,6 +632,21 @@ public class ChunkManager {
         return true;
     }
 
+    /**
+     * Sets a voxel with extra data (bits 16-23) and high flags (bits 24-30, kinetic
+     * spinning state) without re-baking occlusion or relighting. The chunk is still
+     * marked dirty so the GPU sees the flag change immediately.
+     * Thread-safe: called from any thread.
+     */
+    public boolean setVoxelWithFlags(int x, int y, int z, int type, int extra, int flags) {
+        int slot = world.getChunkSlot(x, y, z);
+        if (slot == World.EMPTY) return false;
+
+        world.setVoxelWithFlags(x, y, z, type, extra, flags);
+        dirtySlots.add(slot);
+        return true;
+    }
+
     // GPU upload queries (called from main thread)
     public Set<Integer> getDirtySlots() { return dirtySlots; }
     public boolean isTableDirty() { return tableDirty.get(); }

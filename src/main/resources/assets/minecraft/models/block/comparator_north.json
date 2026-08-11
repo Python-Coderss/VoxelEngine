@@ -1,0 +1,25 @@
+{
+  "textures": {
+    "up": "comparator_off_north",
+    "down": "stone_slab_top",
+    "north": "stone_slab_side",
+    "south": "stone_slab_side",
+    "west": "stone_slab_side",
+    "east": "stone_slab_side",
+    "particle": "comparator_off_north"
+  },
+  "elements": [
+    {
+      "from": [
+        0,
+        0,
+        0
+      ],
+      "to": [
+        16,
+        2,
+        16
+      ]
+    }
+  ]
+}

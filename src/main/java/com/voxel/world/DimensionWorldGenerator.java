@@ -53,6 +53,8 @@ public class DimensionWorldGenerator extends WorldGenerator {
     private final int redstoneOreId;
     private final int lapisOreId;
     private final int emeraldOreId;
+    private final int copperOreId;
+    private final int zincOreId;
 
     // Biome system (biomeProvider is inherited from WorldGenerator)
     private final BiomeDecorator biomeDecorator;
@@ -118,6 +120,10 @@ public class DimensionWorldGenerator extends WorldGenerator {
         this.lapisOreId = lapisOre != null ? lapisOre : 85;
         Integer emeraldOre = blockDataManager.findBlockId("emerald_ore");
         this.emeraldOreId = emeraldOre != null ? emeraldOre : 84;
+        Integer copperOre = blockDataManager.findBlockId("copper_ore");
+        this.copperOreId = copperOre != null ? copperOre : 142;
+        Integer zincOre = blockDataManager.findBlockId("zinc_ore");
+        this.zincOreId = zincOre != null ? zincOre : 144;
     }
 
     @Override
@@ -359,6 +365,18 @@ public class DimensionWorldGenerator extends WorldGenerator {
         if (y < 64) {
             float ironNoise = erosionNoise.noise(x * 0.6f, z * 0.6f, 0.08f) + detailNoise.noise(y, z, 0.04f);
             if (ironNoise > 0.7f && ironNoise < 0.78f) return ironOreId;
+        }
+
+        // Copper ore (Create-style): common below y=48, generous wide veins
+        if (y < 48) {
+            float copperNoise = detailNoise.noise(x * 0.55f, z * 0.55f, 0.09f) + erosionNoise.noise(y, x, 0.05f);
+            if (copperNoise > 0.64f && copperNoise < 0.73f) return copperOreId;
+        }
+
+        // Zinc ore (Create-style): mid-deep veins below y=32
+        if (y < 32) {
+            float zincNoise = erosionNoise.noise(x * 0.6f, z * 0.6f, 0.08f) + detailNoise.noise(y, x, 0.04f);
+            if (zincNoise > 0.69f && zincNoise < 0.76f) return zincOreId;
         }
         // Iron ore in upper far lands regions (y >= 64, occasional veins)
         if (y >= 64) {

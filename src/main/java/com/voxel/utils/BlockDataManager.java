@@ -311,6 +311,26 @@ public class BlockDataManager {
             data.hardness = 3.0f;
             data.preferredTool = "pickaxe";
             data.miningTier = 2; // Stone or better
+        } else if (lower.contains("coal") && lower.contains("ore")) {
+            data.hardness = 3.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 1; // Wood or better
+        } else if (lower.contains("copper") && lower.contains("ore")) {
+            data.hardness = 3.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 2; // Stone or better
+        } else if (lower.contains("zinc") && lower.contains("ore")) {
+            data.hardness = 3.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 2; // Stone or better
+        } else if (lower.contains("lapis") && lower.contains("ore")) {
+            data.hardness = 3.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 2; // Stone or better
+        } else if (lower.contains("redstone") && lower.contains("ore")) {
+            data.hardness = 3.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 2; // Stone or better
         } else if (lower.contains("obsidian")) {
             data.hardness = 12.0f;
             data.preferredTool = "pickaxe";
@@ -333,6 +353,14 @@ public class BlockDataManager {
             data.miningTier = 3; // Iron required
         } else if (lower.contains("lapis_block")) {
             data.hardness = 3.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 2; // Stone required
+        } else if (lower.contains("copper_block")) {
+            data.hardness = 5.0f;
+            data.preferredTool = "pickaxe";
+            data.miningTier = 2; // Stone required
+        } else if (lower.contains("zinc_block")) {
+            data.hardness = 5.0f;
             data.preferredTool = "pickaxe";
             data.miningTier = 2; // Stone required
         } else if (lower.contains("stone")) {
@@ -684,6 +712,16 @@ public class BlockDataManager {
     public void setMiningTier(int blockId, int tier) {
         BlockData data = blockRegistry.get(blockId);
         if (data != null) data.miningTier = tier;
+    }
+
+    /**
+     * Overrides whether the block occupies the full voxel space. Non-full blocks
+     * render through their model-defined AABBs and let light pass through them
+     * (e.g. shafts, cogwheels, the water wheel).
+     */
+    public void setFullBlock(int blockId, boolean full) {
+        BlockData data = blockRegistry.get(blockId);
+        if (data != null) data.isFullBlock = full;
     }
 
     /** @return true if this block emits light (emissive > 0). */

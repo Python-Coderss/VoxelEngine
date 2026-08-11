@@ -1,0 +1,14 @@
+{
+    "textures": {
+        "up": "axis_top",
+        "down": "axis_top",
+        "north": "axis",
+        "south": "axis",
+        "west": "axis",
+        "east": "axis",
+        "particle": "axis"
+    },
+    "elements": [
+        { "from": [ 6, 0, 6 ], "to": [ 10, 16, 10 ] }
+    ]
+}

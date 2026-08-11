@@ -90,6 +90,19 @@ public class CameraController {
             return cam;
         }
 
+        // Furnace cutscene progress
+        if (ctx.furnaceCutsceneActive) {
+            float t = Math.min(1.0f, ctx.furnaceCutsceneTimer / GameContext.FURNACE_CUTSCENE_DURATION);
+            float smoothT = t * t * (3.0f - 2.0f * t);
+            Vector3f cam = new Vector3f();
+            cam.set(
+                ctx.furnaceCutsceneCameraStart.x + (ctx.furnaceCutsceneCameraTarget.x - ctx.furnaceCutsceneCameraStart.x) * smoothT,
+                ctx.furnaceCutsceneCameraStart.y + (ctx.furnaceCutsceneCameraTarget.y - ctx.furnaceCutsceneCameraStart.y) * smoothT,
+                ctx.furnaceCutsceneCameraStart.z + (ctx.furnaceCutsceneCameraTarget.z - ctx.furnaceCutsceneCameraStart.z) * smoothT
+            );
+            return cam;
+        }
+
         // Crafting table open (use the cutscene target position we already computed)
         if (ctx.craftingTableOpen) {
             return new Vector3f(ctx.cutsceneCameraTargetPos);

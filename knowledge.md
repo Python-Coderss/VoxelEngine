@@ -109,6 +109,13 @@ where is the canonical registry mentioned.
 - **ui.vert/.frag:** UI element rendering with rotation, texture arrays
 - **test.vert/.frag:** Testing shaders
 
+## Railways & Minecarts
+
+- **Rails:** block IDs 391 (`rail_ns`, runs along Z) and 392 (`rail_ew`, runs along X); 1/16-tall slab models (`rail_ns.json`/`rail_ew.json`, `rail_normal.png` texture). Placement requires a full block below and picks the axis from rail neighbours (cross/free-standing falls back to the player's look direction). Item `rail` (6 iron ingots → 16). Drops map both IDs to the rail item.
+- **Minecart:** item `minecart` (5 iron ingots) spawns a `MinecartEntity` on the target rail (queued via `GameContext.minecartSpawnQueue` from the GL thread, drained on the logic thread). Entity model `models/entity/minecart.json` (5 cuboid-atlas parts) + generated 64×32 `textures/entity/minecart.png` (regenerate with `tools/gen_minecart_texture.py`).
+- **Physics (`MinecartEntity.updateCart`):** follows the rail under its center along the rail's axis (accelerates from rider W/S input, coasts with friction, parks at track ends, clamps fall steps to 0.5 blocks so thin floors can't be tunnelled). Off rails it falls with gravity until something is below.
+- **Riding:** right-click a cart to mount (W/S move, E or right-click dismounts). `Player.ridingCart` early-returns in `update()` to lock the player onto the cart; `GameContext.ridingMinecart` (volatile) + `ctx.dismountMinecart` runnable handle the GL→logic thread handoff. Auto-dismount on death or dimension change.
+
 ## Slash Commands
 
 | Command | Description |
@@ -182,7 +189,40 @@ Reads `renderTexture` back via `glGetTextureImage`, Y-flips, saves timestamped P
 | 206-210 | slabs | 211 | torch |
 | 259 | sticky piston head | 260-261 | horizontal oak logs |
 | 262 | andesite_casing | 263 | encased_fan |
-| 274 | villager_tv | - | - |
+| 274 | villager_tv | 291-296 | kinetic blocks (see below) |
+| 297-328 | colored redstone lamps (16 × off/on) | 329-336 | repeaters (4 dirs × off/on) |
+| 337-352 | comparators (4 dirs × off/on × compare/subtract) | 353-356 | clutch, clutch_on, gearshift, gearshift_on |
+| 357-390 | dye items + nether quartz (item/drop models) | - | - |
+
+## Kinetic Network (KineticManager)
+
+- **Sources:** a `water_wheel` adjacent to water (4 horizontal neighbors or below) generates rotation. **Propagation:** any kinetic block (shafts 291-293, cogwheel 294, large_cogwheel 295, water_wheel 296, clutch/gearshift 353-356) connects to kinetic neighbors in all 6 directions.
+- **Clutch (353/354):** redstone-powered → disengages (blocks propagation). **Gearshift (355/356):** redstone-powered → reverses the spin direction of everything downstream.
+- Every voxel in an active network gets flags in packed-voxel bits 24-25 (bit 24 = spinning, bit 25 = reversed), written via `ChunkManager.setVoxelWithFlags` (marks the chunk dirty; no relight). The raytracer threads these out of `traceWorld`/`traceAll` and gates/reverses the cog/wheel texture animation — so a lone cog is static, a wheel-fed network spins, and a powered gearshift spins it backwards. Dropped/crafting-grid items still always animate.
+- `KineticManager.tick()` runs after `redstoneManager.tickLamps()` (clutch power reads the fresh power map); swaps are applied on the GL thread via `applySwaps()` next to `applyLampChanges()`. Positions are tracked on place/break (BlockInteraction) plus an incremental per-column rescan (covers dimension switches / world reloads). Note: kinetic flags are not persisted in the chunk save format (recomputed live).
+
+## Redstone Expansion
+
+- **Colored lamps (297-328):** 16 colors (white…black, MC dye order), off = 297+2c, on = off+1. Toggle via `id ^ 1` in `RedstoneManager.evaluateLampStates`; lit variants are emissive. Textures are the vanilla lamp art tinted per color (`tools/generate_redstone_assets.py`). Crafted from `redstone_lamp` + matching dye.
+- **Repeaters (329-336):** off = 329-332 (north/south/west/east), on = 333-336 (`id ^ 4`). Delay 1-4 redstone ticks stored in voxel extra bits 0-3 (1 tick = 6 logic ticks at 60 TPS); right-click cycles it. Input = back face (wire power or strong source), output = strong 15 at the front cell, seeded into `rebuildNetwork` Phase 1b (repeat delay via `repeaterTimers` map).
+- **Comparators (337-352):** direction + mode are baked into the ID — off 337-340, on 341-344, subtract-off 345-348, subtract-on 349-352 (toggle mode via `id ^ 8`, on/off via `id ^ 4`). Back input = chest (118) or furnace (116/117) fill strength, else wire/strong power behind; compares against the max of the two side inputs (compare = `input>=side ? input : 0`, subtract = `max(0, input-side)`). Output strength seeded at the front cell. `RedstoneManager.setContainerManagers(...)` attaches chest/furnace for fill reads.
+- **Wires** connect visually and logically to lamps/repeaters/comparators (they're redstone components). `applyLampChanges` now preserves the voxel extra byte on every swap so repeater delays survive.
+
+### Kinetic Blocks (Create-inspired, IDs 291-296)
+
+| ID | Name | Notes |
+|----|------|-------|
+| 291 | shaft | Vertical (Y axis) 4px column; `axis` side + `axis_top` caps |
+| 292 | shaft_x | Horizontal along X (placed from clicked face, drops `shaft`) |
+| 293 | shaft_z | Horizontal along Z (placed from clicked face, drops `shaft`) |
+| 294 | cogwheel | 6px horizontal disc, animated spinning cogwheel texture |
+| 295 | large_cogwheel | 8px horizontal disc, animated spinning texture |
+| 296 | water_wheel | 14px vertical disc facing N/S, `wheel` + `axis` hub, animated |
+
+- Textures come from the old Create mod repo (mc1.16 branch): `axis`, `axis_top`, `cogwheel`, `large_cogwheel`, `wheel`. The cogs/wheel textures are 8-frame 16×128 vertical strips (generated by `tools/generate_kinetic_animations.py`) — TextureManager auto-detects them and the raytracer cycles frames at ~20 fps, so placed blocks visibly spin.
+- These are AABB blocks (`setFullBlock(false)`): model JSON `elements` define the shape, texture alpha punches holes (gear gaps), and light passes through (`getOpacity` = 0).
+- Dropped items render the block's own AABB model spinning (OBB path), so a dropped cog is a spinning mini-gear.
+- Recipes (CraftingManager): 2× andesite_casing → 4 shaft (shapeless); stick ring + casing → 8 cogwheel; stick corners + planks + casing → 2 large_cogwheel; oak_slab ring + large_cogwheel → 1 water_wheel.
 
 ## Villager System
 
@@ -197,6 +237,18 @@ Reads `renderTexture` back via `glGetTextureImage`, Y-flips, saves timestamped P
 - TV block (ID 274): right-click = zoom cutscene, LEFT/RIGHT = cycle channels, ESC = exit
 - `/locate village` – find nearest village; `/tv <0-3>` – change TV channel
 - **MapGenVillage improved**: log corners, glass windows, roof overhangs, cobblestone plaza, gravel paths, glowstone light posts, perimeter walls, workshops with crafting tables
+
+### 2×2 Shaped Recipes on the 3×3 Crafting Table
+- Stick (and other 2×2 shaped) recipes previously only matched on the 2×2 surface-crafting grid: `matchRecipe3x3` fell back to 2×2 **shapeless** recipes only. Now shaped 2×2 patterns also match on the table — `matchesPatternRotation` takes a top-left offset and rotates within the pattern's own dimensions, and `matchesPattern2x2On3x3` tries all 4 placements × 4 rotations. Sticks (2 planks in a column, 7 plank variants) and 2×2 compacting recipes (packed ice, etc.) now craft on the table.
+
+### Biome Registry Init Race Fix (boot NPE)
+- **Root cause:** `BiomeRegistry.init()` set the `initialized` flag to true *before* registering the ~110 biomes. The world-gen thread's first `getBiome()` (via `BiomeManager.fillBiomeDataForChunk`) could observe `initialized == true` while the map was still half-populated (`DimensionWorldGenerator` also calls `init()` on the main thread when other dimensions are created) → `biomeById.get(id)` returned null → NPE at `BiomeManager.getBiomeTempHumidity`.
+- **Fix:** `init()` is now double-checked-locked on the class with a `volatile initialized` flag published only *after* `populate()` completes, plus a re-entrancy guard (`initializing`) so a biome constructor can't recurse into `populate()`. `getBiome(int)`/`getBiome(String)` fall back to PLAINS instead of null; `BiomeManager.getBiomeTempHumidity` null-checks the provider and biome (temperate fallback 0.7/0.5); the Beta anonymous provider bounds-checks `betaId` against `BETA_TO_VE_BIOME`.
+
+### Crafting Table Camera Fix (detached camera bug)
+- **Root cause:** `loop()`'s camera decomposition used the first-person player eye whenever `cameraMode == FIRST_PERSON`, even while the crafting cutscene / crafting table / furnace cutscene were active. `getActiveCameraPosition()` correctly returned the cutscene/target camera, but the shader ray origin was the player eye — so the rendered crafting view never matched `raycastCraftingCell` (which casts from the cutscene camera). Grid clicks landed on the wrong cells (or missed entirely), ingredients went to wrong slots, and the CRAFT button appeared not to register — the misalignment varied with the cutscene yaw, matching the "certain angles" report.
+- **Fix:** `loop()` now routes those states through the cameraPos-based decomposition (`detachedCamera = ctx.craftingCutsceneActive || ctx.craftingTableOpen || ctx.furnaceCutsceneActive`). `Player.getInterpolatedPosition` and the fixed-point `pxTP` read the same longs, so the else-branch math resolves exactly to `cameraPos` even mid-walk.
+- **Also fixed:** `handleMouseButton` returns early during cutscenes (clicks could otherwise place/break blocks or re-trigger the cutscene); `updateCursorMode` resyncs `lastMouseX/Y` from `glfwGetCursorPos` when releasing the cursor (GLFW virtual cursor drifts under `GLFW_CURSOR_DISABLED`, so the first post-cutscene click could register at a stale coordinate).
 
 ## Important Patterns
 

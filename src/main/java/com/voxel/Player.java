@@ -71,6 +71,11 @@ public class Player {
     private float yaw = -90, pitch = 0;
     private com.voxel.world.DimensionType dimension = com.voxel.world.DimensionType.OVERWORLD;
 
+    // ── Minecart riding ──
+    /** When true, update() locks the player onto cartX/Y/Z and skips physics. */
+    public volatile boolean ridingCart = false;
+    public volatile double cartX, cartY, cartZ;
+
     public Player(double x, double y, double z) {
         posX = FixedPoint.fromDouble(x);
         posY = FixedPoint.fromDouble(y);
@@ -86,6 +91,21 @@ public class Player {
 
     public void update(float dt, World world, BlockDataManager blockDataManager) {
         if (isDead) return;
+
+        // Riding a minecart: lock the player to the cart and skip all physics.
+        if (ridingCart) {
+            posX = FixedPoint.fromDouble(cartX);
+            posY = FixedPoint.fromDouble(cartY);
+            posZ = FixedPoint.fromDouble(cartZ);
+            prevPosX = posX;
+            prevPosY = posY;
+            prevPosZ = posZ;
+            velocity.set(0, 0, 0);
+            fallDistance = 0;
+            onGround = true;
+            tickAccumulator = 0;
+            return;
+        }
 
         isSwimming = checkInLiquid(world, blockDataManager);
 

@@ -1,0 +1,18 @@
+{
+    "textures": {
+        "all": "minecart_normal"
+    },
+    "elements": [
+        {   "from": [ 1, 0, 1 ],
+            "to": [ 15, 3, 15 ],
+            "faces": {
+                "up":    { "uv": [ 0, 0, 16, 16 ], "texture": "#all" },
+                "down":  { "uv": [ 0, 0, 16, 16 ], "texture": "#all" },
+                "north": { "uv": [ 0, 0, 16, 3 ], "texture": "#all" },
+                "south": { "uv": [ 0, 0, 16, 3 ], "texture": "#all" },
+                "east":  { "uv": [ 0, 0, 16, 3 ], "texture": "#all" },
+                "west":  { "uv": [ 0, 0, 16, 3 ], "texture": "#all" }
+            }
+        }
+    ]
+}

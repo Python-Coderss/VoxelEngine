@@ -283,7 +283,17 @@ public class World {
      * Bit 31 is the solid flag (1=solid, 0=air) for GPU raytracing.
      */
     public void setVoxelInPool(int slot, int lx, int ly, int lz, int type, int extra) {
-        int packed = (type & 0xFFFF) | ((extra & 0xFF) << 16);
+        setVoxelInPool(slot, lx, ly, lz, type, extra, 0);
+    }
+
+    /**
+     * Sets a voxel with both the low extra byte (bits 16-23, e.g. redstone power/conn)
+     * and high flags (bits 24-30, e.g. kinetic spinning state). Callers that need the
+     * GPU to see the change must route through ChunkManager.setVoxelWithFlags (marks
+     * the chunk dirty); this low-level write only touches the CPU pool.
+     */
+    public void setVoxelInPool(int slot, int lx, int ly, int lz, int type, int extra, int flags) {
+        int packed = (type & 0xFFFF) | ((extra & 0xFF) << 16) | ((flags & 0x7F) << 24);
         if (type > 0) packed |= 0x80000000; // Solid flag for GPU
         int bitIdx = lx | (ly << 4) | (lz << 8);
         int poolIdx = (slot << 12) | bitIdx;
@@ -446,6 +456,16 @@ public void clearLightPoolSlot(int slot) {
      * Does nothing if the chunk is not allocated.
      */
     public void setVoxelWithData(int x, int y, int z, int type, int extra) {
+        setVoxelWithFlags(x, y, z, type, extra, 0);
+    }
+
+    /**
+     * Sets a voxel ID with extra data (bits 16-23) and high flags (bits 24-30)
+     * at world coordinates. High flags carry per-voxel state such as the kinetic
+     * spinning bit consumed by the raytracer shader.
+     * Does nothing if the chunk is not allocated.
+     */
+    public void setVoxelWithFlags(int x, int y, int z, int type, int extra, int flags) {
         int rx = x - offsetX;
         int ry = y - offsetY;
         int rz = z - offsetZ;
@@ -458,8 +478,9 @@ public void clearLightPoolSlot(int slot) {
         int slot = indirectionTable[tableIdx];
         if (slot == EMPTY) return;
 
-        setVoxelInPool(slot, rx & 15, ry & 15, rz & 15, type, extra);
+        setVoxelInPool(slot, rx & 15, ry & 15, rz & 15, type, extra, flags);
     }
+
 
     /**
      * Returns the full raw voxel value (including extra data in upper bits).

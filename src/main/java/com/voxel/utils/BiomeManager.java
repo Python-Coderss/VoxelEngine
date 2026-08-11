@@ -320,11 +320,21 @@ public class BiomeManager {
      */
     private final float[] tempHumBuf = new float[2];
     private float[] getBiomeTempHumidity(int x, int z) {
-        Biome biome = biomeProvider.getBiome(x, z);
-        // MC 1.12.2 temperature range is [-0.5, 2.0]. Vanilla clamps to [0,1] for colormap lookup.
-        // Use getTemperature()/getHumidity() so biome overrides and noise are respected.
-        tempHumBuf[0] = Math.max(0.0f, Math.min(1.0f, biome.getTemperature(x, z)));
-        tempHumBuf[1] = Math.max(0.0f, Math.min(1.0f, biome.getHumidity(x, z)));
+        BiomeProvider provider = biomeProvider;
+        if (provider != null) {
+            Biome biome = provider.getBiome(x, z);
+            if (biome != null) {
+                // MC 1.12.2 temperature range is [-0.5, 2.0]. Vanilla clamps to [0,1] for colormap lookup.
+                // Use getTemperature()/getHumidity() so biome overrides and noise are respected.
+                tempHumBuf[0] = Math.max(0.0f, Math.min(1.0f, biome.getTemperature(x, z)));
+                tempHumBuf[1] = Math.max(0.0f, Math.min(1.0f, biome.getHumidity(x, z)));
+                return tempHumBuf;
+            }
+        }
+        // Fallback: uniform temperate values when the provider is unset or the
+        // registry momentarily cannot resolve a biome (never NPE on the gen thread).
+        tempHumBuf[0] = 0.7f;
+        tempHumBuf[1] = 0.5f;
         return tempHumBuf;
     }
 

@@ -50,7 +50,8 @@ public class PlayerController {
      * Skips if inventory / command / death / crafting-cutscene is active.
      */
     public void handleInput(float dt) {
-        if (main.inventoryOpen || main.commandMode || main.player.isDead() || ctx.craftingCutsceneActive) return;
+        if (main.inventoryOpen || main.commandMode || main.player.isDead()
+                || ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive) return;
 
         // Forward / right vectors for WASD
         double ry = Math.toRadians(main.yaw);

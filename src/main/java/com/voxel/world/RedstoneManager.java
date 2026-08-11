@@ -28,6 +28,22 @@ public class RedstoneManager {
     public static final int BLOCK_OBSIDIAN       = 16;
     public static final int BLOCK_NETHER_PORTAL   = 19;
 
+    // ---- Colored redstone lamps (297-328): off = 297+2c, on = 297+2c+1 ----
+    public static final int BLOCK_LAMP_BASE  = 297;
+    public static final int BLOCK_LAMP_COUNT = 16;
+    // ---- Repeaters (329-336): off = 329-332 (n/s/w/e), on = 333-336 ----
+    public static final int BLOCK_REPEATER_BASE = 329;
+    // ---- Comparators (337-352): off = 337-340, on = 341-344, sub-off = 345-348, sub-on = 349-352 ----
+    public static final int BLOCK_COMPARATOR_BASE = 337;
+
+    public static boolean isLamp(int block) { return block >= BLOCK_LAMP_BASE && block < BLOCK_LAMP_BASE + BLOCK_LAMP_COUNT * 2; }
+    public static boolean isRepeater(int block) { return block >= BLOCK_REPEATER_BASE && block < BLOCK_REPEATER_BASE + 8; }
+    public static boolean isComparator(int block) { return block >= BLOCK_COMPARATOR_BASE && block < BLOCK_COMPARATOR_BASE + 16; }
+
+    /** Repeater/comparator facing direction from the block ID (2=north, 3=south, 4=west, 5=east). */
+    public static int repeaterDirection(int block) { return (block - BLOCK_REPEATER_BASE) % 4 + 2; }
+    public static int comparatorDirection(int block) { return (block - BLOCK_COMPARATOR_BASE) % 4 + 2; }
+
     private static final int MAX_POWER = 15;
     private static final int TORCH_COOLDOWN_TICKS = 2;  // Prevent rapid oscillation
 
@@ -114,6 +130,19 @@ public class RedstoneManager {
     /** Torch cooldown: packed → ticks remaining before torch can toggle state again. */
     private final Map<Long, Integer> torchCooldown = new ConcurrentHashMap<>();
 
+    /** Repeater delay timers: packed → logic ticks remaining before the output turns on. */
+    private final Map<Long, Integer> repeaterTimers = new ConcurrentHashMap<>();
+
+    /** Repeater output state: packed → true if currently emitting power to the front. */
+    private final Map<Long, Boolean> repeaterOutputs = new ConcurrentHashMap<>();
+
+    /** Comparator output state: packed → current output strength (0-15). */
+    private final Map<Long, Integer> comparatorOutputs = new ConcurrentHashMap<>();
+
+    /** Container managers for comparator fill-strength reads (set from Main). */
+    private com.voxel.game.ChestManager chestManager;
+    private com.voxel.game.FurnaceManager furnaceManager;
+
     /** True when a redstone component was added/removed and rebuildNetwork() is needed. */
     private volatile boolean needsRebuild = false;
 
@@ -193,6 +222,9 @@ public class RedstoneManager {
             components.remove(key);
             lampLitState.remove(key);
             pistonExtended.remove(key);
+            repeaterTimers.remove(key);
+            repeaterOutputs.remove(key);
+            comparatorOutputs.remove(key);
             action = "REMOVED from components (block=" + block + ")";
         }
         RedstoneLogger.log("onBlockChanged", x, y, z, action + " wasComp=" + wasComponent + " needsRebuild=" + (isComponent || wasComponent));
@@ -218,7 +250,19 @@ public class RedstoneManager {
             || block == BLOCK_REDSTONE_LAMP
             || block == BLOCK_REDSTONE_WIRE
             || block == BLOCK_REDSTONE_LAMP_ON
-            || block == BLOCK_REDSTONE_ORE;
+            || block == BLOCK_REDSTONE_ORE
+            || isLamp(block)
+            || isRepeater(block)
+            || isComparator(block);
+    }
+
+    /**
+     * Attaches the container managers used by comparators to read chest/furnace
+     * fill strengths. Called once from Main after both managers exist.
+     */
+    public void setContainerManagers(com.voxel.game.ChestManager chestManager, com.voxel.game.FurnaceManager furnaceManager) {
+        this.chestManager = chestManager;
+        this.furnaceManager = furnaceManager;
     }
 
     /**
@@ -343,6 +387,10 @@ public class RedstoneManager {
         // Tick torch cooldowns
         torchCooldown.replaceAll((k, v) -> v > 0 ? v - 1 : 0);
 
+        // Repeaters/comparators update against the previous tick's power map; any
+        // output change requests a rebuild so the new power reaches the network.
+        evaluateComponents();
+
         if (needsRebuild) {
             RedstoneLogger.log("tickLamps: needsRebuild=true, componentCount=" + components.size() + " starting rebuild");
             needsRebuild = false;
@@ -402,7 +450,10 @@ public class RedstoneManager {
             int x = change[0], y = change[1], z = change[2], id = change[3];
             String idName = (id == BLOCK_REDSTONE_LAMP_ON) ? "LAMP_ON" : (id == BLOCK_REDSTONE_LAMP) ? "LAMP_OFF" : String.valueOf(id);
             RedstoneLogger.log("applyLampChanges", x, y, z, "swapping to " + idName);
-            chunkManager.setVoxel(x, y, z, id);
+            // Preserve the low extra byte so repeater delays and comparator modes survive swaps.
+            int raw = world.getRawVoxel(x, y, z);
+            int extra = (raw >> 16) & 0xFF;
+            chunkManager.setVoxelWithData(x, y, z, id, extra);
             pendingNeighborUpdates.add(new int[]{x, y, z});
             count++;
         }
@@ -476,6 +527,35 @@ public class RedstoneManager {
             }
         }
         RedstoneLogger.log("rebuildNetwork: Phase1 found " + sourcesFound + " sources, starting BFS from " + queue.size() + " nodes");
+
+        // Phase 1b: Repeater and comparator outputs are virtual sources at their
+        // front cell (repeater = strong 15, comparator = computed strength).
+        int virtualSources = 0;
+        for (long key : components) {
+            int x = unpackX(key), y = unpackY(key), z = unpackZ(key);
+            int block = world.getVoxel(x, y, z);
+            if (isRepeater(block)) {
+                if (repeaterOutputs.getOrDefault(key, false)) {
+                    int[] off = DIR_OFFSETS[repeaterDirection(block)];
+                    int fx = x + off[0], fy = y + off[1], fz = z + off[2];
+                    powerLevels.put(pack(fx, fy, fz), MAX_POWER);
+                    queue.add(new PowerNode(fx, fy, fz, MAX_POWER));
+                    virtualSources++;
+                }
+            } else if (isComparator(block)) {
+                int str = comparatorOutputs.getOrDefault(key, 0);
+                if (str > 0) {
+                    int[] off = DIR_OFFSETS[comparatorDirection(block)];
+                    int fx = x + off[0], fy = y + off[1], fz = z + off[2];
+                    powerLevels.put(pack(fx, fy, fz), str);
+                    queue.add(new PowerNode(fx, fy, fz, str));
+                    virtualSources++;
+                }
+            }
+        }
+        if (virtualSources > 0) {
+            RedstoneLogger.log("rebuildNetwork: Phase1b seeded " + virtualSources + " repeater/comparator outputs");
+        }
 
         // Phase 2: BFS propagation from non-torch sources.
         int bfsCount = bfsPropagate(queue);
@@ -609,6 +689,150 @@ public class RedstoneManager {
     }
 
     // ========================================================================
+    //  Repeater + comparator evaluation (internal – called from logic thread)
+    // ========================================================================
+
+    /**
+     * Evaluates all repeaters and comparators against the current power map.
+     * Repeaters run their delay timers; comparators recompute their output
+     * strength. Any state change queues a block-ID swap and requests a rebuild.
+     */
+    private void evaluateComponents() {
+        boolean anyChanged = false;
+        for (long key : components) {
+            int x = unpackX(key), y = unpackY(key), z = unpackZ(key);
+            int block = world.getVoxel(x, y, z);
+            if (isRepeater(block)) {
+                if (updateRepeater(x, y, z, block, key)) anyChanged = true;
+            } else if (isComparator(block)) {
+                if (updateComparator(x, y, z, block, key)) anyChanged = true;
+            }
+        }
+        if (anyChanged) needsRebuild = true;
+    }
+
+    /** True if the block at (x,y,z) is powered (wire signal or strong source). */
+    private boolean isBlockPowered(int x, int y, int z) {
+        if (powerLevels.getOrDefault(pack(x, y, z), 0) > 0) return true;
+        int block = world.getVoxel(x, y, z);
+        return block == BLOCK_REDSTONE_BLOCK || block == BLOCK_REDSTONE_TORCH || block == BLOCK_REDSTONE_ORE;
+    }
+
+    /**
+     * Repeater: passes the signal from its back face to its front face after a
+     * configurable delay (1-4 redstone ticks stored in voxel extra bits 0-3;
+     * 1 redstone tick = 6 logic ticks at 60 TPS = MC's 0.1s).
+     */
+    private boolean updateRepeater(int x, int y, int z, int block, long key) {
+        int dir = repeaterDirection(block);
+        int[] off = DIR_OFFSETS[dir];
+        int bx = x - off[0], by = y - off[1], bz = z - off[2];
+        boolean inputPowered = isBlockPowered(bx, by, bz);
+        boolean wasOn = repeaterOutputs.getOrDefault(key, false);
+
+        int delay = ((world.getRawVoxel(x, y, z) >> 16) & 0xF);
+        if (delay < 1 || delay > 4) delay = 1;
+        int delayTicks = delay * 6;
+
+        if (inputPowered && !wasOn) {
+            int timer = repeaterTimers.getOrDefault(key, delayTicks);
+            timer--;
+            if (timer <= 0) {
+                repeaterTimers.remove(key);
+                repeaterOutputs.put(key, true);
+                lampChangeQueue.add(new int[]{x, y, z, block ^ 4});
+                RedstoneLogger.log("repeater/on", x, y, z, "delay=" + delay + " turned ON");
+                return true;
+            }
+            repeaterTimers.put(key, timer);
+        } else if (!inputPowered) {
+            if (wasOn) {
+                repeaterOutputs.remove(key);
+                lampChangeQueue.add(new int[]{x, y, z, block ^ 4});
+                RedstoneLogger.log("repeater/off", x, y, z, "turned OFF");
+                return true;
+            }
+            repeaterTimers.remove(key);
+        }
+        return false;
+    }
+
+    /**
+     * Comparator: reads its back input (container fill strength, wire power, or
+     * strong source), compares it with the two side inputs, and outputs the
+     * result to the front. Mode (compare/subtract) lives in voxel extra bit 0.
+     */
+    private boolean updateComparator(int x, int y, int z, int block, long key) {
+        int dir = comparatorDirection(block);
+        int di = dir - 2;
+        // Mode is baked into the block ID (subtract IDs start at 345). Right-click
+        // toggles it via id ^ 8.
+        int mode = (block >= BLOCK_COMPARATOR_BASE + 8) ? 1 : 0;
+        int[] off = DIR_OFFSETS[dir];
+        int bx = x - off[0], by = y - off[1], bz = z - off[2];
+
+        // Main input: container fill, otherwise the signal behind.
+        int strength = containerStrength(bx, by, bz);
+        if (strength < 0) {
+            strength = getPowerLevel(bx, by, bz);
+            int bb = world.getVoxel(bx, by, bz);
+            if (bb == BLOCK_REDSTONE_BLOCK || bb == BLOCK_REDSTONE_TORCH) strength = Math.max(strength, MAX_POWER);
+            else if (bb == BLOCK_REDSTONE_ORE) strength = Math.max(strength, 7);
+        }
+
+        int[][] sides = sideOffsets(dir);
+        int sideMax = Math.max(getPowerLevel(x + sides[0][0], y, z + sides[0][1]),
+                               getPowerLevel(x + sides[1][0], y, z + sides[1][1]));
+
+        int out;
+        if (mode == 0) out = (strength >= sideMax) ? strength : 0;
+        else out = Math.max(0, strength - sideMax);
+
+        int oldOut = comparatorOutputs.getOrDefault(key, 0);
+        if (out != oldOut) {
+            comparatorOutputs.put(key, out);
+            int newBlock = BLOCK_COMPARATOR_BASE + di + (mode * 8) + (out > 0 ? 4 : 0);
+            lampChangeQueue.add(new int[]{x, y, z, newBlock});
+            RedstoneLogger.log("comparator", x, y, z, "input=" + strength + " sideMax=" + sideMax + " mode=" + (mode == 0 ? "compare" : "subtract") + " out=" + out);
+            return true;
+        }
+        return false;
+    }
+
+    /** Horizontal offsets perpendicular to the given horizontal facing. */
+    private int[][] sideOffsets(int dir) {
+        if (dir == 2 || dir == 3) return new int[][]{{-1, 0}, {1, 0}};
+        return new int[][]{{0, -1}, {0, 1}};
+    }
+
+    /**
+     * Container fill strength for the block behind a comparator: chests and
+     * furnaces. Returns -1 if (x,y,z) is not a readable container.
+     */
+    private int containerStrength(int x, int y, int z) {
+        int block = world.getVoxel(x, y, z);
+        if (block == 118 && chestManager != null) {
+            com.voxel.game.ItemDefinitions.ItemStack[] inv = chestManager.getInventory(x, y, z);
+            if (inv == null || inv.length == 0) return 0;
+            int filled = 0;
+            for (com.voxel.game.ItemDefinitions.ItemStack s : inv) {
+                if (s != null && s.count > 0) filled++;
+            }
+            return filled == 0 ? 0 : Math.max(1, filled * MAX_POWER / inv.length);
+        }
+        if ((block == 116 || block == 117) && furnaceManager != null) {
+            com.voxel.game.FurnaceManager.FurnaceState st = furnaceManager.getState(x, y, z);
+            if (st == null) return 0;
+            int filled = 0;
+            if (st.input != null) filled++;
+            if (st.fuel != null) filled++;
+            if (st.output != null) filled++;
+            return filled == 0 ? 0 : Math.max(1, filled * MAX_POWER / 3);
+        }
+        return -1;
+    }
+
+    // ========================================================================
     //  Lamp state evaluation (internal – called from logic thread)
     // ========================================================================
 
@@ -622,7 +846,7 @@ public class RedstoneManager {
             int x = unpackX(key), y = unpackY(key), z = unpackZ(key);
             int block = world.getVoxel(x, y, z);
 
-            boolean isLamp = (block == BLOCK_REDSTONE_LAMP || block == BLOCK_REDSTONE_LAMP_ON);
+            boolean isLamp = (block == BLOCK_REDSTONE_LAMP || block == BLOCK_REDSTONE_LAMP_ON || RedstoneManager.isLamp(block));
             if (!isLamp) continue;
             lampsChecked++;
 
@@ -634,10 +858,11 @@ public class RedstoneManager {
                 continue;   // no change
             }
 
-            int newBlock = shouldBeLit ? BLOCK_REDSTONE_LAMP_ON : BLOCK_REDSTONE_LAMP;
+            // Vanilla pair is 28/30; colored pairs are adjacent IDs (off = id^1 when even).
+            int newBlock = (block == BLOCK_REDSTONE_LAMP || block == BLOCK_REDSTONE_LAMP_ON) ? (shouldBeLit ? BLOCK_REDSTONE_LAMP_ON : BLOCK_REDSTONE_LAMP) : (block ^ 1);
             lampChangeQueue.add(new int[]{x, y, z, newBlock});
             lampLitState.put(key, shouldBeLit);
-            RedstoneLogger.log("evaluateLamp", x, y, z, "CHANGED wasLit=" + wasLit + " shouldBeLit=" + shouldBeLit + " neighborPowers=" + pl + " newBlock=" + (shouldBeLit ? "LAMP_ON" : "LAMP_OFF"));
+            RedstoneLogger.log("evaluateLamp", x, y, z, "CHANGED wasLit=" + wasLit + " shouldBeLit=" + shouldBeLit + " neighborPowers=" + pl + " newBlock=" + newBlock);
             lampsChanged++;
         }
         if (lampsChecked > 0) {

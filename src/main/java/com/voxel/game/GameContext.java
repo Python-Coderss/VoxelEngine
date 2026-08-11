@@ -3,6 +3,7 @@ package com.voxel.game;
 import com.voxel.Player;
 import com.voxel.World;
 import com.voxel.crafting.CraftingManager;
+import com.voxel.entity.Entity;
 import com.voxel.entity.EntityManager;
 import com.voxel.entity.PlayerEntity;
 import com.voxel.utils.BiomeManager;
@@ -41,6 +42,8 @@ public class GameContext {
     public DimensionManager dimensionManager;
     public DimensionType activeDimension = DimensionType.OVERWORLD;
     public RedstoneManager redstoneManager;
+    /** Create-style kinetic network (per-dimension, recreated on switch). */
+    public com.voxel.world.KineticManager kineticManager;
 
     // --- Entity ---
     public EntityManager entityManager;
@@ -134,6 +137,17 @@ public class GameContext {
     public boolean furnaceOpen = false;
     public int furnaceBlockX, furnaceBlockY, furnaceBlockZ;
 
+    // --- Furnace walk-up cutscene (opens the furnace UI on completion) ---
+    public boolean furnaceCutsceneActive = false;
+    public float furnaceCutsceneTimer = 0.0f;
+    public static final float FURNACE_CUTSCENE_DURATION = 0.9f;
+    public Vector3f furnaceCutsceneStartPos = new Vector3f();
+    public Vector3f furnaceCutsceneTargetPos = new Vector3f();
+    public Vector3f furnaceCutsceneCameraStart = new Vector3f();
+    public Vector3f furnaceCutsceneCameraTarget = new Vector3f();
+    public float furnaceCutsceneStartYaw = -90, furnaceCutsceneStartPitch = 0;
+    public float furnaceCutsceneTargetYaw = -90, furnaceCutsceneTargetPitch = -15;
+
     // --- Chest ---
     public ChestManager chestManager = new ChestManager();
     public boolean chestOpen = false;
@@ -200,6 +214,18 @@ public class GameContext {
     public float tvCutsceneStartYaw, tvCutsceneStartPitch;
     public float tvCutsceneTargetYaw = -90, tvCutsceneTargetPitch = -15;
     public boolean tvWatching = false;
+
+    // ── Minecarts ──
+    /** The minecart the player is currently riding, or null. Written by the GL
+     *  thread (interact) and read by the logic thread (tick) — volatile. */
+    public volatile Entity ridingMinecart = null;
+    /** Set by Main: dismounts the player from the current cart. */
+    public Runnable dismountMinecart = null;
+    /** Cart spawns requested by block interaction (GL thread) for the logic
+     *  thread to consume — avoids mutating the EntityManager off-thread.
+     *  Thread-safe list: the GL thread adds, the logic thread drains. */
+    public final java.util.List<Vector3f> minecartSpawnQueue =
+            java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
     // --- Spawn resolution (deferred until spawn chunks are generated) ---
     public int pendingSpawnX = Integer.MIN_VALUE;
@@ -327,6 +353,9 @@ public class GameContext {
         }
         redstoneManager = new RedstoneManager(world, chunkManager);
         com.voxel.world.RedstoneLogger.log("DIMENSION SWITCH: created new RedstoneManager for " + target.name + " (was " + previous.name + ")");
+        redstoneManager.setContainerManagers(chestManager, furnaceManager);
+        kineticManager = new com.voxel.world.KineticManager(world, chunkManager, redstoneManager);
+        com.voxel.world.RedstoneLogger.log("DIMENSION SWITCH: created new KineticManager for " + target.name);
 
         // Recreate fluid manager for the new dimension
         fluidManager = new com.voxel.world.FluidManager(world, chunkManager, blockDataManager, target == DimensionType.NETHER);

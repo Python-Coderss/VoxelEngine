@@ -217,6 +217,11 @@ public class ItemDefinitions {
         registerBlock("diamond_block", "Diamond Block", 139, "diamond_block");
         registerBlock("emerald_block", "Emerald Block", 140, "emerald_block");
         registerBlock("lapis_block", "Lapis Lazuli Block", 141, "lapis_block");
+        // --- Create-inspired ores and metal blocks (copper + zinc) ---
+        registerBlock("copper_ore", "Copper Ore", 142, "copper_ore");
+        registerBlock("copper_block", "Copper Block", 143, "copper_block");
+        registerBlock("zinc_ore", "Zinc Ore", 144, "zinc_ore");
+        registerBlock("zinc_block", "Zinc Block", 145, "zinc_block");
         // --- Create-inspired blocks ---
         registerBlock("andesite_casing", "Andesite Casing", 262, "stone_andesite");
         registerBlock("encased_fan", "Encased Fan", 263, "furnace_top");
@@ -227,6 +232,63 @@ public class ItemDefinitions {
         registerBlock("chain_command_block", "Chain Command Block", 276, "chain_command_block_side");
         registerBlock("repeating_command_block", "Repeating Command Block", 277, "repeating_command_block_side");
         registerItemBlock("power_fragment", "Power Fragment", "emerald", 278, 278, ToolType.HAND, 1.0f, 16, 0);
+        // --- Material items for proper progression (coal/diamond drop from ores, ingots smelt) ---
+        registerItemBlock("coal", "Coal", "coal", 279, 285, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("diamond", "Diamond", "diamond", 280, 286, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("gold_ingot", "Gold Ingot", "gold_ingot", 281, 287, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("copper_ingot", "Copper Ingot", "copper_ingot", 282, 288, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("zinc_ingot", "Zinc Ingot", "zinc_ingot", 283, 289, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("charcoal", "Charcoal", "charcoal", 284, 290, ToolType.HAND, 1.0f, 64, 0);
+        // --- Create-inspired kinetic blocks (shafts, cogs, water wheel) ---
+        registerBlock("shaft", "Shaft", 291, "axis_top");
+        registerBlock("cogwheel", "Cogwheel", 294, "cogwheel");
+        registerBlock("large_cogwheel", "Large Cogwheel", 295, "large_cogwheel");
+        registerBlock("water_wheel", "Water Wheel", 296, "wheel");
+        // --- Colored redstone lamps (off variants are the items; on variants drop the off item) ---
+        String[] lampColors = {"white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+                               "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"};
+        for (int c = 0; c < lampColors.length; c++) {
+            String col = lampColors[c];
+            int offId = 297 + c * 2;
+            int onId = offId + 1;
+            String cap = col.substring(0, 1).toUpperCase(java.util.Locale.ROOT) + col.substring(1);
+            registerBlock("lamp_" + col, cap + " Lamp", offId, "lamp_" + col + "_off");
+            blockItemByBlockId.put(onId, "lamp_" + col);
+        }
+        // --- Redstone repeaters (only the off, base-direction items are placeable) ---
+        String[] hDirs = {"north", "south", "west", "east"};
+        for (int d = 0; d < 4; d++) {
+            String dir = hDirs[d];
+            registerBlock("repeater_" + dir, "Redstone Repeater", 329 + d, "repeater_off_" + dir);
+            blockItemByBlockId.put(333 + d, "repeater_" + dir);
+        }
+        // --- Redstone comparators ---
+        for (int d = 0; d < 4; d++) {
+            String dir = hDirs[d];
+            registerBlock("comparator_" + dir, "Redstone Comparator", 337 + d, "comparator_off_" + dir);
+            for (int s = 1; s < 4; s++) {
+                blockItemByBlockId.put(337 + d + s * 4, "comparator_" + dir);
+            }
+        }
+        // --- Clutches and gearshifts ---
+        registerBlock("clutch", "Clutch", 353, "clutch_off");
+        blockItemByBlockId.put(354, "clutch");
+        registerBlock("gearshift", "Gearshift", 355, "gearshift_off");
+        blockItemByBlockId.put(356, "gearshift");
+        // --- Dyes + nether quartz ---
+        String[] dyeColors = {"white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+                              "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"};
+        for (int c = 0; c < dyeColors.length; c++) {
+            String col = dyeColors[c];
+            String tex = col.equals("light_gray") ? "dye_powder_silver" : "dye_powder_" + col;
+            String cap = col.substring(0, 1).toUpperCase(java.util.Locale.ROOT) + col.substring(1);
+            registerItemBlock(col + "_dye", cap + " Dye", tex, 357 + c, 373 + c, ToolType.HAND, 1.0f, 64, 0);
+        }
+        registerItemBlock("nether_quartz", "Nether Quartz", "quartz", 389, 390, ToolType.HAND, 1.0f, 64, 0);
+        // --- Rails and minecarts ---
+        registerBlock("rail", "Rail", 391, "rail_normal");
+        blockItemByBlockId.put(392, "rail"); // E-W rail variant drops the same item
+        registerBlock("minecart", "Minecart", 393, "minecart_normal");
         // --- Stair blocks ---
         registerBlock("oak_stairs", "Oak Stairs", 200, "planks_oak");
         registerBlock("cobblestone_stairs", "Cobblestone Stairs", 201, "cobblestone");
@@ -266,6 +328,7 @@ public class ItemDefinitions {
         registerAlias("piston_block", "piston");
         registerAlias("empty_bucket", "bucket");
         registerAlias("iron_bucket", "bucket");
+        registerAlias("silver_dye", "light_gray_dye");
         // --- Drop mappings for orientation variants (no separate items) ---
         // Horizontal oak logs (260/261) drop the regular oak_log item.
         blockItemByBlockId.put(260, "oak_log");
@@ -281,6 +344,9 @@ public class ItemDefinitions {
         blockItemByBlockId.put(271, "sticky_piston");
         blockItemByBlockId.put(272, "sticky_piston");
         blockItemByBlockId.put(273, "sticky_piston");
+        // Horizontal shaft variants (292/293) drop the regular shaft item.
+        blockItemByBlockId.put(292, "shaft");
+        blockItemByBlockId.put(293, "shaft");
     }
 
     private void registerBlock(String itemId, String displayName, int blockId, String textureName) {
