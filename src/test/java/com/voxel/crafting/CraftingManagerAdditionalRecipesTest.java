@@ -2,6 +2,7 @@ package com.voxel.crafting;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 
 import org.junit.Test;
 
@@ -84,6 +85,54 @@ public class CraftingManagerAdditionalRecipesTest {
             assertNotNull(plankType, shovel);
             assertEquals(plankType, "wood_shovel", shovel.resultItemId);
         }
+    }
+
+    @Test
+    public void shaped2x2RecipesCraftOnThe3x3Table() {
+        // Sticks (2 planks in a column) are a 2x2 SHAPED recipe. They must also
+        // match on the 3x3 crafting table, in any placement and rotation —
+        // previously only shapeless 2x2 recipes were tried there.
+        String[] plankTypes = {
+            "oak_planks", "spruce_planks", "birch_planks", "jungle_planks",
+            "acacia_planks", "dark_oak_planks", "skyroot_planks"
+        };
+        for (String plankType : plankTypes) {
+            // Vertical column in the top-left 2x2 region of the table
+            CraftingManager.CraftingRecipe sticks = manager.matchRecipe3x3(new String[][] {
+                {plankType, null, null},
+                {plankType, null, null},
+                {null, null, null}
+            });
+            assertNotNull(plankType, sticks);
+            assertEquals(plankType, "stick", sticks.resultItemId);
+            assertEquals(plankType, 4, sticks.resultCount);
+
+            // Same pattern rotated 90°, placed in the bottom-right 2x2 region
+            CraftingManager.CraftingRecipe rotated = manager.matchRecipe3x3(new String[][] {
+                {null, null, null},
+                {null, null, plankType},
+                {null, null, plankType}
+            });
+            assertNotNull(plankType, rotated);
+            assertEquals(plankType, "stick", rotated.resultItemId);
+            assertEquals(plankType, 4, rotated.resultCount);
+        }
+
+        // Other 2x2 shaped recipes (block compacting) work on the table too
+        CraftingManager.CraftingRecipe packed = manager.matchRecipe3x3(new String[][] {
+            {null, null, null},
+            {null, "ice", "ice"},
+            {null, "ice", "ice"}
+        });
+        assertNotNull(packed);
+        assertEquals("packed_ice", packed.resultItemId);
+
+        // Negative: a stray extra item in the grid must NOT match the 2x2 pattern
+        assertNull("stray item must break the shaped match", manager.matchRecipe3x3(new String[][] {
+            {"oak_planks", null, null},
+            {"oak_planks", null, "oak_planks"},
+            {null, null, null}
+        }));
     }
 
     @Test

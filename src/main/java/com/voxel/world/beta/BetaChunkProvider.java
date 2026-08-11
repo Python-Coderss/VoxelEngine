@@ -464,6 +464,7 @@ public class BetaChunkProvider {
         }
         caveGen.setNumericProfile(numericProfile);
         caveGen.func_867_a(worldSeed, cx, cz, caveTempArray);
+        caveGen.generateSurfaceCaves(worldSeed, cx, cz, caveTempArray);
         for (int cy = 0; cy < 8; cy++) {
             boolean any = false;
             byte[] sec = sections.get(cy);
@@ -1298,7 +1299,8 @@ public class BetaChunkProvider {
         switch (biomeId) { case BetaBiomeGenBase.FOREST: grassCount=2; break; case BetaBiomeGenBase.RAINFOREST: grassCount=10; break; case BetaBiomeGenBase.SEASONAL_FOREST: grassCount=2; break; case BetaBiomeGenBase.TAIGA: grassCount=1; break; case BetaBiomeGenBase.PLAINS: grassCount=10; break; }
         for (int i=0; i<grassCount; ++i) { int gx=var4+rand.nextInt(16)+8, gy=rand.nextInt(128), gz=var5+rand.nextInt(16)+8; if (world.getVoxel(gx,gy,gz)==veGrass||world.getVoxel(gx,gy,gz)==veDirt) if (world.getVoxel(gx,gy+1,gz)==0) setVoxelColumnAware(world,gx,gy+1,gz,veTallGrass,BETA_TALL_GRASS); }
         if (rand.nextInt(2)==0) { int rx=var4+rand.nextInt(16)+8, ry=rand.nextInt(128), rz=var5+rand.nextInt(16)+8; if (world.getVoxel(rx,ry,rz)==veGrass||world.getVoxel(rx,ry,rz)==veDirt) if (world.getVoxel(rx,ry+1,rz)==0) setVoxelColumnAware(world,rx,ry+1,rz,veRose,BETA_PLANT_RED); }
-        for (int i=0;i<50;++i){generateLake(world,var4+rand.nextInt(16),rand.nextInt(120)+4,var5+rand.nextInt(16),veWaterStill);}
+        for (int i=0;i<24;++i){generateLake(world,var4+rand.nextInt(16),rand.nextInt(120)+4,var5+rand.nextInt(16),veWaterStill);}
+        for (int i=0;i<12;++i){generateSurfaceLake(world,var4+rand.nextInt(16),var5+rand.nextInt(16));}
         for (int i=0;i<50;++i){generateLake(world,var4+rand.nextInt(16),rand.nextInt(rand.nextInt(10)+8),var5+rand.nextInt(16),veLavaStill);}
         generateBeaches(world,cx,cz); generateClay(world,cx,cz);
         for (int i=0;i<1;++i){generateDungeon(world,var4+rand.nextInt(16),rand.nextInt(30)+6,var5+rand.nextInt(16));}
@@ -1463,6 +1465,35 @@ public class BetaChunkProvider {
         for(int s=0;s<4;s++){int ox=cx+rand.nextInt(radius)-radius/2,oy=cy+rand.nextInt(3),oz=cz+rand.nextInt(radius)-radius/2,r=2+rand.nextInt(3);
             for(int x=ox-r;x<=ox+r;x++)for(int y=oy-r;y<=oy+r;y++)for(int z=oz-r;z<=oz+r;z++){
                 int dx=x-ox,dy=y-oy,dz=z-oz;if(dx*dx+dy*dy+dz*dz<=r*r){int ex=world.getVoxel(x,y,z);if(ex==0||ex==blockId)continue;world.setVoxel(x,y,z,y>oy?0:blockId);}
+            }
+        }
+    }
+
+    /**
+     * Surface lake: a shallow elliptical bowl of water carved into the ground at
+     * the column's surface, with a sand floor. Only spawns on land (above sea
+     * level, below the mountains) so lakes read as visible ponds. The previous
+     * generateLake only produced hidden underground pools (its air/solid gate
+     * rejects anything above ground), which is why lakes were never visible.
+     */
+    private void generateSurfaceLake(com.voxel.World world,int cx,int cz){
+        int topY=worldGetTopY(cx,cz);
+        if(topY<=64||topY>96)return; // land band only (sea level is 64)
+        int radius=4+rand.nextInt(4);
+        int rx=radius,rz=radius+rand.nextInt(3)-1;
+        int depth=2+rand.nextInt(3);
+        for(int x=cx-rx;x<=cx+rx;x++)for(int z=cz-rz;z<=cz+rz;z++){
+            float dx=(x-cx)/(float)rx,dz=(z-cz)/(float)rz;
+            float d2=dx*dx+dz*dz;
+            if(d2>1.0f)continue;
+            int g=worldGetTopY(x,z);
+            if(g<=0||g>topY+4||g<topY-6)continue; // stay on the same terrace
+            int digTo=Math.max(1,topY-(int)(depth*(1.0f-d2)));
+            for(int y=g;y>=digTo;y--){
+                int cur=world.getVoxel(x,y,z);
+                if(cur==0)break; // don't tunnel under overhangs
+                if(y>digTo)setVoxelColumnAware(world,x,y,z,veWaterStill,betaWaterStill);
+                else setVoxelColumnAware(world,x,y,z,veSand,betaSand);
             }
         }
     }

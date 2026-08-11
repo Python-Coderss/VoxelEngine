@@ -113,36 +113,49 @@ public class CraftingManager {
             {"stick", null, null}
         }, "stone_shovel", 1);
 
-        // Iron tools
+        // Iron tools (proper: smelted iron ingots, not iron blocks)
         addRecipe3x3(new String[][]{
-            {"iron_block", "iron_block", "iron_block"},
+            {"iron_ingot", "iron_ingot", "iron_ingot"},
             {null, "stick", null},
             {null, "stick", null}
         }, "iron_pickaxe", 1);
         addRecipe3x3(new String[][]{
-            {"iron_block", "iron_block", null},
-            {"iron_block", "stick", null},
+            {"iron_ingot", "iron_ingot", null},
+            {"iron_ingot", "stick", null},
             {null, "stick", null}
         }, "iron_axe", 1);
         addRecipe3x3(new String[][]{
-            {"iron_block", null, null},
+            {"iron_ingot", null, null},
             {"stick", null, null},
             {"stick", null, null}
         }, "iron_shovel", 1);
 
-        // Diamond tools
+        // Rails: 6 iron ingots → 16 (two 3-high columns)
         addRecipe3x3(new String[][]{
-            {"diamond_block", "diamond_block", "diamond_block"},
+            {"iron_ingot", null, "iron_ingot"},
+            {"iron_ingot", null, "iron_ingot"},
+            {"iron_ingot", null, "iron_ingot"}
+        }, "rail", 16);
+        // Minecart: 5 iron ingots → 1 (vanilla U-shape)
+        addRecipe3x3(new String[][]{
+            {"iron_ingot", null, "iron_ingot"},
+            {null, null, null},
+            {"iron_ingot", "iron_ingot", "iron_ingot"}
+        }, "minecart", 1);
+
+        // Diamond tools (proper: mined diamonds, not diamond blocks)
+        addRecipe3x3(new String[][]{
+            {"diamond", "diamond", "diamond"},
             {null, "stick", null},
             {null, "stick", null}
         }, "diamond_pickaxe", 1);
         addRecipe3x3(new String[][]{
-            {"diamond_block", "diamond_block", null},
-            {"diamond_block", "stick", null},
+            {"diamond", "diamond", null},
+            {"diamond", "stick", null},
             {null, "stick", null}
         }, "diamond_axe", 1);
         addRecipe3x3(new String[][]{
-            {"diamond_block", null, null},
+            {"diamond", null, null},
             {"stick", null, null},
             {"stick", null, null}
         }, "diamond_shovel", 1);
@@ -190,19 +203,19 @@ public class CraftingManager {
             {null, null, null}
         }, "sandstone_slab", 6);
 
-        // Torch: stick + coal
+        // Torch: stick + coal (coal drops from coal ore)
         addRecipe3x3(new String[][]{
-            {"coal_ore", null, null},
+            {"coal", null, null},
             {"stick", null, null},
             {null, null, null}
         }, "torch", 4);
 
         // ===== 3x3 Recipes (crafting table only) =====
         
-        // Piston
+        // Piston (iron ingot, Minecraft-authentic)
         addRecipe3x3(new String[][]{
             {"oak_planks", "oak_planks", "oak_planks"},
-            {"cobblestone", "iron_block", "cobblestone"},
+            {"cobblestone", "iron_ingot", "cobblestone"},
             {"cobblestone", "redstone_wire", "cobblestone"}
         }, "piston", 1);
 
@@ -226,26 +239,27 @@ public class CraftingManager {
             {"oak_planks", "oak_planks", "oak_planks"}
         }, "bookshelf", 1);
 
-        // Iron Block from iron (compact: 9 iron = iron block)
-        addRecipe3x3(new String[][]{
-            {"iron_ore", "iron_ore", "iron_ore"},
-            {"iron_ore", "iron_ore", "iron_ore"},
-            {"iron_ore", "iron_ore", "iron_ore"}
-        }, "iron_block", 1);
-
-        // Gold Block from gold ore
-        addRecipe3x3(new String[][]{
-            {"gold_ore", "gold_ore", "gold_ore"},
-            {"gold_ore", "gold_ore", "gold_ore"},
-            {"gold_ore", "gold_ore", "gold_ore"}
-        }, "gold_block", 1);
-
-        // Diamond Block from diamond ore
-        addRecipe3x3(new String[][]{
-            {"diamond_ore", "diamond_ore", "diamond_ore"},
-            {"diamond_ore", "diamond_ore", "diamond_ore"},
-            {"diamond_ore", "diamond_ore", "diamond_ore"}
-        }, "diamond_block", 1);
+        // Metal blocks compact from SMELTED ingots / mined gems (not raw ore)
+        addShapeless3x3("iron_block", 1,
+            "iron_ingot", "iron_ingot", "iron_ingot",
+            "iron_ingot", "iron_ingot", "iron_ingot",
+            "iron_ingot", "iron_ingot", "iron_ingot");
+        addShapeless3x3("gold_block", 1,
+            "gold_ingot", "gold_ingot", "gold_ingot",
+            "gold_ingot", "gold_ingot", "gold_ingot",
+            "gold_ingot", "gold_ingot", "gold_ingot");
+        addShapeless3x3("diamond_block", 1,
+            "diamond", "diamond", "diamond",
+            "diamond", "diamond", "diamond",
+            "diamond", "diamond", "diamond");
+        addShapeless3x3("copper_block", 1,
+            "copper_ingot", "copper_ingot", "copper_ingot",
+            "copper_ingot", "copper_ingot", "copper_ingot",
+            "copper_ingot", "copper_ingot", "copper_ingot");
+        addShapeless3x3("zinc_block", 1,
+            "zinc_ingot", "zinc_ingot", "zinc_ingot",
+            "zinc_ingot", "zinc_ingot", "zinc_ingot",
+            "zinc_ingot", "zinc_ingot", "zinc_ingot");
 
         // Lapis Block from lapis ore
         addRecipe3x3(new String[][]{
@@ -317,12 +331,6 @@ public class CraftingManager {
             {null, null, null}
         }, "bucket", 1);
 
-        // Iron Ingot from Iron Ore
-        addRecipe2x2(new String[][]{
-            {"iron_ore", "iron_ore"},
-            {"iron_ore", "iron_ore"}
-        }, "iron_ingot", 1);
-
         // Flint from gravel is a one-ingredient shapeless conversion.
         addShapeless2x2("flint", 1, "gravel");
 
@@ -377,6 +385,71 @@ public class CraftingManager {
             {"iron_ingot", "andesite_casing", "iron_ingot"},
             {"oak_planks", "redstone_wire", "oak_planks"}
         }, "encased_fan", 1);
+
+        // Shaft: two casings -> 4 shafts (Create: 2 alloy -> 8). Shapeless so it
+        // also crafts in the 3x3 table (shaped 2x2 recipes are grid-only here).
+        addShapeless2x2("shaft", 4, "andesite_casing", "andesite_casing");
+
+        // Cogwheel: stick ring + casing centre -> 8 (Create: wooden buttons + alloy)
+        addRecipe3x3(new String[][]{
+            {"stick", "stick", "stick"},
+            {"stick", "andesite_casing", "stick"},
+            {"stick", "stick", "stick"}
+        }, "cogwheel", 8);
+
+        // Large cogwheel: stick corners + planks + casing centre -> 2
+        addRecipe3x3(new String[][]{
+            {"stick", "oak_planks", "stick"},
+            {"oak_planks", "andesite_casing", "oak_planks"},
+            {"stick", "oak_planks", "stick"}
+        }, "large_cogwheel", 2);
+
+        // Water wheel: slab ring + large cogwheel centre -> 1
+        addRecipe3x3(new String[][]{
+            {"oak_slab", "oak_slab", "oak_slab"},
+            {"oak_slab", "large_cogwheel", "oak_slab"},
+            {"oak_slab", "oak_slab", "oak_slab"}
+        }, "water_wheel", 1);
+
+        // Clutch: redstone sides + shaft through an andesite casing (Create recipe)
+        addRecipe3x3(new String[][]{
+            {null, "redstone_wire", null},
+            {"shaft", "andesite_casing", "shaft"},
+            {null, "redstone_wire", null}
+        }, "clutch", 1);
+
+        // Gearshift: same but cogwheels instead of shafts (Create recipe)
+        addRecipe3x3(new String[][]{
+            {null, "redstone_wire", null},
+            {"cogwheel", "andesite_casing", "cogwheel"},
+            {null, "redstone_wire", null}
+        }, "gearshift", 1);
+
+        // Repeater: stone pillars + torches + dust (Minecraft recipe)
+        addRecipe3x3(new String[][]{
+            {"stone", "redstone_torch", "stone"},
+            {"stone", "redstone_torch", "stone"},
+            {"stone", "redstone_wire", "stone"}
+        }, "repeater_north", 1);
+
+        // Comparator: stone sides + quartz bar + torches (Minecraft recipe)
+        addRecipe3x3(new String[][]{
+            {"stone", "redstone_torch", "stone"},
+            {"nether_quartz", "nether_quartz", "nether_quartz"},
+            {"stone", "redstone_torch", "stone"}
+        }, "comparator_north", 1);
+
+        // Colored lamps: vanilla lamp + matching dye -> 1 colored lamp
+        String[] lampColors = {"white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+                               "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"};
+        for (String col : lampColors) {
+            addShapeless2x2("lamp_" + col, 1, "redstone_lamp", col + "_dye");
+        }
+
+        // A few dye conversions from world flowers/ores
+        addShapeless2x2("yellow_dye", 1, "dandelion");
+        addShapeless2x2("red_dye", 1, "poppy");
+        addShapeless2x2("blue_dye", 4, "lapis_ore");
 
         // ===== Additional wood variants =====
 
@@ -436,12 +509,20 @@ public class CraftingManager {
 
         // ===== Additional metal block conversions =====
 
-        // Compacting/decompacting are shapeless; only the ingredient counts matter.
-        addShapeless3x3("iron_block", 1,
-            "iron_ingot", "iron_ingot", "iron_ingot",
-            "iron_ingot", "iron_ingot", "iron_ingot",
-            "iron_ingot", "iron_ingot", "iron_ingot");
+        // Decompacting: one block back into nine of its material (shapeless).
         addShapeless2x2("iron_ingot", 9, "iron_block");
+        addShapeless2x2("gold_ingot", 9, "gold_block");
+        addShapeless2x2("diamond", 9, "diamond_block");
+        addShapeless2x2("copper_ingot", 9, "copper_block");
+        addShapeless2x2("zinc_ingot", 9, "zinc_block");
+
+        // Copper is an alternative frame material for the encased fan
+        // (the iron-ingot recipe above works too — either frame is accepted).
+        addRecipe3x3(new String[][]{
+            {"oak_planks", "copper_ingot", "oak_planks"},
+            {"copper_ingot", "andesite_casing", "copper_ingot"},
+            {"oak_planks", "redstone_wire", "oak_planks"}
+        }, "encased_fan", 1);
     }
     
     private void registerWoodToolRecipes(String plankItemId) {
@@ -505,7 +586,11 @@ public class CraftingManager {
             }
         }
         for (CraftingRecipe recipe : recipes2x2) {
-            if (recipe.shapeless && matchesRecipe(grid, recipe, 3)) {
+            if (recipe.shapeless) {
+                if (matchesRecipe(grid, recipe, 3)) {
+                    return recipe;
+                }
+            } else if (matchesPattern2x2On3x3(grid, recipe.pattern)) {
                 return recipe;
             }
         }
@@ -535,43 +620,64 @@ public class CraftingManager {
     /**
      * Matches a shaped recipe in any cardinal rotation. Reflections are not
      * accepted: rotating a recipe is allowed, mirroring it is a different shape.
-     */
-    private boolean matchesPattern(String[][] grid, String[][] pattern, int size) {
+     */    private boolean matchesPattern(String[][] grid, String[][] pattern, int size) {
         for (int rotation = 0; rotation < 4; rotation++) {
-            if (matchesPatternRotation(grid, pattern, size, rotation)) {
+            if (matchesPatternRotation(grid, pattern, size, rotation, 0, 0)) {
                 return true;
             }
         }
         return false;
     }
-
-    private boolean matchesPatternRotation(String[][] grid, String[][] pattern, int size, int rotation) {
+    /**
+     * Tries a 2x2 shaped pattern in every 2x2 sub-grid of the 3x3 table
+     * (4 placements x 4 rotations), so recipes like sticks (two planks in a
+     * column) work on the crafting table, not just the 2x2 surface grid.
+     */
+    private boolean matchesPattern2x2On3x3(String[][] grid, String[][] pattern) {
+        for (int or = 0; or <= 1; or++) {
+            for (int oc = 0; oc <= 1; oc++) {
+                for (int rotation = 0; rotation < 4; rotation++) {
+                    if (matchesPatternRotation(grid, pattern, 3, rotation, or, oc)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+    private boolean matchesPatternRotation(String[][] grid, String[][] pattern, int size, int rotation, int offsetRow, int offsetCol) {
+        int psize = pattern.length; // rotation happens within the pattern's own dimensions
         for (int r = 0; r < size; r++) {
             for (int c = 0; c < size; c++) {
                 String gridItem = (r < grid.length && c < grid[r].length) ? grid[r][c] : null;
-                int sourceRow;
-                int sourceCol;
-                switch (rotation) {
-                    case 0:
-                        sourceRow = r;
-                        sourceCol = c;
-                        break;
-                    case 1: // 90 degrees clockwise
-                        sourceRow = size - 1 - c;
-                        sourceCol = r;
-                        break;
-                    case 2: // 180 degrees
-                        sourceRow = size - 1 - r;
-                        sourceCol = size - 1 - c;
-                        break;
-                    case 3: // 270 degrees clockwise
-                        sourceRow = c;
-                        sourceCol = size - 1 - r;
-                        break;
-                    default:
-                        return false;
+                int pr = r - offsetRow;
+                int pc = c - offsetCol;
+                String patternItem = null;
+                if (pr >= 0 && pr < psize && pc >= 0 && pc < psize) {
+                    int sourceRow;
+                    int sourceCol;
+                    switch (rotation) {
+                        case 0:
+                            sourceRow = pr;
+                            sourceCol = pc;
+                            break;
+                        case 1: // 90 degrees clockwise
+                            sourceRow = psize - 1 - pc;
+                            sourceCol = pr;
+                            break;
+                        case 2: // 180 degrees
+                            sourceRow = psize - 1 - pr;
+                            sourceCol = psize - 1 - pc;
+                            break;
+                        case 3: // 270 degrees clockwise
+                            sourceRow = pc;
+                            sourceCol = psize - 1 - pr;
+                            break;
+                        default:
+                            return false;
+                    }
+                    patternItem = pattern[sourceRow][sourceCol];
                 }
-                String patternItem = pattern[sourceRow][sourceCol];
 
                 if (patternItem == null) {
                     if (gridItem != null) return false;

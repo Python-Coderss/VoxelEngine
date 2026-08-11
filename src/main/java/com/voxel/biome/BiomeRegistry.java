@@ -11,7 +11,8 @@ public class BiomeRegistry {
 
     private static final Map<Integer, Biome> biomeById = new HashMap<>();
     private static final Map<String, Biome> biomeByName = new HashMap<>();
-    private static boolean initialized = false;
+    private static volatile boolean initialized = false;
+    private static boolean initializing = false; // guarded by the class lock; blocks re-entrant populate()
 
     public static final int BIOME_VOID = 127;
 
@@ -87,10 +88,31 @@ public class BiomeRegistry {
     public static final int MUTATED_MESA_ROCK = 166;
     public static final int MUTATED_MESA_CLEAR_ROCK = 167;
 
+    /**
+     * Thread-safe lazy initialization. `initialized` is published only after
+     * every registration completes, so a concurrent reader (e.g. the world-gen
+     * thread racing the main thread) can never observe a half-populated
+     * registry and resolve a null biome.
+     */
     public static void init() {
         if (initialized) return;
-        initialized = true;
+        synchronized (BiomeRegistry.class) {
+            if (initialized) return;
+            // A biome constructor re-entering getBiome() mid-populate() must not
+            // recurse into populate() forever; it falls through to the (possibly
+            // partial) map, and BiomeManager's null-safe read handles the rest.
+            if (initializing) return;
+            initializing = true;
+            try {
+                populate();
+                initialized = true;
+            } finally {
+                initializing = false;
+            }
+        }
+    }
 
+    private static void populate() {
         // --- Standard Biomes ---
         register(OCEAN, new Biome("Ocean", new BiomeProperties("Ocean")
             .setBaseHeight(-1.0f).setHeightVariation(0.1f)));
@@ -303,12 +325,14 @@ public class BiomeRegistry {
 
     public static Biome getBiome(int id) {
         if (!initialized) init();
-        return biomeById.get(id);
+        Biome b = biomeById.get(id);
+        return b != null ? b : biomeById.get(PLAINS);
     }
 
     public static Biome getBiome(String name) {
         if (!initialized) init();
-        return biomeByName.get(name.toLowerCase());
+        Biome b = biomeByName.get(name.toLowerCase());
+        return b != null ? b : biomeById.get(PLAINS);
     }
 
     public static int getId(Biome biome) {

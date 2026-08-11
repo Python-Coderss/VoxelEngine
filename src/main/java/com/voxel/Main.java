@@ -14,6 +14,7 @@ import com.voxel.utils.TextureManager;
 import com.voxel.world.DimensionManager;
 import com.voxel.world.DimensionType;
 import com.voxel.entity.Entity;
+import com.voxel.entity.MinecartEntity;
 import com.voxel.entity.ModelPart;
 import com.voxel.entity.VillagerEntity;
 import com.voxel.game.VillagerTVSystem;
@@ -401,6 +402,7 @@ public class Main {
         // Defer world GPU upload to render thread (avoid GL calls from LogicThread)
         ctx.uploadWorldToGpu = () -> { needsWorldUpload = true; };
         ctx.updateCursorMode = this::updateCursorMode;
+        ctx.dismountMinecart = () -> dismountMinecart(ctx.ridingMinecart);
         ctx.statusConsumer = this::setStatus;
         ctx.uiDirtyMarker = () -> { hud.inventoryUiDirty = true; };
         ctx.villagerAudioManager = villagerAudioManager;
@@ -615,6 +617,11 @@ public class Main {
 
         redstoneManager = new RedstoneManager(world, chunkManager);
         ctx.redstoneManager = redstoneManager;
+        redstoneManager.setContainerManagers(ctx.chestManager, ctx.furnaceManager);
+
+        // Kinetic network (Create-style shafts/cogs/clutch/water wheel)
+        com.voxel.world.KineticManager kineticManager = new com.voxel.world.KineticManager(world, chunkManager, redstoneManager);
+        ctx.kineticManager = kineticManager;
 
         ctx.fluidManager = new com.voxel.world.FluidManager(world, chunkManager, blockDataManager, false);
         chunkManager.setFluidManager(ctx.fluidManager);
@@ -685,6 +692,87 @@ public class Main {
         if (inventoryOpen != ctx.inventoryOpen) {
             inventoryOpen = ctx.inventoryOpen;
         }
+    }
+
+    /**
+     * Logic-thread minecart driver: consumes cart-spawn requests from the GL
+     * thread, steps every cart (with the riding player's W/S as control), syncs
+     * a riding player's position onto the cart, and auto-dismounts on death or
+     * dimension change.
+     */
+    private void updateMinecarts(float dt) {
+        if (ctx == null || entityManager == null || world == null) return;
+
+        // Spawn carts requested by block interaction (GL thread → logic thread).
+        // The queue is a synchronized list: hold its lock while draining.
+        if (!ctx.minecartSpawnQueue.isEmpty()) {
+            java.util.List<org.joml.Vector3f> queue = ctx.minecartSpawnQueue;
+            int baseId = 70000 + entityManager.getEntityCount();
+            synchronized (queue) {
+                for (org.joml.Vector3f p : queue) {
+                    MinecartEntity cart = new MinecartEntity(baseId++, p, ctx.textureManager);
+                    cart.dimension = activeDimension;
+                    entityManager.addEntity(cart);
+                }
+                queue.clear();
+            }
+        }
+
+        Entity riding = ctx.ridingMinecart;
+        if (riding != null && (!(riding instanceof MinecartEntity)
+                || riding.dimension != activeDimension || player.isDead())) {
+            dismountMinecart(riding);
+            riding = null;
+        }
+
+        // Riding input: W accelerates forward along the rail, S reverses.
+        float control = 0;
+        if (riding instanceof MinecartEntity) {
+            if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) control += 1.0f;
+            if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) control -= 1.0f;
+        }
+
+        for (int i = 0; i < entityManager.getEntityCount(); i++) {
+            Entity e = entityManager.getEntity(i);
+            if (e instanceof MinecartEntity && e.dimension == activeDimension) {
+                ((MinecartEntity) e).updateCart(world, dt, control);
+            }
+        }
+
+        // Re-read: the GL thread may have dismounted mid-tick (E key / right
+        // click), so don't snap the player to a cart they just left.
+        riding = ctx.ridingMinecart;
+        if (riding instanceof MinecartEntity) {
+            MinecartEntity cart = (MinecartEntity) riding;
+            player.ridingCart = true;
+            player.cartX = cart.getPosX();
+            player.cartY = cart.getPosY() + 0.55f;
+            player.cartZ = cart.getPosZ();
+        } else {
+            player.ridingCart = false;
+        }
+    }
+
+    /** Places the player on the ground beside the given cart and stops riding. */
+    private void dismountMinecart(Entity cart) {
+        ctx.ridingMinecart = null;
+        player.ridingCart = false;
+        float cx = cart != null ? cart.getPosX() : player.getPosition().x;
+        float cy = cart != null ? cart.getPosY() : player.getPosition().y;
+        float cz = cart != null ? cart.getPosZ() : player.getPosition().z;
+        int[][] offs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {2, 0}, {-2, 0}, {0, 2}, {0, -2}};
+        for (int[] off : offs) {
+            int bx = (int) Math.floor(cx) + off[0];
+            int bz = (int) Math.floor(cz) + off[1];
+            int gy = (int) Math.floor(cy);
+            while (gy > 0 && world.getVoxel(bx, gy - 1, bz) == 0) gy--;
+            if (gy <= 0) continue;
+            if (world.getVoxel(bx, gy, bz) == 0 && world.getVoxel(bx, gy + 1, bz) == 0) {
+                player.teleport(bx + 0.5, gy, bz + 0.5);
+                return;
+            }
+        }
+        player.teleport(cx + 0.5, cy + 1.0, cz + 0.5);
     }
 
     public void tick(float dt) {
@@ -760,6 +848,8 @@ public class Main {
                     }
                 }
             }
+
+            updateMinecarts(dt);
 
             player.update(dt, world, blockDataManager);
 
@@ -854,6 +944,37 @@ public class Main {
                 // Load existing items from CraftingTableManager into the player's grid
                 playerInventory.loadFromCraftingTable(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ);
                 ctx.setStatus("Crafting Table — 3x3 grid");
+            }
+        }
+
+        // --- Furnace cutscene: walk player towards the furnace, then open its UI ---
+        if (ctx.furnaceCutsceneActive) {
+            ctx.furnaceCutsceneTimer += dt;
+            float ft = Math.min(1.0f, ctx.furnaceCutsceneTimer / GameContext.FURNACE_CUTSCENE_DURATION);
+            float smoothT = ft * ft * (3.0f - 2.0f * ft);
+
+            // Lerp player position to the walk target
+            Vector3f fpos = player.getPosition();
+            fpos.set(
+                ctx.furnaceCutsceneStartPos.x + (ctx.furnaceCutsceneTargetPos.x - ctx.furnaceCutsceneStartPos.x) * smoothT,
+                ctx.furnaceCutsceneStartPos.y + (ctx.furnaceCutsceneTargetPos.y - ctx.furnaceCutsceneStartPos.y) * smoothT,
+                ctx.furnaceCutsceneStartPos.z + (ctx.furnaceCutsceneTargetPos.z - ctx.furnaceCutsceneStartPos.z) * smoothT
+            );
+
+            // Lerp camera yaw/pitch toward the furnace
+            yaw = ctx.furnaceCutsceneStartYaw + (ctx.furnaceCutsceneTargetYaw - ctx.furnaceCutsceneStartYaw) * smoothT;
+            pitch = ctx.furnaceCutsceneStartPitch + (ctx.furnaceCutsceneTargetPitch - ctx.furnaceCutsceneStartPitch) * smoothT;
+            ctx.yaw = yaw;
+            ctx.pitch = pitch;
+            playerYaw = yaw;
+
+            // When cutscene completes: open the furnace UI
+            if (ft >= 1.0f) {
+                ctx.furnaceCutsceneActive = false;
+                blockInteraction.openFurnace(ctx.furnaceBlockX, ctx.furnaceBlockY, ctx.furnaceBlockZ);
+                inventoryOpen = true;
+                needsCursorUpdate = true; // Signal render loop to release cursor on GL thread
+                ctx.setStatus("Furnace — smelt ore, burn fuel");
             }
         }
 
@@ -999,6 +1120,11 @@ public class Main {
         if (redstoneManager != null) {
             redstoneManager.setPlayerPosition(pPosForRS.x, pPosForRS.y, pPosForRS.z);
             redstoneManager.tickLamps();
+            // Kinetic network evaluates after the redstone pass so clutch/gearshift
+            // power states reflect the latest network.
+            if (ctx.kineticManager != null) {
+                ctx.kineticManager.tick();
+            }
             ctx.commandBlockManager.tick(ctx, dt);
         }
 
@@ -1037,7 +1163,7 @@ public class Main {
     }
 
     public void handleInput(float dt) {
-        if (inventoryOpen || commandMode || player.isDead() || ctx.craftingCutsceneActive || ctx.tvCutsceneActive) return;
+        if (inventoryOpen || commandMode || player.isDead() || ctx.craftingCutsceneActive || ctx.tvCutsceneActive || ctx.furnaceCutsceneActive) return;
 
         // Compute forward/right vectors early (needed for dodge roll and movement)
         double ry = Math.toRadians(yaw);
@@ -1301,6 +1427,9 @@ public class Main {
             // still adding the initial enemies.
             if (!ctx.initializing) {
                 redstoneManager.applyLampChanges();
+                if (ctx.kineticManager != null) {
+                    ctx.kineticManager.applySwaps();
+                }
                 // Deferred world GPU upload (must happen on GL thread)
                 if (needsWorldUpload) {
                     uploadWorldToGpu();
@@ -1384,9 +1513,15 @@ public class Main {
             // Camera in buffer-relative space: decompose into camBlock (relative to u_WorldOffset,
             // always in 0-2048 range → full float32 sub-block precision) + camFrac (0-1).
             // First-person mode uses player's 64-bit fixed-point longs (1/256 resolution).
+            // Detached cameras (crafting table view + all cutscenes) must use the
+            // cutscene/camera position from getActiveCameraPosition() instead of the
+            // player eye, otherwise the rendered view never matches the raycast used
+            // for crafting-cell clicks.
             int cbx, cby, cbz;
             float cfx, cfy, cfz;
-            if (cameraMode == CameraMode.FIRST_PERSON) {
+            boolean detachedCamera = ctx.craftingCutsceneActive || ctx.craftingTableOpen
+                || ctx.furnaceCutsceneActive;
+            if (cameraMode == CameraMode.FIRST_PERSON && !detachedCamera) {
                 // Interpolate in pure fixed-point (no float→long precision loss)
                 long px = FixedPoint.lerp(player.getFixedPrevX(), player.getFixedX(), playerPartialTicks);
                 long py = FixedPoint.lerp(player.getFixedPrevY(), player.getFixedY(), playerPartialTicks)
@@ -1644,6 +1779,11 @@ public class Main {
             }
 
             if (key == GLFW_KEY_E) {
+                if (ctx.ridingMinecart != null) {
+                    dismountMinecart(ctx.ridingMinecart);
+                    setStatus("Dismounted minecart");
+                    return;
+                }
                 toggleInventory();
                 showSelectedItemName();
                 return;
@@ -1714,6 +1854,12 @@ public class Main {
                 if (ctx.craftingCutsceneActive) {
                     // Abort crafting cutscene
                     ctx.craftingCutsceneActive = false;
+                    ctx.setStatus("Cancelled");
+                    return;
+                }
+                if (ctx.furnaceCutsceneActive) {
+                    // Abort furnace cutscene
+                    ctx.furnaceCutsceneActive = false;
                     ctx.setStatus("Cancelled");
                     return;
                 }
@@ -1896,6 +2042,10 @@ public class Main {
 
         if (commandMode) return;
 
+        // Cutscenes take over input entirely: never let a stray click place or
+        // break blocks, or re-trigger the cutscene mid-animation.
+        if (ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive || ctx.tvCutsceneActive) return;
+
         if (button == GLFW_MOUSE_BUTTON_RIGHT) {
             if ((mods & GLFW_MOD_ALT) != 0) {
                 blockInteraction.attemptSurfaceCrafting();
@@ -1997,7 +2147,22 @@ public class Main {
     public void updateCursorMode() {
         boolean freeCursor = inventoryOpen || commandMode;
         glfwSetInputMode(window, GLFW_CURSOR, freeCursor ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
-        if (!freeCursor) firstMouse = true;
+        if (freeCursor) {
+            // Resync the tracked cursor position with the OS position. After
+            // GLFW_CURSOR_DISABLED the virtual cursor drifts away from the real
+            // one, so without this the first click after a cutscene would register
+            // at a stale screen coordinate and miss the button the user is aiming at.
+            double[] mx = new double[1], my = new double[1];
+            glfwGetCursorPos(window, mx, my);
+            lastMouseX = (float) mx[0];
+            lastMouseY = (float) my[0];
+            if (ctx != null) {
+                ctx.lastMouseX = lastMouseX;
+                ctx.lastMouseY = lastMouseY;
+            }
+        } else {
+            firstMouse = true;
+        }
     }
 
     public void setStatus(String message) {
@@ -2392,7 +2557,8 @@ public class Main {
         blockDataManager.registerBlock(116, "furnace_off", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockRegistry.register("furnace_on", 117);
         shaderBlockRegistry.register(117, 117);
-        blockDataManager.registerBlock(117, "furnace_on", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.registerBlock(117, "furnace_on", textureManager, "src/main/resources/assets/minecraft/models/block", 0, 0, 255, 220);
+        blockDataManager.setLightColor(117, 255, 150, 60);
         blockRegistry.register("chest", 118);
         shaderBlockRegistry.register(118, 118);
         blockDataManager.registerBlock(118, "chest", textureManager, "src/main/resources/assets/minecraft/models/block");
@@ -2636,6 +2802,22 @@ public class Main {
         shaderBlockRegistry.register(141, 141);
         blockDataManager.registerBlock(141, "lapis_block", textureManager, mcModels);
 
+        // --- Create-inspired ores and metal blocks (copper + zinc) ---
+        blockRegistry.register("copper_ore", 142);
+        shaderBlockRegistry.register(142, 142);
+        blockDataManager.registerBlock(142, "copper_ore", textureManager, mcModels, 0, 0, 255, 15);
+        blockDataManager.setLightColor(142, 230, 140, 60);
+        blockRegistry.register("copper_block", 143);
+        shaderBlockRegistry.register(143, 143);
+        blockDataManager.registerBlock(143, "copper_block", textureManager, mcModels);
+        blockRegistry.register("zinc_ore", 144);
+        shaderBlockRegistry.register(144, 144);
+        blockDataManager.registerBlock(144, "zinc_ore", textureManager, mcModels, 0, 0, 255, 12);
+        blockDataManager.setLightColor(144, 150, 220, 150);
+        blockRegistry.register("zinc_block", 145);
+        shaderBlockRegistry.register(145, 145);
+        blockDataManager.registerBlock(145, "zinc_block", textureManager, mcModels);
+
         // --- Orientable log variants (axis chosen from clicked face at placement) ---
         blockRegistry.register("oak_log_x", 260);
         shaderBlockRegistry.register(260, 260);
@@ -2843,6 +3025,165 @@ public class Main {
         blockRegistry.register("item_drop_diamond_axe", 249);
         shaderBlockRegistry.register(249, 249);
         blockDataManager.registerBlock(249, "item_drop_diamond_axe", textureManager, mcModels);
+
+        // --- New material items (coal, diamond, gold/copper/zinc ingots, charcoal) ---
+        blockRegistry.register("item_coal", 279);
+        shaderBlockRegistry.register(279, 279);
+        blockDataManager.registerBlock(279, "item_coal", textureManager, mcModels);
+        blockRegistry.register("item_diamond", 280);
+        shaderBlockRegistry.register(280, 280);
+        blockDataManager.registerBlock(280, "item_diamond", textureManager, mcModels);
+        blockRegistry.register("item_gold_ingot", 281);
+        shaderBlockRegistry.register(281, 281);
+        blockDataManager.registerBlock(281, "item_gold_ingot", textureManager, mcModels);
+        blockRegistry.register("item_copper_ingot", 282);
+        shaderBlockRegistry.register(282, 282);
+        blockDataManager.registerBlock(282, "item_copper_ingot", textureManager, mcModels);
+        blockRegistry.register("item_zinc_ingot", 283);
+        shaderBlockRegistry.register(283, 283);
+        blockDataManager.registerBlock(283, "item_zinc_ingot", textureManager, mcModels);
+        blockRegistry.register("item_charcoal", 284);
+        shaderBlockRegistry.register(284, 284);
+        blockDataManager.registerBlock(284, "item_charcoal", textureManager, mcModels);
+        blockRegistry.register("item_drop_coal", 285);
+        shaderBlockRegistry.register(285, 285);
+        blockDataManager.registerBlock(285, "item_drop_coal", textureManager, mcModels);
+        blockRegistry.register("item_drop_diamond", 286);
+        shaderBlockRegistry.register(286, 286);
+        blockDataManager.registerBlock(286, "item_drop_diamond", textureManager, mcModels);
+        blockRegistry.register("item_drop_gold_ingot", 287);
+        shaderBlockRegistry.register(287, 287);
+        blockDataManager.registerBlock(287, "item_drop_gold_ingot", textureManager, mcModels);
+        blockRegistry.register("item_drop_copper_ingot", 288);
+        shaderBlockRegistry.register(288, 288);
+        blockDataManager.registerBlock(288, "item_drop_copper_ingot", textureManager, mcModels);
+        blockRegistry.register("item_drop_zinc_ingot", 289);
+        shaderBlockRegistry.register(289, 289);
+        blockDataManager.registerBlock(289, "item_drop_zinc_ingot", textureManager, mcModels);
+        blockRegistry.register("item_drop_charcoal", 290);
+        shaderBlockRegistry.register(290, 290);
+        blockDataManager.registerBlock(290, "item_drop_charcoal", textureManager, mcModels);
+
+        // --- Create-inspired kinetic blocks (shafts, cogs, water wheel) ---
+        // Orientable shafts: 291 = vertical (Y), 292 = X axis, 293 = Z axis.
+        blockRegistry.register("shaft", 291);
+        shaderBlockRegistry.register(291, 291);
+        blockDataManager.registerBlock(291, "shaft", textureManager, mcModels);
+        blockDataManager.setFullBlock(291, false);
+        blockRegistry.register("shaft_x", 292);
+        shaderBlockRegistry.register(292, 292);
+        blockDataManager.registerBlock(292, "shaft_x", textureManager, mcModels);
+        blockDataManager.setFullBlock(292, false);
+        blockRegistry.register("shaft_z", 293);
+        shaderBlockRegistry.register(293, 293);
+        blockDataManager.registerBlock(293, "shaft_z", textureManager, mcModels);
+        blockDataManager.setFullBlock(293, false);
+        blockRegistry.register("cogwheel", 294);
+        shaderBlockRegistry.register(294, 294);
+        blockDataManager.registerBlock(294, "cogwheel", textureManager, mcModels);
+        blockDataManager.setFullBlock(294, false);
+        blockRegistry.register("large_cogwheel", 295);
+        shaderBlockRegistry.register(295, 295);
+        blockDataManager.registerBlock(295, "large_cogwheel", textureManager, mcModels);
+        blockDataManager.setFullBlock(295, false);
+        blockRegistry.register("water_wheel", 296);
+        shaderBlockRegistry.register(296, 296);
+        blockDataManager.registerBlock(296, "water_wheel", textureManager, mcModels);
+        blockDataManager.setFullBlock(296, false);
+
+        // --- Colored redstone lamps (297-328): off = 297+2c, on = 297+2c+1 ---
+        String[] lampColors = {"white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+                               "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"};
+        for (int c = 0; c < lampColors.length; c++) {
+            String col = lampColors[c];
+            int offId = 297 + c * 2;
+            int onId = offId + 1;
+            blockRegistry.register("lamp_" + col, offId);
+            shaderBlockRegistry.register(offId, offId);
+            blockDataManager.registerBlock(offId, "lamp_" + col + "_off", textureManager, mcModels);
+            shaderBlockRegistry.registerOnOff(offId, false, offId);
+            shaderBlockRegistry.registerOnOff(offId, true, onId);
+            blockRegistry.register("lamp_" + col + "_on", onId);
+            shaderBlockRegistry.register(onId, onId);
+            blockDataManager.registerBlock(onId, "lamp_" + col + "_on", textureManager, mcModels, 0, 0, 255, 255);
+        }
+
+        // --- Redstone repeaters (329-336): off = 329-332 (n/s/w/e), on = 333-336 ---
+        String[] hDirs = {"north", "south", "west", "east"};
+        for (int d = 0; d < 4; d++) {
+            String dir = hDirs[d];
+            int offId = 329 + d;
+            int onId = 333 + d;
+            blockRegistry.register("repeater_" + dir, offId);
+            shaderBlockRegistry.register(offId, offId);
+            blockDataManager.registerBlock(offId, "repeater_" + dir, textureManager, mcModels);
+            blockDataManager.setFullBlock(offId, false);
+            blockRegistry.register("repeater_" + dir + "_on", onId);
+            shaderBlockRegistry.register(onId, onId);
+            blockDataManager.registerBlock(onId, "repeater_" + dir + "_on", textureManager, mcModels, 0, 0, 255, 100);
+            blockDataManager.setFullBlock(onId, false);
+        }
+
+        // --- Redstone comparators (337-352): off/on/off-sub/on-sub per direction ---
+        String[] compStates = {"", "_on", "_sub", "_sub_on"};
+        for (int d = 0; d < 4; d++) {
+            String dir = hDirs[d];
+            for (int s = 0; s < 4; s++) {
+                int id = 337 + d + s * 4;
+                String name = "comparator_" + dir + compStates[s];
+                blockRegistry.register(name, id);
+                shaderBlockRegistry.register(id, id);
+                blockDataManager.registerBlock(id, name, textureManager, mcModels);
+                blockDataManager.setFullBlock(id, false);
+            }
+        }
+
+        // --- Create clutches + gearshifts (353-356) ---
+        blockRegistry.register("clutch", 353);
+        shaderBlockRegistry.register(353, 353);
+        blockDataManager.registerBlock(353, "clutch", textureManager, mcModels);
+        blockRegistry.register("clutch_on", 354);
+        shaderBlockRegistry.register(354, 354);
+        blockDataManager.registerBlock(354, "clutch_on", textureManager, mcModels);
+        blockRegistry.register("gearshift", 355);
+        shaderBlockRegistry.register(355, 355);
+        blockDataManager.registerBlock(355, "gearshift", textureManager, mcModels);
+        blockRegistry.register("gearshift_on", 356);
+        shaderBlockRegistry.register(356, 356);
+        blockDataManager.registerBlock(356, "gearshift_on", textureManager, mcModels);
+
+        // --- Dye items (357-388) + nether quartz (389-390) ---
+        String[] dyeTints = {"white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+                             "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"};
+        for (int c = 0; c < dyeTints.length; c++) {
+            String col = dyeTints[c];
+            String tex = col.equals("light_gray") ? "dye_powder_silver" : "dye_powder_" + col;
+            int itemId = 357 + c;
+            int dropId = 373 + c;
+            blockRegistry.register("item_" + col + "_dye", itemId);
+            shaderBlockRegistry.register(itemId, itemId);
+            blockDataManager.registerBlock(itemId, "item_" + col + "_dye", textureManager, mcModels);
+            blockRegistry.register("item_drop_" + col + "_dye", dropId);
+            shaderBlockRegistry.register(dropId, dropId);
+            blockDataManager.registerBlock(dropId, "item_drop_" + col + "_dye", textureManager, mcModels);
+        }
+        blockRegistry.register("item_quartz", 389);
+        shaderBlockRegistry.register(389, 389);
+        blockDataManager.registerBlock(389, "item_quartz", textureManager, mcModels);
+        blockRegistry.register("item_drop_quartz", 390);
+        shaderBlockRegistry.register(390, 390);
+        blockDataManager.registerBlock(390, "item_drop_quartz", textureManager, mcModels);
+
+        // --- Rails and minecarts ---
+        blockRegistry.register("rail_ns", 391);
+        shaderBlockRegistry.register(391, 391);
+        blockDataManager.registerBlock(391, "rail_ns", textureManager, mcModels);
+        blockRegistry.register("rail_ew", 392);
+        shaderBlockRegistry.register(392, 392);
+        blockDataManager.registerBlock(392, "rail_ew", textureManager, mcModels);
+        blockRegistry.register("item_minecart", 393);
+        shaderBlockRegistry.register(393, 393);
+        blockDataManager.registerBlock(393, "item_minecart", textureManager, mcModels);
 
         // Register shader state variants for directional and on/off blocks
         shaderBlockRegistry.registerOnOff(28, true, 30);
@@ -3206,6 +3547,17 @@ public class Main {
                 ctx.cutsceneCameraStartPos.x + (ctx.cutsceneCameraTargetPos.x - ctx.cutsceneCameraStartPos.x) * smoothT,
                 ctx.cutsceneCameraStartPos.y + (ctx.cutsceneCameraTargetPos.y - ctx.cutsceneCameraStartPos.y) * smoothT,
                 ctx.cutsceneCameraStartPos.z + (ctx.cutsceneCameraTargetPos.z - ctx.cutsceneCameraStartPos.z) * smoothT
+            );
+        }
+
+        // Furnace cutscene: lerp the camera toward the furnace front
+        if (ctx.furnaceCutsceneActive) {
+            float ft = Math.min(1.0f, ctx.furnaceCutsceneTimer / GameContext.FURNACE_CUTSCENE_DURATION);
+            float smoothT = ft * ft * (3.0f - 2.0f * ft);
+            return new Vector3f(
+                ctx.furnaceCutsceneCameraStart.x + (ctx.furnaceCutsceneCameraTarget.x - ctx.furnaceCutsceneCameraStart.x) * smoothT,
+                ctx.furnaceCutsceneCameraStart.y + (ctx.furnaceCutsceneCameraTarget.y - ctx.furnaceCutsceneCameraStart.y) * smoothT,
+                ctx.furnaceCutsceneCameraStart.z + (ctx.furnaceCutsceneCameraTarget.z - ctx.furnaceCutsceneCameraStart.z) * smoothT
             );
         }
 

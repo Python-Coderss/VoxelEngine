@@ -78,7 +78,11 @@ public class FurnaceManager {
     }
 
     private void registerDefaultRecipes() {
+        // --- Ore smelting: the heart of the wood->stone->iron->diamond progression ---
         addSmelting("iron_ore", "iron_ingot", 1, 8.0f);
+        addSmelting("gold_ore", "gold_ingot", 1, 8.0f);
+        addSmelting("copper_ore", "copper_ingot", 1, 7.0f);
+        addSmelting("zinc_ore", "zinc_ingot", 1, 7.0f);
         addSmelting("quartz_ore", "nether_quartz", 2, 6.0f);
         // stone -> smelted stone (just returns stone for now)
         addSmelting("stone", "stone", 1, 10.0f);
@@ -86,9 +90,14 @@ public class FurnaceManager {
         addSmelting("sand", "glass", 1, 6.0f);
         // cobblestone -> stone
         addSmelting("cobblestone", "stone", 1, 8.0f);
-        // oak_log -> charcoal
+        // any log -> charcoal (charcoal fuels like coal)
         addSmelting("oak_log", "charcoal", 1, 8.0f);
-        // iron_ore smelting
+        addSmelting("birch_log", "charcoal", 1, 8.0f);
+        addSmelting("spruce_log", "charcoal", 1, 8.0f);
+        addSmelting("jungle_log", "charcoal", 1, 8.0f);
+        addSmelting("acacia_log", "charcoal", 1, 8.0f);
+        addSmelting("dark_oak_log", "charcoal", 1, 8.0f);
+        // redstone ore smelting
         addSmelting("redstone_ore", "redstone_wire", 4, 6.0f);
     }
 
@@ -97,8 +106,20 @@ public class FurnaceManager {
     }
 
     private void registerDefaultFuels() {
+        // Logs burn long; planks shorter; coal/charcoal are the proper smelting fuel.
         addFuel("oak_log", 15.0f);
+        addFuel("birch_log", 15.0f);
+        addFuel("spruce_log", 15.0f);
+        addFuel("jungle_log", 15.0f);
+        addFuel("acacia_log", 15.0f);
+        addFuel("dark_oak_log", 15.0f);
         addFuel("skyroot_log", 15.0f);
+        addFuel("oak_planks", 8.0f);
+        addFuel("spruce_planks", 8.0f);
+        addFuel("birch_planks", 8.0f);
+        addFuel("jungle_planks", 8.0f);
+        addFuel("acacia_planks", 8.0f);
+        addFuel("dark_oak_planks", 8.0f);
         addFuel("skyroot_planks", 10.0f);
         addFuel("coal", 80.0f);
         addFuel("charcoal", 80.0f);
