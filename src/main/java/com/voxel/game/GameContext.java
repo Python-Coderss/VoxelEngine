@@ -208,6 +208,11 @@ public class GameContext {
     public volatile boolean spawnLoading = true;
     public volatile String spawnLoadingMessage = "Generating spawn chunks...";
 
+    // Same-dimension /tp gate: terrain streaming continues, but gameplay physics
+    // stays paused until the destination section has finished generating.
+    public volatile boolean teleportLoading = false;
+    public volatile String teleportLoadingMessage = "Loading terrain...";
+
     // --- Heavy init phase (deferred from Main.init() to the loading screen) ---
     // True while Main hasn't yet created the Overworld dimension / chunkManager /
     // redstoneManager / fluidManager / playerEntity / initial enemies. The
@@ -257,6 +262,17 @@ public class GameContext {
         statusUntil = System.currentTimeMillis() / 1000.0 + 3.0;
         System.out.println(msg);
         if (statusConsumer != null) statusConsumer.accept(msg);
+    }
+
+    /** Starts deferred spawn resolution for a newly selected world position. */
+    /** Starts the short terrain-readiness gate used by same-dimension /tp. */
+    public void beginTeleportTerrainWait() {
+        teleportLoading = true;
+        teleportLoadingMessage = "Loading terrain...";
+    }
+
+    public void finishTeleportTerrainWait() {
+        teleportLoading = false;
     }
 
     /** Starts deferred spawn resolution for a newly selected world position. */

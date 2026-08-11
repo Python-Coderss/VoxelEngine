@@ -14,23 +14,24 @@ public final class BetaNumericProfile {
             new BetaNumericProfile(10, 20, 15, 8, 23, 11, 52);
 
     /**
-     * Overworld profile: coordinate-tuned via {@link Error502BetaPrecision}
-     * (the error502 and overworld presets were swapped). Integer far lands
-     * (~3,060 blocks) with the error502-style float/double degradation layered
-     * on top in block space: float 23→16→12→8→6→4, X/Z double fixed at 26,
-     * Y double 52→40→18→16→14→11.
+     * Overworld profile: coordinate-tuned via {@link OverworldBetaPrecision}.
+     * Integer far lands (~3,060 blocks) with near-full float precision in
+     * bands 0–1, then following the tuned X/Z float curve:
+     * 23→20→12→6→4→2→1. X/Z doubles stay at 52 bits through 4,000 blocks,
+     * then use the historical 26-bit mask. Y follows the same full-through-
+     * 4,000 curve so three-axis corners can degrade without affecting spawn.
      */
     public static final BetaNumericProfile OVERWORLD =
             new BetaNumericProfile(
                     10, 20, 15,
                     8, 23, 8, 23,
                     11, 52, 11, 52,
-                    new Error502BetaPrecision());
+                    new OverworldBetaPrecision());
 
     /**
-     * ERROR502 profile: coordinate-tuned via {@link OverworldBetaPrecision}
-     * (the error502 and overworld presets were swapped). Aggressive block-space
-     * degradation: float 23→16→11→6→4→2, X/Z and Y double 52→40→30→18→11→6.
+     * ERROR502 profile: coordinate-tuned via {@link Error502BetaPrecision}.
+     * Aggressive block-space degradation: float 23→16→11→6→4→2→1, X/Z and
+     * Y double 52→40→30→18→11→6→1.
      */
     public static final BetaNumericProfile DEFAULT =
             new BetaNumericProfile(
@@ -45,7 +46,7 @@ public final class BetaNumericProfile {
                     BetaPrecisionTuning.XZ_DOUBLE_MANTISSA_BITS,
                     BetaPrecisionTuning.Y_DOUBLE_EXPONENT_BITS,
                     BetaPrecisionTuning.Y_DOUBLE_MANTISSA_BITS,
-                    new OverworldBetaPrecision()
+                    new Error502BetaPrecision()
             );
 
     private final int shortBits;
@@ -134,7 +135,7 @@ public final class BetaNumericProfile {
 
     /**
      * The active precision policy: the coordinate-tuned subclass, or the
-     * overworld policy as an instance fallback for helper-only calls
+     * Overworld policy as an instance fallback for helper-only calls
      * (quantizeAtDistance/worldDistance) on fixed-width profiles. Their results
      * are independent of which instance handles them.
      */

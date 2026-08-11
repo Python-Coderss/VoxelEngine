@@ -68,12 +68,15 @@ public class BetaNumericControlsTest {
 
     @Test
     public void coordinateBandsSelectIndependentAxisPrecision() {
+        // Error502BetaPrecision backs the ERROR502 preset: aggressive switches
+        // that degrade float mantissas 23→16→11→6→4→2→1 and doubles
+        // 52→40→30→18→11→6→1.
         BetaPrecisionTuning error502 = new Error502BetaPrecision();
         assertEquals(0, error502.coordinateBand(128.0D));
         assertEquals(0, error502.coordinateBand(-2048.0D));
         assertEquals(23, error502.xFloatMantissaBits(2048.0D));
-        assertEquals(4, error502.yFloatMantissaBits(2048.0D));
-        assertEquals(26, error502.zDoubleMantissaBits(20_000.0D));
+        assertEquals(1, error502.yFloatMantissaBits(2048.0D));
+        assertEquals(1, error502.zDoubleMantissaBits(20_000.0D));
         assertEquals(BetaPrecisionTuning.Axis.X,
                 error502.dominantXZAxis(3000.0D, 100.0D));
         assertEquals(BetaPrecisionTuning.Axis.Z,
@@ -82,46 +85,104 @@ public class BetaNumericControlsTest {
 
     @Test
     public void overworldPolicyClassDegradesWithDistance() {
-        // OverworldBetaPrecision now backs the ERROR502 preset (after the
-        // preset swap) and deliberately degrades float/double mantissas with
-        // distance while integer widths stay at the far-lands baseline.
+        // OverworldBetaPrecision backs the OVERWORLD preset: integer widths
+        // stay at the far-lands baseline, the first two degrading float bands
+        // retain the current Overworld values, then the sequence follows
+        // ERROR502 and reaches the same endpoint.
         OverworldBetaPrecision ow = new OverworldBetaPrecision();
         assertEquals(20, ow.xIntBits(100_000.0D));
         assertEquals(20, ow.zIntBits(100_000.0D));
         assertEquals(15, ow.yIntBits(10_000.0D));
         assertEquals(23, ow.xFloatMantissaBits(0.0D));
-        assertEquals(2, ow.xFloatMantissaBits(100_000.0D));
+        assertEquals(23, ow.xFloatMantissaBits(4000.0D));
+        assertEquals(20, ow.xFloatMantissaBits(4500.0D));
+        assertEquals(12, ow.xFloatMantissaBits(5000.0D));
+        assertEquals(6, ow.xFloatMantissaBits(5500.0D));
+        assertEquals(1, ow.xFloatMantissaBits(100_000.0D));
+        // X/Z doubles remain at full precision through the first 4,000-block
+        // band, then use the historical Error502 mask.
         assertEquals(52, ow.xDoubleMantissaBits(0.0D));
-        assertEquals(6, ow.xDoubleMantissaBits(100_000.0D));
-        assertTrue(ow.xFloatMantissaBits(4000.0D) < ow.xFloatMantissaBits(0.0D));
-        assertTrue(ow.yDoubleMantissaBits(1500.0D) < ow.yDoubleMantissaBits(0.0D));
+        assertEquals(52, ow.xDoubleMantissaBits(4000.0D));
+        // Precision contexts are chunk-aligned: the 4000–4015 chunk stays
+        // full precision, and degradation begins in the next chunk at 4016.
+        assertEquals(52, ow.xDoubleMantissaBits(4015.0D));
+        assertEquals(26, ow.xDoubleMantissaBits(4016.0D));
+        assertEquals(26, ow.xDoubleMantissaBits(100_000.0D));
+        assertEquals(52, ow.zDoubleMantissaBits(4000.0D));
+        assertEquals(52, ow.zDoubleMantissaBits(4015.0D));
+        assertEquals(26, ow.zDoubleMantissaBits(4016.0D));
+        assertEquals(26, ow.zDoubleMantissaBits(100_000.0D));
+        // Negative chunks mirror the boundary with the shared chunk-offset
+        // rounding: -4016 remains in the full-precision chunk, while -4017
+        // enters the first degraded chunk.
+        assertEquals(52, ow.xDoubleMantissaBits(-4000.0D));
+        assertEquals(52, ow.xDoubleMantissaBits(-4016.0D));
+        assertEquals(26, ow.xDoubleMantissaBits(-4017.0D));
+        assertEquals(52, ow.zDoubleMantissaBits(-4000.0D));
+        assertEquals(52, ow.zDoubleMantissaBits(-4016.0D));
+        assertEquals(26, ow.zDoubleMantissaBits(-4017.0D));
+        assertEquals(23, ow.yFloatMantissaBits(400.0D));
+        assertEquals(52, ow.yDoubleMantissaBits(400.0D));
+        assertEquals(23, ow.yFloatMantissaBits(4000.0D));
+        assertEquals(52, ow.yDoubleMantissaBits(4000.0D));
+        assertEquals(23, ow.yFloatMantissaBits(4015.0D));
+        assertEquals(52, ow.yDoubleMantissaBits(4015.0D));
+        assertEquals(20, ow.yFloatMantissaBits(4016.0D));
+        assertEquals(26, ow.yDoubleMantissaBits(4016.0D));
+        assertEquals(1, ow.yFloatMantissaBits(10_000.0D));
+        assertEquals(26, ow.yDoubleMantissaBits(10_000.0D));
+        Error502BetaPrecision error502 = new Error502BetaPrecision();
+        // Overworld stays full through X/Z=4000, then follows its tuned
+        // degradation curve; its early later bands intentionally remain
+        // gentler than ERROR502's corresponding bands.
+        assertEquals(23, ow.xFloatMantissaBits(4000.0D));
+        assertEquals(20, ow.xFloatMantissaBits(4500.0D));
+        assertEquals(12, ow.xFloatMantissaBits(5000.0D));
+        assertEquals(6, ow.xFloatMantissaBits(5500.0D));
+        assertEquals(23, ow.yFloatMantissaBits(1500.0D));
+        assertEquals(52, ow.yDoubleMantissaBits(1500.0D));
+        assertEquals(1, ow.yFloatMantissaBits(10_000.0D));
+        assertEquals(26, ow.yDoubleMantissaBits(10_000.0D));
     }
 
     @Test
-    public void tunedPresetsUseSwappedPoliciesAndDegradeAtDistance() {
-        // The error502 and overworld precision policies were swapped between
-        // the two presets; both presets are coordinate-tuned (STANDARD_BETA
-        // is the fixed-width reference and has no tuning policy).
-        assertTrue(BetaNumericProfile.OVERWORLD.tuning() instanceof Error502BetaPrecision);
-        assertTrue(BetaNumericProfile.DEFAULT.tuning() instanceof OverworldBetaPrecision);
+    public void tunedPresetsUseNamedPoliciesAndDegradeAtDistance() {
+        // Each preset is backed by the policy class named after its dimension;
+        // both are coordinate-tuned (STANDARD_BETA is the fixed-width
+        // reference and has no tuning policy).
+        assertTrue(BetaNumericProfile.OVERWORLD.tuning() instanceof OverworldBetaPrecision);
+        assertTrue(BetaNumericProfile.DEFAULT.tuning() instanceof Error502BetaPrecision);
         assertTrue(BetaNumericProfile.STANDARD_BETA.tuning() == null);
 
-        // At 4,000 blocks (band 1) both swapped policies use a 16-bit float
-        // mantissa, so both presets lose precision there (chunk-aligned to
-        // 3,984).
-        double ow = BetaNumericProfile.OVERWORLD.xFloatValueAtDistance(0.1D, 4000.0D);
-        double ew = BetaNumericProfile.DEFAULT.xFloatValueAtDistance(0.1D, 4000.0D);
-        assertTrue(Math.abs(ow - 0.1D) > 0.005D);
-        assertTrue(Math.abs(ew - 0.1D) > 0.005D);
+        // At 3,600 blocks (still full precision in Overworld, but degraded in
+        // ERROR502), Overworld retains more precision.
+        double ow = BetaNumericProfile.OVERWORLD.xFloatValueAtDistance(0.1D, 3600.0D);
+        double ew = BetaNumericProfile.DEFAULT.xFloatValueAtDistance(0.1D, 3600.0D);
+        assertTrue(Math.abs(ow - 0.1D) < Math.abs(ew - 0.1D));
+
+        // The shifted Overworld stages are verified directly; their values are
+        // intentionally gentler than ERROR502 in the early later bands.
+        OverworldBetaPrecision overworld = new OverworldBetaPrecision();
+        assertEquals(23, overworld.xFloatMantissaBits(4000.0D));
+        assertEquals(20, overworld.xFloatMantissaBits(4500.0D));
+        assertEquals(12, overworld.xFloatMantissaBits(5000.0D));
+        assertEquals(6, overworld.xFloatMantissaBits(5500.0D));
+
+        Error502BetaPrecision error502 = new Error502BetaPrecision();
+        assertEquals(error502.xFloatMantissaBits(100_000.0D),
+                overworld.xFloatMantissaBits(100_000.0D));
+        assertEquals(52, overworld.xDoubleMantissaBits(4000.0D));
+        assertEquals(52, overworld.zDoubleMantissaBits(4000.0D));
+        assertEquals(26, overworld.xDoubleMantissaBits(100_000.0D));
+        assertEquals(26, overworld.zDoubleMantissaBits(100_000.0D));
+        assertEquals(1, overworld.yFloatMantissaBits(10_000.0D));
+        assertEquals(26, overworld.yDoubleMantissaBits(10_000.0D));
     }
 
     @Test
     public void overworldProfileTracksStandardBetaTerrainNearSpawn() {
-        // After the preset swap the overworld runs the error502-style policy,
-        // whose X/Z doubles stay at 26 bits, so near-spawn terrain matches the
-        // legacy fixed-width profile only within that double-quantization
-        // tolerance. Far-lands terrain intentionally diverges once the
-        // float/double degradation bands kick in.
+        // The Overworld keeps full X/Z/Y double precision through 4,000
+        // blocks, then uses the tuned horizontal/vertical degradation bands.
         BetaNumericProfile legacy = BetaNumericProfile.STANDARD_BETA;
         BetaNumericProfile overworld = BetaNumericProfile.OVERWORLD;
         double[][] samples = {

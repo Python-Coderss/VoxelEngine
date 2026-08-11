@@ -505,9 +505,14 @@ public class Player {
     }
 
     public void teleport(double x, double y, double z) {
-        posX = FixedPoint.fromDouble(x);
-        posY = FixedPoint.fromDouble(y);
-        posZ = FixedPoint.fromDouble(z);
+        teleportFixed(FixedPoint.fromDouble(x), FixedPoint.fromDouble(y), FixedPoint.fromDouble(z));
+    }
+
+    /** Teleport using raw 8-bit-fraction fixed-point coordinates without float/double conversion. */
+    public void teleportFixed(long x, long y, long z) {
+        posX = x;
+        posY = y;
+        posZ = z;
         prevPosX = posX;
         prevPosY = posY;
         prevPosZ = posZ;
