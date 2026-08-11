@@ -44,7 +44,8 @@ public abstract class BetaPrecisionTuning {
     // Baseline aliases used when constructing the default (ERROR502) profile.
     public static final int SHORT_BITS = 10;
     public static final int XZ_INT_BITS = 20;
-    public static final int Y_INT_BITS = 15;
+    /** Independent Y lattice width; 17 bits moves the vertical wrap to ±65,536. */
+    public static final int Y_INT_BITS = 17;
     public static final int XZ_FLOAT_EXPONENT_BITS = 8;
     public static final int XZ_FLOAT_MANTISSA_BITS = 14;
     public static final int Y_FLOAT_EXPONENT_BITS = 8;

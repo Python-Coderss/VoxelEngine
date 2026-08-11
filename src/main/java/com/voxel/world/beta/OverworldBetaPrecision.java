@@ -4,7 +4,7 @@ package com.voxel.world.beta;
  * Coordinate-aware precision policy backing the OVERWORLD preset
  * ({@link BetaNumericProfile#OVERWORLD}).
  *
- * Integer widths stay at the far-lands baseline (20-bit X/Z int, 15-bit Y int).
+ * Integer widths stay at the far-lands baseline (20-bit X/Z int, 17-bit Y int).
  * X/Z and Y float/double precision remain at full standard precision through
  * the chunk-aligned 4,000-block boundary, keeping vertical quantization out of
  * near-spawn horizontal behavior. Beyond that first band, each axis follows
@@ -52,12 +52,12 @@ public final class OverworldBetaPrecision extends BetaPrecisionTuning {
     @Override
     public int yIntBits(double y) {
         switch (coordinateBandY(y)) {
-            case 0: return 15;
-            case 1: return 15;
-            case 2: return 15;
-            case 3: return 15;
-            case 4: return 15;
-            default: return 15;
+            case 0: return 17;
+            case 1: return 17;
+            case 2: return 17;
+            case 3: return 17;
+            case 4: return 17;
+            default: return 17;
         }
     }
 

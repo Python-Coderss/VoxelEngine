@@ -39,7 +39,7 @@ public class BetaNumericControlsTest {
         BetaNumericProfile profile = BetaNumericProfile.STANDARD_BETA;
         assertEquals(10, profile.shortBits());
         assertEquals(20, profile.intBits());
-        assertEquals(15, profile.yIntBits());
+        assertEquals(17, profile.yIntBits());
         assertEquals(8, profile.floatExponentBits());
         assertEquals(23, profile.floatMantissaBits());
         assertEquals(8, profile.yFloatExponentBits());
@@ -52,13 +52,13 @@ public class BetaNumericControlsTest {
     }
 
     @Test
-    public void defaultPresetUsesIndependentTwentyBitXZAndFifteenBitYIntegers() {
+    public void defaultPresetUsesIndependentTwentyBitXZAndSeventeenBitYIntegers() {
         assertEquals(BetaPrecisionTuning.XZ_INT_BITS, BetaNumericProfile.DEFAULT.intBits());
         assertEquals(BetaPrecisionTuning.Y_INT_BITS, BetaNumericProfile.DEFAULT.yIntBits());
         assertEquals(BetaPrecisionTuning.XZ_FLOAT_MANTISSA_BITS,
                 BetaNumericProfile.DEFAULT.floatMantissaBits());
         assertEquals(20, BetaNumericProfile.DEFAULT.intBits());
-        assertEquals(15, BetaNumericProfile.DEFAULT.yIntBits());
+        assertEquals(17, BetaNumericProfile.DEFAULT.yIntBits());
         assertEquals(14, BetaNumericProfile.DEFAULT.floatMantissaBits());
         assertEquals(8, BetaNumericProfile.DEFAULT.yFloatExponentBits());
         assertEquals(11, BetaNumericProfile.DEFAULT.yFloatMantissaBits());
@@ -92,7 +92,7 @@ public class BetaNumericControlsTest {
         OverworldBetaPrecision ow = new OverworldBetaPrecision();
         assertEquals(20, ow.xIntBits(100_000.0D));
         assertEquals(20, ow.zIntBits(100_000.0D));
-        assertEquals(15, ow.yIntBits(10_000.0D));
+        assertEquals(17, ow.yIntBits(10_000.0D));
         assertEquals(23, ow.xFloatMantissaBits(0.0D));
         assertEquals(23, ow.xFloatMantissaBits(4000.0D));
         assertEquals(20, ow.xFloatMantissaBits(4500.0D));
@@ -217,10 +217,19 @@ public class BetaNumericControlsTest {
 
     @Test
     public void yIntegerWidthDoesNotChangeXZWidth() {
-        BetaNumericProfile profile = new BetaNumericProfile(8, 20, 16, 8, 23, 11, 52);
+        BetaNumericProfile profile = new BetaNumericProfile(8, 20, 17, 8, 23, 11, 52);
+        assertEquals(20, profile.intBits());
         assertEquals(32768, profile.intValue(32768));
-        assertEquals(-32768, profile.yIntValue(32768));
-        assertEquals(16, profile.yIntBits());
+        assertEquals(32768, profile.yIntValue(32768));
+        assertEquals(-65536, profile.yIntValue(65536));
+        assertEquals(17, profile.yIntBits());
+
+        assertEquals(17, BetaNumericProfile.STANDARD_BETA.yIntBits());
+        assertEquals(17, BetaNumericProfile.OVERWORLD.yIntBits());
+        assertEquals(17, BetaNumericProfile.DEFAULT.yIntBits());
+        assertEquals(-65536, BetaNumericProfile.DEFAULT.yIntValue(65536));
+        assertEquals(17, new OverworldBetaPrecision().yIntBits(100_000.0D));
+        assertEquals(17, new Error502BetaPrecision().yIntBits(100_000.0D));
     }
 
     @Test
@@ -247,7 +256,7 @@ public class BetaNumericControlsTest {
 
     @Test
     public void floatQuantizationUsesWorldDistanceForDerivedValues() {
-        BetaNumericProfile profile = new BetaNumericProfile(10, 20, 15, 8, 11, 8, 11, 11, 26, 11, 11);
+        BetaNumericProfile profile = new BetaNumericProfile(10, 20, 17, 8, 11, 8, 11, 11, 26, 11, 11);
         assertEquals(0.25D, profile.floatValueAtDistance(0.25D, 0.0D), 0.0D);
         assertEquals(0.25D, profile.floatValueAtDistance(0.25D, 128.0D), 0.0D);
         assertEquals(0.0D, profile.floatValueAtDistance(0.25D, 1024.0D), 0.0D);
@@ -280,7 +289,7 @@ public class BetaNumericControlsTest {
     public void yWidthDoesNotAffectTwoDimensionalXZNoise() {
         java.util.Random seed = new java.util.Random(7L);
         NoiseGeneratorPerlin wideY = new NoiseGeneratorPerlin(seed,
-                new BetaNumericProfile(10, 20, 15, 8, 11, 8, 11, 11, 26, 11, 11));
+                new BetaNumericProfile(10, 20, 17, 8, 11, 8, 11, 11, 26, 11, 11));
         seed = new java.util.Random(7L);
         NoiseGeneratorPerlin narrowY = new NoiseGeneratorPerlin(seed,
                 new BetaNumericProfile(10, 20, 8, 8, 11, 4, 3, 11, 26, 4, 3));
@@ -311,12 +320,12 @@ public class BetaNumericControlsTest {
     @Test
     public void yFloatingControlsAreIndependentAndQuantizeAtLargeY() {
         BetaNumericProfile profile = new BetaNumericProfile(
-                10, 20, 15,
+                10, 20, 17,
                 8, 11,
                 8, 5,
                 11, 26,
                 11, 5);
-        assertEquals(15, profile.yIntBits());
+        assertEquals(17, profile.yIntBits());
         assertEquals(8, profile.yFloatExponentBits());
         assertEquals(5, profile.yFloatMantissaBits());
         assertEquals(11, profile.yDoubleExponentBits());

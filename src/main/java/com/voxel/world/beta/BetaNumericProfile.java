@@ -6,12 +6,12 @@ public final class BetaNumericProfile {
 
     /**
      * Legacy fixed-width Beta profile (no distance tuning): short=10, X/Z
-     * int=20, Y int=15, standard float 8/23 and double 11/52 on every axis.
+     * int=20, Y int=17, standard float 8/23 and double 11/52 on every axis.
      * Retained for tests and reference — the overworld now uses the
      * coordinate-tuned {@link #OVERWORLD} profile.
      */
     public static final BetaNumericProfile STANDARD_BETA =
-            new BetaNumericProfile(10, 20, 15, 8, 23, 11, 52);
+            new BetaNumericProfile(10, 20, 17, 8, 23, 11, 52);
 
     /**
      * Overworld profile: coordinate-tuned via {@link OverworldBetaPrecision}.
@@ -23,7 +23,7 @@ public final class BetaNumericProfile {
      */
     public static final BetaNumericProfile OVERWORLD =
             new BetaNumericProfile(
-                    10, 20, 15,
+                    10, 20, 17,
                     8, 23, 8, 23,
                     11, 52, 11, 52,
                     new OverworldBetaPrecision());
