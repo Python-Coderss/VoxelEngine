@@ -9,13 +9,16 @@ package com.voxel.world.beta;
  * concrete instance methods on this base (override them too if a dimension
  * needs different band boundaries).
  *
- * Existing policies (the error502 and overworld presets were swapped — the
- * overworld now runs {@link Error502BetaPrecision} and ERROR502 runs
- * {@link OverworldBetaPrecision}):
- *   {@link OverworldBetaPrecision} — aggressive switches: float 23→16→11→6→4→2,
- *       X/Z + Y double 52→40→30→18→11→6 past 3,500 blocks.
- *   {@link Error502BetaPrecision}  — gentler switches: float 23→16→12→8→6→4,
- *       X/Z double fixed at 26, Y double 52→40→18→16→14→11.
+ * Existing policies:
+ *   {@link OverworldBetaPrecision} — backs the OVERWORLD preset
+ *       ({@link BetaNumericProfile#OVERWORLD}): full float/double precision
+ *       through the chunk-aligned 4,000-block boundary, then
+ *       23→20→12→6→4→2→1; X/Z and Y doubles use the historical fixed
+ *       26-bit mask after the full-precision band.
+ *   {@link Error502BetaPrecision}  — backs the ERROR502 preset
+ *       ({@link BetaNumericProfile#DEFAULT}): aggressive switches, float
+ *       23→16→11→6→4→2→1, X/Z + Y double 52→40→30→18→11→6→1 past 3,500
+ *       blocks.
  *
  * Add a new subclass to give another dimension its own far-lands behavior
  * without touching the generators or {@link BetaNumericProfile}.
@@ -65,7 +68,8 @@ public abstract class BetaPrecisionTuning {
         if (distance < 4500.0D) return 2;
         if (distance < 5000.0D) return 3;
         if (distance < 5500.0D) return 4;
-        return 5;
+        if (distance < 6000.0D) return 5;
+        return 6;
     }
 
     /** Coordinate bands used by the Y switch functions. */
@@ -76,7 +80,8 @@ public abstract class BetaPrecisionTuning {
         if (distance < 1000.0D) return 2;
         if (distance < 1200.0D) return 3;
         if (distance < 1400.0D) return 4;
-        return 5;
+        if (distance < 1600.0D) return 5;
+        return 6;
     }
 
     /**

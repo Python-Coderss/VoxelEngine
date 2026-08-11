@@ -369,8 +369,9 @@ public class Main {
         com.voxel.entity.VillagerEntity.setEntityManager(entityManager);
         com.voxel.world.structure.MapGenVillage.setEntityManager(entityManager);
         com.voxel.world.structure.MapGenVillage.setTextureManager(textureManager);
-        // The spawn pool's water surface is at y=62; player feet should start one block above it.
-        player = new Player(1024, 63, 1024); // Spawn above the water pool at y=62
+        // Start near the origin; spawn resolution replaces the fallback Y with
+        // the generated surface height before gameplay begins.
+        player = new Player(0, 63, 0);
 
         setupTexture();
         // Generate procedural textures BEFORE loading so they're available in the texture array
@@ -566,7 +567,7 @@ public class Main {
 
     public void spawnInitialEnemies(Player p) {
         for (int i = 0; i < 3; i++) {
-            com.voxel.entity.ZombieEntity zombie = new com.voxel.entity.ZombieEntity(100 + i, new Vector3f(1030 + i * 12, 64, 1030), textureManager, p);
+            com.voxel.entity.ZombieEntity zombie = new com.voxel.entity.ZombieEntity(100 + i, new Vector3f(6 + i * 12, 64, 6), textureManager, p);
             zombie.dimension = activeDimension;
             zombie.setWorld(world);
             entityManager.addEntity(zombie);
@@ -579,8 +580,8 @@ public class Main {
     public void spawnInitialVillagers() {
         // Spawn a few villagers near the player's spawn for testing
         for (int i = 0; i < 4; i++) {
-            float vx = 1050 + i * 8;
-            float vz = 1050 - i * 5;
+            float vx = 20 + i * 8;
+            float vz = 20 - i * 5;
             int vy = 65;
             // Find surface
             for (int y = 127; y >= 0; y--) {
@@ -635,8 +636,8 @@ public class Main {
         // chunks finish generating + the surface is detected, the loading overlay
         // hides.
         ctx.spawnLoadingMessage = "Generating spawn chunks...";
-        ctx.beginSpawnResolution(1024, 1024);
-        chunkManager.update(player.getPosition(), yaw);
+        ctx.beginSpawnResolution(0, 0);
+        chunkManager.updateFixedPosition(player.getFixedX(), player.getFixedY(), player.getFixedZ(), yaw);
 
         ctx.initializing = false;
     }
@@ -714,10 +715,15 @@ public class Main {
             playerYaw = yaw;
         }
 
-        int pcx = (int) Math.floor(player.getPosition().x) >> 4;
-        int pcy = (int) Math.floor(player.getPosition().y) >> 4;
-        int pcz = (int) Math.floor(player.getPosition().z) >> 4;
+        int pcx = FixedPoint.blockX(player.getFixedX()) >> 4;
+        int pcy = FixedPoint.blockX(player.getFixedY()) >> 4;
+        int pcz = FixedPoint.blockX(player.getFixedZ()) >> 4;
         boolean chunksReady = chunkManager.isChunkLoaded(pcx, pcz);
+        boolean teleportReady = !ctx.teleportLoading
+                || chunkManager.isPlayerSectionGenerated(pcx, pcy, pcz);
+        if (ctx.teleportLoading && teleportReady) {
+            ctx.finishTeleportTerrainWait();
+        }
 
         // The player is NEVER frozen waiting for terrain: the single section
         // they are standing in may still be mid-generation, so neighboring
@@ -731,7 +737,7 @@ public class Main {
             ctx.resolveSpawnAfterChunksGenerated();
         }
 
-        if (chunksReady && !ctx.spawnLoading) {
+        if (chunksReady && !ctx.spawnLoading && !ctx.teleportLoading) {
             // Compatibility call; resolution is already complete by this point.
             ctx.adjustSpawnYAfterChunkLoad();
 
@@ -793,14 +799,21 @@ public class Main {
             playerEntity.syncFromPlayer(player, playerYaw, pitch, cameraMode != CameraMode.FIRST_PERSON, dt);
         }
 
-        // Keep chunk streaming alive while the initial spawn-loading screen is
-        // active, but do not run movement, combat, AI, fluids, or other
-        // gameplay simulation yet.
-        if (ctx.spawnLoading) {
-            // Keep retrying the immediate spawn area if the first pass could
-            // not allocate every section; ChunkManager coalesces these requests.
-            chunkManager.retrySpawnGeneration(player.getPosition(), yaw);
-            chunkManager.update(player.getPosition(), yaw);
+        // Keep chunk streaming alive while spawn loading or a same-dimension
+        // teleport is waiting for its destination section. Do not run movement,
+        // combat, AI, fluids, or other gameplay simulation during either gate.
+        if (ctx.spawnLoading || ctx.teleportLoading) {
+            if (ctx.spawnLoading) {
+                // Keep retrying the immediate spawn area if the first pass could
+                // not allocate every section.
+                chunkManager.retrySpawnGeneration(player.getPosition(), yaw);
+            } else {
+                // A same-dimension /tp may stay in the current XZ column while
+                // changing Y sections, so retry from exact fixed-point position.
+                chunkManager.retryTeleportGeneration(
+                    player.getFixedX(), player.getFixedY(), player.getFixedZ(), yaw);
+            }
+            chunkManager.updateFixedPosition(player.getFixedX(), player.getFixedY(), player.getFixedZ(), yaw);
             lastLogicTickNanos = System.nanoTime();
             return;
         }
@@ -1012,11 +1025,12 @@ public class Main {
             }
         }
 
-        chunkManager.update(player.getPosition(), yaw);
+        chunkManager.updateFixedPosition(player.getFixedX(), player.getFixedY(), player.getFixedZ(), yaw);
 
         // Center-ray look-ahead: preload the first unloaded chunk the camera is
         // looking at (second priority behind the player's own chunk).
-        chunkManager.requestLookAhead(player.getPosition(), yaw, pitch);
+        chunkManager.requestLookAheadFixed(
+            player.getFixedX(), player.getFixedY(), player.getFixedZ(), yaw, pitch);
 
         // Record wall-clock time for render-thread interpolation
         lastLogicTickNanos = System.nanoTime();

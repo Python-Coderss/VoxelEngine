@@ -5,6 +5,7 @@ import com.voxel.World;
 import com.voxel.lighting.LightEngine;
 import com.voxel.utils.BiomeManager;
 import com.voxel.utils.BlockDataManager;
+import com.voxel.utils.FixedPoint;
 import org.joml.Vector3f;
 import java.util.*;
 import java.util.concurrent.*;
@@ -69,6 +70,7 @@ public class ChunkManager {
     private static final int DECORATION_BATCH_SIZE = 4;
     private volatile boolean deferredBetaDecorationCancelled = false;
     private final AtomicBoolean spawnRetryQueued = new AtomicBoolean(false);
+    private final AtomicBoolean teleportRetryQueued = new AtomicBoolean(false);
     // The first manage cycle only needs the immediate spawn cube. Do not queue
     // thousands of render-distance sections before the player can leave the
     // loading screen; the full stream is enabled after spawn resolution.
@@ -272,9 +274,19 @@ public class ChunkManager {
      * processed before older pending operations.
      */
     public void update(Vector3f playerPos, float yaw) {
-        int pcx = (int) Math.floor(playerPos.x) >> 4;
-        int pcy = (int) Math.floor(playerPos.y) >> 4;
-        int pcz = (int) Math.floor(playerPos.z) >> 4;
+        updateFixedPosition(FixedPoint.fromDouble(playerPos.x),
+                FixedPoint.fromDouble(playerPos.y), FixedPoint.fromDouble(playerPos.z), yaw);
+    }
+
+    /**
+     * Exact-position overload used by teleport and the logic loop. Chunk
+     * coordinates are derived directly from raw fixed-point longs, so the
+     * Vector3f rendering view cannot round a far-land position into a neighbor.
+     */
+    public void updateFixedPosition(long fixedX, long fixedY, long fixedZ, float yaw) {
+        int pcx = FixedPoint.blockX(fixedX) >> 4;
+        int pcy = FixedPoint.blockX(fixedY) >> 4;
+        int pcz = FixedPoint.blockX(fixedZ) >> 4;
 
         // Trigger on any chunk-coordinate change: X, Y, Z, or teleport
         if (pcx != lastPlayerCX || pcy != lastPlayerCY || pcz != lastPlayerCZ) {
@@ -306,11 +318,20 @@ public class ChunkManager {
      * bootstrap so it cannot delay spawn resolution.
      */
     public void requestLookAhead(Vector3f playerPos, float yaw, float pitch) {
+        requestLookAheadFixed(FixedPoint.fromDouble(playerPos.x),
+                FixedPoint.fromDouble(playerPos.y), FixedPoint.fromDouble(playerPos.z), yaw, pitch);
+    }
+
+    /** Center-ray look-ahead using the player's raw fixed-point position. */
+    public void requestLookAheadFixed(long fixedX, long fixedY, long fixedZ, float yaw, float pitch) {
         if (spawnBootstrap) return;
 
-        int pcx = (int) Math.floor(playerPos.x) >> 4;
-        int pcy = (int) Math.floor(playerPos.y) >> 4;
-        int pcz = (int) Math.floor(playerPos.z) >> 4;
+        int blockX = FixedPoint.blockX(fixedX);
+        int blockY = FixedPoint.blockX(fixedY);
+        int blockZ = FixedPoint.blockX(fixedZ);
+        int pcx = blockX >> 4;
+        int pcy = blockY >> 4;
+        int pcz = blockZ >> 4;
 
         // Forward unit vector — same convention as CameraController.getLookDirection()
         // (reduces to the yaw-only 2D look direction used by the ring sort when pitch == 0).
@@ -330,9 +351,11 @@ public class ChunkManager {
         int sx = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
         int sy = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
         int sz = dz > 0 ? 1 : (dz < 0 ? -1 : 0);
-        double ox = playerPos.x / 16.0 - pcx; // fractional position inside the starting section
-        double oy = playerPos.y / 16.0 - pcy;
-        double oz = playerPos.z / 16.0 - pcz;
+        // Compute section-local fractions from integer block parts plus the
+        // fixed-point fractional byte; never convert the large absolute position.
+        double ox = ((blockX & 15) + FixedPoint.camFrac(fixedX)) / 16.0;
+        double oy = ((blockY & 15) + FixedPoint.camFrac(fixedY)) / 16.0;
+        double oz = ((blockZ & 15) + FixedPoint.camFrac(fixedZ)) / 16.0;
         double tMaxX = sx > 0 ? (1.0 - ox) / Math.abs(dx) : (sx < 0 ? ox / Math.abs(dx) : Double.POSITIVE_INFINITY);
         double tMaxY = sy > 0 ? (1.0 - oy) / Math.abs(dy) : (sy < 0 ? oy / Math.abs(dy) : Double.POSITIVE_INFINITY);
         double tMaxZ = sz > 0 ? (1.0 - oz) / Math.abs(dz) : (sz < 0 ? oz / Math.abs(dz) : Double.POSITIVE_INFINITY);
@@ -450,6 +473,29 @@ public class ChunkManager {
                 manageChunks(pcx, pcy, pcz, yaw);
             } finally {
                 spawnRetryQueued.set(false);
+            }
+        });
+    }
+
+    /**
+     * Retries the destination section after a same-dimension /tp. This is needed
+     * even when the teleport stays inside the current XZ chunk column: the Y
+     * section may be new, so updateFixedPosition's chunk-change edge alone is
+     * not sufficient to queue generation.
+     */
+    public void retryTeleportGeneration(long fixedX, long fixedY, long fixedZ, float yaw) {
+        int pcx = FixedPoint.blockX(fixedX) >> 4;
+        int pcy = FixedPoint.blockX(fixedY) >> 4;
+        int pcz = FixedPoint.blockX(fixedZ) >> 4;
+        lastPlayerCX = pcx;
+        lastPlayerCY = pcy;
+        lastPlayerCZ = pcz;
+        if (!teleportRetryQueued.compareAndSet(false, true)) return;
+        taskQueue.addFirst(() -> {
+            try {
+                manageChunks(pcx, pcy, pcz, yaw);
+            } finally {
+                teleportRetryQueued.set(false);
             }
         });
     }

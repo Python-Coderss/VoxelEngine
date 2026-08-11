@@ -5,16 +5,10 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-/**
- * Verifies the far-lands fade-out ceiling: degraded coordinates previously
- * packed Beta columns solid all the way to the buffer top (y=2047), starving
- * the chunk pool and leaving the far lands with no sky. Terrain must now
- * always fade back to air by y≈2000 — in every Beta dimension profile — while
- * the far-lands mass below the ceiling still exists.
- */
 public class BetaFarLandsCeilingTest {
 
-    private static final int CEILING = 2000;
+    private static final int BUFFER_TOP_EXCLUSIVE = 2048;
+    private static final int PROBE_START_Y = 2000;
 
     private static BetaChunkProvider makeProvider(BetaNumericProfile profile) {
         int[] snowLevels = {0, 78, 78, 78, 78, 78, 78, 78, 78};
@@ -31,34 +25,54 @@ public class BetaFarLandsCeilingTest {
     }
 
     /**
-     * Probes a far-lands column (chunk 500,500 = block 8000+, well inside the
-     * degradation bands) and asserts: nothing solid at/above y=2000, and the
-     * far-lands mass still exists somewhere below it.
+     * Probes a degraded far-lands column (chunk 500,500 = block 8000+).
+     * The old explicit Y=2000 cap forced every sample from 2000 through 2047
+     * to air. The generator must now be allowed to produce terrain in that
+     * bounded buffer range; this test intentionally does not impose a new
+     * upper terrain cap.
      */
-    private static void assertFadeOut(BetaNumericProfile profile) {
-        BetaChunkProvider p = makeProvider(profile);
-        int bx = 500 * 16 + 8, bz = 500 * 16 + 8;
+    private static void assertNoArtificialY2000Cutoff(BetaNumericProfile profile) {
+        BetaChunkProvider provider = makeProvider(profile);
+        int bx = 500 * 16 + 8;
+        int bz = 500 * 16 + 8;
 
-        // The far-lands fill must still exist below the ceiling.
-        boolean solidBelow = false;
-        for (int y = 500; y < CEILING; y += 50) {
-            if (p.getBetaBlock(bx, bz, y) != 0) { solidBelow = true; break; }
+        boolean solidAtOrAbove2000 = false;
+        for (int y = PROBE_START_Y; y < BUFFER_TOP_EXCLUSIVE; y++) {
+            if (provider.getBetaBlock(bx, bz, y) != 0) {
+                solidAtOrAbove2000 = true;
+                break;
+            }
         }
-        assertTrue("no far-lands fill at all below y=" + CEILING, solidBelow);
 
-        // Nothing may be solid at or above the ceiling.
-        for (int y = CEILING; y < 2048; y++) {
-            assertEquals("solid voxel at y=" + y, 0, p.getBetaBlock(bx, bz, y));
-        }
+        // This fixed Overworld column is known to contain upper Far Lands mass.
+        // Assert the exact former cutoff boundary and the bounded buffer top.
+        assertTrue("Y=2000 cap still removes all terrain through the buffer top",
+                solidAtOrAbove2000);
+        assertEquals("Y=2000 should retain the generated Far Lands mass", 1,
+                provider.getBetaBlock(bx, bz, PROBE_START_Y));
+        assertEquals("unexpected block at the bounded buffer top", 0,
+                provider.getBetaBlock(bx, bz, BUFFER_TOP_EXCLUSIVE - 1));
     }
 
     @Test
-    public void overworldAggressiveProfileFadesByY2000() {
-        assertFadeOut(BetaNumericProfile.OVERWORLD);
+    public void overworldCanGenerateFarLandsAboveY2000() {
+        assertNoArtificialY2000Cutoff(BetaNumericProfile.OVERWORLD);
     }
 
     @Test
-    public void error502ExperimentalProfileFadesByY2000() {
-        assertFadeOut(BetaNumericProfile.DEFAULT);
+    public void bedrockIsOnlyOneLayerAtYZero() {
+        BetaChunkProvider provider = makeProvider(BetaNumericProfile.OVERWORLD);
+        int x = 8;
+        int z = 8;
+
+        assertEquals("Y=0 must be the single bedrock layer", 7,
+                provider.getBetaBlock(x, z, 0));
+        assertTrue("Y=-1 must remain generated terrain, not bedrock",
+                provider.getBetaBlock(x, z, -1) != 7);
+        assertTrue("Y=-64 must no longer be forced to bedrock",
+                provider.getBetaBlock(x, z, -64) != 7);
+        assertTrue("Y=-65 must no longer be forced to bedrock",
+                provider.getBetaBlock(x, z, -65) != 7);
     }
+
 }

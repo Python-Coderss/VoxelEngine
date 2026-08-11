@@ -23,7 +23,7 @@ Build: Maven (`./mvnw compile`, `./mvnw test -Dtest=X -DfailIfNoTests=false`). J
 
 Validation: compile ✓, BetaFarLandsCeilingTest (2) ✓, BetaNumericControlsTest (22) ✓, ChunkManagerGridReadyTest (4) ✓, PlayerFallThroughTest (5) ✓, PlayerUnstuckTest (4) ✓ — **37/37 green.**
 
-**Also fixed (follow-up):** `BetaNumericControlsTest.overworldPolicyClassDegradesWithDistance` was failing (expected 52 got 26) — pre-existing, in the user's precision-policy work. `OverworldBetaPrecision`'s javadoc already documented "X/Z + Y doubles degrade 52→40→30→18→11→6" and the Y branch matched, but the X/Z double branches still carried the pre-swap values (26/2). Aligned them to the documented contract (52/40/30/18/11/6). Effect: the error502 dimension (DEFAULT preset → OverworldBetaPrecision) now has full 52-bit X/Z doubles at origin, degrading with distance — matches STANDARD_BETA near spawn better. `BetaTreeDensityTest` (slow, ~min) still untested this session.
+**Also fixed (follow-up):** `BetaNumericControlsTest.overworldPolicyClassDegradesWithDistance` was failing (expected 52 got 26) — pre-existing, in the user's precision-policy work. `Error502BetaPrecision`'s javadoc already documented "X/Z + Y doubles degrade 52→40→30→18→11→6" and the Y branch matched, but the X/Z double branches still carried the pre-swap values (26/2). Aligned them to the documented contract (52/40/30/18/11/6). Effect: the error502 dimension (DEFAULT preset → Error502BetaPrecision) now has full 52-bit X/Z doubles at origin, degrading with distance — matches STANDARD_BETA near spawn better. `BetaTreeDensityTest` (slow, ~min) still untested this session.
 
 ### Planned design (already fully worked out, see details below)
 
@@ -44,7 +44,7 @@ Validation: compile ✓, BetaFarLandsCeilingTest (2) ✓, BetaNumericControlsTes
 - **Surface dressing** (`replaceBlocksForBiome`) is inherently column-wide (scans topY→0, needs to know where the surface is). Solution: generate sections **top-down** (ChunkManager does: `orderedSections` sorts higher-first, `ensure3x3x3Loaded` uses {pcy+1, pcy, pcy-1}). Then when generating section cy, cached sections above tell you if (x,z) is underground (solid above → leave stone) or at the surface (air above → first stone below air = surface → grass/dirt/sand/gravel).
 - **The band needs a probe above it**: if the first requested section of a column is cy<8 (e.g. `ensure3x3x3Loaded` at spawn, or standing at a mountain base), no sections above are cached yet. If the real surface is above y=127 (tall mountain / far-lands mass), the band's `replaceBlocksForBiome` would wrongly grass the band top. So generate probe sections 8..11 first; if any solid → skip surface pass on the band. Cost: 4×75 evals once per column.
 - Caves (`carveCavesFromSections`) already only touch cy 0..7 (16×128×16 temp buffer) — safe inside the band.
-- `func_4061_a` already has the far-lands fade ceiling (y≥2000 → negative density) baked in; per-section generation inherits it for free.
+- `func_4061_a` no longer applies an artificial Y=2000 far-lands ceiling; per-section generation can continue through the bounded buffer range.
 - `getHeight` is effectively dead code for Beta (no production callers found; grep showed only `BetaWorldGenerator.getHeight` → `betaProvider.getHeight`, and WorldGenerator's default `getBlockType(x,y,z,height)` fallback which Beta overrides). Keep it working but don't over-invest; its far-lands early-out (`maxSectionCY==127 || |coord| >= CLASSIC_FAR_LANDS_BLOCKS`) may be less accurate with per-section gen — acceptable, it's unused in the hot path.
 
 ### Known acceptable tradeoffs (user already said "no parity needed" for far lands)
@@ -74,7 +74,7 @@ Validation: compile ✓, BetaFarLandsCeilingTest (2) ✓, BetaNumericControlsTes
 - `getHeight(x,y,z)`: same gate + scan down from maxSectionCY. **REWIRE the gate only.**
 - `replaceBlocksForBiome`: column-wide surface pass (topY from `var3.keySet()`). Extracting `computeSurfaceNoise(cx,cz)` (sandNoise/gravelNoise/stoneNoise via `field_909_n`/`field_908_o`) is planned so the section-local pass can reuse it. **Must still work for generateColumn + band + generateColumnCopy.**
 - `carveCavesFromSections`: fills caveTempArray from sections 0..7, runs `caveGen.func_867_a`, writes back. Only cy 0..7.
-- `func_4061_a`: single density source; has FAR_LANDS_CEILING_Y=2000 / FADE_START=1890 / FADE_SLOPE=1e12.
+- `func_4061_a`: single density source with no artificial Y=2000 fade/cap; the world buffer still bounds resident sections separately.
 - `populateColumn(world, cx, cz)`: decoration — ore veins, glowstone, trees (`worldGetTopY` caps scan at y=127), lakes, beaches, clay, dungeons, snow. Writes into **world** + `getColumnBlocks` (neighbor copies) + overlay flush for `decorationTouchedNeighbors`.
 - `generateColumnCopy(cx,cz)`: full-column neighbor copy (generateTerrain + replaceBlocksForBiome + caves). **PLAN: band-only.**
 - `genOreVein(world,...)`: checks `getSectionBlock(b, ...) == BETA_STONE` where `b = getColumnBlocks(px>>4, pz>>4)`; writes world + section.
@@ -105,15 +105,15 @@ Validation: compile ✓, BetaFarLandsCeilingTest (2) ✓, BetaNumericControlsTes
 
 1. Removed chunk-freeze logic; made overworld terrain generate fast (persistent 96-column neighbor LRU in BetaChunkProvider; `decorationTouchedNeighbors` limits overlay flush).
 2. Sky-light: "8 air blocks under a cover = sun" fix in `LightEngine.generateSkyLight` (`SUN_CLEAR_RUN=8`, removed early break).
-3. Far-lands fade-out ceiling y=2000 in `func_4061_a` (FADE_START 1890, slope 1e12) + `evaluateDensity` guard; new test `BetaFarLandsCeilingTest`. Far lands previously packed columns solid to y=2047 → chunk pool starvation.
-4. Beta precision work (previous session): `OverworldBetaPrecision` (integer-only far lands ~3060 blocks, distance degradation OFF by default) vs `Error502BetaPrecision` (coordinate-aware degradation, editable). `BetaNumericProfile` now holds a per-dimension `BetaPrecisionTuning` instance; `STANDARD_BETA` retained for tests.
+3. Removed the artificial far-lands Y=2000 fade/cap from `func_4061_a` and `evaluateDensity`; `BetaFarLandsCeilingTest` now verifies terrain is not forcibly cut at 2000 while retaining the separate bounded buffer behavior.
+4. Beta precision work (previous session): the error502/overworld preset classes were swapped at some point, so the file names no longer matched the dimensions that used them. **Corrected (2026-08-10):** `OverworldBetaPrecision` backs the OVERWORLD preset with full Y float/double precision (23/52 bits) at every height. X/Z and Y float/double precision are full through the chunk-aligned 4,000 boundary; after that, each axis follows the tuned degradation bands, with X/Z doubles using the historical fixed 26-bit mask. Integer widths remain unchanged. `Error502BetaPrecision` backs the ERROR502 preset (aggressive float 23→16→11→6→4→2→1, X/Z + Y double 52→40→30→18→11→6→1). `BetaNumericProfile` holds a per-dimension `BetaPrecisionTuning` instance; `STANDARD_BETA` retained for tests.
 5. Latest complaint: post-spawn generation stall ("chunks take a while to generate after the spawn chunks, then picks up again") → traced to full-column batching in `generateColumn` → user: "we don't ever need per column generation. only cubic chunk generation."
 
 ---
 
 ## TESTS
 
-- `src/test/java/com/voxel/world/beta/BetaFarLandsCeilingTest.java` — probes `p.getBetaBlock(bx, bz, y)` across y for far-lands column under both profiles; asserts no solid ≥2000, solid below. **Uses getBetaBlock — must keep working.**
+- `src/test/java/com/voxel/world/beta/BetaFarLandsCeilingTest.java` — probes `p.getBetaBlock(bx, bz, y)` through the bounded 2048-block buffer under both profiles; asserts the old Y=2000 cutoff is gone. **Uses getBetaBlock — must keep working.**
 - `BetaNumericControlsTest` (22 tests) — precision routing.
 - `BetaTreeDensityTest` — calls `provider.generateColumn(cx, cz)` directly; slow (~min), avoid in quick runs.
 - `ChunkManagerGridReadyTest` — fake generator, `isPlayerSectionGenerated`.

@@ -193,18 +193,6 @@ public class BetaChunkProvider {
     private static final int SEA_LEVEL = 64;
     private static final double BETA_Y_SAMPLES = 17.0;
 
-    // ── Far-lands fade-out ceiling ────────────────────────────────────────
-    // At degraded coordinates the collapsed noise outputs astronomically large
-    // positive densities that overwhelm the vanilla height falloff and pack the
-    // column solid all the way to the buffer top (y=2047) — starving the chunk
-    // pool and leaving the far lands with no sky. The ceiling is enforced in
-    // func_4061_a, the single density source for both the initial column fill
-    // and on-demand section generation, so every Beta dimension fades back to
-    // air by y≈2000.
-    private static final double FAR_LANDS_CEILING_Y = 2000.0D;      // block Y: nothing solid at/above
-    private static final double FAR_LANDS_FADE_START_Y = 1890.0D;   // block Y: fade zone begins
-    private static final double FAR_LANDS_FADE_SLOPE = 1.0e12D;     // >> any noise magnitude (int32-bounded, ~2e9)
-
     /** Index into a 16³ section: lx|(ly<<4)|(lz<<8) */
     private static int sectionIdx(int lx, int ly, int lz) {
         return lx | (ly << 4) | (lz << 8);
@@ -435,6 +423,7 @@ public class BetaChunkProvider {
         this.replaceBlocksForBiome(cx, cz, columnSections, this.biomesForGeneration);
 
         carveCavesFromSections(worldSeed, cx, cz, columnSections);
+        enforceBedrockLayer(columnSections);
 
         for (int cy : columnSections.keySet()) {
             if (cy > maxSectionCY) maxSectionCY = cy;
@@ -524,6 +513,7 @@ public class BetaChunkProvider {
         this.generateSectionRange(0, 9);
         this.replaceBlocksForBiome(cx, cz, blocks, this.biomesForGeneration);
         carveCavesFromSections(worldSeed, cx, cz, blocks);
+        enforceBedrockLayer(blocks);
 
         this.columnCX = savedCX; this.columnCZ = savedCZ;
         // Restore the main column's noise context; guard the never-generated
@@ -590,7 +580,7 @@ public class BetaChunkProvider {
         int cx = x >> 4, cz = z >> 4, cy = y >> 4;
         ensureSection(cx, cy, cz);
         if (y < 0) {
-            if (y <= -64) return BETA_BEDROCK;
+            // Below the single Y=0 bedrock layer, terrain remains noise-driven.
             return evaluateDensity(x, y, z) ? BETA_STONE : BETA_AIR;
         }
         int lx = x & 15, lz = z & 15, ly = y & 15;
@@ -617,7 +607,9 @@ public class BetaChunkProvider {
 
         int lx = x & 15, lz = z & 15;
 
-        // Normal terrain: scan downward from highest known section.
+        // Normal terrain: scan downward from highest known section. The
+        // generated Y=0 bedrock layer is the lower bound for this height query;
+        // below-zero terrain is still available through getBetaBlock().
         for (int scanCY = maxSectionCY; scanCY >= 0; scanCY--) {
             byte[] sec = columnSections.get(scanCY);
             if (sec == null) continue;
@@ -683,6 +675,7 @@ public class BetaChunkProvider {
                 }
             }
             carveCavesFromSections(worldSeed, cx, cz, columnSections);
+            enforceBedrockLayer(columnSections);
             mergeDecorationOverlay(cx, cz);
             return;
         }
@@ -915,8 +908,16 @@ public class BetaChunkProvider {
         }
     }
 
+    /** Ensures the one-block bedrock layer survives cave carving and all generation paths. */
+    private void enforceBedrockLayer(HashMap<Integer, byte[]> sections) {
+        for (int lx = 0; lx < 16; lx++) {
+            for (int lz = 0; lz < 16; lz++) {
+                setGeneratedBlock(sections, lx, 0, lz, BETA_BEDROCK);
+            }
+        }
+    }
+
     private boolean evaluateDensity(int x, int y, int z) {
-        if (y >= FAR_LANDS_CEILING_Y) return false; // far-lands ceiling: nothing above y≈2000
         applyNoiseContext(chunkCorner(x >> 4), chunkCorner(y >> 4), chunkCorner(z >> 4));
         double nx = x / 4.0, ny = y / 8.0, nz = z / 4.0;
         double n1 = field_912_k.generateNoiseOctaves(evalNoiseBuffer, nx, ny, nz, 1, 1, 1,
@@ -1069,7 +1070,7 @@ public class BetaChunkProvider {
                 byte var16 = (byte)BetaBiomeGenBase.FILLER_BLOCKS[biomeId];
 
                 for (int var17 = topY; var17 >= 0; --var17) {
-                    if (var17 <= 0 + this.rand.nextInt(5)) {
+                    if (var17 == 0) {
                         setGeneratedBlock(var3, var8, var17, var9, BETA_BEDROCK);
                     } else {
                         byte var19 = getGeneratedBlock(var3, var8, var17, var9);
@@ -1179,19 +1180,6 @@ public class BetaChunkProvider {
                     else if (var42 > 1.0D) var34 = var40;
                     else var34 = var38 + (var40 - var38) * var42;
                     var34 -= var36;
-                    // Far-lands ceiling: absolute block Y for this sample
-                    // (sample index × 8-block noise resolution). Force density
-                    // negative above the fade start so the degraded fill can
-                    // never extend past y≈2000; the quadratic ramp makes the
-                    // top of the far-lands mass taper instead of shearing off.
-                    double varCeilingY = (double)(var33 + var3) * 8.0D;
-                    if (varCeilingY >= FAR_LANDS_CEILING_Y) {
-                        var34 = -FAR_LANDS_FADE_SLOPE;
-                    } else if (varCeilingY >= FAR_LANDS_FADE_START_Y) {
-                        double varFade = (varCeilingY - FAR_LANDS_FADE_START_Y)
-                                / (FAR_LANDS_CEILING_Y - FAR_LANDS_FADE_START_Y);
-                        var34 -= varFade * varFade * FAR_LANDS_FADE_SLOPE;
-                    }
                     var1[var14] = var34; ++var14;
                 }
             }
@@ -1274,8 +1262,8 @@ public class BetaChunkProvider {
         for (int i = 0; i < 1; ++i)  { genOreVein(world, var4+rand.nextInt(16), rand.nextInt(16), var5+rand.nextInt(16), veDiamondOre, 7); }
         for (int i = 0; i < 1; ++i)  { genOreVein(world, var4+rand.nextInt(16), rand.nextInt(16)+rand.nextInt(16), var5+rand.nextInt(16), veLapisOre, 6); }
         // Glowstone ore: copious amounts across the full column for Far Lands lighting
-        // The fade-out ceiling keeps maxSectionCY ≤ ~124, so veins stay under
-        // the y≈2000 ceiling (and veins only replace stone anyway).
+        // Ore veins only replace existing stone; they do not extend the
+        // generated terrain beyond the requested section range.
         int glowMaxY = Math.max(128, (maxSectionCY + 1) << 4);
         for (int i = 0; i < 60; ++i) { genOreVein(world, var4+rand.nextInt(16), rand.nextInt(glowMaxY), var5+rand.nextInt(16), veGlowstone, 12); }
 

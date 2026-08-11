@@ -1,25 +1,18 @@
 package com.voxel.world.beta;
 
 /**
- * Experimental coordinate-aware precision policy — backs the OVERWORLD preset
- * after the error502/overworld preset swap (ERROR502 uses
- * {@link OverworldBetaPrecision}).
+ * Aggressive coordinate-aware precision policy backing the ERROR502 preset
+ * ({@link BetaNumericProfile#DEFAULT}).
  *
- * Mirrors the original {@link BetaPrecisionTuning} switch values: integer widths
- * stay at the far-lands baseline (20-bit X/Z int, 15-bit Y int), float
- * mantissas degrade 23→16→12→8→6→4 past 3,500 blocks, X/Z doubles stay fixed
- * at 26 bits, and Y doubles degrade 52→40→18→16→14→11.
+ * Integer widths stay at the far-lands baseline (20-bit X/Z int, 15-bit Y int)
+ * while float mantissas degrade 23→16→11→6→4→2→1 past 3,500 blocks and X/Z + Y
+ * doubles degrade 52→40→30→18→11→6→1. Edit the switch bodies to tune.
  */
 public final class Error502BetaPrecision extends BetaPrecisionTuning {
 
     @Override
     public int xIntBits(double x) {
         switch (coordinateBand(x)) {
-            case 0: return 20;
-            case 1: return 20;
-            case 2: return 20;
-            case 3: return 20;
-            case 4: return 20;
             default: return 20;
         }
     }
@@ -27,11 +20,6 @@ public final class Error502BetaPrecision extends BetaPrecisionTuning {
     @Override
     public int yIntBits(double y) {
         switch (coordinateBandY(y)) {
-            case 0: return 15;
-            case 1: return 15;
-            case 2: return 15;
-            case 3: return 15;
-            case 4: return 15;
             default: return 15;
         }
     }
@@ -39,11 +27,6 @@ public final class Error502BetaPrecision extends BetaPrecisionTuning {
     @Override
     public int zIntBits(double z) {
         switch (coordinateBand(z)) {
-            case 0: return 20;
-            case 1: return 20;
-            case 2: return 20;
-            case 3: return 20;
-            case 4: return 20;
             default: return 20;
         }
     }
@@ -60,10 +43,11 @@ public final class Error502BetaPrecision extends BetaPrecisionTuning {
         switch (coordinateBand(x)) {
             case 0: return 23;
             case 1: return 16;
-            case 2: return 12;
-            case 3: return 8;
-            case 4: return 6;
-            default: return 4;
+            case 2: return 11;
+            case 3: return 6;
+            case 4: return 4;
+            case 5: return 2;
+            default: return 1;
         }
     }
 
@@ -79,10 +63,11 @@ public final class Error502BetaPrecision extends BetaPrecisionTuning {
         switch (coordinateBandY(y)) {
             case 0: return 23;
             case 1: return 16;
-            case 2: return 12;
-            case 3: return 8;
-            case 4: return 6;
-            default: return 4;
+            case 2: return 11;
+            case 3: return 6;
+            case 4: return 4;
+            case 5: return 2;
+            default: return 1;
         }
     }
 
@@ -98,10 +83,11 @@ public final class Error502BetaPrecision extends BetaPrecisionTuning {
         switch (coordinateBand(z)) {
             case 0: return 23;
             case 1: return 16;
-            case 2: return 12;
-            case 3: return 8;
-            case 4: return 6;
-            default: return 4;
+            case 2: return 11;
+            case 3: return 6;
+            case 4: return 4;
+            case 5: return 2;
+            default: return 1;
         }
     }
 
@@ -114,8 +100,15 @@ public final class Error502BetaPrecision extends BetaPrecisionTuning {
 
     @Override
     public int xDoubleMantissaBits(double x) {
+        // Full 52-bit doubles at origin, degrading with distance.
         switch (coordinateBand(x)) {
-            default: return 26;
+            case 0: return 52;
+            case 1: return 40;
+            case 2: return 30;
+            case 3: return 18;
+            case 4: return 11;
+            case 5: return 6;
+            default: return 1;
         }
     }
 
@@ -131,10 +124,11 @@ public final class Error502BetaPrecision extends BetaPrecisionTuning {
         switch (coordinateBandY(y)) {
             case 0: return 52;
             case 1: return 40;
-            case 2: return 18;
-            case 3: return 16;
-            case 4: return 14;
-            default: return 11;
+            case 2: return 30;
+            case 3: return 18;
+            case 4: return 11;
+            case 5: return 6;
+            default: return 1;
         }
     }
 
@@ -147,8 +141,15 @@ public final class Error502BetaPrecision extends BetaPrecisionTuning {
 
     @Override
     public int zDoubleMantissaBits(double z) {
+        // Full 52-bit doubles at origin, degrading with distance.
         switch (coordinateBand(z)) {
-            default: return 26;
+            case 0: return 52;
+            case 1: return 40;
+            case 2: return 30;
+            case 3: return 18;
+            case 4: return 11;
+            case 5: return 6;
+            default: return 1;
         }
     }
 }

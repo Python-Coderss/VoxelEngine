@@ -1325,8 +1325,17 @@ public class HudUI {
             FixedPoint.camBlock(pfz), (int)(FixedPoint.camFrac(pfz) * 100 + 0.5f)));
         int bx = FixedPoint.camBlock(pfx);
         int bz = FixedPoint.camBlock(pfz);
-        com.voxel.biome.Biome biome = biomeManager.getBiomeProvider().getBiome(bx, bz);
-        title.append(" | ").append(biome.name);
+        // Dimension/provider wiring can briefly race the first render frame, and
+        // an unmapped biome id is also allowed to return null. The title is
+        // diagnostic UI, so keep startup alive and show a neutral fallback.
+        String biomeName = "Unknown";
+        if (biomeManager != null && biomeManager.getBiomeProvider() != null) {
+            com.voxel.biome.Biome biome = biomeManager.getBiomeProvider().getBiome(bx, bz);
+            if (biome != null && biome.name != null && !biome.name.isEmpty()) {
+                biomeName = biome.name;
+            }
+        }
+        title.append(" | ").append(biomeName);
         int pcx = FixedPoint.camBlock(pfx) >> 4;
         int pcz = FixedPoint.camBlock(pfz) >> 4;
         if (!ctx.chunkManager.isChunkLoaded(pcx, pcz)) title.append(" [WAITING FOR CHUNKS]");

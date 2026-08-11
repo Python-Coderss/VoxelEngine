@@ -6,6 +6,7 @@ import java.util.Locale;
 
 import com.voxel.game.GameContext.CameraMode;
 import com.voxel.game.GameContext.GameMode;
+import com.voxel.utils.FixedPoint;
 import org.joml.Vector3f;
 
 
@@ -94,23 +95,39 @@ public class CommandProcessor {
                 ctx.setStatus("Survival /tp requires relative coordinates (use ~). ");
                 return;
             }
-            Vector3f current = ctx.player.getPosition();
-            double x = parseCoordinate(parts[1], current.x);
-            double y = parseCoordinate(parts[2], current.y);
-            double z = parseCoordinate(parts[3], current.z);
-            ctx.player.teleport(x, y, z);
-            ctx.setStatus(String.format(Locale.ROOT, "Teleported to %.1f, %.1f, %.1f", x, y, z));
-        } catch (NumberFormatException e) {
+            // Resolve coordinates from the player's raw fixed-point longs. The
+            // Vector3f rendering view is deliberately not involved here.
+            long x = parseCoordinate(parts[1], ctx.player.getFixedX());
+            long y = parseCoordinate(parts[2], ctx.player.getFixedY());
+            long z = parseCoordinate(parts[3], ctx.player.getFixedZ());
+            requireWorldCoordinateRange(x);
+            requireWorldCoordinateRange(y);
+            requireWorldCoordinateRange(z);
+            ctx.player.teleportFixed(x, y, z);
+            ctx.beginTeleportTerrainWait();
+            ctx.setStatus("Teleported to " + FixedPoint.blockX(x) + ", "
+                + FixedPoint.blockX(y) + ", " + FixedPoint.blockX(z));
+        } catch (NumberFormatException | ArithmeticException e) {
             ctx.setStatus("Invalid coordinates. Usage: /tp <x> <y> <z>");
         }
     }
 
-    private double parseCoordinate(String token, float current) {
+    private void requireWorldCoordinateRange(long fixedCoordinate) {
+        long blockCoordinate = fixedCoordinate >> FixedPoint.FRAC_BITS;
+        if (blockCoordinate < Integer.MIN_VALUE || blockCoordinate > Integer.MAX_VALUE) {
+            throw new ArithmeticException("coordinate outside world range");
+        }
+    }
+
+    /** Parses an integer block coordinate directly into the player's fixed-point space. */
+    private long parseCoordinate(String token, long currentFixed) {
         if (token.startsWith("~")) {
             String offset = token.substring(1);
-            return current + (offset.isEmpty() ? 0.0 : Double.parseDouble(offset));
+            long blocks = offset.isEmpty() ? 0L : Long.parseLong(offset);
+            return Math.addExact(currentFixed, Math.multiplyExact(blocks, FixedPoint.SCALE));
         }
-        return Double.parseDouble(token);
+        long blocks = Long.parseLong(token);
+        return Math.multiplyExact(blocks, FixedPoint.SCALE);
     }
 
     /** Executes a command block with its origin and macro context. */
