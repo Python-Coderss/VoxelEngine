@@ -4,7 +4,7 @@ package com.voxel.world.beta;
  * Aggressive coordinate-aware precision policy backing the ERROR502 preset
  * ({@link BetaNumericProfile#DEFAULT}).
  *
- * Integer widths stay at the far-lands baseline (20-bit X/Z int, 15-bit Y int)
+ * Integer widths stay at the far-lands baseline (20-bit X/Z int, 17-bit Y int)
  * while float mantissas degrade 23→16→11→6→4→2→1 past 3,500 blocks and X/Z + Y
  * doubles degrade 52→40→30→18→11→6→1. Edit the switch bodies to tune.
  */
@@ -20,7 +20,7 @@ public final class Error502BetaPrecision extends BetaPrecisionTuning {
     @Override
     public int yIntBits(double y) {
         switch (coordinateBandY(y)) {
-            default: return 15;
+            default: return 17;
         }
     }
 
