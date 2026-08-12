@@ -77,6 +77,8 @@ public class GameContext {
     public volatile StringBuilder menuTextInput = new StringBuilder();
     /** True while the menu is accepting typed characters. */
     public volatile boolean menuTextActive = false;
+    /** True when the Tutorial World (Create showcase) was chosen from the menu. */
+    public volatile boolean tutorialWorld = false;
     /** Last seed parsed from the menu (0 = random). */
     public volatile long menuSeed = 0L;
     /** True when the menu was told to use a random seed. */

@@ -117,6 +117,7 @@ public class HudUI {
 
     // ── Spawn loading overlay ──
     // These are appended last so the overlay is composited above the normal HUD.
+    public UILayer.UIElement menuTextPanel;      // translucent backdrop behind menu text
     public UILayer.UIElement spawnLoadingBackground;
     public UILayer.UIElement menuBackground;
     public UILayer.UIElement loadingPopupBackground; // top-right toast panel
@@ -811,6 +812,21 @@ public class HudUI {
         }
         loadingPopupBackground.visible = false;
         layer.addElement(loadingPopupBackground);
+
+        // Translucent panel behind the menu text so the title + options stay
+        // readable over the 3D panorama. Inserted before the title/status so it
+        // renders underneath them; theme-aware color set in
+        // updateSpawnLoadingOverlay().
+        menuTextPanel = new UILayer.UIElement(
+            new Vector2f(main.width / 2f - 350, main.height / 2f - 115),
+            new Vector2f(700, 330),
+            new Vector4f(0.05f, 0.06f, 0.09f, 0.55f)
+        );
+        menuTextPanel.visible = false;
+        // Pure backdrop: never intercept clicks (the menu is keyboard-driven and
+        // the full-screen menuBackground already blocks stray in-game clicks).
+        menuTextPanel.onClick = null;
+        layer.addElement(menuTextPanel);
 
         spawnLoadingTitle = new UILayer.UITextElement(
             new Vector2f(main.width / 2f - 175, main.height / 2f - 70),
@@ -1614,6 +1630,17 @@ public class HudUI {
 
         // Theme-aware palette: light menus get dark text on a pale backdrop.
         boolean dark = ctx.uiTheme == GameContext.UiTheme.DARK;
+
+        // Translucent text backdrop (menu only): dark pane in dark mode, pale
+        // pane in light mode so the theme's text color stays readable over the
+        // 3D panorama behind it.
+        menuTextPanel.visible = menuActive;
+        if (dark) {
+            menuTextPanel.color.set(0.05f, 0.06f, 0.09f, 0.55f);
+        } else {
+            menuTextPanel.color.set(1.0f, 1.0f, 1.0f, 0.40f);
+        }
+
         float titleR = dark ? 0.95f : 0.12f;
         float titleG = dark ? 0.85f : 0.10f;
         float titleB = dark ? 0.45f : 0.55f;

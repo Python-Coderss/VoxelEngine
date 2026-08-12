@@ -584,9 +584,12 @@ float fastShadow(vec3 ro, vec3 rd, float maxDist) {
 
 // Kinetic block IDs (shafts 291-293, cogwheel 294, large cogwheel 295, water wheel 296,
 // clutch 353/354, gearshift 355/356). Their animated textures are gated by the per-voxel
-// kinetic flags set by the KineticManager.
+// kinetic flags set by the KineticManager. Create machines with spinning animation
+// strips (windmill sail 406, millstone 408, crushing wheel 409, drill 410, saw 411,
+// belt 413) animate the same way when their network is powered.
 bool isKineticBlock(int id) {
-    return (id >= 291 && id <= 296) || id == 353 || id == 354 || id == 355 || id == 356;
+    return (id >= 291 && id <= 296) || id == 353 || id == 354 || id == 355 || id == 356
+        || id == 406 || (id >= 408 && id <= 411) || id == 413;
 }
 
 bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out ivec4 resBlockData1, out uint resKineticActive, out uint resKineticReverse) {

@@ -148,6 +148,7 @@ public class Main {
     // A hand-crafted voxel scene rendered by the raytracer behind the menu
     // (Minecraft-panorama style) while the real world is still uninitialized.
     public volatile boolean panoramaActive = false;
+    private boolean tutorialBuilt = false;   // one-shot Tutorial World showcase build
     private com.voxel.World panoramaWorld;
     private int panoramaNextSlot = 0;
     private float panoramaAngle = 0f;    // orbit angle (radians)
@@ -732,6 +733,66 @@ public class Main {
             buildPanoramaIsland(28, 41, 30, 6, GRASS, DIRT, STONE);
             buildPanoramaIsland(86, 42, 78, 5, GRASS, DIRT, STONE);
 
+            // ── Create machines showcase (all spinning where kinetic) ──
+            // A leveled plaza holding a windmill, cogwheel power line, millstone,
+            // press, crushing wheel, drill, saw, belt feeding a vault, a hand
+            // crank, encased fan, lit blaze burner + steam engine, copper tank
+            // and brass casing pillars. Kinetic blocks carry FLAG_SPINNING (bit
+            // 24) so the raytracer animates their texture strips; the windmill
+            // sails use the 4-frame spin strip added to isKineticBlock.
+            int SHAFT = 291, COG = 294, CRANK = 404, BEARING = 405, SAIL = 406,
+                PRESS = 407, MILL = 408, CRUSHER = 409, DRILL = 410, SAW = 411,
+                BELT = 413, VAULT = 414, CASING = 415, FAN = 263, BURNER = 395,
+                ENGINE = 397, TANK = 398, TANK1 = 399;
+            final int SPIN = 1; // KineticManager.FLAG_SPINNING
+            // Level a flat plaza for the machines.
+            for (int px = 62; px <= 84; px++) {
+                for (int pz = 13; pz <= 30; pz++) {
+                    for (int py = 27; py <= 44; py++) placePanoramaVoxel(px, py, pz, 0);
+                    placePanoramaVoxel(px, 26, pz, GRASS);
+                    placePanoramaVoxel(px, 25, pz, DIRT);
+                    placePanoramaVoxel(px, 24, pz, DIRT);
+                }
+            }
+            int mbx = 66, mbz = 24, mby = 26; // plaza origin + surface level
+            // Windmill tower: bearing + 4 sails on a vertical shaft.
+            placePanoramaVoxel(mbx + 7, mby + 1, mbz - 7, SHAFT, 0, SPIN);
+            placePanoramaVoxel(mbx + 7, mby + 2, mbz - 7, SHAFT, 0, SPIN);
+            placePanoramaVoxel(mbx + 7, mby + 3, mbz - 7, SHAFT, 0, SPIN);
+            placePanoramaVoxel(mbx + 7, mby + 4, mbz - 7, SHAFT, 0, SPIN);
+            placePanoramaVoxel(mbx + 7, mby + 5, mbz - 7, BEARING, 0, 0);
+            placePanoramaVoxel(mbx + 6, mby + 5, mbz - 7, SAIL, 0, SPIN);
+            placePanoramaVoxel(mbx + 8, mby + 5, mbz - 7, SAIL, 0, SPIN);
+            placePanoramaVoxel(mbx + 7, mby + 5, mbz - 8, SAIL, 0, SPIN);
+            placePanoramaVoxel(mbx + 7, mby + 5, mbz - 6, SAIL, 0, SPIN);
+            placePanoramaVoxel(mbx + 8, mby + 1, mbz - 7, COG, 0, SPIN);
+            // Cogwheel power line along +X.
+            for (int n = 1; n <= 4; n++) placePanoramaVoxel(mbx + 8 + n, mby + 1, mbz - 7, COG, 0, SPIN);
+            // Machine row (adjacent to the power line).
+            placePanoramaVoxel(mbx + 8, mby + 1, mbz - 6, MILL, 0, SPIN);
+            placePanoramaVoxel(mbx + 9, mby + 1, mbz - 6, PRESS, 0, SPIN);
+            placePanoramaVoxel(mbx + 10, mby + 1, mbz - 6, CRUSHER, 0, SPIN);
+            placePanoramaVoxel(mbx + 11, mby + 1, mbz - 6, DRILL, 0, SPIN); // facing down
+            placePanoramaVoxel(mbx + 12, mby + 1, mbz - 6, SAW, 5, SPIN);    // facing +X (east)
+            // Belt feeding the item vault (horizontal facing so it would run).
+            for (int n = 0; n <= 3; n++) placePanoramaVoxel(mbx + 8 + n, mby + 1, mbz - 5, BELT, 5, SPIN);
+            placePanoramaVoxel(mbx + 12, mby + 1, mbz - 5, VAULT, 0, 0);
+            // Hand crank at the end of the line.
+            placePanoramaVoxel(mbx + 13, mby + 1, mbz - 6, CRANK, 0, SPIN);
+            // Encased fan + steam setup along the back row.
+            placePanoramaVoxel(mbx + 9, mby + 1, mbz - 8, FAN, 5, 0);
+            placePanoramaVoxel(mbx + 10, mby + 1, mbz - 8, BURNER, 0, 0);
+            placePanoramaVoxel(mbx + 10, mby + 2, mbz - 8, ENGINE, 0, 0);
+            placePanoramaVoxel(mbx + 11, mby + 1, mbz - 8, TANK, 0, 0);
+            placePanoramaVoxel(mbx + 11, mby + 2, mbz - 8, TANK1, 0, 0);
+            // Brass casing pillars for visual framing.
+            for (int h = 1; h <= 3; h++) {
+                placePanoramaVoxel(mbx + 6, mby + h, mbz - 3, CASING, 0, 0);
+                placePanoramaVoxel(mbx + 6, mby + h, mbz - 4, CASING, 0, 0);
+                placePanoramaVoxel(mbx + 13, mby + h, mbz - 3, CASING, 0, 0);
+                placePanoramaVoxel(mbx + 13, mby + h, mbz - 4, CASING, 0, 0);
+            }
+
             // Sky light: full brightness on every voxel. The shader samples the
             // light map at the hit face's neighbor (air or water for every visible
             // surface in this scene — no caves/overhangs), so surfaces are fully
@@ -820,10 +881,322 @@ public class Main {
     }
 
     private void placePanoramaVoxel(int x, int y, int z, int type) {
+        placePanoramaVoxel(x, y, z, type, 0, 0);
+    }
+
+    private void placePanoramaVoxel(int x, int y, int z, int type, int extra, int flags) {
         int cx = x >> 4, cy = y >> 4, cz = z >> 4;
         int slot = panoramaWorld.getIndirectionTable()[cx + cy * 128 + cz * 128 * 128];
         if (slot == com.voxel.World.EMPTY) return;
-        panoramaWorld.setVoxelInPool(slot, x & 15, y & 15, z & 15, type);
+        panoramaWorld.setVoxelInPool(slot, x & 15, y & 15, z & 15, type, extra, flags);
+    }
+
+    /**
+     * Tutorial World: levels a large plaza at spawn and builds a fully-wired
+     * Create showcase across several zones —
+     *   • Windmill + water wheel (two rotation sources on one network)
+     *   • Cogwheel power line with a large cogwheel, gearshift (reversed branch)
+     *     and redstone-controlled clutch (stopped branch)
+     *   • Live machines: millstone grinding cobble, press compacting sand +
+     *     alloying brass, crushing wheel doubling ore off the belt, saw chewing
+     *     a log pile, drill excavating a stone quarry wall
+     *   • Mechanical belt feeding an item vault, hand crank boost, encased fan,
+     *     lit blaze burner + steam engine, copper tanks
+     *   • Deployer station (pre-loaded, auto-places brass casings), redstone
+     *     lamp demo, workshop building with a stocked chest, garden and path.
+     * Registers every block with the kinetic + machine + redstone managers so
+     * the sources actually power the network, and stocks the player with a full
+     * kit. Runs on the logic thread once, right after spawn resolution.
+     */
+    private void buildTutorialWorld() {
+        if (world == null || chunkManager == null) return;
+        int bx = (int) Math.floor(player.getPosition().x);
+        int bz = (int) Math.floor(player.getPosition().z);
+        // Surface under the spawn point.
+        int baseY = 100;
+        for (int y = 100; y >= 0; y--) {
+            if (world.getVoxel(bx, y, bz) > 0) { baseY = y; break; }
+        }
+        // Build 8 blocks to the +z so the player faces the showcase.
+        bz += 8;
+
+        final int GRASS = 1, DIRT = 13, STONE = 2, LOG = 5, WATER = 15;
+        final int SHAFT = 291, COG = 294, BIG_COG = 295, WHEEL = 296;
+        final int CLUTCH = 353, GEARSHIFT = 355;
+        final int CRANK = 404, BEARING = 405, SAIL = 406, PRESS = 407, MILL = 408;
+        final int CRUSHER = 409, DRILL = 410, SAW = 411, DEPLOYER = 412, BELT = 413;
+        final int VAULT = 414, CASING = 415, FAN = 263, BURNER = 395, ENGINE = 397;
+        final int TANK = 398, TANK1 = 399;
+        final int R_TORCH = 27, LAMP = 28;
+        final int PLANKS = 72, GLASS = 3, BRICK = 131, CHEST = 118, TORCH = 211;
+        final int GRAVEL = 54, POPPY = 34, DANDELION = 121, SAPLING = 45;
+
+        // ── Level the plaza (31×23) and clear the air above it ──
+        for (int dx = -6; dx <= 24; dx++) {
+            for (int dz = -12; dz <= 10; dz++) {
+                int x = bx + dx, z = bz + dz;
+                for (int y = baseY + 1; y <= baseY + 14; y++) {
+                    chunkManager.setVoxelWithFlags(x, y, z, 0, 0, 0);
+                }
+                chunkManager.setVoxelWithFlags(x, baseY, z, GRASS, 0, 0);
+                chunkManager.setVoxelWithFlags(x, baseY - 1, z, DIRT, 0, 0);
+                chunkManager.setVoxelWithFlags(x, baseY - 2, z, DIRT, 0, 0);
+                chunkManager.setVoxelWithFlags(x, baseY - 3, z, DIRT, 0, 0);
+            }
+        }
+
+        // ── Zone 1: Windmill tower (rotation source 1) ──
+        // Bearing + 4 sails on a vertical shaft; a cogwheel foots the tower.
+        placeTutorial(7, baseY + 1, -7, SHAFT, 0); // vertical shaft (4 tall)
+        placeTutorial(7, baseY + 2, -7, SHAFT, 0);
+        placeTutorial(7, baseY + 3, -7, SHAFT, 0);
+        placeTutorial(7, baseY + 4, -7, SHAFT, 0);
+        placeTutorial(7, baseY + 5, -7, BEARING, 0);
+        placeTutorial(6, baseY + 5, -7, SAIL, 0); // sails N/S/E/W
+        placeTutorial(8, baseY + 5, -7, SAIL, 0);
+        placeTutorial(7, baseY + 5, -8, SAIL, 0);
+        placeTutorial(7, baseY + 5, -6, SAIL, 0);
+        placeTutorial(8, baseY + 1, -7, COG, 0);  // foot cogwheel (network junction)
+
+        // ── Zone 2: Water wheel pond (rotation source 2) ──
+        // A cobble-rimmed 4×4 pond with a water wheel dipping into it; a shaft +
+        // cog line carries its rotation east to join the windmill network.
+        for (int dx = -5; dx <= -2; dx++) {
+            for (int dz = -6; dz <= -3; dz++) {
+                placeTutorial(dx, baseY, dz, 0, 0);        // open the surface (sunken pond)
+                placeTutorial(dx, baseY - 1, dz, WATER, 0);
+                placeTutorial(dx, baseY - 2, dz, WATER, 0);
+                if (ctx.fluidManager != null) {
+                    ctx.fluidManager.notifyBlockChanged(bx + dx, baseY - 1, bz + dz);
+                    ctx.fluidManager.notifyBlockChanged(bx + dx, baseY - 2, bz + dz);
+                }
+            }
+        }
+        for (int dx = -6; dx <= -1; dx++) {
+            for (int dz = -7; dz <= -2; dz++) {
+                boolean rim = (dx == -6 || dx == -1) || (dz == -7 || dz == -2);
+                boolean cornerInside = dx >= -5 && dx <= -2 && dz >= -6 && dz <= -3;
+                if (rim && !cornerInside) placeTutorial(dx, baseY, dz, BRICK, 0);
+            }
+        }
+        placeTutorial(-4, baseY, -6, WHEEL, 0);    // wheel, water below
+        placeTutorial(-4, baseY + 1, -6, SHAFT, 0); // riser shaft
+        for (int n = -3; n <= 2; n++) {
+            placeTutorial(n, baseY + 1, -6, COG, 0);
+        }
+        for (int n = 2; n <= 6; n++) {
+            placeTutorial(n, baseY + 1, -7, COG, 0); // junction into main line (shaft at 7 stays)
+        }
+
+        // ── Zone 3: Deployer station (pre-loaded, auto-places) ──
+        placeTutorial(-1, baseY + 1, -5, DEPLOYER, 5); // facing +X
+        if (ctx.machineManager != null) {
+            int dx = -1 + (int) Math.floor(player.getPosition().x);
+            int dz = -5 + (int) Math.floor(player.getPosition().z) + 8;
+            for (int i = 0; i < 8; i++) {
+                ctx.machineManager.loadDeployer(dx, baseY + 1, dz, "brass_casing");
+            }
+        }
+
+        // ── Zone 4: Main cogwheel power line + redstone demos ──
+        for (int n = 9; n <= 13; n++) {
+            placeTutorial(n, baseY + 1, -7, COG, 0);
+        }
+        placeTutorial(12, baseY + 1, -7, BIG_COG, 0); // large cogwheel (gear ratio)
+        // Gearshift branch: redstone torch above powers it -> everything east
+        // of it spins REVERSED.
+        placeTutorial(14, baseY + 1, -7, GEARSHIFT, 0);
+        placeTutorialRedstone(14, baseY + 2, -7, R_TORCH, 0);
+        placeTutorial(15, baseY + 1, -7, COG, 0); // reversed branch
+        // Clutch branch: redstone torch above powers it -> everything east of it
+        // STOPS (disengaged). Break the torch to re-engage.
+        placeTutorial(16, baseY + 1, -7, CLUTCH, 0);
+        placeTutorialRedstone(16, baseY + 2, -7, R_TORCH, 0);
+        placeTutorial(17, baseY + 1, -7, COG, 0); // stopped branch
+        placeTutorial(18, baseY + 1, -7, CRANK, 0); // end-of-line hand crank
+        // Redstone lamp demo: torch above turns the lamp on.
+        placeTutorial(16, baseY + 1, -8, LAMP, 0);
+        placeTutorialRedstone(16, baseY + 2, -8, R_TORCH, 0);
+
+        // ── Zone 5: Machine row (south of the power line) ──
+        placeTutorial(8, baseY + 1, -6, MILL, 0);      // grinds cobble -> gravel -> flint
+        placeTutorial(9, baseY + 1, -6, PRESS, 0);     // sand x4 -> sandstone; copper+zinc -> brass
+        placeTutorial(10, baseY + 1, -6, CRUSHER, 5);  // facing +X: doubles ore thrown in front
+        placeTutorial(12, baseY + 1, -6, SAW, 5);      // facing +X: converts logs in front to planks
+        placeTutorial(15, baseY + 1, -6, DRILL, 5);    // facing +X: mines the quarry wall in front
+
+        // Saw log feed (2 logs the saw chews through).
+        placeTutorial(13, baseY + 1, -6, LOG, 0);
+        placeTutorial(14, baseY + 1, -6, LOG, 0);
+        // Quarry wall for the drill (2×2 stone it excavates, dropping cobble).
+        for (int dx = 16; dx <= 17; dx++) {
+            for (int h = 1; h <= 2; h++) {
+                placeTutorial(dx, baseY + h, -6, STONE, 0);
+            }
+        }
+
+        // ── Zone 6: Belt feeding the item vault (south of the machine row) ──
+        // Facing must be horizontal (2-5) or the belt won't run; east (5)
+        // carries items toward the vault at +X.
+        for (int n = 0; n <= 3; n++) {
+            placeTutorial(8 + n, baseY + 1, -5, BELT, 5);
+        }
+        placeTutorial(12, baseY + 1, -5, VAULT, 0);
+
+        // ── Zone 7: Encased fan + steam setup along the back row ──
+        placeTutorial(9, baseY + 1, -8, FAN, 5);        // encased fan, facing +X
+        placeTutorial(10, baseY + 1, -8, BURNER, 0);    // lit blaze burner
+        placeTutorial(10, baseY + 2, -8, ENGINE, 0);    // active steam engine (source 3)
+        placeTutorial(11, baseY + 1, -8, TANK, 0);      // copper tank (2 high)
+        placeTutorial(11, baseY + 2, -8, TANK1, 0);
+
+        // ── Zone 8: Workshop building (planks + glass, stocked chest, torch) ──
+        for (int dx = 18; dx <= 24; dx++) {
+            for (int dz = -3; dz <= 5; dz++) {
+                placeTutorial(dx, baseY, dz, BRICK, 0); // stone-brick floor
+                boolean wall = (dx == 18 || dx == 24) || (dz == -3 || dz == 5);
+                if (wall) {
+                    for (int h = 1; h <= 3; h++) {
+                        placeTutorial(dx, baseY + h, dz, PLANKS, 0);
+                    }
+                    // Glass windows on the south/east faces.
+                    boolean glass = (dz == 5 && (dx == 19 || dx == 23))
+                            || (dx == 24 && (dz == -1 || dz == 3));
+                    if (glass) {
+                        placeTutorial(dx, baseY + 2, dz, GLASS, 0);
+                    }
+                }
+            }
+        }
+        // Door gap on the south face (2 tall; the roof above stays intact).
+        placeTutorial(21, baseY + 1, 5, 0, 0);
+        placeTutorial(21, baseY + 2, 5, 0, 0);
+        // Roof.
+        for (int dx = 18; dx <= 24; dx++) {
+            for (int dz = -3; dz <= 5; dz++) {
+                placeTutorial(dx, baseY + 4, dz, PLANKS, 0);
+            }
+        }
+        // Interior torch + stocked chest.
+        placeTutorial(22, baseY + 1, 1, TORCH, 0);
+        placeTutorial(20, baseY + 1, 2, CHEST, 0);
+        if (ctx.chestManager != null) {
+            com.voxel.game.ItemDefinitions.ItemStack[] inv =
+                    new com.voxel.game.ItemDefinitions.ItemStack[com.voxel.game.ChestManager.CHEST_SLOTS];
+            String[] items = {"brass_ingot", "cogwheel", "shaft", "redstone_torch", "torch",
+                    "glass", "oak_planks", "wool", "gravel", "stone_brick",
+                    "deployer", "clutch", "gearshift", "water_wheel", "large_cogwheel",
+                    "oak_sapling", "poppy", "dandelion", "sand", "cobblestone"};
+            int[] counts = {16, 8, 8, 8, 8, 8, 32, 8, 16, 16, 2, 2, 2, 2, 2, 4, 4, 4, 8, 16};
+            for (int i = 0; i < items.length && i < inv.length; i++) {
+                inv[i] = new com.voxel.game.ItemDefinitions.ItemStack(items[i], counts[i]);
+            }
+            ctx.chestManager.setInventory(bx + 20, baseY + 1, bz + 2, inv);
+        }
+
+        // ── Zone 9: Garden, trees, path and lights ──
+        // Oak trees flanking the plaza.
+        buildTutorialTree(bx, bz, baseY, -2, -1);
+        buildTutorialTree(bx, bz, baseY, 3, 9);
+        buildTutorialTree(bx, bz, baseY, 12, 8);
+        // Gravel path across the plaza (dz=6) + torch lamps every 4 blocks.
+        for (int dx = -6; dx <= 24; dx++) {
+            placeTutorial(dx, baseY, 6, GRAVEL, 0);
+        }
+        for (int dx = -2; dx <= 22; dx += 4) {
+            placeTutorial(dx, baseY + 1, 6, TORCH, 0);
+        }
+        // Flowers + saplings.
+        placeTutorial(1, baseY + 1, 8, POPPY, 0);
+        placeTutorial(-3, baseY + 1, 8, DANDELION, 0);
+        placeTutorial(5, baseY + 1, 8, POPPY, 0);
+        placeTutorial(-4, baseY + 1, 2, DANDELION, 0);
+        placeTutorial(6, baseY + 1, -2, POPPY, 0);
+        placeTutorial(-3, baseY + 1, 4, SAPLING, 0);
+        placeTutorial(3, baseY + 1, 8, SAPLING, 0);
+        placeTutorial(5, baseY + 1, -2, SAPLING, 0);
+        // Water lilies on the pond.
+        placeTutorial(-3, baseY, -4, 41, 0);
+        placeTutorial(-2, baseY, -5, 41, 0);
+
+        // ── Live machine feed items ──
+        if (ctx.droppedItemManager != null) {
+            // Millstone: cobblestone on top -> gravel -> flint.
+            ctx.droppedItemManager.spawn("cobblestone", 2, bx + 8, baseY + 2, bz - 6);
+            // Press: sand x4 (sandstone) + copper/zinc (brass alloy).
+            ctx.droppedItemManager.spawn("sand", 4, bx + 9, baseY + 2, bz - 6);
+            ctx.droppedItemManager.spawn("copper_ingot", 1, bx + 9, baseY + 2, bz - 6);
+            ctx.droppedItemManager.spawn("zinc_ingot", 1, bx + 9, baseY + 2, bz - 6);
+            // Crusher: iron ore thrown in front of its face -> 2 ingots.
+            ctx.droppedItemManager.spawn("iron_ore", 1, bx + 11, baseY + 1, bz - 6);
+            // Belt items riding toward the vault (spawn one cell above the belt so
+            // moveOnBelt's by+1 pickup rule carries them east to the vault).
+            ctx.droppedItemManager.spawn("brass_ingot", 2, bx + 9, baseY + 2, bz - 5);
+            ctx.droppedItemManager.spawn("cobblestone", 1, bx + 10, baseY + 2, bz - 5);
+            ctx.droppedItemManager.spawn("coal", 1, bx + 11, baseY + 2, bz - 5);
+        }
+
+        // ── Starter kit so the player can build more machines ──
+        String[] kit = {
+            "wrench", "goggles", "brass_ingot", "hand_crank", "windmill_bearing",
+            "windmill_sail", "shaft", "cogwheel", "large_cogwheel", "millstone",
+            "mechanical_press", "crushing_wheel", "mechanical_drill", "mechanical_saw",
+            "belt_conveyor", "item_vault", "brass_casing", "blaze_burner", "steam_engine",
+            "copper_tank", "encased_fan", "water_wheel", "deployer", "clutch",
+            "gearshift", "redstone_torch", "redstone_block", "redstone_lamp", "torch",
+            "glass", "oak_planks", "wool", "oak_sapling", "poppy", "dandelion",
+            "gravel", "stone_brick", "chest", "sand"
+        };
+        for (String item : kit) {
+            playerInventory.addItem(item, 4);
+        }
+
+        setStatus("Welcome to the Tutorial World! The windmill + water wheel power one network — "
+            + "right-click the hand crank for a boost, the goggles inspect power states, the "
+            + "wrench rotates machines. Redstone torches above the gearshift/clutch reverse/stop "
+            + "their branches; the deployer auto-places brass; the workshop chest holds supplies.");
+    }
+
+    /** Builds a small oak tree (trunk + leaf blob) at a tutorial plaza offset. */
+    private void buildTutorialTree(int bx, int bz, int baseY, int dx, int dz) {
+        for (int h = 1; h <= 4; h++) {
+            placeTutorial(dx, baseY + h, dz, 5, 0);
+        }
+        for (int lx = -2; lx <= 2; lx++) {
+            for (int lz = -2; lz <= 2; lz++) {
+                if (lx == 0 && lz == 0) continue;
+                placeTutorial(dx + lx, baseY + 4, dz + lz, 4, 0);
+            }
+        }
+        for (int lx = -1; lx <= 1; lx++) {
+            for (int lz = -1; lz <= 1; lz++) {
+                placeTutorial(dx + lx, baseY + 5, dz + lz, 4, 0);
+            }
+        }
+        placeTutorial(dx, baseY + 6, dz, 4, 0);
+    }
+
+    /** Places one tutorial-world voxel and registers it with the kinetic/machine managers. */
+    private void placeTutorial(int dx, int dy, int dz, int block, int facing) {
+        int x = (int) Math.floor(player.getPosition().x) + dx;
+        int y = dy;
+        int z = (int) Math.floor(player.getPosition().z) + 8 + dz;
+        chunkManager.setVoxelWithFlags(x, y, z, block, facing, 0);
+        if (ctx.kineticManager != null) ctx.kineticManager.onBlockChanged(x, y, z);
+        if (ctx.machineManager != null) ctx.machineManager.onBlockChanged(x, y, z);
+        if (ctx.redstoneManager != null) ctx.redstoneManager.onBlockChanged(x, y, z);
+    }
+
+    /** Places a redstone component and notifies neighbors so power propagates immediately. */
+    private void placeTutorialRedstone(int dx, int dy, int dz, int block, int facing) {
+        int x = (int) Math.floor(player.getPosition().x) + dx;
+        int y = dy;
+        int z = (int) Math.floor(player.getPosition().z) + 8 + dz;
+        chunkManager.setVoxelWithFlags(x, y, z, block, facing, 0);
+        if (ctx.redstoneManager != null) {
+            ctx.redstoneManager.onBlockChanged(x, y, z);
+            ctx.redstoneManager.notifyNeighbors(x, y, z);
+        }
     }
 
     /** Builds a grass-topped floating mound (classic panorama floating island). */
@@ -1270,8 +1643,8 @@ public class Main {
 
         switch (screen) {
             case MAIN: {
-                // Title screen: New World / Load Save / Theme
-                int optionCount = 3;
+                // Title screen: New World / Tutorial World / Load Save / Theme
+                int optionCount = 4;
                 if (menuKeyPressed(GLFW_KEY_UP)) {
                     ctx.menuSelection--;
                     if (ctx.menuSelection < 0) ctx.menuSelection = optionCount - 1;
@@ -1288,12 +1661,31 @@ public class Main {
                             ctx.menuTextInput.setLength(0);
                             ctx.menuTextInput.append("New World");
                             break;
-                        case 1: // Load Save
+                        case 1: // Tutorial World (Create showcase)
+                            ctx.tutorialWorld = true;
+                            ctx.saveName = "tutorial";
+                            ctx.worldSeed = 1234567L;
+                            ctx.randomSeed = false;
+                            ctx.menuSeed = ctx.worldSeed;
+                            ctx.worldSize = com.voxel.world.WorldSize.MEDIUM;
+                            ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
+                            // Fresh showcase every time: drop any previous tutorial save.
+                            com.voxel.world.WorldSaveManager.deleteSave(ctx.saveName);
+                            ctx.worldSaveManager = com.voxel.world.WorldSaveManager.forSave(ctx.saveName);
+                            ctx.loadPending = false;
+                            ctx.worldSizeConfirmed = true;
+                            ctx.worldSizeMenu = false;
+                            ctx.menuScreen = GameContext.MenuScreen.IN_GAME;
+                            ctx.menuTextActive = false;
+                            ctx.spawnLoadingMessage = "Generating tutorial world...";
+                            setStatus("Starting Tutorial World — a Create machines showcase!");
+                            break;
+                        case 2: // Load Save
                             ctx.saveList = com.voxel.world.WorldSaveManager.listSaves();
                             ctx.saveListSelection = 0;
                             ctx.menuScreen = GameContext.MenuScreen.LOAD_SAVE;
                             break;
-                        case 2: // Theme
+                        case 3: // Theme
                             ctx.uiTheme = ctx.uiTheme == GameContext.UiTheme.DARK
                                 ? GameContext.UiTheme.LIGHT : GameContext.UiTheme.DARK;
                             break;
@@ -1403,7 +1795,7 @@ public class Main {
                 }
                 if (menuKeyPressed(GLFW_KEY_ESCAPE)) {
                     ctx.menuScreen = GameContext.MenuScreen.MAIN;
-                    ctx.menuSelection = 1;
+                    ctx.menuSelection = 2;
                 }
                 break;
             }
@@ -1446,7 +1838,7 @@ public class Main {
         StringBuilder sb = new StringBuilder();
         if (screen == GameContext.MenuScreen.MAIN) {
             sb.append("VOXEL ENGINE\n\n");
-            String[] options = { "New World", "Load Save", "Theme: " +
+            String[] options = { "New World", "Tutorial World", "Load Save", "Theme: " +
                 (ctx.uiTheme == GameContext.UiTheme.DARK ? "Dark" : "Light") };
             for (int i = 0; i < options.length; i++) {
                 sb.append(ctx.menuSelection == i ? "> " : "  ").append(options[i]).append("\n");
@@ -1594,6 +1986,13 @@ public class Main {
         if (chunksReady && !ctx.spawnLoading && !ctx.teleportLoading) {
             // Compatibility call; resolution is already complete by this point.
             ctx.adjustSpawnYAfterChunkLoad();
+
+            // Tutorial World: build the Create showcase once, right after the
+            // player is standing on terrain.
+            if (ctx.tutorialWorld && !tutorialBuilt) {
+                buildTutorialWorld();
+                tutorialBuilt = true;
+            }
 
             handleInput(dt);
 
