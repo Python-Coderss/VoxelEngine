@@ -66,6 +66,7 @@ public class DimensionWorldGenerator extends WorldGenerator {
 
     // Structure generators
     private final com.voxel.world.structure.MapGenStructure structureGen;
+    private final com.voxel.world.structure.MapGenFortress mapGenFortress;
 
     public DimensionWorldGenerator(DimensionType dimension, com.voxel.utils.BlockDataManager blockDataManager) {
         super(0, blockDataManager);
@@ -80,6 +81,7 @@ public class DimensionWorldGenerator extends WorldGenerator {
         super.biomeProvider = new BiomeProvider(42);
         this.biomeDecorator = new BiomeDecorator();
         this.structureGen = new com.voxel.world.structure.MapGenStructure(42);
+        this.mapGenFortress = new com.voxel.world.structure.MapGenFortress();
 
         this.stoneId = blockDataManager.findBlockId("stone");
         this.grassId = blockDataManager.findBlockId("grass_block");
@@ -560,6 +562,11 @@ public class DimensionWorldGenerator extends WorldGenerator {
                     }
                 }
             }
+        }
+
+        // --- Nether fortress generation ---
+        if (dimension == DimensionType.NETHER && cy == 2) {
+            mapGenFortress.generate(world, slot, cx, cz, cy);
         }
 
         if (dimension != DimensionType.OVERWORLD) return;

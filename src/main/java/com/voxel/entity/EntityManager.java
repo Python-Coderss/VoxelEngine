@@ -310,4 +310,13 @@ public class EntityManager {
         if (index < 0 || index >= entities.size()) return null;
         return entities.get(index);
     }
+
+    /** Remove dead enemies and expired fireballs from the entity list. */
+    public void pruneExpired() {
+        entities.removeIf(e -> {
+            if (e instanceof FireballEntity) return ((FireballEntity) e).isExpired();
+            if (e instanceof EnemyEntity) return ((EnemyEntity) e).isDead();
+            return false;
+        });
+    }
 }

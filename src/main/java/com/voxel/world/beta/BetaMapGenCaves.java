@@ -279,9 +279,9 @@ public class BetaMapGenCaves {
         for (int x = cx - range; x <= cx + range; ++x) {
             for (int z = cz - range; z <= cz + range; ++z) {
                 this.rand.setSeed((long) x * a + (long) z * b ^ worldSeed);
-                // ~1/3 of columns get surface caves (classic pass only reaches
-                // 1/15, which is why surface mouths are so rare).
-                if (this.rand.nextInt(3) != 0) continue;
+                // ~1/100 of columns get surface caves (classic pass gives
+                // 1/15 underground tunnels; surface mouths should be rare).
+                if (this.rand.nextInt(100) != 0) continue;
                 int count = 1 + this.rand.nextInt(2);
                 for (int i = 0; i < count; ++i) {
                     double sx = x * 16 + this.rand.nextInt(16);

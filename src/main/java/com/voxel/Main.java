@@ -15,6 +15,9 @@ import com.voxel.world.DimensionManager;
 import com.voxel.world.DimensionType;
 import com.voxel.entity.Entity;
 import com.voxel.entity.MinecartEntity;
+import com.voxel.entity.BlazeEntity;
+import com.voxel.entity.ZombiePigmanEntity;
+import com.voxel.entity.FireballEntity;
 import com.voxel.entity.ModelPart;
 import com.voxel.entity.VillagerEntity;
 import com.voxel.game.VillagerTVSystem;
@@ -579,6 +582,29 @@ public class Main {
         spawnInitialVillagers();
     }
 
+    public void spawnNetherMobs(Player p) {
+        Vector3f pos = p.getPosition();
+        // Pigmen: neutral horde, scattered near the portal
+        for (int i = 0; i < 5; i++) {
+            ZombiePigmanEntity pigman = new ZombiePigmanEntity(70000 + i,
+                new Vector3f(pos.x + (i - 2f) * 5f, pos.y, pos.z + (i % 3 - 1f) * 6f),
+                textureManager, p);
+            pigman.dimension = activeDimension;
+            pigman.setWorld(world);
+            entityManager.addEntity(pigman);
+        }
+        // Blazes: floating shooters, elevated above the portal area
+        for (int i = 0; i < 2; i++) {
+            BlazeEntity blaze = new BlazeEntity(70100 + i,
+                new Vector3f(pos.x + (i * 8f - 4f), pos.y + 3f + i * 2f, pos.z + (i * 6f - 3f)),
+                textureManager, p);
+            blaze.dimension = activeDimension;
+            blaze.setWorld(world);
+            entityManager.addEntity(blaze);
+        }
+        setStatus("Entered the Nether... hostile mobs near!");
+    }
+
     public void spawnInitialVillagers() {
         // Spawn a few villagers near the player's spawn for testing
         for (int i = 0; i < 4; i++) {
@@ -775,6 +801,58 @@ public class Main {
         player.teleport(cx + 0.5, cy + 1.0, cz + 0.5);
     }
 
+    /**
+     * Handles UP/DOWN/ENTER keys during the world-size startup menu.
+     * Called from handleInput() when ctx.worldSizeMenu is true.
+     */
+    private void handleWorldSizeMenuInput() {
+        com.voxel.world.WorldSize[] sizes = com.voxel.world.WorldSize.values();
+        // UP/DOWN navigation (process on key press, not hold)
+        if (menuKeyPressed(GLFW_KEY_UP)) {
+            ctx.worldSizeSelection--;
+            if (ctx.worldSizeSelection < 0) ctx.worldSizeSelection = sizes.length - 1;
+        }
+        if (menuKeyPressed(GLFW_KEY_DOWN)) {
+            ctx.worldSizeSelection++;
+            if (ctx.worldSizeSelection >= sizes.length) ctx.worldSizeSelection = 0;
+        }
+        // ENTER confirms
+        if (menuKeyPressed(GLFW_KEY_ENTER)) {
+            ctx.worldSize = sizes[ctx.worldSizeSelection];
+            ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
+            // Push int bits into the Beta generator before world creation
+            com.voxel.world.WorldGenerator gen = ctx.dimensionManager.getActiveGenerator();
+            if (gen instanceof com.voxel.world.BetaWorldGenerator) {
+                ((com.voxel.world.BetaWorldGenerator) gen).setWorldSize(ctx.worldSize);
+            }
+            ctx.worldSizeConfirmed = true;
+            ctx.worldSizeMenu = false;
+        }
+    }
+
+    /** Builds the menu text for the loading-screen overlay. */
+    private String buildMenuMessage() {
+        com.voxel.world.WorldSize[] sizes = com.voxel.world.WorldSize.values();
+        StringBuilder sb = new StringBuilder("Select World Size:\n\n");
+        for (int i = 0; i < sizes.length; i++) {
+            String marker = (i == ctx.worldSizeSelection) ? "> " : "  ";
+            sb.append(marker).append(sizes[i].displayName())
+              .append(" (").append(sizes[i].intBits()).append("-bit, border ")
+              .append(sizes[i].borderRadius() / 1000).append("K)\n");
+        }
+        sb.append("\nUP/DOWN to change, ENTER to confirm");
+        return sb.toString();
+    }
+
+    // Simple key-press detector for menus (detects edge: was not pressed last frame, is now)
+    private final java.util.BitSet menuKeysDown = new java.util.BitSet(512);
+    private boolean menuKeyPressed(int key) {
+        boolean now = glfwGetKey(window, key) == GLFW_PRESS;
+        boolean wasDown = menuKeysDown.get(key);
+        menuKeysDown.set(key, now);
+        return now && !wasDown;
+    }
+
     public void tick(float dt) {
         if (!running) return;
 
@@ -785,6 +863,21 @@ public class Main {
         // been invoked, so the rest of tick() can run normally.
         if (ctx.initializing) {
             initializeWorldPhase();
+        }
+
+        // Startup menu: world exists, but pause gameplay until confirmation
+        if (ctx.worldSizeMenu && !ctx.worldSizeConfirmed) {
+            // Process menu input (must happen before the return below)
+            handleWorldSizeMenuInput();
+            // Push current world size into the Beta generator (safe now that world is live)
+            com.voxel.world.WorldGenerator gen = ctx.dimensionManager != null ? ctx.dimensionManager.getActiveGenerator() : null;
+            if (gen instanceof com.voxel.world.BetaWorldGenerator) {
+                ((com.voxel.world.BetaWorldGenerator) gen).setWorldSize(com.voxel.world.WorldSize.values()[ctx.worldSizeSelection]);
+            }
+            if (world != null) {
+                ctx.spawnLoadingMessage = buildMenuMessage();
+            }
+            return;
         }
 
         syncGameState();
@@ -831,6 +924,11 @@ public class Main {
 
             handleInput(dt);
 
+            // Spawn initial nether mobs on first nether entry
+            if (activeDimension == DimensionType.NETHER && entityManager.getEntityCount(DimensionType.NETHER) < 2) {
+                spawnNetherMobs(player);
+            }
+
             // Parachute deploy: auto-activate when falling fast in the Aether
             if (activeDimension == DimensionType.AETHER && !player.isOnGround() && !player.isParachuteDeployed()
                     && player.getVelocity().y < -8.0f && player.getPosition().y > 0) {
@@ -852,6 +950,8 @@ public class Main {
             updateMinecarts(dt);
 
             player.update(dt, world, blockDataManager);
+            // Hard world border clamp (keeps player within Far Lands boundary)
+            ctx.borderManager.clamp(player);
 
             // Parachute landing: consume durability when player touches ground
             if (player.isOnGround() && player.getParachuteItemId() != null) {
@@ -887,6 +987,11 @@ public class Main {
 
         if (playerEntity != null) {
             playerEntity.syncFromPlayer(player, playerYaw, pitch, cameraMode != CameraMode.FIRST_PERSON, dt);
+        }
+
+        // ── Startup world-size menu: update the loading-screen message ──
+        if (ctx.worldSizeMenu) {
+            ctx.spawnLoadingMessage = buildMenuMessage();
         }
 
         // Keep chunk streaming alive while spawn loading or a same-dimension
@@ -1044,9 +1149,34 @@ public class Main {
             }
         }
 
+        // Fireball cleanup + player damage (fireballs are not EnemyEntities)
+        for (int i = entityManager.getEntityCount() - 1; i >= 0; i--) {
+            com.voxel.entity.Entity e = entityManager.getEntity(i);
+            if (e instanceof FireballEntity) {
+                FireballEntity fb = (FireballEntity) e;
+                if (fb.isExpired()) {
+                    // Can't remove from list without an API; mark expired = skip
+                    continue;
+                }
+                Vector3f pPos2 = player.getPosition();
+                if (fb.getPosition().distanceSquared(pPos2) < 2.5f) {
+                    player.takeDamage(4.0f);
+                    fb.expire();
+                    ctx.setStatus("Hit by a blaze fireball!");
+                }
+            }
+        }
+        // Remove dead enemies and expired fireballs from the list
+        entityManager.pruneExpired();
+
         // Tick furnaces (smelting logic)
         if (ctx.furnaceManager != null && ctx.chunkManager != null) {
             ctx.furnaceManager.tickAll(ctx.chunkManager, dt);
+        }
+
+        // Tick blaze burners and steam engines
+        if (ctx.blazeBurnerManager != null) {
+            ctx.blazeBurnerManager.tick(dt);
         }
 
         // Tick encased fans (push dropped items along the fan's facing when powered)
@@ -1429,6 +1559,12 @@ public class Main {
                 redstoneManager.applyLampChanges();
                 if (ctx.kineticManager != null) {
                     ctx.kineticManager.applySwaps();
+                }
+                if (ctx.blazeBurnerManager != null) {
+                    ctx.blazeBurnerManager.drainSwaps();
+                }
+                if (ctx.copperTankManager != null) {
+                    ctx.copperTankManager.drainSwaps();
                 }
                 // Deferred world GPU upload (must happen on GL thread)
                 if (needsWorldUpload) {
@@ -3184,6 +3320,27 @@ public class Main {
         blockRegistry.register("item_minecart", 393);
         shaderBlockRegistry.register(393, 393);
         blockDataManager.registerBlock(393, "item_minecart", textureManager, mcModels);
+
+        // --- Blaze burner / steam engine / copper tank ---
+        blockRegistry.register("blaze_burner", 394);
+        shaderBlockRegistry.registerOnOff(394, true, 395);
+        blockDataManager.registerBlock(394, "blaze_burner", textureManager, mcModels);
+        blockRegistry.register("blaze_burner_lit", 395);
+        shaderBlockRegistry.register(395, 395);
+        blockDataManager.registerBlock(395, "blaze_burner_lit", textureManager, mcModels);
+        blockRegistry.register("steam_engine", 396);
+        shaderBlockRegistry.registerOnOff(396, true, 397);
+        blockDataManager.registerBlock(396, "steam_engine", textureManager, mcModels);
+        blockRegistry.register("steam_engine_active", 397);
+        shaderBlockRegistry.register(397, 397);
+        blockDataManager.registerBlock(397, "steam_engine_active", textureManager, mcModels);
+        for (int lev = 0; lev <= 5; lev++) {
+            int id = 398 + lev;
+            String modelFile = lev == 0 ? "copper_tank" : "copper_tank_" + lev;
+            blockRegistry.register(modelFile, id);
+            shaderBlockRegistry.register(id, id);
+            blockDataManager.registerBlock(id, modelFile, textureManager, mcModels);
+        }
 
         // Register shader state variants for directional and on/off blocks
         shaderBlockRegistry.registerOnOff(28, true, 30);

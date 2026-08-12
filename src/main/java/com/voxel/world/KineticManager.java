@@ -41,6 +41,10 @@ public class KineticManager {
     public static final int BLOCK_CLUTCH_ON = 354;
     public static final int BLOCK_GEARSHIFT = 355;
     public static final int BLOCK_GEARSHIFT_ON = 356;
+    // Steam engines: 396 idle, 397 active (heated by a lit blaze burner below).
+    // Active engines are rotation sources, like spinning water wheels.
+    public static final int BLOCK_STEAM_ENGINE = BlazeBurnerManager.BLOCK_STEAM_ENGINE;
+    public static final int BLOCK_STEAM_ENGINE_ACTIVE = BlazeBurnerManager.BLOCK_STEAM_ENGINE_ACTIVE;
 
     // Voxel flag bits (bits 24-25 of the packed int)
     public static final int FLAG_SPINNING = 1;
@@ -55,7 +59,8 @@ public class KineticManager {
     public static boolean isKinetic(int block) {
         return (block >= BLOCK_SHAFT && block <= BLOCK_WATER_WHEEL)
             || block == BLOCK_CLUTCH || block == BLOCK_CLUTCH_ON
-            || block == BLOCK_GEARSHIFT || block == BLOCK_GEARSHIFT_ON;
+            || block == BLOCK_GEARSHIFT || block == BLOCK_GEARSHIFT_ON
+            || block == BLOCK_STEAM_ENGINE || block == BLOCK_STEAM_ENGINE_ACTIVE;
     }
 
     public static boolean isClutch(int block) {
@@ -168,7 +173,10 @@ public class KineticManager {
         Set<Long> visited = new HashSet<>();
         for (long key : kineticPositions) {
             int x = unpackX(key), y = unpackY(key), z = unpackZ(key);
-            if (world.getVoxel(x, y, z) == BLOCK_WATER_WHEEL && hasAdjacentWater(x, y, z)) {
+            int block = world.getVoxel(x, y, z);
+            boolean isSource = (block == BLOCK_WATER_WHEEL && hasAdjacentWater(x, y, z))
+                || block == BLOCK_STEAM_ENGINE_ACTIVE;
+            if (isSource) {
                 bfsNetwork(x, y, z, visited);
             }
         }

@@ -15,6 +15,8 @@ import com.voxel.world.ChunkManager;
 import com.voxel.world.DimensionManager;
 import com.voxel.world.DimensionType;
 import com.voxel.world.RedstoneManager;
+import com.voxel.world.WorldBorderManager;
+import com.voxel.world.WorldSize;
 import com.voxel.world.WorldSaveManager;
 import org.joml.Vector2i;
 import org.joml.Vector3f;
@@ -44,6 +46,22 @@ public class GameContext {
     public RedstoneManager redstoneManager;
     /** Create-style kinetic network (per-dimension, recreated on switch). */
     public com.voxel.world.KineticManager kineticManager;
+    /** Create-style blaze burner / steam engine heat manager. */
+    public com.voxel.world.BlazeBurnerManager blazeBurnerManager;
+    /** Create-style copper tank fluid manager. */
+    public com.voxel.world.CopperTankManager copperTankManager;
+
+    // --- World size & border ---
+    public WorldSize worldSize = WorldSize.MEDIUM;
+    public WorldBorderManager borderManager = new WorldBorderManager(WorldSize.MEDIUM.intBits());
+
+    // --- Startup menu ---
+    /** When true, the render loop shows the world-size selection menu instead of gameplay. */
+    public volatile boolean worldSizeMenu = true;
+    /** Currently highlighted world-size index in the menu. */
+    public volatile int worldSizeSelection = 2; // MEDIUM
+    /** Set to true by the menu handler after ENTER is pressed to create the world. */
+    public volatile boolean worldSizeConfirmed = false;
 
     // --- Entity ---
     public EntityManager entityManager;
@@ -360,6 +378,16 @@ public class GameContext {
         // Recreate fluid manager for the new dimension
         fluidManager = new com.voxel.world.FluidManager(world, chunkManager, blockDataManager, target == DimensionType.NETHER);
         chunkManager.setFluidManager(fluidManager);
+
+        blazeBurnerManager = new com.voxel.world.BlazeBurnerManager(world, chunkManager);
+        copperTankManager = new com.voxel.world.CopperTankManager(world, chunkManager);
+        borderManager = new WorldBorderManager(worldSize.intBits());
+
+        // Push the configured X/Z int bits into the Beta terrain precision tuning
+        com.voxel.world.WorldGenerator gen = dimensionManager.getActiveGenerator();
+        if (gen instanceof com.voxel.world.BetaWorldGenerator) {
+            ((com.voxel.world.BetaWorldGenerator) gen).setWorldSize(worldSize);
+        }
 
         if (previous != target) dimensionManager.unloadDimension(previous);
 

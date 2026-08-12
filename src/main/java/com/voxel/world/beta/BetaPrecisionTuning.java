@@ -30,6 +30,22 @@ public abstract class BetaPrecisionTuning {
     public static final int CHUNK_BLOCKS = 16;
 
     /**
+     * Configurable X/Z integer bit width. Both {@link OverworldBetaPrecision}
+     * and {@link Error502BetaPrecision} read this field instead of hardcoding
+     * 20. Default is 20 (classic Beta Far Lands). Higher values push the Far
+     * Lands further out; the hard world border tracks this value.
+     */
+    protected int xzIntBits = XZ_INT_BITS;
+
+    /** Sets the X/Z integer bit width for both axes. */
+    public void setXzIntBits(int bits) {
+        this.xzIntBits = Math.max(16, Math.min(32, bits));
+    }
+
+    /** Returns the currently configured X/Z int bits. */
+    public int getXzIntBits() { return xzIntBits; }
+
+    /**
      * Rounds a block coordinate to the corner of its 16-block chunk that lies
      * closest to 0,0,0: positive coordinates round down to the chunk start,
      * negative coordinates round up to the chunk end. Every block of a chunk
