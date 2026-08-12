@@ -5,6 +5,8 @@ import com.voxel.utils.BlockDataManager;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -137,43 +139,101 @@ public class FluidManager {
 
     /** Processes pending fluid ticks. Call once per logic frame. */
     public void tick(int maxPerTick) {
+        tick(maxPerTick, Float.NaN, Float.NaN, Float.NaN);
+    }
+
+    /**
+     * Processes pending fluid ticks with proximity prioritisation.
+     * When player coordinates are provided, entries closest to the player
+     * are processed first; the remainder are deferred. Uses half the budget
+     * for near prioritisation and half for round-robin fairness.
+     */
+    public void tick(int maxPerTick, float px, float py, float pz) {
         int processed = 0;
-        while (processed < maxPerTick) {
-            long packed;
-            synchronized (this) {
-                if (tickQueue.isEmpty()) break;
-                packed = tickQueue.pollFirst();
+        boolean havePlayer = !Float.isNaN(px);
+        int nearBudget = havePlayer ? maxPerTick / 2 : maxPerTick;
+
+        // ── Drain all pending entries into a temporary list ──
+        List<Long> batch = new ArrayList<>();
+        synchronized (this) {
+            while (!tickQueue.isEmpty()) {
+                long packed = tickQueue.pollFirst();
                 pendingTicks.remove(packed);
+                batch.add(packed);
             }
-
-            int x = unpackX(packed);
-            int y = unpackY(packed);
-            int z = unpackZ(packed);
-
-            int blockId = world.getVoxel(x, y, z);
-            if (!isFluid(blockId)) {
-                synchronized (this) { tickCounters.remove(packed); }
-                continue;
-            }
-
-            Integer counter;
-            synchronized (this) { counter = tickCounters.get(packed); }
-            if (counter != null && counter > 0) {
-                synchronized (this) {
-                    tickCounters.put(packed, counter - 1);
-                    if (!pendingTicks.contains(packed)) {
-                        tickQueue.addLast(packed);
-                        pendingTicks.add(packed);
-                    }
-                }
-                processed++;
-                continue;
-            }
-
-            synchronized (this) { tickCounters.remove(packed); }
-            updateFluidBlock(x, y, z, blockId);
-            processed++;
         }
+        if (batch.isEmpty()) return;
+
+        // ── Sort by distance to player (closest first) ──
+        if (havePlayer) {
+            final float pfx = px, pfy = py, pfz = pz;
+            Collections.sort(batch, new Comparator<Long>() {
+                public int compare(Long a, Long b) {
+                    float da = distSq(unpackX(a), unpackY(a), unpackZ(a), pfx, pfy, pfz);
+                    float db = distSq(unpackX(b), unpackY(b), unpackZ(b), pfx, pfy, pfz);
+                    return Float.compare(da, db);
+                }
+            });
+        }
+
+        // ── Process closest entries up to the near budget ──
+        int idx = 0;
+        while (idx < batch.size() && processed < nearBudget) {
+            long packed = batch.get(idx++);
+            if (processOne(packed)) processed++;
+        }
+
+        // ── Round-robin: one from the back of the remaining list to avoid starvation ──
+        int farIdx = batch.size() - 1;
+        while (idx <= farIdx && processed < maxPerTick) {
+            long packed = batch.get(farIdx--);
+            if (processOne(packed)) processed++;
+        }
+
+        // ── Re-queue any entries we didn't get to ──
+        synchronized (this) {
+            while (idx <= farIdx) {
+                long packed = batch.get(idx++);
+                if (pendingTicks.add(packed)) {
+                    tickQueue.addLast(packed);
+                }
+            }
+        }
+    }
+
+    /** Shared single-entry processor (called from tick). Returns true if work was done. */
+    private boolean processOne(long packed) {
+        int x = unpackX(packed);
+        int y = unpackY(packed);
+        int z = unpackZ(packed);
+
+        int blockId = world.getVoxel(x, y, z);
+        if (!isFluid(blockId)) {
+            synchronized (this) { tickCounters.remove(packed); }
+            return true;
+        }
+
+        Integer counter;
+        synchronized (this) { counter = tickCounters.get(packed); }
+        if (counter != null && counter > 0) {
+            synchronized (this) {
+                tickCounters.put(packed, counter - 1);
+                if (!pendingTicks.contains(packed)) {
+                    tickQueue.addLast(packed);
+                    pendingTicks.add(packed);
+                }
+            }
+            return true;
+        }
+
+        synchronized (this) { tickCounters.remove(packed); }
+        updateFluidBlock(x, y, z, blockId);
+        return true;
+    }
+
+    private static float distSq(int x, int y, int z, float px, float py, float pz) {
+        float dx = x - px, dy = y - py, dz = z - pz;
+        return dx * dx + dy * dy + dz * dz;
     }
 
     public int pendingCount() { return tickQueue.size(); }
