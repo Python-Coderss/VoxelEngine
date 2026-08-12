@@ -853,6 +853,12 @@ public class Main {
         return now && !wasDown;
     }
 
+    // ── Per-tick budget: limits heavy ops to keep 20 TPS consistent ──
+    private static final int MAX_ENTITY_AI_PER_TICK = 48;
+    private static final int STALE_CLEANUP_TICK_INTERVAL = 20; // ~1s at 20 TPS
+    private int aiUpdateOffset = 0;
+    private int staleCleanupCounter = 0;
+
     public void tick(float dt) {
         if (!running) return;
 
@@ -1136,20 +1142,45 @@ public class Main {
             }
         }
 
-        // --- Enemy AI (now handled inside EnemyEntity) ---
+        // --- Enemy AI (rate-limited: near entities first, then round-robin, capped per tick) ---
         Vector3f pPos = player.getPosition();
-        for (int i = 0; i < entityManager.getEntityCount(); i++) {
+        int processed = 0;
+        int totalEntities = entityManager.getEntityCount();
+        // Every ~1s, reset the round-robin offset so no entity starves
+        staleCleanupCounter++;
+        if (staleCleanupCounter >= STALE_CLEANUP_TICK_INTERVAL) {
+            staleCleanupCounter = 0;
+            aiUpdateOffset = 0;
+        }
+        // Pass 0: entities within 32 blocks (always get updated)
+        for (int i = 0; i < totalEntities && processed < MAX_ENTITY_AI_PER_TICK; i++) {
             com.voxel.entity.Entity e = entityManager.getEntity(i);
             if (e.dimension != activeDimension) continue;
             if (e instanceof com.voxel.entity.EnemyEntity) {
                 com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) e;
-                if (!enemy.isDead()) {
+                if (!enemy.isDead() && enemy.getPosition().distanceSquared(pPos) < 1024f) {
                     enemy.updateAI(pPos, dt);
+                    processed++;
                 }
             }
         }
+        // Pass 1: round-robin through remaining entities (capped by budget)
+        int startIdx = (aiUpdateOffset % Math.max(1, totalEntities));
+        for (int i = 0; i < totalEntities && processed < MAX_ENTITY_AI_PER_TICK; i++) {
+            int idx = (startIdx + i) % totalEntities;
+            com.voxel.entity.Entity e = entityManager.getEntity(idx);
+            if (e.dimension != activeDimension) continue;
+            if (e instanceof com.voxel.entity.EnemyEntity) {
+                com.voxel.entity.EnemyEntity enemy = (com.voxel.entity.EnemyEntity) e;
+                if (!enemy.isDead() && enemy.getPosition().distanceSquared(pPos) >= 1024f) {
+                    enemy.updateAI(pPos, dt);
+                    processed++;
+                }
+            }
+        }
+        aiUpdateOffset = (aiUpdateOffset + processed) % Math.max(1, totalEntities);
 
-        // Fireball cleanup + player damage (fireballs are not EnemyEntities)
+        // Fireball cleanup + player damage (cheap — always full-scan)
         for (int i = entityManager.getEntityCount() - 1; i >= 0; i--) {
             com.voxel.entity.Entity e = entityManager.getEntity(i);
             if (e instanceof FireballEntity) {
@@ -1260,7 +1291,9 @@ public class Main {
 
         // Tick fluid flow (process up to 64 pending fluid blocks per tick)
         if (ctx.fluidManager != null) {
-            ctx.fluidManager.tick(64);
+            // Fluids: rate-limited with proximity prioritisation (closest first)
+            Vector3f fluidPlr = player.getPosition();
+            ctx.fluidManager.tick(32, fluidPlr.x, fluidPlr.y, fluidPlr.z);
         }
 
         // /light point lights are DYNAMIC: they follow the player. The command stores

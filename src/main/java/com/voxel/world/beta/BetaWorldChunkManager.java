@@ -65,9 +65,14 @@ public class BetaWorldChunkManager {
         int cx = var1 >> 4, cz = var2 >> 4;
         BiomeMapEntry entry = biomeMapCache.get(columnKey(cx, cz));
         if (entry == null) {
-            loadBlockGeneratorData(null, cx * 16, cz * 16, 16, 16);
+            try {
+                loadBlockGeneratorData(null, cx * 16, cz * 16, 16, 16);
+            } catch (Exception e) {
+                // Fall through — return a safe default below
+            }
             entry = biomeMapCache.get(columnKey(cx, cz));
         }
+        if (entry == null) return 4; // FOREST as safe fallback
         return entry.biomes[(var1 & 15) | ((var2 & 15) << 4)];
     }
 
