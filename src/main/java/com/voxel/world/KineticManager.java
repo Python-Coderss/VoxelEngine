@@ -47,10 +47,11 @@ public class KineticManager {
     public static final int BLOCK_STEAM_ENGINE_ACTIVE = BlazeBurnerManager.BLOCK_STEAM_ENGINE_ACTIVE;
     // Create machines (404-413): hand crank and windmill bearing are rotation
     // sources (via CreateMachineManager); the rest propagate rotation and use it
-    // to do work. Windmill sails (406), item vault (414) and brass casing (415)
-    // are NOT kinetic.
+    // to do work. Windmill sails (406) spin with the windmill; item vault (414)
+    // and brass casing (415) are NOT kinetic.
     public static final int BLOCK_HAND_CRANK = com.voxel.game.CreateMachineManager.BLOCK_HAND_CRANK;
     public static final int BLOCK_WINDMILL_BEARING = com.voxel.game.CreateMachineManager.BLOCK_WINDMILL_BEARING;
+    public static final int BLOCK_WINDMILL_SAIL = com.voxel.game.CreateMachineManager.BLOCK_WINDMILL_SAIL;
     public static final int BLOCK_MECHANICAL_PRESS = com.voxel.game.CreateMachineManager.BLOCK_MECHANICAL_PRESS;
     public static final int BLOCK_MILLSTONE = com.voxel.game.CreateMachineManager.BLOCK_MILLSTONE;
     public static final int BLOCK_CRUSHING_WHEEL = com.voxel.game.CreateMachineManager.BLOCK_CRUSHING_WHEEL;
@@ -75,6 +76,7 @@ public class KineticManager {
             || block == BLOCK_GEARSHIFT || block == BLOCK_GEARSHIFT_ON
             || block == BLOCK_STEAM_ENGINE || block == BLOCK_STEAM_ENGINE_ACTIVE
             || block == BLOCK_HAND_CRANK || block == BLOCK_WINDMILL_BEARING
+            || block == BLOCK_WINDMILL_SAIL   // sails spin with the windmill
             || (block >= BLOCK_MECHANICAL_PRESS && block <= BLOCK_BELT_CONVEYOR);
     }
 
