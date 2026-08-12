@@ -645,6 +645,13 @@ public class Player {
     public boolean isOnGround() { return onGround; }
     public float getHealth() { return health; }
     public float getMaxHealth() { return maxHealth; }
+
+    /** Sets the player's health directly (used when loading a save). */
+    public void setHealth(float value) {
+        health = Math.max(0, Math.min(maxHealth, value));
+        if (health <= 0 && !isDead) die();
+        else if (health > 0) isDead = false;
+    }
     public boolean isDead() { return isDead; }
 
     public boolean isParachuteDeployed() { return parachuteDeployed; }

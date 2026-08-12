@@ -30,6 +30,19 @@ public class PerlinNoise {
         for (int i = 0; i < 256; i++) p[256 + i] = p[i];
     }
 
+    /** Re-initializes the permutation table with a new seed (same as constructor). */
+    public void reseed(long seed) {
+        Random rand = new Random(seed);
+        for (int i = 0; i < 256; i++) p[i] = i;
+        for (int i = 0; i < 256; i++) {
+            int j = rand.nextInt(256);
+            int temp = p[i];
+            p[i] = p[j];
+            p[j] = temp;
+        }
+        for (int i = 0; i < 256; i++) p[256 + i] = p[i];
+    }
+
     /**
      * Calculates the noise value at a 2D coordinate (X, Y).
      * @param x The X coordinate.

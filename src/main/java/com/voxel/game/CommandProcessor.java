@@ -57,6 +57,8 @@ public class CommandProcessor {
             case "tv": handleTv(parts); break;
             case "light": handleLight(parts); break;
             case "worldsize": handleWorldSize(parts); break;
+            case "save": handleSave(); break;
+            case "seed": handleSeed(parts); break;
             default: ctx.setStatus("Unknown command: /" + command + ". Type /help for commands."); break;
         }
     }
@@ -275,12 +277,41 @@ public class CommandProcessor {
                 + (ws.borderRadius() / 1000) + "K blocks). Existing chunks retain old precision; new chunks use the new size.");
     }
 
+    private void handleSave() {
+        if (ctx.worldSaveManager == null || ctx.player == null || ctx.playerInventory == null) {
+            ctx.setStatus("No active save.");
+            return;
+        }
+        ctx.worldSaveManager.saveLevelData(ctx, ctx.player, ctx.playerInventory);
+        ctx.worldSaveManager.saveCraftingData(ctx.activeDimension, ctx.craftingTableManager);
+        ctx.worldSaveManager.saveSurfaceCraftingData(ctx.activeDimension, ctx.surfaceCraftingManager);
+        ctx.worldSaveManager.saveCommandBlockData(ctx.activeDimension, ctx.commandBlockManager);
+        ctx.worldSaveManager.saveFurnaceData(ctx.activeDimension, ctx.furnaceManager);
+        ctx.worldSaveManager.saveChestData(ctx.activeDimension, ctx.chestManager);
+        ctx.setStatus("Saved to \"" + ctx.saveName + "\" (seed " + ctx.worldSeed + ")");
+    }
+
+    private void handleSeed(String[] parts) {
+        if (parts.length < 2) {
+            ctx.setStatus("World seed: " + ctx.worldSeed);
+            return;
+        }
+        try {
+            ctx.worldSeed = Long.parseLong(parts[1]);
+        } catch (NumberFormatException e) {
+            ctx.worldSeed = parts[1].hashCode();
+        }
+        ctx.setStatus("Seed set to " + ctx.worldSeed + " (takes effect for newly generated chunks)");
+    }
+
     private void handleHelp() {
         StringBuilder sb = new StringBuilder("Available commands:");
         sb.append("\n  /help - Show this help");
         sb.append("\n  /list items - List all items");
         sb.append("\n  /list blocks - List all placeable blocks");
         sb.append("\n  /list commands - List all commands");
+        sb.append("\n  /save - Save the current world now");
+        sb.append("\n  /seed [value] - Show or set the world seed");
         sb.append("\n  /gamemode <survival|creative> - Change game mode");
         sb.append("\n  /give <item> [amount] - Give yourself an item");
         sb.append("\n  /slotclear [slot] - Clear inventory slot");

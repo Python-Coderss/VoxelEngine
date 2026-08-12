@@ -47,6 +47,8 @@ public class HudUI {
     public Vector2i fontTextureSize = new Vector2i(1, 1);
     public int loadingTextureId = 0;
     public int menuBackgroundTextureId = 0;
+    /** Dark-mode panorama variant of the menu backdrop. */
+    public int menuBackgroundDarkTextureId = 0;
     // Compact top-right loading-popup panel (loading_popup.png, 256x64).
     public int loadingPopupTextureId = 0;
 
@@ -81,11 +83,24 @@ public class HudUI {
     public final UILayer.UIElement[] chestCountDigit1     = new UILayer.UIElement[20];
     public final UILayer.UIElement[] chestCountDigit2     = new UILayer.UIElement[20];
 
+    // ── Creative item picker ──
+    /** 10 columns x 6 rows of picker slots (fits 720p without scrolling for most filters). */
+    public static final int CREATIVE_COLS = 10;
+    public static final int CREATIVE_ROWS = 6;
+    public UILayer.UIElement creativePanelBg;
+    public UILayer.UITextElement creativeSearchText;
+    public UILayer.UITextElement creativeCountText;
+    public final UILayer.UIElement[] creativeSlotBackgrounds = new UILayer.UIElement[CREATIVE_COLS * CREATIVE_ROWS];
+    public final UILayer.UIElement[] creativeSlotItems       = new UILayer.UIElement[CREATIVE_COLS * CREATIVE_ROWS];
+    /** Current item id shown in each slot (updated every refresh). */
+    public final String[] creativeSlotItemIds = new String[CREATIVE_COLS * CREATIVE_ROWS];
+
     public final UILayer.UIElement[] playerHearts = new UILayer.UIElement[10];
     public final UILayer.UIElement[] heartBases   = new UILayer.UIElement[10];
 
     public UILayer.UITextElement commandTextElement;
     public UILayer.UITextElement statusTextElement;
+    public UILayer.UITextElement gogglesOverlayElement;
 
     // ── Map overlay elements ──
     public UILayer.UIElement mapPanelBg;
@@ -209,10 +224,16 @@ public class HudUI {
                 System.err.println("Note: loading.png not found; using the bright fallback color");
             }
 
-            // Load the custom menu background
+            // Load the custom menu background (light + dark panorama variants)
             java.io.File menuBgFile = new java.io.File("src/main/resources/ui/menu_background.png");
             if (menuBgFile.exists()) {
                 menuBackgroundTextureId = UIManager.loadTexture(menuBgFile.getPath());
+            }
+            java.io.File menuBgDarkFile = new java.io.File("src/main/resources/ui/menu_background_dark.png");
+            if (menuBgDarkFile.exists()) {
+                menuBackgroundDarkTextureId = UIManager.loadTexture(menuBgDarkFile.getPath());
+            } else {
+                menuBackgroundDarkTextureId = menuBackgroundTextureId;
             }
         } catch (Exception e) {
             System.err.println("Note: loading.png could not be loaded; using the bright fallback color");
@@ -533,6 +554,60 @@ public class HudUI {
         statusTextElement.charLineLimit = 40;
         statusTextElement.visible = false;
         layer.addElement(statusTextElement);
+
+        // Goggles overlay: machine name + power state under the crosshair.
+        gogglesOverlayElement = new UILayer.UITextElement(new Vector2f(main.width / 2f - 200, main.height / 2f + 14), "", 1.5f, new Vector4f(0.4f, 1, 0.9f, 1), fontTextureId);
+        gogglesOverlayElement.charLineLimit = 40;
+        gogglesOverlayElement.visible = false;
+        layer.addElement(gogglesOverlayElement);
+
+        // ── Creative item picker (full item grid, creative mode only) ──
+        float cSlotW = 64, cSlotH = 64, cGap = 8;
+        float cGridW = CREATIVE_COLS * cSlotW + (CREATIVE_COLS - 1) * cGap;
+        float cGridH = CREATIVE_ROWS * cSlotH + (CREATIVE_ROWS - 1) * cGap;
+        float cX = (main.width - cGridW) / 2f;
+        float cY = (main.height - cGridH) / 2f - 20;
+        creativePanelBg = new UILayer.UIElement(
+            new Vector2f(cX - 14, cY - 44),
+            new Vector2f(cGridW + 28, cGridH + 92),
+            new Vector4f(0.08f, 0.10f, 0.14f, 0.92f)
+        );
+        creativePanelBg.visible = false;
+        layer.addElement(creativePanelBg);
+        creativeSearchText = new UILayer.UITextElement(
+            new Vector2f(cX, cY - 32), "SEARCH: ", 1.6f, new Vector4f(0.9f, 0.95f, 1f, 1f), fontTextureId);
+        creativeSearchText.visible = false;
+        creativeSearchText.charLineLimit = 30;
+        layer.addElement(creativeSearchText);
+        creativeCountText = new UILayer.UITextElement(
+            new Vector2f(cX + cGridW - 140, cY - 32), "", 1.3f, new Vector4f(0.7f, 0.8f, 0.9f, 1f), fontTextureId);
+        creativeCountText.visible = false;
+        creativeCountText.charLineLimit = 20;
+        layer.addElement(creativeCountText);
+
+        for (int i = 0; i < CREATIVE_COLS * CREATIVE_ROWS; i++) {
+            int col = i % CREATIVE_COLS;
+            int row = i / CREATIVE_COLS;
+            float sx = cX + col * (cSlotW + cGap);
+            float sy = cY + row * (cSlotH + cGap);
+            UILayer.UIElement bg = new UILayer.UIElement(
+                new Vector2f(sx, sy), new Vector2f(cSlotW, cSlotH),
+                new Vector4f(0.16f, 0.19f, 0.24f, 0.95f));
+            bg.visible = false;
+            layer.addElement(bg);
+            creativeSlotBackgrounds[i] = bg;
+            UILayer.UIElement itemEl = new UILayer.UIElement(
+                new Vector2f(sx + 12, sy + 12), new Vector2f(40, 40),
+                new Vector4f(0, 0, 0, 0));
+            itemEl.visible = false;
+            layer.addElement(itemEl);
+            creativeSlotItems[i] = itemEl;
+            final int slotIdx = i;
+            bg.onClick = () -> {
+                String id = creativeSlotItemIds[slotIdx];
+                if (id != null) main.creativeGiveItem(id);
+            };
+        }
 
         // ── Map overlay UI elements (top-right control panel) ──
         mapPanelBg = new UILayer.UIElement(
@@ -1164,6 +1239,93 @@ public class HudUI {
             }
         }
 
+        // ── Creative item picker (overrides the survival bag layout) ──
+        boolean useCreative = main.inventoryOpen && ctx.creativeMenuOpen
+            && ctx.gameMode == GameContext.GameMode.CREATIVE
+            && ctx.activeUI == ActiveUI.INVENTORY;
+        if (useCreative) {
+            // Hide the other inventory UI panes so only the picker shows.
+            craftingTableBg.visible = false;
+            for (int i = 0; i < 9; i++) {
+                crafting3x3SlotBackgrounds[i].visible = false;
+                crafting3x3SlotItems[i].visible = false;
+            }
+            furnacePanelBg.visible = false;
+            chestPanelBg.visible = false;
+            for (int i = 0; i < 20; i++) {
+                chestSlotBackgrounds[i].visible = false;
+                chestSlotItems[i].visible = false;
+            }
+            inventoryPanelElement.visible = true;
+
+            // Collect all registered items, filtered by the search box.
+            String search = ctx.creativeSearch.toString().toLowerCase(java.util.Locale.ROOT);
+            java.util.List<ItemDefinition> all = new java.util.ArrayList<>();
+            for (java.util.Map.Entry<String, ItemDefinition> e : itemDefinitions.getRegistry().entrySet()) {
+                ItemDefinition def = e.getValue();
+                if (def == null || def.iconLayer < 0) continue;
+                if (!search.isEmpty()) {
+                    if (!def.id.toLowerCase(java.util.Locale.ROOT).contains(search)
+                        && !def.displayName.toLowerCase(java.util.Locale.ROOT).contains(search)) {
+                        continue;
+                    }
+                }
+                all.add(def);
+            }
+            all.sort((a, b) -> a.displayName.compareToIgnoreCase(b.displayName));
+
+            // Scroll clamp: keep the view inside the filtered list.
+            int rows = (int) Math.ceil(all.size() / (float) CREATIVE_COLS);
+            int maxScroll = Math.max(0, rows - CREATIVE_ROWS);
+            if (ctx.creativeScroll > maxScroll) ctx.creativeScroll = maxScroll;
+
+            creativePanelBg.visible = true;
+            creativeSearchText.visible = true;
+            creativeSearchText.text = "SEARCH: " + ctx.creativeSearch + "_";
+            creativeCountText.visible = true;
+            creativeCountText.text = all.size() + " items";
+
+            for (int i = 0; i < CREATIVE_COLS * CREATIVE_ROWS; i++) {
+                int col = i % CREATIVE_COLS;
+                int row = i / CREATIVE_COLS;
+                int listIdx = (ctx.creativeScroll + row) * CREATIVE_COLS + col;
+                UILayer.UIElement bg = creativeSlotBackgrounds[i];
+                UILayer.UIElement itemEl = creativeSlotItems[i];
+                creativeSlotItemIds[i] = null;
+                if (listIdx >= all.size()) {
+                    bg.visible = false;
+                    itemEl.visible = false;
+                    continue;
+                }
+                ItemDefinition def = all.get(listIdx);
+                creativeSlotItemIds[i] = def.id;
+                bg.visible = true;
+                itemEl.visible = true;
+                itemEl.textureId = textureManager.getTextureArrayId();
+                itemEl.textureType = 2;
+                itemEl.layer = def.iconLayer;
+                itemEl.color.set(1, 1, 1, 1);
+                itemEl.size.set(40, 40);
+                itemEl.pos.set(bg.pos.x + 12, bg.pos.y + 12);
+                // Hover tooltip
+                if (bg.isPointInside(main.lastMouseX, main.lastMouseY)) {
+                    itemNameElement.text = def.displayName;
+                    itemNameElement.visible = true;
+                    itemNameElement.color.w = 1.0f;
+                    itemNameDisplayUntil = time + 0.1;
+                }
+            }
+        } else {
+            creativePanelBg.visible = false;
+            creativeSearchText.visible = false;
+            creativeCountText.visible = false;
+            for (int i = 0; i < CREATIVE_COLS * CREATIVE_ROWS; i++) {
+                creativeSlotBackgrounds[i].visible = false;
+                creativeSlotItems[i].visible = false;
+                creativeSlotItemIds[i] = null;
+            }
+        }
+
         // --- 3x3 Crafting table UI ---
         if (use3x3) {
             // Hide other UIs
@@ -1335,6 +1497,15 @@ public class HudUI {
             statusTextElement.color.w = alpha;
         }
 
+        // Goggles overlay: driven by Main.tick() via ctx.machineLookInfo.
+        boolean gogglesVisible = ctx.machineLookInfo != null && !ctx.machineLookInfo.isEmpty()
+                && !ctx.inventoryOpen && !ctx.commandMode;
+        gogglesOverlayElement.visible = gogglesVisible;
+        if (gogglesVisible) {
+            gogglesOverlayElement.text = ctx.machineLookInfo;
+            gogglesOverlayElement.color.w = 1f;
+        }
+
         // ── Map overlay updates ──
         boolean mapVisible = ctx.mapOpen;
         mapPanelBg.visible = mapVisible;
@@ -1399,23 +1570,56 @@ public class HudUI {
      *    corner, leaving the world visible behind it.
      */
     public void updateSpawnLoadingOverlay(double time) {
+        boolean inMenu = ctx.menuScreen != GameContext.MenuScreen.IN_GAME;
         boolean loading = ctx.spawnLoading;
-        boolean preWorld = ctx.initializing || ctx.worldSizeMenu;
-        boolean menuActive = ctx.worldSizeMenu;
-        menuBackground.visible = loading && menuActive;
+        boolean preWorld = ctx.initializing || inMenu;
+        boolean menuActive = inMenu;
+        menuBackground.visible = menuActive;
+        if (main.panoramaActive) {
+            // The 3D panorama renders behind the menu: fade the 2D backdrop image
+            // out entirely, but keep the element visible (alpha 0) so it still
+            // consumes clicks and hidden inventory controls can't be hit.
+            menuBackground.color.w = 0f;
+        } else {
+            menuBackground.color.w = 1f;
+            if (menuActive && menuBackground.textureId == 0) {
+                menuBackground.textureId = ctx.uiTheme == GameContext.UiTheme.DARK
+                    ? menuBackgroundDarkTextureId : menuBackgroundTextureId;
+            }
+        }
         spawnLoadingBackground.visible = loading && preWorld && !menuActive;
         loadingPopupBackground.visible = loading && !preWorld && !menuActive;
-        spawnLoadingTitle.visible = loading;
-        spawnLoadingSpinner.visible = loading;
-        spawnLoadingStatus.visible = loading;
-        if (!loading) return;
+        spawnLoadingTitle.visible = loading || menuActive;
+        spawnLoadingSpinner.visible = loading || menuActive;
+        spawnLoadingStatus.visible = loading || menuActive;
+        if (!loading && !menuActive) return;
 
-        String title = ctx.worldSizeMenu ? "SELECT WORLD SIZE" : "WORLD INITIALIZING";
+        String title = "WORLD INITIALIZING";
+        if (inMenu) {
+            switch (ctx.menuScreen) {
+                case MAIN: title = "VOXEL ENGINE"; break;
+                case NEW_WORLD_NAME: title = "NEW WORLD"; break;
+                case NEW_WORLD_SEED: title = "NEW WORLD"; break;
+                case NEW_WORLD_SIZE: title = "NEW WORLD"; break;
+                case NEW_WORLD_MODE: title = "NEW WORLD"; break;
+                case LOAD_SAVE: title = "LOAD SAVE"; break;
+                default: break;
+            }
+        }
         spawnLoadingTitle.text = title;
 
         String message = ctx.spawnLoadingMessage;
         spawnLoadingStatus.text = (message == null || message.isEmpty())
             ? "Preparing spawn..." : message;
+
+        // Theme-aware palette: light menus get dark text on a pale backdrop.
+        boolean dark = ctx.uiTheme == GameContext.UiTheme.DARK;
+        float titleR = dark ? 0.95f : 0.12f;
+        float titleG = dark ? 0.85f : 0.10f;
+        float titleB = dark ? 0.45f : 0.55f;
+        float bodyR = dark ? 0.85f : 0.10f;
+        float bodyG = dark ? 0.78f : 0.15f;
+        float bodyB = dark ? 0.55f : 0.35f;
 
         // A small, deterministic pulse makes it clear that the game is working.
         int spinnerFrame = (int) Math.floor(time * 8.0) % 4;
@@ -1423,20 +1627,32 @@ public class HudUI {
         float pulse = 0.72f + 0.28f * (float) Math.abs(Math.sin(time * 3.0));
         spawnLoadingSpinner.color.w = pulse;
 
-        if (preWorld) {
-            // Centered layout on the full-screen loading artwork.
-            boolean menu = ctx.worldSizeMenu;
-            spawnLoadingTitle.pos.set(main.width / 2f - (menu ? 290f : 175f), main.height / 2f - 70);
-            spawnLoadingTitle.scale = menu ? 3.5f : 3.0f;
-            spawnLoadingTitle.color.set(menu ? 0.95f : 0.06f, menu ? 0.85f : 0.22f, menu ? 0.45f : 0.32f, 1.0f);
+        if (menuActive) {
+            // Full-screen main menu centered on the panorama backdrop.
+            spawnLoadingTitle.pos.set(main.width / 2f - 210f, main.height / 2f - 150f);
+            spawnLoadingTitle.scale = 4.5f;
+            spawnLoadingTitle.color.set(titleR, titleG, titleB, 1.0f);
             spawnLoadingTitle.charLineLimit = 40;
             spawnLoadingSpinner.pos.set(main.width / 2f - 12, main.height / 2f - 10);
-            spawnLoadingSpinner.scale = menu ? 3.5f : 3.0f;
-            spawnLoadingSpinner.color.set(menu ? 0.95f : 0.06f, menu ? 0.65f : 0.48f, menu ? 0.20f : 0.48f, pulse);
-            spawnLoadingStatus.pos.set(menu ? (main.width / 2f - 310f) : (main.width / 2f - 230), main.height / 2f + 55);
-            spawnLoadingStatus.scale = menu ? 2.2f : 1.8f;
-            spawnLoadingStatus.color.set(menu ? 0.85f : 0.10f, menu ? 0.78f : 0.28f, menu ? 0.55f : 0.34f, 1.0f);
-            spawnLoadingStatus.charLineLimit = menu ? 60 : 52;
+            spawnLoadingSpinner.scale = 3.0f;
+            spawnLoadingSpinner.color.set(dark ? 0.95f : 0.2f, dark ? 0.65f : 0.4f, dark ? 0.20f : 0.6f, pulse);
+            spawnLoadingStatus.pos.set(main.width / 2f - 300f, main.height / 2f - 90f);
+            spawnLoadingStatus.scale = 2.0f;
+            spawnLoadingStatus.color.set(bodyR, bodyG, bodyB, 1.0f);
+            spawnLoadingStatus.charLineLimit = 46;
+        } else if (preWorld) {
+            // Centered layout on the full-screen loading artwork.
+            spawnLoadingTitle.pos.set(main.width / 2f - 175f, main.height / 2f - 70);
+            spawnLoadingTitle.scale = 3.0f;
+            spawnLoadingTitle.color.set(0.06f, 0.22f, 0.32f, 1.0f);
+            spawnLoadingTitle.charLineLimit = 40;
+            spawnLoadingSpinner.pos.set(main.width / 2f - 12, main.height / 2f - 10);
+            spawnLoadingSpinner.scale = 3.0f;
+            spawnLoadingSpinner.color.set(0.06f, 0.48f, 0.48f, pulse);
+            spawnLoadingStatus.pos.set(main.width / 2f - 230, main.height / 2f + 55);
+            spawnLoadingStatus.scale = 1.8f;
+            spawnLoadingStatus.color.set(0.10f, 0.28f, 0.34f, 1.0f);
+            spawnLoadingStatus.charLineLimit = 52;
         } else {
             // Top-right toast: panel at (width-268, 12) sized 256x64.
             float popupX = main.width - 268f;

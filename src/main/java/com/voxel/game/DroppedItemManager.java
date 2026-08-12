@@ -235,6 +235,99 @@ public class DroppedItemManager {
     }
 
     /**
+     * True when a live dropped item of {@code itemId} is resting in the voxel
+     * cell ({@code x},{@code y},{@code z}). Used by machines to peek at inputs
+     * before consuming them (e.g. press alloying needs both metals present).
+     */
+    public boolean hasItemInCell(int x, int y, int z, String itemId) {
+        synchronized (items) {
+            for (DroppedItem di : items) {
+                if (!di.alive) continue;
+                if (!di.itemId.equals(itemId)) continue;
+                if ((int) Math.floor(di.baseX) == x
+                        && (int) Math.floor(di.baseY) == y
+                        && (int) Math.floor(di.baseZ) == z) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Remove up to {@code need} of {@code itemId} from a single stack resting in
+     * the cell ({@code x},{@code y},{@code z}). Returns false when no single
+     * stack there has enough (nothing is removed then).
+     */
+    public boolean consumeFromCell(int x, int y, int z, String itemId, int need) {
+        synchronized (items) {
+            for (DroppedItem di : items) {
+                if (!di.alive) continue;
+                if (!di.itemId.equals(itemId)) continue;
+                if ((int) Math.floor(di.baseX) != x
+                        || (int) Math.floor(di.baseY) != y
+                        || (int) Math.floor(di.baseZ) != z) {
+                    continue;
+                }
+                if (di.count < need) return false;
+                if (di.count > need) {
+                    di.count -= need;
+                } else {
+                    di.alive = false;
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Move items resting in the cell directly above a belt conveyor along its
+     * facing (dx, dz). Items are pushed {@code delta} voxels this tick and
+     * re-anchor to whatever ground lies beneath their new column, so they roll
+     * off the belt end and settle naturally.
+     */
+    public void moveOnBelt(int bx, int by, int bz, int dx, int dz, float delta) {
+        if (delta <= 0f) return;
+        synchronized (items) {
+            for (DroppedItem di : items) {
+                if (!di.alive) continue;
+                int ix = (int) Math.floor(di.baseX);
+                int iy = (int) Math.floor(di.baseY);
+                int iz = (int) Math.floor(di.baseZ);
+                if (ix != bx || iy != by + 1 || iz != bz) continue;
+
+                float nx = di.baseX + dx * delta;
+                float nz = di.baseZ + dz * delta;
+                if (ctx.world != null) {
+                    // Blocked by a solid block at belt level or item level ahead.
+                    if (ctx.world.getVoxel((int) Math.floor(nx), by, (int) Math.floor(nz)) != 0) continue;
+                    if (ctx.world.getVoxel((int) Math.floor(nx), by + 1, (int) Math.floor(nz)) != 0) continue;
+                }
+                boolean columnChanged = (int) Math.floor(nx) != ix || (int) Math.floor(nz) != iz;
+                di.baseX = nx;
+                di.baseZ = nz;
+                if (columnChanged) {
+                    GroundResult ground = findGroundBelow((int) Math.floor(di.baseX), (int) Math.floor(di.baseZ), di.baseY + 1.0f);
+                    di.grounded = false;
+                    di.vy = 0f;
+                    if (ground.found) {
+                        di.groundTopY = ground.groundTopY;
+                        di.supportBlockX = (int) Math.floor(di.baseX);
+                        di.supportBlockY = ground.supportBlockY;
+                        di.supportBlockZ = (int) Math.floor(di.baseZ);
+                        di.hasSupportBlock = true;
+                        di.restY = ground.groundTopY + di.hoverHeight + 0.5f * DROPPED_ITEM_SCALE;
+                    } else {
+                        di.hasSupportBlock = false;
+                        di.restY = Float.NEGATIVE_INFINITY;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Per-tick update: integrate gravity for in-flight drops, then pickup check.
      *
      *  - Falling items: integrate vy with terminal-velocity cap, advance baseY; snap to

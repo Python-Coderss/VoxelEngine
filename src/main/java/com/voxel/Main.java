@@ -143,6 +143,20 @@ public class Main {
     private final float[][] poolDirs = new float[16][3]; // fixed light dir per pool
     private final float[] activeSunDir = new float[3];   // live sun dir for pool pick
     private final float[] activeMoonDir = new float[3];  // live moon dir for pool pick
+
+    // ── 3D main-menu panorama ──
+    // A hand-crafted voxel scene rendered by the raytracer behind the menu
+    // (Minecraft-panorama style) while the real world is still uninitialized.
+    public volatile boolean panoramaActive = false;
+    private com.voxel.World panoramaWorld;
+    private int panoramaNextSlot = 0;
+    private float panoramaAngle = 0f;    // orbit angle (radians)
+    private float panoramaTime = 3600f;  // in-world time; drifts gently for sun motion
+    private static final float PANORAMA_CX = 56f, PANORAMA_CY = 26f, PANORAMA_CZ = 56f;
+    // Reusable zero point-light header (16 bytes) for the panorama pass — do NOT
+    // use persistentPlBuf here: renderMenuPanorama also runs from
+    // presentInitialLoadingFrame(), before persistentPlBuf is allocated.
+    private final IntBuffer panoramaPlHeader = IntBuffer.allocate(4);
     private final float[] shadowCamPosPrev = new float[3];
     private int activeSunPool = 0, activeMoonPool = 8;
     private int prevActiveSunPool = -1, prevActiveMoonPool = -1;
@@ -263,13 +277,19 @@ public class Main {
             e.printStackTrace();
         }
 
-        // Save data on shutdown
+        // Save data on shutdown (including the level.dat player state)
         if (ctx.worldSaveManager != null) {
             ctx.worldSaveManager.saveCraftingData(ctx.activeDimension, ctx.craftingTableManager);
             ctx.worldSaveManager.saveSurfaceCraftingData(ctx.activeDimension, ctx.surfaceCraftingManager);
             ctx.worldSaveManager.saveCommandBlockData(ctx.activeDimension, ctx.commandBlockManager);
             ctx.worldSaveManager.saveFurnaceData(ctx.activeDimension, ctx.furnaceManager);
             ctx.worldSaveManager.saveChestData(ctx.activeDimension, ctx.chestManager);
+            if (ctx.machineManager != null) {
+                ctx.worldSaveManager.saveMachineData(ctx.activeDimension, ctx.machineManager);
+            }
+            if (player != null && playerInventory != null && ctx.menuScreen == GameContext.MenuScreen.IN_GAME) {
+                ctx.worldSaveManager.saveLevelData(ctx, player, playerInventory);
+            }
         }
 
         glDeleteProgram(quadProgram);
@@ -470,6 +490,11 @@ public class Main {
         mapRenderer.setTextureId(mapTex);
         ctx.mapTexId = mapTex;
 
+        // Build the 3D panorama scene + SSBOs so the menu can render real voxel
+        // terrain behind it (the raytracer otherwise has nothing to render until
+        // the world is committed). Runs before the first presented loop frame.
+        setupPanoramaWorld();
+
         ctx.initializing = true;
         ctx.spawnLoadingMessage = "Initializing world...";
 
@@ -481,8 +506,12 @@ public class Main {
         bootMark.accept("UI loading frame presented");
         bootMark.accept("UI ready");
 
-        // Initialize world save manager (dev/world folder)
-        ctx.worldSaveManager = new com.voxel.world.WorldSaveManager("dev/world");
+        // The save manager is created when the main menu commits a world
+        // (new world or load save), so the chosen save slot is baked in before
+        // dimension generation starts. A null save manager is safe everywhere
+        // (all call sites null-check). Initialize it to the default slot so
+        // nothing crashes if the world is created before menu confirm.
+        ctx.worldSaveManager = com.voxel.world.WorldSaveManager.forSave("world");
 
         // Initialize world gen logging
         GameLogger.init();
@@ -552,20 +581,377 @@ public class Main {
         for (UILayer layer : hud.uiLayers) layer.render(hud.uiManager);
         hud.uiManager.end();
 
+        if (panoramaActive) {
+            // Present the 3D panorama (with the menu UI composited by the
+            // raytracer) as the very first visible frame.
+            renderMenuPanorama(0f);
+        } else {
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, width, height);
+            // Use the same bright fallback tone as the real loading background so
+            // this first presented frame is visibly a loading frame, not a black flash.
+            glClearColor(0.88f, 0.94f, 0.78f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glUseProgram(quadProgram);
+            glBindTextureUnit(0, hud.uiManager.getUITexture());
+            if (locQuadPass >= 0) glUniform1i(locQuadPass, 0);
+            if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 0);
+            glBindVertexArray(quadVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+        }
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    }
+
+    /**
+     * Builds the hand-crafted 3D scene shown behind the main menu (rolling
+     * hills, a lake, trees, a stone watchtower and floating islands) and
+     * uploads it into the chunk SSBOs so the raytracer can render it while the
+     * real world is still uninitialized. A slowly orbiting camera renders it
+     * Minecraft-panorama style. When a world is committed, uploadWorldToGpu()
+     * deletes these SSBOs and replaces them with the real world's data.
+     * Runs once on the GL thread during init, before the render loop starts.
+     */
+    private void setupPanoramaWorld() {
+        try {
+            panoramaWorld = new com.voxel.World(256); // 8×3×8 = 192 slots (incl. +X/+Z light border) + headroom
+            panoramaNextSlot = 0;
+
+            int GRASS = blockRegistry.getId("grass_block");
+            int DIRT  = blockRegistry.getId("dirt");
+            int STONE = blockRegistry.getId("stone");
+            int SAND  = blockRegistry.getId("sand");
+            int WATER = blockRegistry.getId("water");
+            int LOG   = blockRegistry.getId("oak_log");
+            int LEAF  = blockRegistry.getId("oak_leaves");
+            int COBBLE = blockRegistry.getId("cobblestone");
+            if (GRASS <= 0) GRASS = 1;
+            if (DIRT <= 0) DIRT = 13;
+            if (STONE <= 0) STONE = 2;
+            if (SAND <= 0) SAND = 14;
+            if (WATER <= 0) WATER = 15;
+            if (LOG <= 0) LOG = 5;
+            if (LEAF <= 0) LEAF = 4;
+            if (COBBLE <= 0) COBBLE = STONE;
+
+            java.util.Random rnd = new java.util.Random(42);
+
+            // Allocate an 8×3×8 chunk region: the 7×3×7 terrain (112×48×112 blocks)
+            // plus a one-chunk air border on the +X/+Z sides. The border gives the
+            // outer cliff faces a real (fully-lit) air chunk to sample light from
+            // (the -X/-Z edges don't need one: the shader's DDA stops at buffer
+            // coordinate 0 and the shading fallback samples the block's own light,
+            // which is fully lit). Border chunks stay entirely air.
+            for (int cx = 0; cx <= 7; cx++) {
+                for (int cy = 0; cy <= 2; cy++) {
+                    for (int cz = 0; cz <= 7; cz++) {
+                        int slot = panoramaNextSlot++;
+                        panoramaWorld.setChunkSlot(cx, cy, cz, slot);
+                        panoramaWorld.clearChunkPoolSlot(slot);
+                    }
+                }
+            }
+
+            // Rolling-hills heightfield with a valley at the center for the lake.
+            float[][] height = new float[112][112];
+            for (int x = 0; x < 112; x++) {
+                for (int z = 0; z < 112; z++) {
+                    height[x][z] = 24f
+                            + 5.5f * (float) Math.sin(x * 0.045)
+                            + 4.0f * (float) Math.cos(z * 0.06)
+                            + 2.5f * (float) Math.sin((x + z) * 0.028)
+                            + 1.8f * (float) Math.sin(x * 0.11 + 1.7f) * (float) Math.cos(z * 0.13);
+                }
+            }
+            // Carve the lake basin near the center.
+            for (int x = 42; x <= 70; x++) {
+                for (int z = 40; z <= 72; z++) {
+                    float dx = (x - 56) / 16f, dz = (z - 56) / 15f;
+                    float d = dx * dx + dz * dz;
+                    if (d < 1.0f) {
+                        height[x][z] = Math.min(height[x][z], 23f - (1f - d) * 2f);
+                    }
+                }
+            }
+
+            for (int x = 0; x < 112; x++) {
+                for (int z = 0; z < 112; z++) {
+                    int h = (int) Math.floor(height[x][z]);
+                    boolean shore = h <= 25; // sandy shoreline around the lake
+                    for (int y = 0; y <= h; y++) {
+                        int type;
+                        if (y == h) type = shore ? SAND : GRASS;
+                        else if (y >= h - 3) type = DIRT;
+                        else type = STONE;
+                        placePanoramaVoxel(x, y, z, type);
+                    }
+                    // Lake water fills from the bed up to the waterline (y=26).
+                    if (h < 26) {
+                        for (int y = h + 1; y <= 26; y++) {
+                            placePanoramaVoxel(x, y, z, WATER);
+                        }
+                    }
+                }
+            }
+
+            // Scattered trees on dry, not-too-high ground.
+            for (int i = 0; i < 16; i++) {
+                int x = 8 + rnd.nextInt(96);
+                int z = 8 + rnd.nextInt(96);
+                int h = (int) Math.floor(height[x][z]);
+                if (h < 25 || h > 33) continue;
+                for (int y = h + 1; y <= h + 4; y++) placePanoramaVoxel(x, y, z, LOG);
+                for (int dx = -2; dx <= 2; dx++) {
+                    for (int dz = -2; dz <= 2; dz++) {
+                        int rr = dx * dx + dz * dz;
+                        if (rr > 4) continue;
+                        placePanoramaVoxel(x + dx, h + 4, z + dz, LEAF);
+                        if (rr <= 2) placePanoramaVoxel(x + dx, h + 5, z + dz, LEAF);
+                    }
+                }
+                placePanoramaVoxel(x, h + 6, z, LEAF);
+            }
+
+            // A small cobblestone watchtower on the east shore of the lake.
+            int tx = 74, tz = 40;
+            int th = (int) Math.floor(height[tx][tz]);
+            for (int y = th + 1; y <= th + 8; y++) {
+                for (int dx = 0; dx <= 2; dx++) {
+                    for (int dz = 0; dz <= 2; dz++) {
+                        boolean rim = (dx == 0 || dx == 2) || (dz == 0 || dz == 2);
+                        if (y <= th + 7) {
+                            if (rim || y <= th + 2) placePanoramaVoxel(tx + dx, y, tz + dz, COBBLE);
+                        } else if (rim) {
+                            placePanoramaVoxel(tx + dx, y, tz + dz, COBBLE); // crenellation
+                        }
+                    }
+                }
+            }
+
+            // Floating islands — the classic panorama look.
+            buildPanoramaIsland(28, 41, 30, 6, GRASS, DIRT, STONE);
+            buildPanoramaIsland(86, 42, 78, 5, GRASS, DIRT, STONE);
+
+            // Sky light: full brightness on every voxel. The shader samples the
+            // light map at the hit face's neighbor (air or water for every visible
+            // surface in this scene — no caves/overhangs), so surfaces are fully
+            // lit and depth comes from AO + the sun term. The air border chunks
+            // are already fully lit by this same loop.
+            int[] chunkPoolArr = panoramaWorld.getChunkPool();
+            int[] lightPoolArr = panoramaWorld.getLightPool();
+            for (int slot = 0; slot < panoramaNextSlot; slot++) {
+                int base = slot << 12;
+                for (int i = 0; i < 4096; i++) {
+                    lightPoolArr[base + i] = 0xFF;
+                }
+            }
+
+            // ── Upload the scene to the chunk SSBOs (same layout as uploadWorldToGpu) ──
+            int poolSize = panoramaWorld.getPoolSizeForAlloc();
+            IntBuffer tableBuf = MemoryUtil.memAllocInt(panoramaWorld.getIndirectionTable().length);
+            tableBuf.put(panoramaWorld.getIndirectionTable()).flip();
+            indirectionSSBO = glCreateBuffers();
+            glNamedBufferStorage(indirectionSSBO, tableBuf, GL_DYNAMIC_STORAGE_BIT);
+            MemoryUtil.memFree(tableBuf);
+
+            chunkPoolSSBO = glCreateBuffers();
+            glNamedBufferStorage(chunkPoolSSBO, (long) poolSize * 4096 * Integer.BYTES, GL_DYNAMIC_STORAGE_BIT);
+            IntBuffer poolBuf = MemoryUtil.memAllocInt(poolSize * 4096);
+            poolBuf.put(chunkPoolArr).flip();
+            glNamedBufferSubData(chunkPoolSSBO, 0, poolBuf);
+            MemoryUtil.memFree(poolBuf);
+
+            bitmaskSSBO = glCreateBuffers();
+            glNamedBufferStorage(bitmaskSSBO, (long) poolSize * 128 * Integer.BYTES, GL_DYNAMIC_STORAGE_BIT);
+            IntBuffer maskBuf = MemoryUtil.memAllocInt(poolSize * 128);
+            maskBuf.put(panoramaWorld.getBitmaskPool()).flip();
+            glNamedBufferSubData(bitmaskSSBO, 0, maskBuf);
+            MemoryUtil.memFree(maskBuf);
+
+            occlusionSSBO = glCreateBuffers();
+            glNamedBufferStorage(occlusionSSBO, (long) poolSize * 4096 * Short.BYTES, GL_DYNAMIC_STORAGE_BIT);
+            // Zero it (the shader's getVoxelOcclusion is currently uncalled, but
+            // undefined storage is a foot-gun if it ever becomes live).
+            java.nio.ByteBuffer zeroOcc = java.nio.ByteBuffer.allocate(poolSize * 4096 * 2);
+            glNamedBufferSubData(occlusionSSBO, 0, zeroOcc);
+
+            lightSSBO = glCreateBuffers();
+            glNamedBufferStorage(lightSSBO, (long) poolSize * 4096 * Integer.BYTES, GL_DYNAMIC_STORAGE_BIT);
+            IntBuffer lightBuf = MemoryUtil.memAllocInt(poolSize * 4096);
+            lightBuf.put(lightPoolArr).flip();
+            glNamedBufferSubData(lightSSBO, 0, lightBuf);
+            MemoryUtil.memFree(lightBuf);
+
+            pointLightSSBO = glCreateBuffers();
+            glNamedBufferStorage(pointLightSSBO, 4096, GL_DYNAMIC_STORAGE_BIT);
+            IntBuffer plHeader = MemoryUtil.memAllocInt(4);
+            plHeader.put(0).put(0).put(0).put(0).flip();
+            glNamedBufferSubData(pointLightSSBO, 0, plHeader);
+            MemoryUtil.memFree(plHeader);
+
+            craftingItemSSBO = glCreateBuffers();
+            glNamedBufferStorage(craftingItemSSBO, (long) 80 * 32, GL_DYNAMIC_STORAGE_BIT);
+
+            sdfSSBO = glCreateBuffers();
+            glNamedBufferStorage(sdfSSBO, (long) poolSize * 8, GL_DYNAMIC_STORAGE_BIT);
+            java.nio.ByteBuffer zeroSdf = java.nio.ByteBuffer.allocate(poolSize * 8);
+            glNamedBufferSubData(sdfSSBO, 0, zeroSdf);
+
+            // Zero the 16 light-pool textures so the panorama's god-ray sampling
+            // sees clean zeros (no shafts) instead of undefined storage content.
+            java.nio.ByteBuffer zeroPool = java.nio.ByteBuffer.allocate(shadowMapRes * shadowMapRes * 4);
+            for (int i = 0; i < 16; i++) {
+                glTextureSubImage2D(lightPoolTex[i], 0, 0, 0, shadowMapRes, shadowMapRes, GL_RED, GL_FLOAT, zeroPool);
+            }
+
+            // Give the menu terrain varied grass colors (the real biome map is
+            // filled per-chunk once the actual world generates).
+            biomeManager.createPanoramaBiomeData(2048);
+            biomeManager.uploadBiomeMap();
+
+            panoramaActive = true;
+        } catch (RuntimeException e) {
+            // Never let the menu break because of the panorama: fall back to the
+            // 2D menu background image.
+            System.err.println("Menu panorama setup failed, using 2D background:");
+            e.printStackTrace();
+            panoramaActive = false;
+        }
+    }
+
+    private void placePanoramaVoxel(int x, int y, int z, int type) {
+        int cx = x >> 4, cy = y >> 4, cz = z >> 4;
+        int slot = panoramaWorld.getIndirectionTable()[cx + cy * 128 + cz * 128 * 128];
+        if (slot == com.voxel.World.EMPTY) return;
+        panoramaWorld.setVoxelInPool(slot, x & 15, y & 15, z & 15, type);
+    }
+
+    /** Builds a grass-topped floating mound (classic panorama floating island). */
+    private void buildPanoramaIsland(int cx, int baseY, int cz, int radius, int grass, int dirt, int stone) {
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                float d = (dx * dx + dz * dz) / (float) (radius * radius);
+                if (d > 1.1f) continue;
+                int thick = (int) ((1f - d) * (radius * 0.9f)) + 2;
+                for (int t = 0; t < thick; t++) {
+                    int y = baseY + t;
+                    int type = (t == thick - 1) ? grass : (t >= thick - 3 ? dirt : stone);
+                    placePanoramaVoxel(cx + dx, y, cz + dz, type);
+                }
+            }
+        }
+    }
+
+    /**
+     * Renders one frame of the 3D main-menu panorama: a full raytracer pass with
+     * a slowly orbiting camera aimed at the hand-crafted scene, with the menu UI
+     * composited on top (u_UITexture). Mirrors the world-render pass minus all
+     * gameplay state (entities, point lights, break overlay, light-pool regen).
+     */
+    private void renderMenuPanorama(float dt) {
+        // Slow orbit (~2.5 min/revolution) + gentle sun drift for a living sky.
+        panoramaAngle += dt * 0.042f;
+        panoramaTime += dt * 1.8f;
+        if (panoramaTime > 24000f) panoramaTime -= 24000f;
+
+        float a = panoramaAngle;
+        float camX = PANORAMA_CX + (float) Math.cos(a) * 46f;
+        float camZ = PANORAMA_CZ + (float) Math.sin(a) * 46f;
+        float camY = PANORAMA_CY + 18f + (float) Math.sin(a * 0.7f) * 3.0f;
+        float dx = PANORAMA_CX - camX, dy = PANORAMA_CY + 8f - camY, dz = PANORAMA_CZ - camZ;
+        double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        double ry = Math.atan2(dz, dx);
+        double rp = Math.asin(Math.max(-1.0, Math.min(1.0, dy / dist)));
+        float fx = (float) (Math.cos(ry) * Math.cos(rp)), fy = (float) Math.sin(rp), fz = (float) (Math.sin(ry) * Math.cos(rp));
+        float rx = -fz, rz = fx;
+        float rl = (float) Math.sqrt(rx * rx + rz * rz);
+        if (rl > 0) { rx /= rl; rz /= rl; }
+        float ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;
+
+        int cbx = (int) Math.floor(camX), cby = (int) Math.floor(camY), cbz = (int) Math.floor(camZ);
+        float cfx = camX - cbx, cfy = camY - cby, cfz = camZ - cbz;
+
+        glUseProgram(computeProgram);
+
+        // No point lights (defensive re-zero of the count header every frame).
+        panoramaPlHeader.rewind();
+        glNamedBufferSubData(pointLightSSBO, 0, panoramaPlHeader);
+
+        // Camera + world uniforms (buffer-relative; the panorama world offset is 0).
+        glProgramUniform3f(computeProgram, 0, cfx, cfy, cfz);
+        glProgramUniform3i(computeProgram, 29, cbx, cby, cbz);
+        glProgramUniform3f(computeProgram, 1, fx, fy, fz);
+        glProgramUniform3f(computeProgram, 2, rx, 0, rz);
+        glProgramUniform3f(computeProgram, 3, ux, uy, uz);
+        glProgramUniform1f(computeProgram, 4, panoramaTime);
+        glProgramUniform1i(computeProgram, 5, 0); // no entities
+        atmosphereRenderer.upload(panoramaTime, DimensionType.OVERWORLD);
+        glProgramUniform1i(computeProgram, atmosphereRenderer.locDimensionID(), DimensionType.OVERWORLD.id);
+        glProgramUniform3i(computeProgram, 6, 0, 0, 0); // world offset
+
+        // No break overlay, no underwater camera.
+        glProgramUniform1i(computeProgram, LOC_UNDER_WATER, 0);
+        glProgramUniform3i(computeProgram, 19, 0, 0, 0);
+        glProgramUniform1f(computeProgram, 20, 0.0f);
+        int destroyBaseLayer = textureManager.getTextureIndex("destroy_stage_0");
+        glProgramUniform1i(computeProgram, 21, destroyBaseLayer < 0 ? -1 : destroyBaseLayer);
+
+        glUniform4f(locHeartUVs, hud.uvHeartFull.x, hud.uvHeartFull.y, hud.uvHeartFull.z, hud.uvHeartFull.w);
+        glUniform4f(locHeartUVs + 1, hud.uvHeartHalf.x, hud.uvHeartHalf.y, hud.uvHeartHalf.z, hud.uvHeartHalf.w);
+        glUniform4f(locHeartUVs + 2, hud.uvHeartEmpty.x, hud.uvHeartEmpty.y, hud.uvHeartEmpty.z, hud.uvHeartEmpty.w);
+
+        bindTextures();
+        glActiveTexture(GL_TEXTURE17);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, textureManager.getDestroyStageArrayId());
+        if (locDestroyStages >= 0) glUniform1i(locDestroyStages, 17);
+        glActiveTexture(GL_TEXTURE15);
+        glBindTexture(GL_TEXTURE_2D, hud.uiTextureId);
+        glUniform1i(locUISource, 15);
+
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, bitmaskSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, occlusionSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, pointLightSSBO);
+        entityManager.bind(6, 7);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, craftingItemSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, lightSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, sdfSSBO);
+        glProgramUniform1i(computeProgram, locCraftingItemCount, 0);
+
+        // God-ray state: real uniforms, but the pools are zeroed so no shafts
+        // appear — avoids any stale/undefined pool-texture sampling.
+        glProgramUniform1i(computeProgram, LOC_SHADOW_PASS, 0);
+        AtmosphereRenderer.computeSunDir(DimensionType.OVERWORLD, panoramaTime, activeSunDir);
+        activeMoonDir[0] = -activeSunDir[0];
+        activeMoonDir[1] = -activeSunDir[1];
+        activeMoonDir[2] = -activeSunDir[2];
+        uploadPoolBasis(LOC_SHADOW_ORIGIN, LOC_SHADOW_RIGHT, LOC_SHADOW_UP, LOC_SHADOW_SUN_DIR,
+                activeSunDir, cbx, cby, cbz);
+        uploadPoolBasis(LOC_MOON_POOL_ORIGIN, LOC_MOON_POOL_RIGHT, LOC_MOON_POOL_UP, LOC_MOON_POOL_DIR,
+                activeMoonDir, cbx, cby, cbz);
+        glProgramUniform2f(computeProgram, LOC_SHADOW_EXTENT, shadowHalfExtent, shadowDepth);
+        glActiveTexture(GL_TEXTURE18);
+        glBindTexture(GL_TEXTURE_2D, lightPoolTex[0]);
+        glActiveTexture(GL_TEXTURE19);
+        glBindTexture(GL_TEXTURE_2D, lightPoolTex[8]);
+        glProgramUniform1i(computeProgram, LOC_SUN_POOL, 18);
+        glProgramUniform1i(computeProgram, LOC_MOON_POOL, 19);
+        glProgramUniform1f(computeProgram, LOC_SHADOW_MAP_SIZE, 1.0f / shadowMapRes);
+
+        glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
+        glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, width, height);
-        // Use the same bright fallback tone as the real loading background so
-        // this first presented frame is visibly a loading frame, not a black flash.
-        glClearColor(0.88f, 0.94f, 0.78f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         glUseProgram(quadProgram);
-        glBindTextureUnit(0, hud.uiManager.getUITexture());
-        if (locQuadPass >= 0) glUniform1i(locQuadPass, 0);
+        glBindTextureUnit(0, renderTexture);
+        glUniform1i(locQuadPass, 0);
         if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 0);
         glBindVertexArray(quadVAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
-        glfwSwapBuffers(window);
-        glfwPollEvents();
     }
 
     public void cacheUniformLocations() {
@@ -648,7 +1034,13 @@ public class Main {
     private void initializeWorldPhase() {
         // Create only Overworld at startup; other dimensions lazy-load.
         dimensionManager = new DimensionManager(blockDataManager, ctx.worldSaveManager, biomeManager);
+        dimensionManager.setWorldSeed(ctx.worldSeed);
         dimensionManager.createDimension(DimensionType.OVERWORLD, 8);
+        // Push the configured X/Z int bits into the Beta terrain precision tuning
+        com.voxel.world.WorldGenerator activeGen = dimensionManager.getActiveGenerator();
+        if (activeGen instanceof com.voxel.world.BetaWorldGenerator) {
+            ((com.voxel.world.BetaWorldGenerator) activeGen).setWorldSize(ctx.worldSize);
+        }
 
         world = dimensionManager.getActiveWorld();
         chunkManager = dimensionManager.getActiveChunkManager();
@@ -663,6 +1055,12 @@ public class Main {
         // Kinetic network (Create-style shafts/cogs/clutch/water wheel)
         com.voxel.world.KineticManager kineticManager = new com.voxel.world.KineticManager(world, chunkManager, redstoneManager);
         ctx.kineticManager = kineticManager;
+
+        // Create-style machines (crank, windmill, belt, press, millstone, crusher,
+        // drill, saw, deployer). Recreated per dimension like the other managers.
+        ctx.machineManager = new com.voxel.game.CreateMachineManager(ctx, world, chunkManager, ctx.droppedItemManager);
+        kineticManager.setMachineManager(ctx.machineManager);
+        ctx.worldSaveManager.loadMachineData(activeDimension, ctx.machineManager);
 
         ctx.fluidManager = new com.voxel.world.FluidManager(world, chunkManager, blockDataManager, false);
         chunkManager.setFluidManager(ctx.fluidManager);
@@ -683,11 +1081,56 @@ public class Main {
         // Begin the existing per-dimension spawn resolution flow. Once the spawn
         // chunks finish generating + the surface is detected, the loading overlay
         // hides.
-        ctx.spawnLoadingMessage = "Generating spawn chunks...";
-        ctx.beginSpawnResolution(0, 0);
+        ctx.spawnLoadingMessage = ctx.loadPending ? "Loading world..." : "Generating spawn chunks...";
+        // Loading a save: resolve spawn near the saved position so the surface
+        // probe lands on real terrain, then apply the exact saved state after
+        // spawn resolution completes (see applyLoadedPlayerState).
+        if (ctx.loadPending) {
+            ctx.beginSpawnResolution((int) Math.floor(ctx.loadX), (int) Math.floor(ctx.loadZ));
+        } else {
+            ctx.beginSpawnResolution(0, 0);
+        }
         chunkManager.updateFixedPosition(player.getFixedX(), player.getFixedY(), player.getFixedZ(), yaw);
 
         ctx.initializing = false;
+    }
+
+    /**
+     * Applies the saved player state (position, health, yaw/pitch, inventory,
+     * world time) once spawn resolution has placed the player on real terrain.
+     * Called from tick() when ctx.loadPending && !ctx.spawnLoading.
+     */
+    private void applyLoadedPlayerState() {
+        if (!ctx.loadPending) return;
+        ctx.loadPending = false;
+        // Spawn resolution already snapped X/Z near the saved column; keep the
+        // exact saved Y (which may differ from the surface probe).
+        player.setPosition(ctx.loadX, ctx.loadY, ctx.loadZ);
+        player.resetVelocity();
+        yaw = ctx.loadYaw;
+        pitch = ctx.loadPitch;
+        playerYaw = yaw;
+        ctx.yaw = yaw;
+        ctx.pitch = pitch;
+        ctx.worldTime = ctx.loadWorldTime;
+        // Restore inventory (non-null entries only).
+        if (ctx.loadInventory != null) {
+            for (int i = 0; i < Math.min(ctx.loadInventory.length, PlayerInventory.INVENTORY_SIZE); i++) {
+                com.voxel.game.ItemDefinitions.ItemStack stack = ctx.loadInventory[i];
+                if (stack != null) {
+                    playerInventory.setSlot(i, stack);
+                } else if (i < PlayerInventory.INVENTORY_SIZE) {
+                    playerInventory.clearSlot(i);
+                }
+            }
+        }
+        // Restore health (clamped to max).
+        float maxHp = player.getMaxHealth();
+        player.setHealth(Math.max(1, Math.min(maxHp, ctx.loadHealth)));
+        // Restore spawn point so death respawns in the saved world.
+        player.setSpawnPoint(new org.joml.Vector3f(player.getPosition()));
+        hud.inventoryUiDirty = true;
+        setStatus("Welcome back to \"" + ctx.saveName + "\"!");
     }
 
     public void setupUi() { hud.setupUi(); }
@@ -817,45 +1260,228 @@ public class Main {
     }
 
     /**
-     * Handles UP/DOWN/ENTER keys during the world-size startup menu.
-     * Called from handleInput() when ctx.worldSizeMenu is true.
+     * Handles UP/DOWN/ENTER/BACKSPACE for the full main-menu state machine
+     * (title screen, new-world wizard, save selection). Called from tick()
+     * while ctx.menuScreen != IN_GAME and the world has not been created yet.
      */
-    private void handleWorldSizeMenuInput() {
+    private void handleMainMenuInput() {
         com.voxel.world.WorldSize[] sizes = com.voxel.world.WorldSize.values();
-        // UP/DOWN navigation (process on key press, not hold)
-        if (menuKeyPressed(GLFW_KEY_UP)) {
-            ctx.worldSizeSelection--;
-            if (ctx.worldSizeSelection < 0) ctx.worldSizeSelection = sizes.length - 1;
-        }
-        if (menuKeyPressed(GLFW_KEY_DOWN)) {
-            ctx.worldSizeSelection++;
-            if (ctx.worldSizeSelection >= sizes.length) ctx.worldSizeSelection = 0;
-        }
-        // ENTER confirms
-        if (menuKeyPressed(GLFW_KEY_ENTER)) {
-            ctx.worldSize = sizes[ctx.worldSizeSelection];
-            ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
-            // Push int bits into the Beta generator before world creation
-            com.voxel.world.WorldGenerator gen = ctx.dimensionManager.getActiveGenerator();
-            if (gen instanceof com.voxel.world.BetaWorldGenerator) {
-                ((com.voxel.world.BetaWorldGenerator) gen).setWorldSize(ctx.worldSize);
+        GameContext.MenuScreen screen = ctx.menuScreen;
+
+        switch (screen) {
+            case MAIN: {
+                // Title screen: New World / Load Save / Theme
+                int optionCount = 3;
+                if (menuKeyPressed(GLFW_KEY_UP)) {
+                    ctx.menuSelection--;
+                    if (ctx.menuSelection < 0) ctx.menuSelection = optionCount - 1;
+                }
+                if (menuKeyPressed(GLFW_KEY_DOWN)) {
+                    ctx.menuSelection++;
+                    if (ctx.menuSelection >= optionCount) ctx.menuSelection = 0;
+                }
+                if (menuKeyPressed(GLFW_KEY_ENTER)) {
+                    switch (ctx.menuSelection) {
+                        case 0: // New World
+                            ctx.menuScreen = GameContext.MenuScreen.NEW_WORLD_NAME;
+                            ctx.menuTextActive = true;
+                            ctx.menuTextInput.setLength(0);
+                            ctx.menuTextInput.append("New World");
+                            break;
+                        case 1: // Load Save
+                            ctx.saveList = com.voxel.world.WorldSaveManager.listSaves();
+                            ctx.saveListSelection = 0;
+                            ctx.menuScreen = GameContext.MenuScreen.LOAD_SAVE;
+                            break;
+                        case 2: // Theme
+                            ctx.uiTheme = ctx.uiTheme == GameContext.UiTheme.DARK
+                                ? GameContext.UiTheme.LIGHT : GameContext.UiTheme.DARK;
+                            break;
+                    }
+                }
+                break;
             }
-            ctx.worldSizeConfirmed = true;
-            ctx.worldSizeMenu = false;
+
+            case NEW_WORLD_NAME: {
+                if (menuKeyPressed(GLFW_KEY_ENTER)) {
+                    String name = ctx.menuTextInput.toString().trim();
+                    if (name.isEmpty()) name = "New World";
+                    // Sanitize: keep folder-safe characters only
+                    name = name.replaceAll("[^a-zA-Z0-9 _-]", "").trim();
+                    if (name.isEmpty()) name = "New World";
+                    ctx.saveName = name;
+                    ctx.menuScreen = GameContext.MenuScreen.NEW_WORLD_SEED;
+                    ctx.menuTextActive = true;
+                    ctx.menuTextInput.setLength(0);
+                }
+                break;
+            }
+
+            case NEW_WORLD_SEED: {
+                if (menuKeyPressed(GLFW_KEY_ENTER)) {
+                    String seedText = ctx.menuTextInput.toString().trim();
+                    if (seedText.isEmpty()) {
+                        ctx.randomSeed = true;
+                        ctx.menuSeed = java.util.concurrent.ThreadLocalRandom.current().nextLong();
+                    } else {
+                        ctx.randomSeed = false;
+                        try {
+                            ctx.menuSeed = Long.parseLong(seedText);
+                        } catch (NumberFormatException e) {
+                            // Support string seeds via hashCode (Minecraft-style)
+                            ctx.menuSeed = seedText.hashCode();
+                        }
+                    }
+                    ctx.worldSizeSelection = 2; // MEDIUM default
+                    ctx.menuScreen = GameContext.MenuScreen.NEW_WORLD_SIZE;
+                    ctx.menuTextActive = false;
+                }
+                break;
+            }
+
+            case NEW_WORLD_SIZE: {
+                if (menuKeyPressed(GLFW_KEY_UP)) {
+                    ctx.worldSizeSelection--;
+                    if (ctx.worldSizeSelection < 0) ctx.worldSizeSelection = sizes.length - 1;
+                }
+                if (menuKeyPressed(GLFW_KEY_DOWN)) {
+                    ctx.worldSizeSelection++;
+                    if (ctx.worldSizeSelection >= sizes.length) ctx.worldSizeSelection = 0;
+                }
+                if (menuKeyPressed(GLFW_KEY_ENTER)) {
+                    ctx.worldSize = sizes[ctx.worldSizeSelection];
+                    ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
+                    ctx.gameMode = GameContext.GameMode.SURVIVAL;
+                    ctx.menuScreen = GameContext.MenuScreen.NEW_WORLD_MODE;
+                }
+                break;
+            }
+
+            case NEW_WORLD_MODE: {
+                if (menuKeyPressed(GLFW_KEY_UP) || menuKeyPressed(GLFW_KEY_DOWN)) {
+                    ctx.gameMode = ctx.gameMode == GameContext.GameMode.SURVIVAL
+                        ? GameContext.GameMode.CREATIVE : GameContext.GameMode.SURVIVAL;
+                }
+                if (menuKeyPressed(GLFW_KEY_ENTER)) {
+                    // Commit the new world: create save manager + seed, then let
+                    // initializeWorldPhase() run on the next tick.
+                    ctx.worldSeed = ctx.randomSeed ? ctx.menuSeed : ctx.menuSeed;
+                    ctx.worldSaveManager = com.voxel.world.WorldSaveManager.forSave(ctx.saveName);
+                    ctx.loadPending = false;
+                    ctx.worldSizeConfirmed = true;
+                    ctx.worldSizeMenu = false;
+                    ctx.menuScreen = GameContext.MenuScreen.IN_GAME;
+                    ctx.menuTextActive = false;
+                    ctx.spawnLoadingMessage = "Generating spawn chunks...";
+                    setStatus("Created world \"" + ctx.saveName + "\" (seed " + ctx.worldSeed + ")");
+                }
+                break;
+            }
+
+            case LOAD_SAVE: {
+                int n = ctx.saveList.size();
+                if (menuKeyPressed(GLFW_KEY_UP) && n > 0) {
+                    ctx.saveListSelection--;
+                    if (ctx.saveListSelection < 0) ctx.saveListSelection = n - 1;
+                }
+                if (menuKeyPressed(GLFW_KEY_DOWN) && n > 0) {
+                    ctx.saveListSelection++;
+                    if (ctx.saveListSelection >= n) ctx.saveListSelection = 0;
+                }
+                if (menuKeyPressed(GLFW_KEY_BACKSPACE) && n > 0) {
+                    String doomed = ctx.saveList.get(ctx.saveListSelection);
+                    com.voxel.world.WorldSaveManager.deleteSave(doomed);
+                    ctx.saveList = com.voxel.world.WorldSaveManager.listSaves();
+                    if (ctx.saveListSelection >= ctx.saveList.size()) {
+                        ctx.saveListSelection = Math.max(0, ctx.saveList.size() - 1);
+                    }
+                    setStatus("Deleted save \"" + doomed + "\"");
+                }
+                if (menuKeyPressed(GLFW_KEY_ENTER) && n > 0) {
+                    String name = ctx.saveList.get(ctx.saveListSelection);
+                    loadSaveIntoContext(name);
+                }
+                if (menuKeyPressed(GLFW_KEY_ESCAPE)) {
+                    ctx.menuScreen = GameContext.MenuScreen.MAIN;
+                    ctx.menuSelection = 1;
+                }
+                break;
+            }
+
+            default:
+                break;
         }
+    }
+
+    /** Loads level.dat metadata + player state from a save into ctx and commits. */
+    private void loadSaveIntoContext(String name) {
+        ctx.saveName = name;
+        ctx.worldSaveManager = com.voxel.world.WorldSaveManager.forSave(name);
+        com.voxel.world.WorldSaveManager.PlayerState ps = ctx.worldSaveManager.loadLevelData(ctx);
+        if (ps != null) {
+            ctx.loadPending = true;
+            ctx.loadX = ps.x;
+            ctx.loadY = ps.y;
+            ctx.loadZ = ps.z;
+            ctx.loadYaw = ps.yaw;
+            ctx.loadPitch = ps.pitch;
+            ctx.loadHealth = ps.health;
+            ctx.loadWorldTime = ctx.worldTime;
+            ctx.loadInventory = ps.inventory;
+        }
+        ctx.worldSizeConfirmed = true;
+        ctx.worldSizeMenu = false;
+        ctx.menuScreen = GameContext.MenuScreen.IN_GAME;
+        ctx.menuTextActive = false;
+        ctx.spawnLoadingMessage = "Loading world...";
+        setStatus("Loading save \"" + name + "\"");
     }
 
     /** Builds the menu text for the loading-screen overlay. */
     private String buildMenuMessage() {
-        com.voxel.world.WorldSize[] sizes = com.voxel.world.WorldSize.values();
-        StringBuilder sb = new StringBuilder("Select World Size:\n\n");
-        for (int i = 0; i < sizes.length; i++) {
-            String marker = (i == ctx.worldSizeSelection) ? "> " : "  ";
-            sb.append(marker).append(sizes[i].displayName())
-              .append(" (").append(sizes[i].intBits()).append("-bit, border ")
-              .append(sizes[i].borderRadius() / 1000).append("K)\n");
+        GameContext.MenuScreen screen = ctx.menuScreen;
+        if (screen == GameContext.MenuScreen.IN_GAME) {
+            return ctx.spawnLoadingMessage;
         }
-        sb.append("\nUP/DOWN to change, ENTER to confirm");
+        StringBuilder sb = new StringBuilder();
+        if (screen == GameContext.MenuScreen.MAIN) {
+            sb.append("VOXEL ENGINE\n\n");
+            String[] options = { "New World", "Load Save", "Theme: " +
+                (ctx.uiTheme == GameContext.UiTheme.DARK ? "Dark" : "Light") };
+            for (int i = 0; i < options.length; i++) {
+                sb.append(ctx.menuSelection == i ? "> " : "  ").append(options[i]).append("\n");
+            }
+            sb.append("\nUP/DOWN select, ENTER confirm, M mouse");
+        } else if (screen == GameContext.MenuScreen.NEW_WORLD_NAME) {
+            sb.append("NEW WORLD — NAME\n\n").append(ctx.menuTextInput).append("_\n\nENTER to continue");
+        } else if (screen == GameContext.MenuScreen.NEW_WORLD_SEED) {
+            sb.append("NEW WORLD — SEED (blank = random)\n\n").append(ctx.menuTextInput).append("_\n\nENTER to continue");
+        } else if (screen == GameContext.MenuScreen.NEW_WORLD_SIZE) {
+            com.voxel.world.WorldSize[] sizes = com.voxel.world.WorldSize.values();
+            sb.append("NEW WORLD — SIZE\n\n");
+            for (int i = 0; i < sizes.length; i++) {
+                String marker = (i == ctx.worldSizeSelection) ? "> " : "  ";
+                sb.append(marker).append(sizes[i].displayName())
+                  .append(" (").append(sizes[i].intBits()).append("-bit, border ")
+                  .append(sizes[i].borderRadius() / 1000).append("K)\n");
+            }
+            sb.append("\nUP/DOWN to change, ENTER to confirm");
+        } else if (screen == GameContext.MenuScreen.NEW_WORLD_MODE) {
+            sb.append("NEW WORLD — MODE\n\n");
+            sb.append(ctx.gameMode == GameContext.GameMode.SURVIVAL ? "> " : "  ").append("Survival\n");
+            sb.append(ctx.gameMode == GameContext.GameMode.CREATIVE ? "> " : "  ").append("Creative\n");
+            sb.append("\nUP/DOWN to change, ENTER to create");
+        } else if (screen == GameContext.MenuScreen.LOAD_SAVE) {
+            sb.append("LOAD SAVE\n\n");
+            if (ctx.saveList.isEmpty()) {
+                sb.append("  (no saves found)\n\nESC to go back");
+            } else {
+                for (int i = 0; i < ctx.saveList.size(); i++) {
+                    sb.append(ctx.saveListSelection == i ? "> " : "  ").append(ctx.saveList.get(i)).append("\n");
+                }
+                sb.append("\nENTER to load, BACKSPACE to delete, ESC back");
+            }
+        }
         return sb.toString();
     }
 
@@ -897,9 +1523,20 @@ public class Main {
     private static final int STALE_CLEANUP_TICK_INTERVAL = 20; // ~1s at 20 TPS
     private int aiUpdateOffset = 0;
     private int staleCleanupCounter = 0;
+    private int autosaveCounter = 0;
 
     public void tick(float dt) {
         if (!running) return;
+
+        // Deferred world + initial-entity init runs once on the logic thread while
+        // Main menu: runs BEFORE the world is created, so the chosen seed / save
+        // slot can be baked into dimension generation. While any menu screen is
+        // active the world does not exist yet — only menu input + rendering run.
+        if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME) {
+            handleMainMenuInput();
+            ctx.spawnLoadingMessage = buildMenuMessage();
+            return;
+        }
 
         // Deferred world + initial-entity init runs once on the logic thread while
         // the spawn-loading overlay is already visible on the GL thread. By the
@@ -908,21 +1545,6 @@ public class Main {
         // been invoked, so the rest of tick() can run normally.
         if (ctx.initializing) {
             initializeWorldPhase();
-        }
-
-        // Startup menu: world exists, but pause gameplay until confirmation
-        if (ctx.worldSizeMenu && !ctx.worldSizeConfirmed) {
-            // Process menu input (must happen before the return below)
-            handleWorldSizeMenuInput();
-            // Push current world size into the Beta generator (safe now that world is live)
-            com.voxel.world.WorldGenerator gen = ctx.dimensionManager != null ? ctx.dimensionManager.getActiveGenerator() : null;
-            if (gen instanceof com.voxel.world.BetaWorldGenerator) {
-                ((com.voxel.world.BetaWorldGenerator) gen).setWorldSize(com.voxel.world.WorldSize.values()[ctx.worldSizeSelection]);
-            }
-            if (world != null) {
-                ctx.spawnLoadingMessage = buildMenuMessage();
-            }
-            return;
         }
 
         syncGameState();
@@ -961,6 +1583,12 @@ public class Main {
         // spawn columns have finished generation/loading.
         if (ctx.spawnLoading) {
             ctx.resolveSpawnAfterChunksGenerated();
+        }
+
+        // A loaded save: once spawn resolution places the player on terrain,
+        // restore the exact saved position / health / inventory / time.
+        if (ctx.loadPending && !ctx.spawnLoading) {
+            applyLoadedPlayerState();
         }
 
         if (chunksReady && !ctx.spawnLoading && !ctx.teleportLoading) {
@@ -1034,8 +1662,8 @@ public class Main {
             playerEntity.syncFromPlayer(player, playerYaw, pitch, cameraMode != CameraMode.FIRST_PERSON, dt);
         }
 
-        // ── Startup world-size menu: update the loading-screen message ──
-        if (ctx.worldSizeMenu) {
+        // ── Startup menu screens refresh the loading-screen message ──
+        if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME) {
             ctx.spawnLoadingMessage = buildMenuMessage();
         }
 
@@ -1322,9 +1950,13 @@ public class Main {
             redstoneManager.tickLamps();
             // Kinetic network evaluates after the redstone pass so clutch/gearshift
             // power states reflect the latest network.
+            if (ctx.machineManager != null) {
+                ctx.machineManager.tick(dt);
+            }
             if (ctx.kineticManager != null) {
                 ctx.kineticManager.tick();
             }
+            updateMachineLookInfo();
             ctx.commandBlockManager.tick(ctx, dt);
         }
 
@@ -1369,6 +2001,18 @@ public class Main {
                 FixedPoint.fromFloat(ctx.mapPanX),
                 FixedPoint.fromFloat(mapCamY),
                 FixedPoint.fromFloat(ctx.mapPanY), 0f);
+        }
+
+        // Periodic auto-save: write level.dat (player state + metadata) every
+        // 10 seconds so crashes lose at most a few moments of progress.
+        if (++autosaveCounter >= 200) {
+            autosaveCounter = 0;
+            if (ctx.worldSaveManager != null && player != null && playerInventory != null) {
+                ctx.worldSaveManager.saveLevelData(ctx, player, playerInventory);
+                if (ctx.machineManager != null) {
+                    ctx.worldSaveManager.saveMachineData(ctx.activeDimension, ctx.machineManager);
+                }
+            }
         }
 
         // Record wall-clock time for render-thread interpolation
@@ -1728,6 +2372,12 @@ public class Main {
             for (UILayer layer : hud.uiLayers) layer.render(hud.uiManager);
             hud.uiManager.end();
 
+            // Release the menu panorama's CPU scene once a world is committed
+            // (its SSBOs were already replaced by the real world's upload).
+            if (panoramaWorld != null && ctx.menuScreen == GameContext.MenuScreen.IN_GAME) {
+                panoramaWorld = null;
+            }
+
             // --- Compute partial ticks for smooth interpolation between logic ticks ---
             long nowNanos = System.nanoTime();
             float elapsedSinceLogic = (nowNanos - lastLogicTickNanos) / 1e9f;
@@ -1752,7 +2402,12 @@ public class Main {
             // Same gate as block A above: world / chunkManager / entityManager
             // are only safe to read AFTER initializeWorldPhase() finishes (see
             // the volatile ctx.initializing flag).
-            if (!ctx.initializing) {
+            if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME && panoramaActive) {
+                // 3D main-menu panorama: the raytracer renders the hand-crafted
+                // scene with a slowly orbiting camera and composites the menu UI
+                // (u_UITexture) on top — the same path used in-world.
+                renderMenuPanorama(Math.min(dt, 0.1f));
+            } else if (!ctx.initializing) {
             // World buffer origin — used to make all shader positions buffer-relative
             int wox = world.getOffsetX(), woy = world.getOffsetY(), woz = world.getOffsetZ();
 
@@ -1997,14 +2652,17 @@ public class Main {
             glBindVertexArray(quadVAO);
             glDrawArrays(GL_TRIANGLES, 0, 6);
             } else {
-                // Loading-screen-only frame: clear to a known background and
-                // draw the quad over renderTexture (still zero-initialized at
-                // this point). HudUI's spawn-loading overlay covers the screen.
+                // Loading-screen-only frame: the UI texture already holds the
+                // current full-screen overlay (main-menu panorama + title, or the
+                // spawn-loading artwork during world creation), so present it
+                // directly through the quad. The raytracer that normally
+                // composites the UI cannot run while the world is still
+                // initializing — without this the menu phase would be black.
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
                 glViewport(0, 0, width, height);
                 glClear(GL_COLOR_BUFFER_BIT);
                 glUseProgram(quadProgram);
-                glBindTextureUnit(0, renderTexture);
+                glBindTextureUnit(0, hud.uiManager.getUITexture());
                 glUniform1i(locQuadPass, 0);
                 if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 0);
                 glBindVertexArray(quadVAO);
@@ -2025,7 +2683,25 @@ public class Main {
         // Ignore input callbacks while the early loading frame is being presented.
         // The normal loop will begin polling once all dependent state exists.
         if (ctx == null || player == null) return;
+        // Menu screens own the keyboard (world does not exist yet). The menu
+        // keys are polled by the logic thread, but block gameplay hotkeys here.
+        if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME) return;
         if (action == GLFW_PRESS) {
+            // Creative picker search: BACKSPACE edits the filter.
+            if (ctx.creativeMenuOpen && inventoryOpen) {
+                if (key == GLFW_KEY_BACKSPACE && ctx.creativeSearch.length() > 0) {
+                    ctx.creativeSearch.deleteCharAt(ctx.creativeSearch.length() - 1);
+                    hud.inventoryUiDirty = true;
+                }
+                return;
+            }
+            // Menu text fields: BACKSPACE edits the active buffer.
+            if (ctx.menuTextActive && ctx.menuScreen != GameContext.MenuScreen.IN_GAME) {
+                if (key == GLFW_KEY_BACKSPACE && ctx.menuTextInput.length() > 0) {
+                    ctx.menuTextInput.deleteCharAt(ctx.menuTextInput.length() - 1);
+                }
+                return;
+            }
             if (commandMode) {
                 handleCommandModeKey(key);
                 return;
@@ -2067,8 +2743,13 @@ public class Main {
                     setStatus("Dismounted minecart");
                     return;
                 }
-                toggleInventory();
-                showSelectedItemName();
+                // Creative mode opens the item picker instead of the survival bag.
+                if (gameMode == GameMode.CREATIVE) {
+                    toggleCreativeMenu();
+                } else {
+                    toggleInventory();
+                    showSelectedItemName();
+                }
                 return;
             }
 
@@ -2234,6 +2915,21 @@ public class Main {
     }
 
     public void handleCharInput(long win, int codepoint) {
+        // Creative picker search box accepts typed characters.
+        if (ctx != null && ctx.creativeMenuOpen && inventoryOpen) {
+            if (codepoint >= 32 && codepoint <= 126 && ctx.creativeSearch.length() < 32) {
+                ctx.creativeSearch.append((char) codepoint);
+                hud.inventoryUiDirty = true;
+            }
+            return;
+        }
+        // Main-menu text fields (world name / seed) accept typed characters.
+        if (ctx != null && ctx.menuTextActive && ctx.menuScreen != GameContext.MenuScreen.IN_GAME) {
+            if (codepoint >= 32 && codepoint <= 126 && ctx.menuTextInput.length() < 64) {
+                ctx.menuTextInput.append((char) codepoint);
+            }
+            return;
+        }
         if (ctx != null && ctx.commandBlockEditorOpen) {
             if (codepoint >= 32 && codepoint <= 126 && ctx.commandBlockEditorCommand.length() < 512) {
                 ctx.commandBlockEditorCommand += (char) codepoint;
@@ -2247,6 +2943,14 @@ public class Main {
     }
 
     public void handleCursorMoved(long win, double xpos, double ypos) {
+        // Menu screens have no camera to turn; just track the cursor position.
+        if (ctx != null && ctx.menuScreen != GameContext.MenuScreen.IN_GAME) {
+            lastMouseX = (float) xpos;
+            lastMouseY = (float) ypos;
+            ctx.lastMouseX = lastMouseX;
+            ctx.lastMouseY = lastMouseY;
+            return;
+        }
         if (firstMouse) {
             lastMouseX = (float) xpos;
             lastMouseY = (float) ypos;
@@ -2305,11 +3009,18 @@ public class Main {
 
     public void handleScroll(long win, double xoffset, double yoffset) {
         scrollDelta += (float) yoffset;
+        // Creative picker grid scrolls with the wheel.
+        if (ctx != null && ctx.creativeMenuOpen && inventoryOpen && yoffset != 0) {
+            ctx.creativeScroll = Math.max(0, ctx.creativeScroll + (int) Math.signum(-yoffset));
+            hud.inventoryUiDirty = true;
+        }
     }
 
     public void handleMouseButton(long win, int button, int action, int mods) {
         // Mouse callbacks may arrive before the game context/UI are ready.
         if (ctx == null || player == null || blockInteraction == null) return;
+        // During menu screens the world does not exist; clicks must not raycast.
+        if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME) return;
 
         // Map drag pan: LEFT or RIGHT mouse both pan (like Google Maps). A
         // left press first tries the map overlay buttons (zoom/reset/center);
@@ -2435,6 +3146,33 @@ public class Main {
         setInventoryOpen(!inventoryOpen);
     }
 
+    /** Opens/closes the creative item picker (E in creative mode). */
+    public void toggleCreativeMenu() {
+        hud.inventoryUiDirty = true;
+        boolean open = !ctx.creativeMenuOpen;
+        ctx.creativeMenuOpen = open;
+        ctx.activeUI = open ? GameContext.ActiveUI.INVENTORY : GameContext.ActiveUI.NONE;
+        setInventoryOpen(open);
+        ctx.creativeSearch.setLength(0);
+        ctx.creativeScroll = 0;
+        updateCursorMode();
+    }
+
+    /** Adds a stack of the given item via the creative picker. */
+    public void creativeGiveItem(String itemId) {
+        if (itemId == null) return;
+        ItemDefinitions.ItemDefinition def = itemDefinitions.getDefinition(itemId);
+        if (def == null) return;
+        int amount = def.maxStack;
+        boolean added = playerInventory.addItem(itemId, amount);
+        if (!added && def.kind == ItemDefinitions.ItemKind.BLOCK) {
+            // Try at least one when full
+            playerInventory.addItem(itemId, 1);
+        }
+        hud.inventoryUiDirty = true;
+        setStatus("Given " + def.displayName + " x" + amount);
+    }
+
     public void toggleCameraMode() {
         CameraMode[] modes = CameraMode.values();
         int currentOrdinal = cameraMode.ordinal();
@@ -2448,12 +3186,55 @@ public class Main {
         setStatus("Camera: " + modeName);
     }
 
+    /**
+     * Goggles overlay: when the selected item is the goggles, describe the
+     * machine under the crosshair (name + power state). Runs on the logic
+     * thread; HudUI renders {@code ctx.machineLookInfo}.
+     */
+    private void updateMachineLookInfo() {
+        ctx.machineLookInfo = "";
+        if (ctx.machineManager == null || ctx.world == null || ctx.playerInventory == null) return;
+        if (ctx.inventoryOpen || ctx.commandMode) return;
+        com.voxel.game.ItemDefinitions.ItemStack sel = ctx.playerInventory.getSelected();
+        if (sel == null || !"goggles".equals(sel.itemId)) return;
+        int[] hit = blockInteraction.raycastBlock(6.0f);
+        if (hit == null) return;
+        int b = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
+        if (b <= 0) return;
+        String name = machineDisplayName(b);
+        if (name == null) return;
+        String state = ctx.machineManager.isMachinePowered(hit[0], hit[1], hit[2]) ? "Powered" : "Idle";
+        ctx.machineLookInfo = name + " — " + state;
+    }
+
+    /** Display name for Create machine blocks, or null for non-machines. */
+    private static String machineDisplayName(int block) {
+        switch (block) {
+            case 404: return "Hand Crank";
+            case 405: return "Windmill Bearing";
+            case 406: return "Windmill Sail";
+            case 407: return "Mechanical Press";
+            case 408: return "Millstone";
+            case 409: return "Crushing Wheel";
+            case 410: return "Mechanical Drill";
+            case 411: return "Mechanical Saw";
+            case 412: return "Deployer";
+            case 413: return "Mechanical Belt";
+            case 414: return "Item Vault";
+            case 415: return "Brass Casing";
+            default: return null;
+        }
+    }
+
     public void setInventoryOpen(boolean open) {
         hud.inventoryUiDirty = true;
         inventoryOpen = open;
         ctx.inventoryOpen = open;
         if (open) {
             ctx.leftMousePressedThisFrame = false; // prevent stale press from world
+        }
+        if (!open) {
+            ctx.creativeMenuOpen = false; // closing inventory always closes the picker
         }
         if (!open) {
             // Save surface-crafting grid before closing. Its ingredients remain
@@ -2493,7 +3274,8 @@ public class Main {
     }
 
     public void updateCursorMode() {
-        boolean freeCursor = inventoryOpen || commandMode || ctx.mapOpen;
+        boolean inMenu = ctx != null && ctx.menuScreen != GameContext.MenuScreen.IN_GAME;
+        boolean freeCursor = inMenu || inventoryOpen || commandMode || ctx.mapOpen;
         glfwSetInputMode(window, GLFW_CURSOR, freeCursor ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
         if (freeCursor) {
             // Resync the tracked cursor position with the OS position. After
@@ -3553,6 +4335,66 @@ public class Main {
             shaderBlockRegistry.register(id, id);
             blockDataManager.registerBlock(id, modelFile, textureManager, mcModels);
         }
+
+        // --- Create machines (404-415) ---
+        blockRegistry.register("hand_crank", 404);
+        shaderBlockRegistry.register(404, 404);
+        blockDataManager.registerBlock(404, "hand_crank", textureManager, mcModels);
+        blockDataManager.setFullBlock(404, false);
+        blockRegistry.register("windmill_bearing", 405);
+        shaderBlockRegistry.register(405, 405);
+        blockDataManager.registerBlock(405, "windmill_bearing", textureManager, mcModels);
+        blockRegistry.register("windmill_sail", 406);
+        shaderBlockRegistry.register(406, 406);
+        blockDataManager.registerBlock(406, "windmill_sail", textureManager, mcModels);
+        blockRegistry.register("mechanical_press", 407);
+        shaderBlockRegistry.register(407, 407);
+        blockDataManager.registerBlock(407, "mechanical_press", textureManager, mcModels);
+        blockRegistry.register("millstone", 408);
+        shaderBlockRegistry.register(408, 408);
+        blockDataManager.registerBlock(408, "millstone", textureManager, mcModels);
+        blockRegistry.register("crushing_wheel", 409);
+        shaderBlockRegistry.register(409, 409);
+        blockDataManager.registerBlock(409, "crushing_wheel", textureManager, mcModels);
+        blockRegistry.register("mechanical_drill", 410);
+        shaderBlockRegistry.register(410, 410);
+        blockDataManager.registerBlock(410, "mechanical_drill", textureManager, mcModels);
+        blockRegistry.register("mechanical_saw", 411);
+        shaderBlockRegistry.register(411, 411);
+        blockDataManager.registerBlock(411, "mechanical_saw", textureManager, mcModels);
+        blockRegistry.register("deployer", 412);
+        shaderBlockRegistry.register(412, 412);
+        blockDataManager.registerBlock(412, "deployer", textureManager, mcModels);
+        blockRegistry.register("belt_conveyor", 413);
+        shaderBlockRegistry.register(413, 413);
+        blockDataManager.registerBlock(413, "belt_conveyor", textureManager, mcModels);
+        blockDataManager.setFullBlock(413, false);
+        blockRegistry.register("item_vault", 414);
+        shaderBlockRegistry.register(414, 414);
+        blockDataManager.registerBlock(414, "item_vault", textureManager, mcModels);
+        blockRegistry.register("brass_casing", 415);
+        shaderBlockRegistry.register(415, 415);
+        blockDataManager.registerBlock(415, "brass_casing", textureManager, mcModels);
+
+        // --- Create tools & materials (416-421) ---
+        blockRegistry.register("item_wrench", 416);
+        shaderBlockRegistry.register(416, 416);
+        blockDataManager.registerBlock(416, "item_wrench", textureManager, mcModels);
+        blockRegistry.register("item_drop_wrench", 417);
+        shaderBlockRegistry.register(417, 417);
+        blockDataManager.registerBlock(417, "item_drop_wrench", textureManager, mcModels);
+        blockRegistry.register("item_goggles", 418);
+        shaderBlockRegistry.register(418, 418);
+        blockDataManager.registerBlock(418, "item_goggles", textureManager, mcModels);
+        blockRegistry.register("item_drop_goggles", 419);
+        shaderBlockRegistry.register(419, 419);
+        blockDataManager.registerBlock(419, "item_drop_goggles", textureManager, mcModels);
+        blockRegistry.register("item_brass_ingot", 420);
+        shaderBlockRegistry.register(420, 420);
+        blockDataManager.registerBlock(420, "item_brass_ingot", textureManager, mcModels);
+        blockRegistry.register("item_drop_brass_ingot", 421);
+        shaderBlockRegistry.register(421, 421);
+        blockDataManager.registerBlock(421, "item_drop_brass_ingot", textureManager, mcModels);
 
         // Register shader state variants for directional and on/off blocks
         shaderBlockRegistry.registerOnOff(28, true, 30);

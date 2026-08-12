@@ -279,6 +279,23 @@ public class ItemDefinitions {
         blockItemByBlockId.put(354, "clutch");
         registerBlock("gearshift", "Gearshift", 355, "gearshift_off");
         blockItemByBlockId.put(356, "gearshift");
+        // --- Create machines (404-415) ---
+        registerBlock("hand_crank", "Hand Crank", 404, "hand_crank");
+        registerBlock("windmill_bearing", "Windmill Bearing", 405, "windmill_bearing");
+        registerBlock("windmill_sail", "Windmill Sail", 406, "windmill_sail");
+        registerBlock("mechanical_press", "Mechanical Press", 407, "mechanical_press");
+        registerBlock("millstone", "Millstone", 408, "millstone");
+        registerBlock("crushing_wheel", "Crushing Wheel", 409, "crushing_wheel");
+        registerBlock("mechanical_drill", "Mechanical Drill", 410, "mechanical_drill");
+        registerBlock("mechanical_saw", "Mechanical Saw", 411, "mechanical_saw");
+        registerBlock("deployer", "Deployer", 412, "deployer");
+        registerBlock("belt_conveyor", "Mechanical Belt", 413, "belt_conveyor");
+        registerBlock("item_vault", "Item Vault", 414, "item_vault");
+        registerBlock("brass_casing", "Brass Casing", 415, "brass_casing");
+        // --- Create tools & materials (416-421) ---
+        registerItemBlock("wrench", "Wrench", "wrench", 416, 417, ToolType.HAND, 1.0f, 1, 0);
+        registerItemBlock("goggles", "Goggles", "goggles", 418, 419, ToolType.HAND, 1.0f, 1, 0);
+        registerItemBlock("brass_ingot", "Brass Ingot", "brass_ingot", 420, 421, ToolType.HAND, 1.0f, 64, 0);
         // --- Dyes + nether quartz ---
         String[] dyeColors = {"white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
                               "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"};

@@ -45,6 +45,19 @@ public class KineticManager {
     // Active engines are rotation sources, like spinning water wheels.
     public static final int BLOCK_STEAM_ENGINE = BlazeBurnerManager.BLOCK_STEAM_ENGINE;
     public static final int BLOCK_STEAM_ENGINE_ACTIVE = BlazeBurnerManager.BLOCK_STEAM_ENGINE_ACTIVE;
+    // Create machines (404-413): hand crank and windmill bearing are rotation
+    // sources (via CreateMachineManager); the rest propagate rotation and use it
+    // to do work. Windmill sails (406), item vault (414) and brass casing (415)
+    // are NOT kinetic.
+    public static final int BLOCK_HAND_CRANK = com.voxel.game.CreateMachineManager.BLOCK_HAND_CRANK;
+    public static final int BLOCK_WINDMILL_BEARING = com.voxel.game.CreateMachineManager.BLOCK_WINDMILL_BEARING;
+    public static final int BLOCK_MECHANICAL_PRESS = com.voxel.game.CreateMachineManager.BLOCK_MECHANICAL_PRESS;
+    public static final int BLOCK_MILLSTONE = com.voxel.game.CreateMachineManager.BLOCK_MILLSTONE;
+    public static final int BLOCK_CRUSHING_WHEEL = com.voxel.game.CreateMachineManager.BLOCK_CRUSHING_WHEEL;
+    public static final int BLOCK_MECHANICAL_DRILL = com.voxel.game.CreateMachineManager.BLOCK_MECHANICAL_DRILL;
+    public static final int BLOCK_MECHANICAL_SAW = com.voxel.game.CreateMachineManager.BLOCK_MECHANICAL_SAW;
+    public static final int BLOCK_DEPLOYER = com.voxel.game.CreateMachineManager.BLOCK_DEPLOYER;
+    public static final int BLOCK_BELT_CONVEYOR = com.voxel.game.CreateMachineManager.BLOCK_BELT_CONVEYOR;
 
     // Voxel flag bits (bits 24-25 of the packed int)
     public static final int FLAG_SPINNING = 1;
@@ -60,7 +73,9 @@ public class KineticManager {
         return (block >= BLOCK_SHAFT && block <= BLOCK_WATER_WHEEL)
             || block == BLOCK_CLUTCH || block == BLOCK_CLUTCH_ON
             || block == BLOCK_GEARSHIFT || block == BLOCK_GEARSHIFT_ON
-            || block == BLOCK_STEAM_ENGINE || block == BLOCK_STEAM_ENGINE_ACTIVE;
+            || block == BLOCK_STEAM_ENGINE || block == BLOCK_STEAM_ENGINE_ACTIVE
+            || block == BLOCK_HAND_CRANK || block == BLOCK_WINDMILL_BEARING
+            || (block >= BLOCK_MECHANICAL_PRESS && block <= BLOCK_BELT_CONVEYOR);
     }
 
     public static boolean isClutch(int block) {
@@ -78,6 +93,12 @@ public class KineticManager {
     private final World world;
     private final ChunkManager chunkManager;
     private final RedstoneManager redstoneManager;
+    /** Provides crank/windmill source state (may be null). */
+    private com.voxel.game.CreateMachineManager machineManager;
+
+    public void setMachineManager(com.voxel.game.CreateMachineManager machineManager) {
+        this.machineManager = machineManager;
+    }
 
     private final Set<Long> kineticPositions = ConcurrentHashMap.newKeySet();
     // Concurrent: onBlockChanged runs on the GL thread while tick()/writeFlags run on
@@ -175,7 +196,9 @@ public class KineticManager {
             int x = unpackX(key), y = unpackY(key), z = unpackZ(key);
             int block = world.getVoxel(x, y, z);
             boolean isSource = (block == BLOCK_WATER_WHEEL && hasAdjacentWater(x, y, z))
-                || block == BLOCK_STEAM_ENGINE_ACTIVE;
+                || block == BLOCK_STEAM_ENGINE_ACTIVE
+                || (block == BLOCK_HAND_CRANK && machineManager != null && machineManager.isCrankSpinning(x, y, z))
+                || (block == BLOCK_WINDMILL_BEARING && machineManager != null && machineManager.isWindmillSpinning(x, y, z));
             if (isSource) {
                 bfsNetwork(x, y, z, visited);
             }
@@ -215,7 +238,11 @@ public class KineticManager {
         lastFlags.put(key, flags);
         int block = world.getVoxel(x, y, z);
         if (block > 0) {
-            chunkManager.setVoxelWithFlags(x, y, z, block, 0, flags);
+            // Preserve extra data (bits 16-23) — directional machines like the
+            // encased fan, belt, drill, saw, deployer and crusher store their
+            // facing there, and a spinning network must not wipe it.
+            int existingExtra = (world.getRawVoxel(x, y, z) >> 16) & 0xFF;
+            chunkManager.setVoxelWithFlags(x, y, z, block, existingExtra, flags);
         }
     }
 

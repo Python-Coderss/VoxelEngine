@@ -36,7 +36,8 @@ public final class DroppedItem {
     /** Cached blockId for renderer; -1 if item has no registered block (e.g. tool). */
     public final int blockId;
     public final float bobPhase;
-    public final int count;
+    /** Stack size. Mutable — machines (millstone/press/crusher) can consume part of a stack. */
+    public int count;
     /** Spawn time (System.nanoTime) so each item spins independently from its drop instant. */
     public final long spawnTimeNs;
     /** Toggled false by pickup on the logic thread; read by the render thread's
