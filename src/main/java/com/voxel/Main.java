@@ -193,12 +193,14 @@ public class Main {
 
     public com.voxel.camera.CameraController cameraController;
     public com.voxel.ui.HudUI hud;
+    public com.voxel.game.WorldMapRenderer mapRenderer;
 
     public int width = 1280, height = 720;
     public final int CHUNK_SIZE = 16, REGION_SIZE = 128;
 
     public float lastMouseX = width / 2f, lastMouseY = height / 2f;
     public boolean firstMouse = true;
+    public float scrollDelta = 0f; // accumulated scroll for map zoom
     public float yaw = -90, pitch = 0;
     public float playerYaw = -90;
 
@@ -319,6 +321,7 @@ public class Main {
         glfwSetCharCallback(window, this::handleCharInput);
         glfwSetCursorPosCallback(window, this::handleCursorMoved);
         glfwSetMouseButtonCallback(window, this::handleMouseButton);
+        glfwSetScrollCallback(window, this::handleScroll);
 
         glfwMakeContextCurrent(window);
         glfwSwapInterval(0);
@@ -455,6 +458,18 @@ public class Main {
 
         hud = new com.voxel.ui.HudUI(ctx, this, cameraController, playerInventory, textureManager, itemDefinitions, biomeManager);
         setupUi();
+        // World map renderer (top-down view, M to toggle)
+        mapRenderer = new com.voxel.game.WorldMapRenderer();
+        int mapTex = glGenTextures();
+        glBindTexture(GL_TEXTURE_2D, mapTex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, mapRenderer.getTexSize(), mapRenderer.getTexSize(), 0, GL_RGBA, GL_UNSIGNED_BYTE, (java.nio.ByteBuffer) null);
+        mapRenderer.setTextureId(mapTex);
+        ctx.mapTexId = mapTex;
+
         ctx.initializing = true;
         ctx.spawnLoadingMessage = "Initializing world...";
 
@@ -850,6 +865,15 @@ public class Main {
         boolean now = glfwGetKey(window, key) == GLFW_PRESS;
         boolean wasDown = menuKeysDown.get(key);
         menuKeysDown.set(key, now);
+        return now && !wasDown;
+    }
+
+    /** Edge-detecting key press for map controls (separate from menu). */
+    private final java.util.BitSet mapKeysDown = new java.util.BitSet(512);
+    private boolean keyJustPressed(int key) {
+        boolean now = glfwGetKey(window, key) == GLFW_PRESS;
+        boolean wasDown = mapKeysDown.get(key);
+        mapKeysDown.set(key, now);
         return now && !wasDown;
     }
 
@@ -1321,11 +1345,51 @@ public class Main {
         chunkManager.requestLookAheadFixed(
             player.getFixedX(), player.getFixedY(), player.getFixedZ(), yaw, pitch);
 
+        // ── Map: also load chunks around the map's top-down camera ──
+        if (ctx.mapOpen) {
+            chunkManager.updateFixedPosition(
+                FixedPoint.fromFloat(ctx.mapPanX),
+                FixedPoint.fromFloat(500f),
+                FixedPoint.fromFloat(ctx.mapPanY), 0f);
+        }
+
         // Record wall-clock time for render-thread interpolation
         lastLogicTickNanos = System.nanoTime();
     }
 
     public void handleInput(float dt) {
+        // ── Map controls: WASD/arrows pan, +/- zoom, scroll zoom, left-drag pan ──
+        if (ctx.mapOpen) {
+            // Keyboard pan: WASD or arrow keys
+            float panSpeed = ctx.mapZoom * 8f;
+            if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
+                ctx.mapPanY -= panSpeed;
+            if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
+                ctx.mapPanY += panSpeed;
+            if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
+                ctx.mapPanX -= panSpeed;
+            if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+                ctx.mapPanX += panSpeed;
+            // Keyboard zoom: +/- step by 0.5
+            if (keyJustPressed(GLFW_KEY_EQUAL) || keyJustPressed(GLFW_KEY_KP_ADD))
+                ctx.mapZoom = Math.max(0.25f, ctx.mapZoom - 0.5f);
+            if (keyJustPressed(GLFW_KEY_MINUS) || keyJustPressed(GLFW_KEY_KP_SUBTRACT))
+                ctx.mapZoom = Math.min(16f, ctx.mapZoom + 0.5f);
+            // Scroll zoom: smooth multiplier
+            if (scrollDelta != 0f) {
+                ctx.mapZoom = Math.max(0.25f, Math.min(16f, ctx.mapZoom * (1f - scrollDelta * 0.15f)));
+                scrollDelta = 0f;
+            }
+            // Mouse drag pan
+            if (leftMouseHeld) {
+                float dx = (float)(lastMouseX - (width / 2f));
+                float dy = (float)(lastMouseY - (height / 2f));
+                ctx.mapPanX += dx * ctx.mapZoom * 0.3f;
+                ctx.mapPanY -= dy * ctx.mapZoom * 0.3f;
+            }
+            return;
+        }
+        
         if (inventoryOpen || commandMode || player.isDead() || ctx.craftingCutsceneActive || ctx.tvCutsceneActive || ctx.furnaceCutsceneActive) return;
 
         // Compute forward/right vectors early (needed for dodge roll and movement)
@@ -1635,6 +1699,12 @@ public class Main {
             // Camera uses interpolated player position
             Vector3f cameraPos = cameraController.getActiveCameraPosition(playerPartialTicks);
 
+            // ── Map: orthogonal top-down camera at y=500 ──
+            if (ctx.mapOpen) {
+                cameraPos = new Vector3f(ctx.mapPanX, 500f, ctx.mapPanY);
+                yaw = 0f; pitch = -90f;
+            }
+
             // Same gate as block A above: world / chunkManager / entityManager
             // are only safe to read AFTER initializeWorldPhase() finishes (see
             // the volatile ctx.initializing flag).
@@ -1689,7 +1759,7 @@ public class Main {
             int cbx, cby, cbz;
             float cfx, cfy, cfz;
             boolean detachedCamera = ctx.craftingCutsceneActive || ctx.craftingTableOpen
-                || ctx.furnaceCutsceneActive;
+                || ctx.furnaceCutsceneActive || ctx.mapOpen;
             if (cameraMode == CameraMode.FIRST_PERSON && !detachedCamera) {
                 // Interpolate in pure fixed-point (no float→long precision loss)
                 long px = FixedPoint.lerp(player.getFixedPrevX(), player.getFixedX(), playerPartialTicks);
@@ -1958,6 +2028,21 @@ public class Main {
                 return;
             }
 
+            if (key == GLFW_KEY_M) {
+                if (ctx.mapOpen) {
+                    ctx.mapOpen = false; ctx.activeUI = GameContext.ActiveUI.NONE;
+                    needsCursorUpdate = true; setStatus("");
+                } else {
+                    ctx.mapOpen = true; ctx.activeUI = GameContext.ActiveUI.MAP;
+                    // Reset pan to player position on open
+                    ctx.mapPanX = player.getPosition().x;
+                    ctx.mapPanY = player.getPosition().z;
+                    needsCursorUpdate = true;
+                    setStatus("Map — scroll to zoom, drag to pan, M to close");
+                }
+                return;
+            }
+
             if (key == GLFW_KEY_C) {
                 combatMode = !combatMode;
                 ctx.combatMode = combatMode;
@@ -2153,6 +2238,10 @@ public class Main {
         ctx.pitch = pitch;
     }
 
+    public void handleScroll(long win, double xoffset, double yoffset) {
+        scrollDelta += (float) yoffset;
+    }
+
     public void handleMouseButton(long win, int button, int action, int mods) {
         // Mouse callbacks may arrive before the game context/UI are ready.
         if (ctx == null || player == null || blockInteraction == null) return;
@@ -2314,7 +2403,7 @@ public class Main {
     }
 
     public void updateCursorMode() {
-        boolean freeCursor = inventoryOpen || commandMode;
+        boolean freeCursor = inventoryOpen || commandMode || ctx.mapOpen;
         glfwSetInputMode(window, GLFW_CURSOR, freeCursor ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
         if (freeCursor) {
             // Resync the tracked cursor position with the OS position. After
