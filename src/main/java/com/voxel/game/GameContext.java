@@ -224,6 +224,18 @@ public class GameContext {
     public float mapZoom = 1.0f;       // blocks-per-pixel scale (higher = zoomed out)
     public float mapPanX = 0f, mapPanY = 0f;  // world coords at map centre
     public int mapTexId = 0;            // OpenGL texture ID for the map image
+    // Smooth zoom interpolation: target is what the controls change, display is
+    // what the camera/UI read (lerped toward target each tick).
+    public float mapTargetZoom = 1.0f;
+    public float mapDisplayZoom = 1.0f;
+    // Right-click drag state (map open only)
+    public boolean mapDragging = false;
+    public float mapDragStartX, mapDragStartY;
+    public float mapDragPanStartX, mapDragPanStartY;
+    // Map UI readouts
+    public float mapCompassAngle = 0f;   // compass needle rotation (radians)
+    public String mapCoordinateText = "";
+    public float mapCoordinateUpdateTimer = 0f;
 
     // --- Villager TV ---
     public VillagerTVSystem tvSystem;

@@ -87,6 +87,13 @@ public class HudUI {
     public UILayer.UITextElement commandTextElement;
     public UILayer.UITextElement statusTextElement;
 
+    // ── Map overlay elements ──
+    public UILayer.UIElement mapPanelBg;
+    public UILayer.UIElement mapZoomInBtn, mapZoomOutBtn, mapCenterBtn, mapResetBtn;
+    public UILayer.UITextElement mapZoomInText, mapZoomOutText, mapCenterText, mapResetText;
+    public UILayer.UITextElement mapCoordinateText;
+    public UILayer.UITextElement mapControlsHelpText;
+
     // ── TV overlay elements ──
     public UILayer.UIElement tvOverlayBg;
     public UILayer.UITextElement tvChannelNameText;
@@ -107,6 +114,7 @@ public class HudUI {
 
     public boolean prevInventoryOpenForUi = false;
     public boolean prevCommandModeForUi = false;
+    public boolean prevMapOpenForUi = false;
     public int prevSelectedSlot = -1;
     public float prevHealth = -1;
 
@@ -526,6 +534,121 @@ public class HudUI {
         statusTextElement.visible = false;
         layer.addElement(statusTextElement);
 
+        // ── Map overlay UI elements (top-right control panel) ──
+        mapPanelBg = new UILayer.UIElement(
+            new Vector2f(main.width - 230, 12),
+            new Vector2f(218, 208),
+            new Vector4f(0.06f, 0.08f, 0.12f, 0.88f)
+        );
+        mapPanelBg.visible = false;
+        layer.addElement(mapPanelBg);
+
+        // Zoom In button
+        mapZoomInBtn = new UILayer.UIElement(
+            new Vector2f(main.width - 220, 84),
+            new Vector2f(64, 40),
+            new Vector4f(0.16f, 0.55f, 0.35f, 0.95f)
+        );
+        mapZoomInBtn.visible = false;
+        mapZoomInBtn.onClick = () -> { ctx.mapTargetZoom = Math.max(0.25f, ctx.mapTargetZoom - 0.5f); };
+        layer.addElement(mapZoomInBtn);
+
+        mapZoomInText = new UILayer.UITextElement(
+            new Vector2f(main.width - 196, 93),
+            "+",
+            2.2f,
+            new Vector4f(1, 1, 1, 1),
+            fontTextureId
+        );
+        mapZoomInText.visible = false;
+        layer.addElement(mapZoomInText);
+
+        // Zoom Out button
+        mapZoomOutBtn = new UILayer.UIElement(
+            new Vector2f(main.width - 150, 84),
+            new Vector2f(64, 40),
+            new Vector4f(0.16f, 0.55f, 0.35f, 0.95f)
+        );
+        mapZoomOutBtn.visible = false;
+        mapZoomOutBtn.onClick = () -> { ctx.mapTargetZoom = Math.min(16f, ctx.mapTargetZoom + 0.5f); };
+        layer.addElement(mapZoomOutBtn);
+
+        mapZoomOutText = new UILayer.UITextElement(
+            new Vector2f(main.width - 126, 93),
+            "-",
+            2.2f,
+            new Vector4f(1, 1, 1, 1),
+            fontTextureId
+        );
+        mapZoomOutText.visible = false;
+        layer.addElement(mapZoomOutText);
+
+        // Reset Zoom button
+        mapResetBtn = new UILayer.UIElement(
+            new Vector2f(main.width - 220, 132),
+            new Vector2f(134, 36),
+            new Vector4f(0.55f, 0.45f, 0.2f, 0.95f)
+        );
+        mapResetBtn.visible = false;
+        mapResetBtn.onClick = () -> { ctx.mapTargetZoom = 1.0f; };
+        layer.addElement(mapResetBtn);
+
+        mapResetText = new UILayer.UITextElement(
+            new Vector2f(main.width - 186, 141),
+            "RESET ZOOM",
+            1.5f,
+            new Vector4f(1, 1, 1, 1),
+            fontTextureId
+        );
+        mapResetText.visible = false;
+        layer.addElement(mapResetText);
+
+        // Center on Player button
+        mapCenterBtn = new UILayer.UIElement(
+            new Vector2f(main.width - 220, 176),
+            new Vector2f(134, 36),
+            new Vector4f(0.25f, 0.45f, 0.75f, 0.95f)
+        );
+        mapCenterBtn.visible = false;
+        mapCenterBtn.onClick = () -> {
+            ctx.mapPanX = main.player.getPosition().x;
+            ctx.mapPanY = main.player.getPosition().z;
+        };
+        layer.addElement(mapCenterBtn);
+
+        mapCenterText = new UILayer.UITextElement(
+            new Vector2f(main.width - 196, 185),
+            "CENTER",
+            1.5f,
+            new Vector4f(1, 1, 1, 1),
+            fontTextureId
+        );
+        mapCenterText.visible = false;
+        layer.addElement(mapCenterText);
+
+        // Coordinate readout (top of panel)
+        mapCoordinateText = new UILayer.UITextElement(
+            new Vector2f(main.width - 222, 20),
+            "",
+            1.4f,
+            new Vector4f(0.85f, 0.92f, 1.0f, 1.0f),
+            fontTextureId
+        );
+        mapCoordinateText.visible = false;
+        layer.addElement(mapCoordinateText);
+
+        // Controls help (top-left corner)
+        mapControlsHelpText = new UILayer.UITextElement(
+            new Vector2f(20, 12),
+            "",
+            1.3f,
+            new Vector4f(0.8f, 0.85f, 0.9f, 0.9f),
+            fontTextureId
+        );
+        mapControlsHelpText.visible = false;
+        mapControlsHelpText.charLineLimit = 70;
+        layer.addElement(mapControlsHelpText);
+
         // ── TV overlay ──
         tvOverlayBg = new UILayer.UIElement(
             new Vector2f(50, 40),
@@ -794,13 +917,17 @@ public class HudUI {
 
         int selSlot = playerInventory.getSelectedSlot();
         float hp = main.player.getHealth();
-        if (!inventoryUiDirty && main.inventoryOpen == prevInventoryOpenForUi && main.commandMode == prevCommandModeForUi
-                && selSlot == prevSelectedSlot && Math.abs(hp - prevHealth) < 0.05f) {
+        // While the map is open, always refresh (coordinate readout + hover states).
+        boolean mapForceRefresh = ctx.mapOpen;
+        if (!mapForceRefresh && !inventoryUiDirty && main.inventoryOpen == prevInventoryOpenForUi && main.commandMode == prevCommandModeForUi
+                && selSlot == prevSelectedSlot && Math.abs(hp - prevHealth) < 0.05f
+                && ctx.mapOpen == prevMapOpenForUi) {
             return;
         }
         inventoryUiDirty = false;
         prevInventoryOpenForUi = main.inventoryOpen;
         prevCommandModeForUi = main.commandMode;
+        prevMapOpenForUi = ctx.mapOpen;
         prevSelectedSlot = selSlot;
         prevHealth = hp;
         double time = glfwGetTime();
@@ -1206,6 +1333,26 @@ public class HudUI {
             statusTextElement.lineOffset = main.statusLineOffset;
             float alpha = (float) Math.min(1.0, (main.statusUntil - time) / 0.5);
             statusTextElement.color.w = alpha;
+        }
+
+        // ── Map overlay updates ──
+        boolean mapVisible = ctx.mapOpen;
+        mapPanelBg.visible = mapVisible;
+        mapZoomInBtn.visible = mapVisible;
+        mapZoomInText.visible = mapVisible;
+        mapZoomOutBtn.visible = mapVisible;
+        mapZoomOutText.visible = mapVisible;
+        mapResetBtn.visible = mapVisible;
+        mapResetText.visible = mapVisible;
+        mapCenterBtn.visible = mapVisible;
+        mapCenterText.visible = mapVisible;
+        mapCoordinateText.visible = mapVisible;
+        mapControlsHelpText.visible = mapVisible;
+
+        if (mapVisible) {
+            mapCoordinateText.text = ctx.mapCoordinateText;
+            mapControlsHelpText.text =
+                "WASD/Arrows: Pan   Scroll / +/-: Zoom   Drag: Pan   C/Home: Center   0: Reset zoom   M: Close";
         }
 
         // Update Player Hearts

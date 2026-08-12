@@ -877,6 +877,21 @@ public class Main {
         return now && !wasDown;
     }
 
+    /** Map zoom bounds: min 0.25x (closest) / max 4x (widest view).
+     *  Capped so the visible area stays inside the chunk-stream radius
+     *  (render distance ~8 chunks), avoiding a sea of unloaded void. */
+    private static float clampMapZoom(float z) {
+        return Math.max(0.25f, Math.min(4.0f, z));
+    }
+
+    /** Camera height for the top-down map view at a given zoom level. */
+    private static float mapCameraHeight(float zoom) {
+        // zoom 0.25 → ~50 blocks up (close terrain), zoom 1 → ~140 (roughly
+        // matches the ~128-block chunk stream radius), zoom 4 → ~500 (wide
+        // overview that still keeps most of the screen on loaded terrain).
+        return 120f * zoom + 20f;
+    }
+
     // ── Per-tick budget: limits heavy ops to keep 20 TPS consistent ──
     private static final int MAX_ENTITY_AI_PER_TICK = 48;
     private static final int STALE_CLEANUP_TICK_INTERVAL = 20; // ~1s at 20 TPS
@@ -1347,9 +1362,12 @@ public class Main {
 
         // ── Map: also load chunks around the map's top-down camera ──
         if (ctx.mapOpen) {
+            // Mirror the render-loop camera height so chunks stream in around
+            // whatever zoom level the player is viewing.
+            float mapCamY = mapCameraHeight(ctx.mapDisplayZoom);
             chunkManager.updateFixedPosition(
                 FixedPoint.fromFloat(ctx.mapPanX),
-                FixedPoint.fromFloat(500f),
+                FixedPoint.fromFloat(mapCamY),
                 FixedPoint.fromFloat(ctx.mapPanY), 0f);
         }
 
@@ -1358,35 +1376,58 @@ public class Main {
     }
 
     public void handleInput(float dt) {
-        // ── Map controls: WASD/arrows pan, +/- zoom, scroll zoom, left-drag pan ──
+        // ── Map controls: WASD/arrows pan, scroll zoom, right-drag pan ──
         if (ctx.mapOpen) {
-            // Keyboard pan: WASD or arrow keys
-            float panSpeed = ctx.mapZoom * 8f;
+            // Keyboard pan: WASD or arrow keys (dt-scaled for consistent speed).
+            // W/S drive mapPanX and A/D drive mapPanY — the top-down camera
+            // presents the world with axes swapped on screen, so the keys are
+            // remapped to match what the player sees. Up/down are swapped to
+            // match the camera's screen orientation.
+            float panSpeed = ctx.mapZoom * 40f;
             if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
-                ctx.mapPanY -= panSpeed;
+                ctx.mapPanX += panSpeed * dt;
             if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
-                ctx.mapPanY += panSpeed;
+                ctx.mapPanX -= panSpeed * dt;
             if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
-                ctx.mapPanX -= panSpeed;
+                ctx.mapPanY -= panSpeed * dt;
             if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
-                ctx.mapPanX += panSpeed;
-            // Keyboard zoom: +/- step by 0.5
+                ctx.mapPanY += panSpeed * dt;
+            // Keyboard zoom: multiplicative steps (consistent feel with scroll)
             if (keyJustPressed(GLFW_KEY_EQUAL) || keyJustPressed(GLFW_KEY_KP_ADD))
-                ctx.mapZoom = Math.max(0.25f, ctx.mapZoom - 0.5f);
+                ctx.mapTargetZoom = clampMapZoom(ctx.mapTargetZoom / 1.5f);
             if (keyJustPressed(GLFW_KEY_MINUS) || keyJustPressed(GLFW_KEY_KP_SUBTRACT))
-                ctx.mapZoom = Math.min(16f, ctx.mapZoom + 0.5f);
-            // Scroll zoom: smooth multiplier
+                ctx.mapTargetZoom = clampMapZoom(ctx.mapTargetZoom * 1.5f);
+            // Scroll zoom: smooth multiplier toward the target zoom
             if (scrollDelta != 0f) {
-                ctx.mapZoom = Math.max(0.25f, Math.min(16f, ctx.mapZoom * (1f - scrollDelta * 0.15f)));
+                float zoomFactor = (float) Math.pow(1.15, scrollDelta);
+                ctx.mapTargetZoom = clampMapZoom(ctx.mapTargetZoom / zoomFactor);
                 scrollDelta = 0f;
             }
-            // Mouse drag pan
-            if (leftMouseHeld) {
-                float dx = (float)(lastMouseX - (width / 2f));
-                float dy = (float)(lastMouseY - (height / 2f));
-                ctx.mapPanX += dx * ctx.mapZoom * 0.3f;
-                ctx.mapPanY -= dy * ctx.mapZoom * 0.3f;
+            // Smooth zoom interpolation toward the target
+            float zoomDiff = ctx.mapTargetZoom - ctx.mapDisplayZoom;
+            if (Math.abs(zoomDiff) > 0.001f) {
+                ctx.mapDisplayZoom += zoomDiff * Math.min(1.0f, dt * 6.0f);
+                ctx.mapZoom = ctx.mapDisplayZoom;
             }
+            // Drag panning is handled in handleCursorMoved (render thread) so
+            // it always uses the freshest cursor position.
+            // Center on player (C or Home key)
+            if (keyJustPressed(GLFW_KEY_HOME) || keyJustPressed(GLFW_KEY_C)) {
+                ctx.mapPanX = player.getPosition().x;
+                ctx.mapPanY = player.getPosition().z;
+            }
+            // Reset zoom (0 key)
+            if (keyJustPressed(GLFW_KEY_0)) {
+                ctx.mapTargetZoom = 1.0f;
+            }
+            // Update coordinate + compass readouts (throttled)
+            ctx.mapCoordinateUpdateTimer += dt;
+            if (ctx.mapCoordinateUpdateTimer > 0.1f) {
+                ctx.mapCoordinateUpdateTimer = 0f;
+                ctx.mapCoordinateText = String.format(Locale.ROOT, "X: %.0f   Z: %.0f   Zoom: %.1fx",
+                    ctx.mapPanX, ctx.mapPanY, ctx.mapDisplayZoom);
+            }
+            ctx.mapCompassAngle = (float) Math.toRadians(yaw + 90);
             return;
         }
         
@@ -1699,9 +1740,12 @@ public class Main {
             // Camera uses interpolated player position
             Vector3f cameraPos = cameraController.getActiveCameraPosition(playerPartialTicks);
 
-            // ── Map: orthogonal top-down camera at y=500 ──
+            // ── Map: top-down camera, height derived from zoom level ──
+            // Zooming in lowers the camera for closer terrain; zooming out
+            // raises it for a wider overview (capped by mapCameraHeight).
             if (ctx.mapOpen) {
-                cameraPos = new Vector3f(ctx.mapPanX, 500f, ctx.mapPanY);
+                float mapCamY = mapCameraHeight(ctx.mapDisplayZoom);
+                cameraPos = new Vector3f(ctx.mapPanX, mapCamY, ctx.mapPanY);
                 yaw = 0f; pitch = -90f;
             }
 
@@ -2037,8 +2081,11 @@ public class Main {
                     // Reset pan to player position on open
                     ctx.mapPanX = player.getPosition().x;
                     ctx.mapPanY = player.getPosition().z;
+                    ctx.mapTargetZoom = ctx.mapZoom;
+                    ctx.mapDisplayZoom = ctx.mapZoom;
+                    ctx.mapDragging = false;
                     needsCursorUpdate = true;
-                    setStatus("Map — scroll to zoom, drag to pan, M to close");
+                    setStatus("Map — scroll/+/ - to zoom, drag or WASD to pan, C to center, M to close");
                 }
                 return;
             }
@@ -2211,6 +2258,24 @@ public class Main {
         // until normal gameplay initialization has completed.
         if (ctx == null) return;
 
+        // Map drag-pan is computed HERE (render thread) so it always uses the
+        // freshest cursor position — reading lastMouseX/Y from the logic thread
+        // in handleInput would see stale values and the drag would appear dead.
+        if (ctx.mapOpen && ctx.mapDragging) {
+            float dx = (float) xpos - ctx.mapDragStartX;
+            float dy = (float) ypos - ctx.mapDragStartY;
+            // 1:1 grab: FOV is 90°, so the vertical world span at the map camera
+            // is 2×height → world-units-per-pixel = 2h / viewportHeight. This makes
+            // the world point under the cursor stay under the cursor while dragging.
+            // Axes swapped (dx drives panY, dy drives panX); Y inverted again → +dy.
+            float unitsPerPixel = 2f * mapCameraHeight(ctx.mapZoom) / (float) height;
+            ctx.mapPanX = ctx.mapDragPanStartX + dy * unitsPerPixel;
+            ctx.mapPanY = ctx.mapDragPanStartY - dx * unitsPerPixel;
+            lastMouseX = (float) xpos;
+            lastMouseY = (float) ypos;
+            return;
+        }
+
         if (inventoryOpen || commandMode) {
             // Track mouse position for inventory UI interactions (slot clicks, item drag)
             lastMouseX = (float) xpos;
@@ -2245,6 +2310,31 @@ public class Main {
     public void handleMouseButton(long win, int button, int action, int mods) {
         // Mouse callbacks may arrive before the game context/UI are ready.
         if (ctx == null || player == null || blockInteraction == null) return;
+
+        // Map drag pan: LEFT or RIGHT mouse both pan (like Google Maps). A
+        // left press first tries the map overlay buttons (zoom/reset/center);
+        // if none is hit, the press starts a drag. Everything is consumed so
+        // world actions (break/place) never fire underneath the map UI.
+        if (ctx.mapOpen) {
+            boolean isLeft = button == GLFW_MOUSE_BUTTON_LEFT;
+            boolean isRight = button == GLFW_MOUSE_BUTTON_RIGHT;
+            if (action == GLFW_PRESS && (isLeft || isRight)) {
+                // Left press on an overlay button: fire it, do NOT start a drag.
+                boolean hitButton = isLeft && hud.handleMouseClick((float) lastMouseX, (float) lastMouseY);
+                if (!hitButton) {
+                    ctx.mapDragging = true;
+                    ctx.mapDragStartX = (float) lastMouseX;
+                    ctx.mapDragStartY = (float) lastMouseY;
+                    ctx.mapDragPanStartX = ctx.mapPanX;
+                    ctx.mapDragPanStartY = ctx.mapPanY;
+                }
+            } else if (action == GLFW_RELEASE && (isLeft || isRight)) {
+                ctx.mapDragging = false;
+            }
+            // While the map is open, never fall through to world interaction.
+            return;
+        }
+
         if (button == GLFW_MOUSE_BUTTON_LEFT) {
             if (action == GLFW_PRESS) {
                 leftMouseHeld = true;
