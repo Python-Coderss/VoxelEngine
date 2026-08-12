@@ -216,8 +216,14 @@ public class GameContext {
     public com.voxel.world.FluidManager fluidManager;
 
     // --- Active UI state (which overlay is shown) ---
-    public enum ActiveUI { NONE, INVENTORY, CHEST, FURNACE, CRAFTING_TABLE, SURFACE_CRAFTING, COMMAND_BLOCK, TV }
+    public enum ActiveUI { NONE, INVENTORY, CHEST, FURNACE, CRAFTING_TABLE, SURFACE_CRAFTING, COMMAND_BLOCK, TV, MAP }
     public ActiveUI activeUI = ActiveUI.NONE;
+
+    // --- World Map ---
+    public boolean mapOpen = false;
+    public float mapZoom = 1.0f;       // blocks-per-pixel scale (higher = zoomed out)
+    public float mapPanX = 0f, mapPanY = 0f;  // world coords at map centre
+    public int mapTexId = 0;            // OpenGL texture ID for the map image
 
     // --- Villager TV ---
     public VillagerTVSystem tvSystem;
