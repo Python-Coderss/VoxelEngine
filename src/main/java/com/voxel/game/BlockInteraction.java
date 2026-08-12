@@ -28,6 +28,12 @@ public class BlockInteraction {
     private static final int BLOCK_FURNACE_ON = 117;
     private static final int BLOCK_CHEST = 118;
     private static final int BLOCK_TV = 274;
+    private static final int BLOCK_HAND_CRANK = com.voxel.game.CreateMachineManager.BLOCK_HAND_CRANK;
+    private static final int BLOCK_MECHANICAL_PRESS = com.voxel.game.CreateMachineManager.BLOCK_MECHANICAL_PRESS;
+    private static final int BLOCK_MILLSTONE = com.voxel.game.CreateMachineManager.BLOCK_MILLSTONE;
+    private static final int BLOCK_CRUSHING_WHEEL = com.voxel.game.CreateMachineManager.BLOCK_CRUSHING_WHEEL;
+    private static final int BLOCK_DEPLOYER = com.voxel.game.CreateMachineManager.BLOCK_DEPLOYER;
+    private static final int BLOCK_ITEM_VAULT = com.voxel.game.CreateMachineManager.BLOCK_ITEM_VAULT;
     private static final int BLOCK_COMMAND = CommandBlockManager.BLOCK_COMMAND;
     private static final int BLOCK_CHAIN_COMMAND = CommandBlockManager.BLOCK_CHAIN_COMMAND;
     private static final int BLOCK_REPEATING_COMMAND = CommandBlockManager.BLOCK_REPEATING_COMMAND;
@@ -66,6 +72,22 @@ public class BlockInteraction {
         ctx.inventoryOpen = true;
         ctx.activeUI = GameContext.ActiveUI.CHEST;
         ctx.setStatus("Chest");
+    }
+
+    /** Opens the item-vault UI (shares the ChestManager storage keyed by position). */
+    private void openVault(int x, int y, int z) {
+        ctx.chestBlockX = x;
+        ctx.chestBlockY = y;
+        ctx.chestBlockZ = z;
+        ctx.chestOpen = true;
+        ctx.inventoryOpen = true;
+        ctx.activeUI = GameContext.ActiveUI.CHEST;
+        ctx.setStatus("Item Vault");
+    }
+
+    /** Directional machines whose facing is encoded in extra-data bits 16-18. */
+    private static boolean isDirectionalMachine(int block) {
+        return block == 263 || block == 409 || block == 410 || block == 411 || block == 412 || block == 413;
     }
 
     /**
@@ -208,6 +230,14 @@ public class BlockInteraction {
         if (ctx.encasedFanSystem != null) {
             ctx.encasedFanSystem.onBlockChanged(x, y, z);
         }
+        if (ctx.machineManager != null) {
+            // Deployer contents are returned to the player before the position is
+            // untracked, so the item can be unloaded first.
+            if (blockId == BLOCK_DEPLOYER) {
+                ctx.machineManager.unloadDeployerToInventory(x, y, z, ctx.playerInventory);
+            }
+            ctx.machineManager.onBlockChanged(x, y, z);
+        }
         // Notify fluid manager: block removed may open space for fluid to flow into
         if (ctx.fluidManager != null) {
             ctx.fluidManager.notifyBlockChanged(x, y, z);
@@ -253,8 +283,8 @@ public class BlockInteraction {
             }
         }
 
-        // If breaking a chest, return items to the player
-        if (blockId == 118) {
+        // If breaking a chest or item vault, return items to the player
+        if (blockId == 118 || blockId == BLOCK_ITEM_VAULT) {
             ItemStack[] inv = ctx.chestManager.removeChest(x, y, z);
             if (inv != null) {
                 for (int i = 0; i < ChestManager.CHEST_SLOTS; i++) {
@@ -607,6 +637,28 @@ public class BlockInteraction {
             }
         }
 
+        // Right-click hand crank: wind it up for 5 seconds of rotation
+        if (hitBlock == BLOCK_HAND_CRANK && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && ctx.machineManager != null) {
+            ctx.machineManager.spinCrank(hit[0], hit[1], hit[2]);
+            ctx.setStatus("Cranked — the network spins for 5 seconds");
+            return;
+        }
+
+        // Right-click windmill bearing: report the sail setup
+        if (hitBlock == com.voxel.game.CreateMachineManager.BLOCK_WINDMILL_BEARING
+                && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && ctx.machineManager != null) {
+            int sails = ctx.machineManager.windmillSailCount(hit[0], hit[1], hit[2]);
+            boolean spinning = ctx.machineManager.isWindmillSpinning(hit[0], hit[1], hit[2]);
+            ctx.setStatus("Windmill bearing: " + sails + " sails, " + (spinning ? "spinning" : "needs 2+ exposed sails"));
+            return;
+        }
+
+        // Right-click item vault: opens like a chest
+        if (hitBlock == BLOCK_ITEM_VAULT && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.chestOpen) {
+            openVault(hit[0], hit[1], hit[2]);
+            return;
+        }
+
         // Right-click on chest
         if (hitBlock == BLOCK_CHEST && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.chestOpen) {
             openChest(hit[0], hit[1], hit[2]);
@@ -752,6 +804,42 @@ public class BlockInteraction {
         ItemDefinitions.ItemDefinition def = ctx.itemDefinitions.getDefinition(selected.itemId);
         if (def == null) return;
 
+        // ── Wrench: rotate a directional machine's facing, or read power state ──
+        if ("wrench".equals(selected.itemId) && !ctx.inventoryOpen && !ctx.craftingCutsceneActive) {
+            if (isDirectionalMachine(hitBlock)) {
+                int raw = ctx.world.getRawVoxel(hit[0], hit[1], hit[2]);
+                int dir = (raw >> 16) & 0x7;
+                int nd = (dir > 5) ? 1 : (dir + 1) % 6;
+                ctx.chunkManager.setVoxelWithData(hit[0], hit[1], hit[2], hitBlock, nd);
+                ctx.setStatus("Rotated facing " + com.voxel.game.CreateMachineManager.directionName(nd));
+                return;
+            }
+            if (ctx.machineManager != null && com.voxel.game.CreateMachineManager.isMachineBlock(hitBlock)) {
+                boolean powered = ctx.machineManager.isMachinePowered(hit[0], hit[1], hit[2]);
+                ctx.setStatus(powered ? "Machine is Powered" : "Machine is Idle — connect rotation");
+                return;
+            }
+        }
+
+        // ── Deployer: load with a block item, or report contents ──
+        if (hitBlock == BLOCK_DEPLOYER && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && ctx.machineManager != null) {
+            if (def.kind == ItemDefinitions.ItemKind.BLOCK && def.blockId > 0) {
+                if (ctx.machineManager.loadDeployer(hit[0], hit[1], hit[2], selected.itemId)) {
+                    if (ctx.gameMode == GameMode.SURVIVAL) {
+                        selected.count--;
+                        if (selected.count <= 0) ctx.playerInventory.setSlot(ctx.playerInventory.getSelectedSlot(), null);
+                    }
+                    if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
+                    ctx.setStatus("Deployer loaded: " + selected.itemId.replace('_', ' '));
+                    return;
+                }
+                ctx.setStatus("Deployer is full or holds another item");
+                return;
+            }
+            ctx.setStatus("Deployer holds: " + ctx.machineManager.deployerStatus(hit[0], hit[1], hit[2]));
+            return;
+        }
+
         // ── Bucket fluid interaction ──
         if (def.id.equals("bucket")) {
             // Empty bucket: scoop fluid from the looked-at block
@@ -870,8 +958,8 @@ public class BlockInteraction {
             }
             int dirBlockId = getDirectionalPistonId(placeBlockId, direction);
             if (!ctx.chunkManager.setVoxel(px, py, pz, dirBlockId)) return;
-        } else if (placeBlockId == 263) {
-            // Encased fan: encode facing into extra data
+        } else if (placeBlockId == 263 || (placeBlockId >= 409 && placeBlockId <= 413)) {
+            // Encased fan + directional Create machines: encode facing into extra data
             int dx = hit[0] - px;
             int dy = hit[1] - py;
             int dz = hit[2] - pz;
@@ -903,6 +991,9 @@ public class BlockInteraction {
         }
         if (ctx.encasedFanSystem != null) {
             ctx.encasedFanSystem.onBlockChanged(px, py, pz);
+        }
+        if (ctx.machineManager != null) {
+            ctx.machineManager.onBlockChanged(px, py, pz);
         }
         // Notify fluid manager: block placed next to fluids may affect flow
         if (ctx.fluidManager != null) {

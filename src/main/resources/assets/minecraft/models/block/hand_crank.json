@@ -1,0 +1,1 @@
+{"textures": {"up": "hand_crank", "down": "axis_top", "north": "hand_crank", "south": "hand_crank", "west": "hand_crank", "east": "hand_crank", "particle": "hand_crank"}, "elements": [{"from": [7, 0, 7], "to": [9, 16, 9]}, {"from": [2, 12, 2], "to": [14, 16, 14]}]}

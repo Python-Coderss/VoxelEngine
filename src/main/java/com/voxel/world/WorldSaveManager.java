@@ -4,25 +4,91 @@ import com.voxel.World;
 import com.voxel.game.CraftingTableManager;
 import com.voxel.game.SurfaceCraftingManager;
 import com.voxel.game.CommandBlockManager;
+import com.voxel.game.GameContext;
+import com.voxel.game.ItemDefinitions;
+import com.voxel.game.PlayerInventory;
+import com.voxel.Player;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.*;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 /**
  * Handles saving and loading world data to/from disk.
- * Save format: dev/world/<dimension_name>/chunks/<cx>/<cz>.dat
- * Each file is a GZIP-compressed binary containing all 16 chunk layers (16x16x16 ints each).
- * Also saves CraftingTableManager data to dev/world/<dimension_name>/crafting.dat
+ * Save format: saves/<save_name>/<dimension_name>/chunks/<cx>/<cz>.dat
+ * Each chunk file is a GZIP-compressed binary containing all 16 chunk layers
+ * (16x16x16 ints each). Per-dimension data (crafting/furnace/chest) lives next
+ * to the dimension folder, and a top-level level.dat (JSON) stores world
+ * metadata: seed, world size, game mode, world time, player position / health
+ * / inventory, and the last-played timestamp.
  */
 public class WorldSaveManager {
+    public static final String SAVES_DIR = "saves";
+
     private final String basePath;
 
     public WorldSaveManager(String basePath) {
         this.basePath = basePath;
     }
 
+    /** Creates a save manager rooted at saves/<name>/. */
+    public static WorldSaveManager forSave(String name) {
+        return new WorldSaveManager(SAVES_DIR + "/" + name);
+    }
+
+    /** Returns the save name (last path component). */
+    public String getSaveName() {
+        String p = basePath.replace('\\', '/');
+        int idx = p.lastIndexOf('/');
+        return idx >= 0 ? p.substring(idx + 1) : p;
+    }
+
     public String getBasePath() { return basePath; }
+
+    public File getSaveDir() { return new File(basePath); }
+
+    /** Returns the level.dat metadata file. */
+    public File getLevelFile() { return new File(basePath, "level.dat"); }
+
+    /** True when this save already has a level.dat (i.e. it is a real save). */
+    public boolean exists() { return getLevelFile().exists(); }
+
+    /** Lists all save names under saves/ that contain a level.dat. */
+    public static List<String> listSaves() {
+        List<String> result = new ArrayList<>();
+        File dir = new File(SAVES_DIR);
+        if (!dir.isDirectory()) return result;
+        File[] children = dir.listFiles();
+        if (children == null) return result;
+        for (File f : children) {
+            if (f.isDirectory() && new File(f, "level.dat").exists()) {
+                result.add(f.getName());
+            }
+        }
+        result.sort(String::compareToIgnoreCase);
+        return result;
+    }
+
+    /** Deletes a save folder recursively. */
+    public static boolean deleteSave(String name) {
+        File dir = new File(SAVES_DIR, name);
+        if (!dir.isDirectory()) return false;
+        return deleteRecursively(dir);
+    }
+
+    private static boolean deleteRecursively(File f) {
+        File[] children = f.listFiles();
+        if (children != null) {
+            for (File c : children) deleteRecursively(c);
+        }
+        return f.delete();
+    }
 
     /** Returns the directory for a given dimension. */
     private File getDimensionDir(DimensionType dim) {
@@ -136,6 +202,110 @@ public class WorldSaveManager {
     /** Checks if a chunk exists on disk. */
     public boolean chunkExists(DimensionType dim, int cx, int cz) {
         return getChunkFile(dim, cx, cz).exists();
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    //  level.dat — world metadata (seed, size, mode, player state)
+    // ════════════════════════════════════════════════════════════════════
+
+    /** Serializable snapshot of the player's persistent state. */
+    public static class PlayerState {
+        public double x, y, z;
+        public float yaw, pitch;
+        public float health;
+        public ItemDefinitions.ItemStack[] inventory = new ItemDefinitions.ItemStack[PlayerInventory.INVENTORY_SIZE];
+    }
+
+    /** Writes level.dat with world metadata + the current player state. */
+    public void saveLevelData(GameContext ctx, Player player, PlayerInventory inventory) {
+        try {
+            File file = getLevelFile();
+            file.getParentFile().mkdirs();
+
+            JSONObject root = new JSONObject();
+            root.put("saveName", getSaveName());
+            root.put("seed", ctx.worldSeed);
+            root.put("worldSize", ctx.worldSize != null ? ctx.worldSize.name() : WorldSize.MEDIUM.name());
+            root.put("gameMode", ctx.gameMode != null ? ctx.gameMode.name() : GameContext.GameMode.SURVIVAL.name());
+            root.put("worldTime", ctx.worldTime);
+            root.put("lastPlayed", System.currentTimeMillis());
+
+            JSONObject playerJson = new JSONObject();
+            if (player != null) {
+                playerJson.put("x", player.getPosition().x);
+                playerJson.put("y", player.getPosition().y);
+                playerJson.put("z", player.getPosition().z);
+                playerJson.put("yaw", ctx.yaw);
+                playerJson.put("pitch", ctx.pitch);
+                playerJson.put("health", player.getHealth());
+                playerJson.put("dimension", ctx.activeDimension.name());
+            }
+            JSONArray invJson = new JSONArray();
+            if (inventory != null) {
+                for (int i = 0; i < PlayerInventory.INVENTORY_SIZE; i++) {
+                    ItemDefinitions.ItemStack stack = inventory.getSlot(i);
+                    if (stack == null) continue;
+                    JSONObject s = new JSONObject();
+                    s.put("slot", i);
+                    s.put("item", stack.itemId);
+                    s.put("count", stack.count);
+                    s.put("durability", stack.durability);
+                    invJson.put(s);
+                }
+            }
+            playerJson.put("inventory", invJson);
+            root.put("player", playerJson);
+
+            try (Writer w = new OutputStreamWriter(new FileOutputStream(file), "UTF-8")) {
+                w.write(root.toString(2));
+            }
+            WorldGenLogger.log("LEVEL_SAVE " + file.getPath());
+        } catch (IOException e) {
+            System.err.println("Failed to save level data: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Reads level.dat and applies world metadata (seed / size / mode / time) to
+     * ctx. Returns the saved player state (or null when missing/corrupt).
+     */
+    public PlayerState loadLevelData(GameContext ctx) {
+        File file = getLevelFile();
+        if (!file.exists()) return null;
+        try {
+            String content = new String(Files.readAllBytes(file.toPath()), "UTF-8");
+            JSONObject root = new JSONObject(content);
+            ctx.worldSeed = root.optLong("seed", 0L);
+            ctx.worldSize = WorldSize.fromString(root.optString("worldSize", "MEDIUM"));
+            ctx.gameMode = GameContext.GameMode.valueOf(root.optString("gameMode", "SURVIVAL"));
+            ctx.worldTime = (float) root.optDouble("worldTime", 720.0);
+
+            JSONObject playerJson = root.optJSONObject("player");
+            if (playerJson == null) return null;
+            PlayerState ps = new PlayerState();
+            ps.x = playerJson.optDouble("x", 0);
+            ps.y = playerJson.optDouble("y", 64);
+            ps.z = playerJson.optDouble("z", 0);
+            ps.yaw = (float) playerJson.optDouble("yaw", -90);
+            ps.pitch = (float) playerJson.optDouble("pitch", 0);
+            ps.health = (float) playerJson.optDouble("health", 20);
+            JSONArray invJson = playerJson.optJSONArray("inventory");
+            if (invJson != null) {
+                for (int i = 0; i < invJson.length(); i++) {
+                    JSONObject s = invJson.getJSONObject(i);
+                    int slot = s.optInt("slot", -1);
+                    if (slot < 0 || slot >= ps.inventory.length) continue;
+                    ItemDefinitions.ItemStack stack = new ItemDefinitions.ItemStack(
+                        s.optString("item", ""), s.optInt("count", 1));
+                    stack.durability = s.optInt("durability", 0);
+                    ps.inventory[slot] = stack;
+                }
+            }
+            return ps;
+        } catch (Exception e) {
+            System.err.println("Failed to load level data (" + file.getPath() + "): " + e.getMessage());
+            return null;
+        }
     }
 
     /** Returns the furnace data file for a dimension. */
@@ -252,6 +422,26 @@ public class WorldSaveManager {
             manager.loadFromFile(file);
         } catch (IOException e) {
             System.err.println("Failed to load chest data for " + dim.name + ": " + e.getMessage());
+        }
+    }
+
+    // --- Create machine data (deployer contents) ---
+
+    public void saveMachineData(DimensionType dim, com.voxel.game.CreateMachineManager manager) {
+        try {
+            File file = new File(getDimensionDir(dim), "machines.dat");
+            file.getParentFile().mkdirs();
+            manager.saveToFile(file);
+        } catch (IOException e) {
+            System.err.println("Failed to save machine data for " + dim.name + ": " + e.getMessage());
+        }
+    }
+
+    public void loadMachineData(DimensionType dim, com.voxel.game.CreateMachineManager manager) {
+        try {
+            manager.loadFromFile(new File(getDimensionDir(dim), "machines.dat"));
+        } catch (IOException e) {
+            System.err.println("Failed to load machine data for " + dim.name + ": " + e.getMessage());
         }
     }
 }

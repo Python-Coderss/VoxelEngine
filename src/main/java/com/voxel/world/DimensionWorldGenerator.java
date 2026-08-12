@@ -128,6 +128,22 @@ public class DimensionWorldGenerator extends WorldGenerator {
         this.zincOreId = zincOre != null ? zincOre : 144;
     }
 
+    /**
+     * Re-seeds the noise generators with a per-dimension seed derived from the
+     * world seed (used by the Nether / End generators). Seed 0 keeps the classic
+     * constants, so existing worlds stay byte-identical.
+     */
+    public void setSeed(long seed) {
+        if (seed == 0L) return;
+        continentalNoise.reseed(seed + 42);
+        erosionNoise.reseed(seed + 123);
+        detailNoise.reseed(seed + 456);
+        treeNoise.reseed(seed + 131415);
+        decorationRand.setSeed(seed);
+        if (super.biomeProvider != null) super.biomeProvider = new BiomeProvider(seed + 42);
+        // Structure generators keep their fixed constants; only the noise terrain is re-seeded.
+    }
+
     @Override
     public int getHeight(int x, int y, int z) {
         if (dimension != DimensionType.OVERWORLD) {

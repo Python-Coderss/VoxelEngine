@@ -551,6 +551,84 @@ public class CraftingManager {
             {"copper_ingot", "glass", "copper_ingot"},
             {"copper_ingot", "glass", "copper_ingot"}
         }, "copper_tank", 1);
+
+        // ===== Create machines =====
+
+        // Brass ingot has no table recipe — it is alloyed in the mechanical
+        // press (copper + zinc -> 2 brass).
+
+        // Wrench: two iron ingots
+        addShapeless2x2("wrench", 1, "iron_ingot", "iron_ingot");
+
+        // Goggles: a pair of glass lenses and an iron frame
+        addShapeless2x2("goggles", 1, "glass", "iron_ingot");
+
+        // Brass casing: two brass ingots rolled flat
+        addShapeless2x2("brass_casing", 1, "brass_ingot", "brass_ingot");
+
+        // Hand crank: a stick atop a shaft
+        addRecipe2x2(new String[][]{
+            {"stick", null},
+            {"shaft", null}
+        }, "hand_crank", 1);
+
+        // Windmill bearing: casings hub inside a planks frame
+        addRecipe3x3(new String[][]{
+            {"oak_planks", "oak_planks", "oak_planks"},
+            {"oak_planks", "andesite_casing", "oak_planks"},
+            {"oak_planks", "oak_planks", "oak_planks"}
+        }, "windmill_bearing", 1);
+
+        // Windmill sails: planks + a stick crosspiece (4 per craft)
+        addShapeless2x2("windmill_sail", 4, "oak_planks", "oak_planks", "stick");
+
+        // Mechanical press: iron head over a casing base
+        addRecipe2x2(new String[][]{
+            {"iron_ingot", "iron_ingot"},
+            {"andesite_casing", "andesite_casing"}
+        }, "mechanical_press", 1);
+
+        // Millstone: stone ring over a casing base
+        addRecipe2x2(new String[][]{
+            {"cobblestone", "cobblestone"},
+            {"andesite_casing", "andesite_casing"}
+        }, "millstone", 1);
+
+        // Crushing wheel: two millstones on a shared shaft
+        addRecipe2x2(new String[][]{
+            {"millstone", "millstone"},
+            {"shaft", "shaft"}
+        }, "crushing_wheel", 1);
+
+        // Mechanical drill: iron tips over a piston + shaft
+        addRecipe2x2(new String[][]{
+            {"iron_ingot", "iron_ingot"},
+            {"piston", "shaft"}
+        }, "mechanical_drill", 1);
+
+        // Mechanical saw: iron blade over a casing + shaft
+        addRecipe2x2(new String[][]{
+            {"iron_ingot", "iron_ingot"},
+            {"andesite_casing", "shaft"}
+        }, "mechanical_saw", 1);
+
+        // Deployer: casing housing with a piston arm and shaft
+        addRecipe2x2(new String[][]{
+            {"andesite_casing", "andesite_casing"},
+            {"piston", "shaft"}
+        }, "deployer", 1);
+
+        // Belt conveyor: twin casings with two shafts as rollers
+        addRecipe2x2(new String[][]{
+            {"andesite_casing", "andesite_casing"},
+            {"shaft", "shaft"}
+        }, "belt_conveyor", 1);
+
+        // Item vault: brass casing shell
+        addRecipe2x2(new String[][]{
+            {"brass_casing", "brass_casing"},
+            {"brass_casing", "brass_casing"}
+        }, "item_vault", 1);
     }
 
     private void registerWoodToolRecipes(String plankItemId) {

@@ -172,6 +172,52 @@ public class BiomeManager {
     }
 
     /**
+     * Fills a procedural temperature/humidity gradient for the main-menu 3D
+     * panorama. The real biome provider doesn't exist until a world is created,
+     * so this bakes smooth value noise directly (no BiomeProvider needed) to
+     * give the menu terrain varied grass/foliage colors. Safe to call from any
+     * thread; upload via {@link #uploadBiomeMap()} on the GL thread. The data is
+     * overwritten tile-by-tile once the real world generates its chunks.
+     */
+    public void createPanoramaBiomeData(int worldSize) {
+        synchronized (biomeLock) {
+            int texels = worldSize / BIOME_MAP_SCALE;
+            this.biomeWorldSize = texels;
+            if (biomeData != null) MemoryUtil.memFree(biomeData);
+            biomeData = MemoryUtil.memAlloc(texels * texels * 2);
+            final int N = 16;
+            float[] lattice = new float[N * N * 2];
+            java.util.Random rnd = new java.util.Random(0xC0FFEE);
+            for (int i = 0; i < lattice.length; i++) lattice[i] = rnd.nextFloat();
+            for (int tz = 0; tz < texels; tz++) {
+                for (int tx = 0; tx < texels; tx++) {
+                    float u = tx / (float) texels * N, v = tz / (float) texels * N;
+                    float temp = panValueNoise(lattice, N, u, v, 0);
+                    float hum = panValueNoise(lattice, N, u + 37.7f, v + 11.3f, N * N);
+                    biomeData.put((byte) (Math.max(0, Math.min(1, temp)) * 255));
+                    biomeData.put((byte) (Math.max(0, Math.min(1, hum)) * 255));
+                }
+            }
+            biomeData.flip();
+            fullMapDirty = true;
+            dirtyTiles.clear();
+        }
+    }
+
+    /** Bilinear value noise over a square lattice (plain data, no GL). */
+    private static float panValueNoise(float[] lattice, int n, float u, float v, int offset) {
+        int x0 = ((int) Math.floor(u)) % n, z0 = ((int) Math.floor(v)) % n;
+        if (x0 < 0) x0 += n;
+        if (z0 < 0) z0 += n;
+        int x1 = (x0 + 1) % n, z1 = (z0 + 1) % n;
+        float fu = u - (float) Math.floor(u), fv = v - (float) Math.floor(v);
+        float su = fu * fu * (3f - 2f * fu), sv = fv * fv * (3f - 2f * fv);
+        float a = lattice[offset + z0 * n + x0], b = lattice[offset + z0 * n + x1];
+        float c = lattice[offset + z1 * n + x0], d = lattice[offset + z1 * n + x1];
+        return (a * (1 - su) + b * su) * (1 - sv) + (c * (1 - su) + d * su) * sv;
+    }
+
+    /**
      * Slides the biome map to match the new buffer offset.
      * Copies overlapping pixel data from the old region; newly exposed areas
      * stay neutral until their chunks generate and fill them via

@@ -17,11 +17,27 @@ public class DimensionManager {
     private final BlockDataManager blockDataManager;
     private final WorldSaveManager saveManager;
     private final BiomeManager biomeManager;
+    /** World generation seed shared by all dimensions (0 = classic defaults). */
+    private long worldSeed = 0L;
 
     public DimensionManager(BlockDataManager blockDataManager, WorldSaveManager saveManager, BiomeManager biomeManager) {
         this.blockDataManager = blockDataManager;
         this.saveManager = saveManager;
         this.biomeManager = biomeManager;
+    }
+
+    public void setWorldSeed(long seed) {
+        this.worldSeed = seed;
+        // Seeds are baked into generator constructors, so changing the seed only
+        // affects dimensions created afterwards. Call before createDimension.
+    }
+
+    public long getWorldSeed() { return worldSeed; }
+
+    /** Mixes the world seed into a per-dimension noise seed, keeping 0 → classic. */
+    public long seedFor(DimensionType type) {
+        if (worldSeed == 0L) return 0L;
+        return worldSeed ^ ((long) type.ordinal() + 1) * 0x9E3779B97F4A7C15L;
     } 
 
     /**
@@ -45,8 +61,9 @@ public class DimensionManager {
         System.out.println("[BOOT] world pools ready " + ((System.nanoTime() - createStart) / 1_000_000L) + " ms");
         System.out.flush();
         WorldGenerator generator;
+        long typeSeed = seedFor(type);
         if (type == DimensionType.AETHER) {
-            generator = new AetherGenerator(0, blockDataManager);
+            generator = new AetherGenerator(typeSeed, blockDataManager);
         } else if (type == DimensionType.OVERWORLD) {
             // The normal Overworld uses the coordinate-tuned far-lands policy
             // (OverworldBetaPrecision): classic integer far lands (~3,060
@@ -54,19 +71,22 @@ public class DimensionManager {
             // tuned float values 23→20→12→6→4→2→1. X/Z doubles stay at
             // 52 bits through 4,000, then use the historical 26-bit mask;
             // Y follows the same full-through-4,000 degradation bands.
-            generator = new BetaWorldGenerator(0, blockDataManager,
+            generator = new BetaWorldGenerator(typeSeed, blockDataManager,
                     com.voxel.world.beta.BetaNumericProfile.OVERWORLD);
         } else if (type == DimensionType.ERROR502) {
             // ERROR502 remains the isolated experimental world using the
             // aggressive coordinate-aware degradation switches
             // (Error502BetaPrecision): float 23→16→11→6→4→2→1, doubles
             // 52→40→30→18→11→6→1.
-            generator = new BetaWorldGenerator(0, blockDataManager,
+            generator = new BetaWorldGenerator(typeSeed, blockDataManager,
                     com.voxel.world.beta.BetaNumericProfile.DEFAULT);
         } else if (type == DimensionType.PORTAL_HALL) {
             generator = new PortalHallGenerator(blockDataManager);
         } else {
             generator = new DimensionWorldGenerator(type, blockDataManager);
+            if (typeSeed != 0L && generator instanceof DimensionWorldGenerator) {
+                ((DimensionWorldGenerator) generator).setSeed(typeSeed);
+            }
         }
         System.out.println("[BOOT] generator ready " + ((System.nanoTime() - createStart) / 1_000_000L) + " ms");
         System.out.flush();

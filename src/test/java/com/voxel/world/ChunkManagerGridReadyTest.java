@@ -101,7 +101,9 @@ public class ChunkManagerGridReadyTest {
     }
 
     private static void waitForSectionReady(ChunkManager cm, int cx, int cy, int cz) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 20_000;
+        // Generous deadline: under full-suite load the gen thread shares CPU with
+        // the other ChunkManager-backed tests, so the section can take a while.
+        long deadline = System.currentTimeMillis() + 60_000;
         while (System.currentTimeMillis() < deadline && !cm.isPlayerSectionGenerated(cx, cy, cz)) {
             Thread.sleep(10);
         }

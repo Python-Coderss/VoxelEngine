@@ -55,9 +55,48 @@ public class GameContext {
     public WorldSize worldSize = WorldSize.MEDIUM;
     public WorldBorderManager borderManager = new WorldBorderManager(WorldSize.MEDIUM.intBits());
 
-    // --- Startup menu ---
+    // --- Seed ---
+    /** World generation seed. 0 = default (classic layout). */
+    public long worldSeed = 0L;
+
+    // --- Save ---
+    /** Name of the current save slot (folder under saves/). */
+    public volatile String saveName = "world";
+
+    // ── Main menu state machine ──
+    public enum MenuScreen { MAIN, NEW_WORLD_NAME, NEW_WORLD_SEED, NEW_WORLD_SIZE, NEW_WORLD_MODE, LOAD_SAVE, IN_GAME }
+    /** Which menu screen is active (MAIN = title screen, IN_GAME = in world). */
+    public volatile MenuScreen menuScreen = MenuScreen.MAIN;
+    /** Currently highlighted menu option index. */
+    public volatile int menuSelection = 0;
+    /** Cursor row for the load-save list. */
+    public volatile int saveListSelection = 0;
+    /** Saves found on disk (refreshed when the menu opens). */
+    public volatile java.util.List<String> saveList = new java.util.ArrayList<>();
+    /** Text being typed into the active menu field (world name / seed). */
+    public volatile StringBuilder menuTextInput = new StringBuilder();
+    /** True while the menu is accepting typed characters. */
+    public volatile boolean menuTextActive = false;
+    /** Last seed parsed from the menu (0 = random). */
+    public volatile long menuSeed = 0L;
+    /** True when the menu was told to use a random seed. */
+    public volatile boolean randomSeed = true;
+    /** Pending player state for save-load (applied after spawn resolution). */
+    public volatile boolean loadPending = false;
+    public volatile double loadX, loadY, loadZ;
+    public volatile float loadYaw, loadPitch, loadHealth;
+    public volatile float loadWorldTime = 720f;
+    public volatile com.voxel.world.DimensionType loadDimension = com.voxel.world.DimensionType.OVERWORLD;
+    /** Restored inventory: slot -> item stack (may be null entries). */
+    public volatile ItemDefinitions.ItemStack[] loadInventory;
+
+    // ── UI theme ──
+    public enum UiTheme { LIGHT, DARK }
+    public volatile UiTheme uiTheme = UiTheme.DARK;
+
+    // --- Startup menu (legacy world-size step, still used by NEW_WORLD_SIZE) ---
     /** When true, the render loop shows the world-size selection menu instead of gameplay. */
-    public volatile boolean worldSizeMenu = true;
+    public volatile boolean worldSizeMenu = false;
     /** Currently highlighted world-size index in the menu. */
     public volatile int worldSizeSelection = 2; // MEDIUM
     /** Set to true by the menu handler after ENTER is pressed to create the world. */
@@ -112,6 +151,18 @@ public class GameContext {
     public float cameraShake = 0.0f;
     public double lastAttackTime = 0;
     public double lastRollTime = 0;
+
+    // --- Creative inventory ---
+    /** True while the creative item picker (E in creative mode) is open. */
+    public volatile boolean creativeMenuOpen = false;
+    /** Create-style machine controller (crank/windmill/belt/press/millstone/...). */
+    public volatile CreateMachineManager machineManager = null;
+    /** Goggles overlay text describing the machine under the crosshair. */
+    public volatile String machineLookInfo = "";
+    /** Search filter for the creative item grid. */
+    public volatile StringBuilder creativeSearch = new StringBuilder();
+    /** Scroll offset (rows) for the creative grid. */
+    public volatile int creativeScroll = 0;
 
     // --- UI state ---
     public int uiTextureId = 0;
@@ -364,6 +415,11 @@ public class GameContext {
             worldSaveManager.saveCommandBlockData(previous, commandBlockManager);
             worldSaveManager.saveFurnaceData(previous, furnaceManager);
             worldSaveManager.saveChestData(previous, chestManager);
+            // Persist the player's cross-dimension state too (position is updated
+            // later in this method, so save before the teleport below).
+            if (player != null && playerInventory != null) {
+                worldSaveManager.saveLevelData(this, player, playerInventory);
+            }
         }
 
         // Drop in-world drops from the previous dimension — they're per-dimension and would
