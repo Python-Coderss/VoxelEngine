@@ -144,7 +144,15 @@ public final class BetaNumericProfile {
     }
 
     /** The coordinate-tuned policy backing this profile (null = fixed widths). */
-    BetaPrecisionTuning tuning() { return tuning; }
+    public BetaPrecisionTuning tuning() { return tuning; }
+
+    /**
+     * Pushes a new X/Z int bit width into the underlying precision tuning.
+     * Safe no-op for fixed-width profiles (tuning == null).
+     */
+    public void setXzIntBits(int bits) {
+        if (tuning != null) tuning.setXzIntBits(bits);
+    }
 
     public int shortBits() { return shortBits; }
     public int intBits() { return intBits; }

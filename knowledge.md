@@ -193,6 +193,9 @@ Reads `renderTexture` back via `glGetTextureImage`, Y-flips, saves timestamped P
 | 297-328 | colored redstone lamps (16 × off/on) | 329-336 | repeaters (4 dirs × off/on) |
 | 337-352 | comparators (4 dirs × off/on × compare/subtract) | 353-356 | clutch, clutch_on, gearshift, gearshift_on |
 | 357-390 | dye items + nether quartz (item/drop models) | - | - |
+| 394 | blaze_burner (unlit) | 395 | blaze_burner_lit |
+| 396 | steam_engine (cold) | 397 | steam_engine_active |
+| 398-403 | copper_tank (levels 0-5) | 404-409 | tank level variants |
 
 ## Kinetic Network (KineticManager)
 
@@ -224,6 +227,45 @@ Reads `renderTexture` back via `glGetTextureImage`, Y-flips, saves timestamped P
 - Dropped items render the block's own AABB model spinning (OBB path), so a dropped cog is a spinning mini-gear.
 - Recipes (CraftingManager): 2× andesite_casing → 4 shaft (shapeless); stick ring + casing → 8 cogwheel; stick corners + planks + casing → 2 large_cogwheel; oak_slab ring + large_cogwheel → 1 water_wheel.
 
+## Nether Mobs (Create-inspired)
+
+- **BlazeEntity.java** — hostile flying mob (3 health bars, 4-block hover height). AI: approaches within 8 blocks, retreats when closer than 3, strafes left/right. Fires `FireballEntity` projectiles every 1.5s when lined up. Drops 0-1 blaze rods on death. Model: `models/entity/blaze.json` (smoke rings at 3 heights + core/head rotation). Natural spawns in nether (2 BlazeEntities on dimension entry if < 2 nether entities exist). Texture: generated 64×64 `textures/entity/blaze.png`.
+- **ZombiePigmanEntity.java** — neutral mob (pre-1.16 gold-sword model with zombie animations). 2 health bars. Passive until attacked; then horde-aggros ALL pigmen within 40 blocks (sets `aggroTarget` to attacker, sprint + group-swarm). Restores 20 HP every 5s when out of combat. Drops 0-1 rotten flesh, 0-1 gold nugget on death. Spawns 5 on nether entry. Model: `models/entity/zombie_pigman.json` (head/body/legs/arms + gold sword), texture: `textures/entity/zombie_pigman.png`.
+- **FireballEntity.java** — projectile entity with 4s lifetime. Moves 12 blocks/s in aim direction. `world == null` → falls back to `GameContext.activeWorld` for voxel collision. Deals 4 damage on contact + knockback, expires immediately. Cleaned up in Main's logic tick via `EntityManager.pruneExpired()` (non-Fireball entities ignored). Texture: `textures/entity/fireball.png`.
+
+## Blaze Burner & Steam Engine (Create-inspired)
+
+- **BlazeBurnerManager.java** — per-block fuel tracking. Blaze burner (ID 394) lit → swaps to `blaze_burner_lit` (395; emissive). Accepts coal (+30s), blaze rod (+60s), blaze powder (+20s) via right-click. Lit state propagates to adjacent steam engines. Uses `Set<Long>` for active positions; drain-swaps applied on GL thread alongside KineticManager swaps.
+- **Steam engine (IDs 396/397):** cold = 396, active = 397 (emissive). When adjacent to a lit blaze burner, swaps to active and becomes a **kinetic source** (KineticManager BFS seeds rotation from each active engine). Right-click shows fuel timer in HUD.
+- **CopperTankManager.java** — fluid storage per-block. Right-click with empty bucket fills bucket (water), right-click with water bucket drains into tank. 6 visible levels (0-5, IDs 398-403), each with a progressively higher fluid window. Tank_5 is full; tank_0 is empty (window dark). Level swaps applied via drain-swaps on the GL thread.
+
+## Nether Fortress (MapGenFortress)
+
+- **MapGenFortress.java** — corridor+bridge nether structure generator. Seedable per-column (`(cx*0x5DEECE66DL+cz)^0x5DEECE66DL`). Generates at cy=2 (y 32-47) in NETHER dimension during `DimensionWorldGenerator.decorate()`. Places `nether_brick` blocks for walls/floors (3-block-wide corridors, 4-block ceiling), with occasional cross-junctions and pillar supports. Uses `World.setVoxelInPool()` to write into the indirection-table-managed chunk pool.
+
+## Entity Management
+
+- **EntityManager.pruneExpired()** — removes dead/expired entities from the list. FireballEntity sets `isDead=true` and adds itself to `expired` set on collision/timeout. Called every tick in Main.java's logic thread after fireball cleanup loop.
+
+## New Items
+
+| Item ID | Name | Drop Block ID |
+|---------|------|--------------|
+| 231 | gunpowder | 250 |
+| 232 | blaze_rod | 251 |
+| 233 | blaze_powder | 252 |
+| 234 | fire_charge | 253 |
+
+## New Recipes (CraftingManager)
+
+| Recipe | Grid | Result |
+|--------|------|--------|
+| blaze_powder | 2×2 shapeless: 1 blaze_rod | 2 blaze_powder |
+| fire_charge | 2×2 shapeless: 1 blaze_powder + 1 gunpowder + 1 coal | 3 fire_charge |
+| blaze_burner | 3×3 shaped: iron ring + furnace center + blaze_rod above | 1 blaze_burner |
+| steam_engine | 3×3 shaped: copper ring + blaze_burner center + iron ingot above | 1 steam_engine |
+| copper_tank | 3×3 shaped: copper ring + empty center + copper_ingot above | 1 copper_tank |
+
 ## Villager System
 
 - **VillagerEntity.java** – peaceful NPC with own model (`villager.json`: big nose, robe, hat)
@@ -250,6 +292,10 @@ Reads `renderTexture` back via `glGetTextureImage`, Y-flips, saves timestamped P
 - **Fix:** `loop()` now routes those states through the cameraPos-based decomposition (`detachedCamera = ctx.craftingCutsceneActive || ctx.craftingTableOpen || ctx.furnaceCutsceneActive`). `Player.getInterpolatedPosition` and the fixed-point `pxTP` read the same longs, so the else-branch math resolves exactly to `cameraPos` even mid-walk.
 - **Also fixed:** `handleMouseButton` returns early during cutscenes (clicks could otherwise place/break blocks or re-trigger the cutscene); `updateCursorMode` resyncs `lastMouseX/Y` from `glfwGetCursorPos` when releasing the cursor (GLFW virtual cursor drifts under `GLFW_CURSOR_DISABLED`, so the first post-cutscene click could register at a stale coordinate).
 
+## Texture Generation
+
+- `tools/gen_nether_create_textures.py` — generates all nether/Create textures: blaze entity, zombie pigman skin, fireball, blaze burner (lit/unlit), steam engine (cold/active), copper tank (6 frames + full), plus item textures (gunpowder, blaze_rod, blaze_powder, fire_charge). Use Pillow (`pip install Pillow`). Rerun after editing the generator to refresh all textures.
+
 ## Important Patterns
 
 - **Globals on Main:** `window`, `renderTexture`, all SSBO handles, `ctx` reference
@@ -258,3 +304,11 @@ Reads `renderTexture` back via `glGetTextureImage`, Y-flips, saves timestamped P
 - **World save:** `dev/world/` folder, `WorldSaveManager` handles chunk + crafting/furnace/chest persistence
 - **Dimension switch:** Saves UI state, drops old-dimension items, scales coordinates, re-scans spawn surface
 - **Error handling:** OpenGL errors via `GLUtil.checkError()`, runtime exceptions for shader/setup failures
+
+## World Size & Border
+
+- **WorldSize enum:** TINY(16b)/SMALL(18b)/MEDIUM(20b)/LARGE(24b)/HUGE(28b) — controls X/Z int bit width. Higher bits push the Far Lands further out and expand the hard world border. `WorldSize.fromString(name)` parses case-insensitively.
+- **WorldBorderManager:** Hard world border at `(1L << (intBits-1)) - 16` blocks. `clamp(Player)` pushes player back on X/Z and displays a 3s "You have reached the world border!" message. `getBorderMessage()` returns transient messages for HUD display.
+- **BetaPrecisionTuning.xzIntBits:** Configurable field (default 20). `setWorldSize(WorldSize)` on `BetaWorldGenerator` (delegates to `BetaNumericProfile.setXzIntBits()`) pushes the int bit width to the active precision policy. Both `OverworldBetaPrecision` and `Error502BetaPrecision` read from this field instead of hardcoding 20.
+- **Startup menu:** `GameContext.worldSizeMenu = true` at launch shows a world-size selection screen (UP/DOWN/ENTER) using the existing spawn-loading overlay. `worldSizeSelection` is the index, `worldSizeConfirmed` gates world creation. `tick()` defers `initializeWorldPhase()` until confirmed.
+- **`/worldsize <tiny|small|medium|large|huge>` command:** Changes world size at runtime. Pushes new int bits into the active Beta generator and recomputes the border. Existing chunks retain old precision; new chunks use the new size.

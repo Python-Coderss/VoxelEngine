@@ -56,6 +56,7 @@ public class CommandProcessor {
                 break;
             case "tv": handleTv(parts); break;
             case "light": handleLight(parts); break;
+            case "worldsize": handleWorldSize(parts); break;
             default: ctx.setStatus("Unknown command: /" + command + ". Type /help for commands."); break;
         }
     }
@@ -250,6 +251,30 @@ public class CommandProcessor {
         }
     }
 
+    private void handleWorldSize(String[] parts) {
+        if (parts.length < 2) {
+            StringBuilder sb = new StringBuilder("World sizes: ");
+            for (com.voxel.world.WorldSize ws : com.voxel.world.WorldSize.values()) {
+                sb.append(ws.displayName()).append("(").append(ws.intBits()).append("b) ");
+            }
+            ctx.setStatus("Current: " + ctx.worldSize.displayName() + ". " + sb.toString());
+            return;
+        }
+        com.voxel.world.WorldSize ws = com.voxel.world.WorldSize.fromString(parts[1]);
+        ctx.worldSize = ws;
+        ctx.borderManager.setBorderFromBits(ws.intBits());
+
+        // Push the new int bits into the active generator's precision tuning
+        com.voxel.world.WorldGenerator gen = ctx.dimensionManager.getActiveGenerator();
+        if (gen instanceof com.voxel.world.BetaWorldGenerator) {
+            ((com.voxel.world.BetaWorldGenerator) gen).setWorldSize(ws);
+        }
+
+        ctx.setStatus("World size set to " + ws.displayName()
+                + " (" + ws.intBits() + " X/Z int bits, border at ±"
+                + (ws.borderRadius() / 1000) + "K blocks). Existing chunks retain old precision; new chunks use the new size.");
+    }
+
     private void handleHelp() {
         StringBuilder sb = new StringBuilder("Available commands:");
         sb.append("\n  /help - Show this help");
@@ -269,6 +294,7 @@ public class CommandProcessor {
         sb.append("\n  /tv <channel> - Change TV channel (0=Static,1=Shopping,2=Weather,3=VNN)");
         sb.append("\n  /screenshot - Save a screenshot to screenshots/");
         sb.append("\n  /light <r> <g> <b> - Place a point light (RGB 0-255, radius 32) at your position (/light clear)");
+        sb.append("\n  /worldsize <tiny|small|medium|large|huge> - Change world size (recreates dimension)");
         ctx.setStatus(sb.toString());
     }
 

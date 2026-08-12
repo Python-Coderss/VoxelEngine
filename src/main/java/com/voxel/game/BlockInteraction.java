@@ -569,6 +569,44 @@ public class BlockInteraction {
             return;
         }
 
+        // Right-click on blaze burner: add fuel (coal, blaze rod, blaze powder)
+        if (com.voxel.world.BlazeBurnerManager.isBlazeBurner(hitBlock) && !ctx.inventoryOpen && !ctx.craftingCutsceneActive) {
+            ItemDefinitions.ItemStack held = ctx.playerInventory.getSelected();
+            if (held != null) {
+                int fuelTicks = 0;
+                if (held.itemId.equals("coal")) fuelTicks = 1600;
+                else if (held.itemId.equals("blaze_rod")) fuelTicks = 2400;
+                else if (held.itemId.equals("blaze_powder")) fuelTicks = 800;
+                if (fuelTicks > 0 && ctx.blazeBurnerManager != null) {
+                    ctx.blazeBurnerManager.addFuel(hit[0], hit[1], hit[2], fuelTicks);
+                    held.count--;
+                    if (held.count <= 0) ctx.playerInventory.clearSlot(ctx.playerInventory.getSelectedSlot());
+                    ctx.setStatus("Added fuel to blaze burner");
+                    return;
+                }
+            }
+        }
+
+        // Right-click copper tank with bucket: fill/drain
+        if (com.voxel.world.CopperTankManager.isCopperTank(hitBlock) && !ctx.inventoryOpen && !ctx.craftingCutsceneActive) {
+            ItemDefinitions.ItemStack held = ctx.playerInventory.getSelected();
+            if (held != null && ctx.copperTankManager != null) {
+                if (held.itemId.equals("water_bucket")) {
+                    if (ctx.copperTankManager.fill(hit[0], hit[1], hit[2])) {
+                        ctx.playerInventory.replaceSelected("bucket");
+                        ctx.setStatus("Filled copper tank");
+                        return;
+                    }
+                } else if (held.itemId.equals("bucket")) {
+                    if (ctx.copperTankManager.drain(hit[0], hit[1], hit[2])) {
+                        ctx.playerInventory.replaceSelected("water_bucket");
+                        ctx.setStatus("Drained copper tank");
+                        return;
+                    }
+                }
+            }
+        }
+
         // Right-click on chest
         if (hitBlock == BLOCK_CHEST && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.chestOpen) {
             openChest(hit[0], hit[1], hit[2]);

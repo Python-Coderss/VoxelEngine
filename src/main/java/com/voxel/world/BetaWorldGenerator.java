@@ -129,6 +129,14 @@ public class BetaWorldGenerator extends WorldGenerator {
             }
         };
     }
+
+    /**
+     * Pushes the world-size X/Z int bit width into the underlying precision tuning.
+     * This directly controls how far the Far Lands extend (and where the border sits).
+     */
+    public void setWorldSize(WorldSize ws) {
+        numericProfile.setXzIntBits(ws.intBits());
+    }
     
     public BetaNumericProfile getNumericProfile() {
         return numericProfile;

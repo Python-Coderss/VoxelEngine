@@ -521,10 +521,38 @@ public class CraftingManager {
         addRecipe3x3(new String[][]{
             {"oak_planks", "copper_ingot", "oak_planks"},
             {"copper_ingot", "andesite_casing", "copper_ingot"},
-            {"oak_planks", "redstone_wire", "oak_planks"}
-        }, "encased_fan", 1);
+            {"oak_planks", "redstone_wire", "oak_planks"}        }, "encased_fan", 1);
+
+        // ===== Blaze / Nether / Create recipes =====
+
+        // Blaze powder: 1 blaze rod -> 2 blaze powder (shapeless)
+        addShapeless2x2("blaze_powder", 2, "blaze_rod");
+
+        // Fire charge: blaze powder + gunpowder + coal (shapeless, any order)
+        addShapeless2x2("fire_charge", 3, "blaze_powder", "gunpowder", "coal");
+
+        // Blaze burner: iron frame + furnace core (Create-style empty burner)
+        addRecipe3x3(new String[][]{
+            {"iron_ingot", "iron_ingot", "iron_ingot"},
+            {"iron_ingot", "furnace_off", "iron_ingot"},
+            {"iron_ingot", null, "iron_ingot"}
+        }, "blaze_burner", 1);
+
+        // Steam engine: copper casing + iron shaft core
+        addRecipe3x3(new String[][]{
+            {"copper_ingot", "copper_ingot", "copper_ingot"},
+            {"copper_ingot", "andesite_casing", "copper_ingot"},
+            {"copper_ingot", "iron_ingot", "copper_ingot"}
+        }, "steam_engine", 1);
+
+        // Copper tank: glass window + copper shell
+        addRecipe3x3(new String[][]{
+            {"copper_ingot", "glass", "copper_ingot"},
+            {"copper_ingot", "glass", "copper_ingot"},
+            {"copper_ingot", "glass", "copper_ingot"}
+        }, "copper_tank", 1);
     }
-    
+
     private void registerWoodToolRecipes(String plankItemId) {
         // Pickaxe: three planks across the top and two sticks down the center.
         addRecipe3x3(new String[][]{

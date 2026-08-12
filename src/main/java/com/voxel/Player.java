@@ -602,6 +602,11 @@ public class Player {
     public long getFixedY() { return posY; }
     public long getFixedZ() { return posZ; }
 
+    /** Sets X position directly (fixed-point), without updating prevPos. */
+    public void setFixedX(long x) { this.posX = x; }
+    /** Sets Z position directly (fixed-point), without updating prevPos. */
+    public void setFixedZ(long z) { this.posZ = z; }
+
     /** Raw fixed-point access for velocity-critical paths. */
     public long getFixedPrevX() { return prevPosX; }
     public long getFixedPrevY() { return prevPosY; }

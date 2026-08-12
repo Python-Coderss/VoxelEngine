@@ -1,0 +1,13 @@
+{
+  "parts": [
+    {
+      "name": "ball",
+      "from": [-4.0, -4.0, -4.0],
+      "size": [8.0, 8.0, 8.0],
+      "absolute_offset": [0.0, 0.0, 0.0],
+      "texture": "fireball",
+      "uv": [0, 0],
+      "texture_mapping": "cuboid_atlas"
+    }
+  ]
+}

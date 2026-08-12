@@ -39,38 +39,17 @@ public final class OverworldBetaPrecision extends BetaPrecisionTuning {
 
     @Override
     public int xIntBits(double x) {
-        switch (coordinateBand(x)) {
-            case 0: return 20;
-            case 1: return 20;
-            case 2: return 20;
-            case 3: return 20;
-            case 4: return 20;
-            default: return 20;
-        }
+        return xzIntBits;
     }
 
     @Override
     public int yIntBits(double y) {
-        switch (coordinateBandY(y)) {
-            case 0: return 17;
-            case 1: return 17;
-            case 2: return 17;
-            case 3: return 17;
-            case 4: return 17;
-            default: return 17;
-        }
+        return 17;
     }
 
     @Override
     public int zIntBits(double z) {
-        switch (coordinateBand(z)) {
-            case 0: return 20;
-            case 1: return 20;
-            case 2: return 20;
-            case 3: return 20;
-            case 4: return 20;
-            default: return 20;
-        }
+        return xzIntBits;
     }
 
     @Override

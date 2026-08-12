@@ -46,6 +46,7 @@ public class HudUI {
     public int fontTextureId = 0;
     public Vector2i fontTextureSize = new Vector2i(1, 1);
     public int loadingTextureId = 0;
+    public int menuBackgroundTextureId = 0;
     // Compact top-right loading-popup panel (loading_popup.png, 256x64).
     public int loadingPopupTextureId = 0;
 
@@ -95,6 +96,7 @@ public class HudUI {
     // ── Spawn loading overlay ──
     // These are appended last so the overlay is composited above the normal HUD.
     public UILayer.UIElement spawnLoadingBackground;
+    public UILayer.UIElement menuBackground;
     public UILayer.UIElement loadingPopupBackground; // top-right toast panel
     public UILayer.UITextElement spawnLoadingTitle;
     public UILayer.UITextElement spawnLoadingStatus;
@@ -197,6 +199,12 @@ public class HudUI {
                 loadingTextureId = UIManager.loadTexture(loadingFile.getPath());
             } else {
                 System.err.println("Note: loading.png not found; using the bright fallback color");
+            }
+
+            // Load the custom menu background
+            java.io.File menuBgFile = new java.io.File("src/main/resources/ui/menu_background.png");
+            if (menuBgFile.exists()) {
+                menuBackgroundTextureId = UIManager.loadTexture(menuBgFile.getPath());
             }
         } catch (Exception e) {
             System.err.println("Note: loading.png could not be loaded; using the bright fallback color");
@@ -573,6 +581,19 @@ public class HudUI {
         spawnLoadingBackground.onClick = () -> { };
         spawnLoadingBackground.visible = false;
         layer.addElement(spawnLoadingBackground);
+
+        // Full-screen menu background (custom dark backdrop for world-size selection)
+        menuBackground = new UILayer.UIElement(
+            new Vector2f(0, 0),
+            new Vector2f(main.width, main.height),
+            new Vector4f(1.0f, 1.0f, 1.0f, 1.0f)
+        );
+        if (menuBackgroundTextureId != 0) {
+            menuBackground.textureId = menuBackgroundTextureId;
+        }
+        menuBackground.onClick = () -> { };
+        menuBackground.visible = false;
+        layer.addElement(menuBackground);
 
         // ── Top-right loading popup ──
         // A compact toast panel shown while spawn chunks generate (world boot /
@@ -1232,15 +1253,17 @@ public class HudUI {
      */
     public void updateSpawnLoadingOverlay(double time) {
         boolean loading = ctx.spawnLoading;
-        boolean preWorld = ctx.initializing;
-        spawnLoadingBackground.visible = loading && preWorld;
-        loadingPopupBackground.visible = loading && !preWorld;
+        boolean preWorld = ctx.initializing || ctx.worldSizeMenu;
+        boolean menuActive = ctx.worldSizeMenu;
+        menuBackground.visible = loading && menuActive;
+        spawnLoadingBackground.visible = loading && preWorld && !menuActive;
+        loadingPopupBackground.visible = loading && !preWorld && !menuActive;
         spawnLoadingTitle.visible = loading;
         spawnLoadingSpinner.visible = loading;
         spawnLoadingStatus.visible = loading;
         if (!loading) return;
 
-        String title = "WORLD INITIALIZING";
+        String title = ctx.worldSizeMenu ? "SELECT WORLD SIZE" : "WORLD INITIALIZING";
         spawnLoadingTitle.text = title;
 
         String message = ctx.spawnLoadingMessage;
@@ -1255,17 +1278,18 @@ public class HudUI {
 
         if (preWorld) {
             // Centered layout on the full-screen loading artwork.
-            spawnLoadingTitle.pos.set(main.width / 2f - 175, main.height / 2f - 70);
-            spawnLoadingTitle.scale = 3.0f;
-            spawnLoadingTitle.color.set(0.06f, 0.22f, 0.32f, 1.0f);
+            boolean menu = ctx.worldSizeMenu;
+            spawnLoadingTitle.pos.set(main.width / 2f - (menu ? 290f : 175f), main.height / 2f - 70);
+            spawnLoadingTitle.scale = menu ? 3.5f : 3.0f;
+            spawnLoadingTitle.color.set(menu ? 0.95f : 0.06f, menu ? 0.85f : 0.22f, menu ? 0.45f : 0.32f, 1.0f);
             spawnLoadingTitle.charLineLimit = 40;
             spawnLoadingSpinner.pos.set(main.width / 2f - 12, main.height / 2f - 10);
-            spawnLoadingSpinner.scale = 3.0f;
-            spawnLoadingSpinner.color.set(0.06f, 0.48f, 0.48f, pulse);
-            spawnLoadingStatus.pos.set(main.width / 2f - 230, main.height / 2f + 55);
-            spawnLoadingStatus.scale = 1.8f;
-            spawnLoadingStatus.color.set(0.10f, 0.28f, 0.34f, 1.0f);
-            spawnLoadingStatus.charLineLimit = 52;
+            spawnLoadingSpinner.scale = menu ? 3.5f : 3.0f;
+            spawnLoadingSpinner.color.set(menu ? 0.95f : 0.06f, menu ? 0.65f : 0.48f, menu ? 0.20f : 0.48f, pulse);
+            spawnLoadingStatus.pos.set(menu ? (main.width / 2f - 310f) : (main.width / 2f - 230), main.height / 2f + 55);
+            spawnLoadingStatus.scale = menu ? 2.2f : 1.8f;
+            spawnLoadingStatus.color.set(menu ? 0.85f : 0.10f, menu ? 0.78f : 0.28f, menu ? 0.55f : 0.34f, 1.0f);
+            spawnLoadingStatus.charLineLimit = menu ? 60 : 52;
         } else {
             // Top-right toast: panel at (width-268, 12) sized 256x64.
             float popupX = main.width - 268f;

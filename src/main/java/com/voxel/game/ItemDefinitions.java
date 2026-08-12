@@ -238,6 +238,10 @@ public class ItemDefinitions {
         registerItemBlock("gold_ingot", "Gold Ingot", "gold_ingot", 281, 287, ToolType.HAND, 1.0f, 64, 0);
         registerItemBlock("copper_ingot", "Copper Ingot", "copper_ingot", 282, 288, ToolType.HAND, 1.0f, 64, 0);
         registerItemBlock("zinc_ingot", "Zinc Ingot", "zinc_ingot", 283, 289, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("gunpowder", "Gunpowder", "gunpowder", 231, 250, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("blaze_rod", "Blaze Rod", "blaze_rod", 232, 251, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("blaze_powder", "Blaze Powder", "blaze_powder", 233, 252, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("fire_charge", "Fire Charge", "fire_charge", 234, 253, ToolType.HAND, 1.0f, 64, 0);
         registerItemBlock("charcoal", "Charcoal", "charcoal", 284, 290, ToolType.HAND, 1.0f, 64, 0);
         // --- Create-inspired kinetic blocks (shafts, cogs, water wheel) ---
         registerBlock("shaft", "Shaft", 291, "axis_top");
