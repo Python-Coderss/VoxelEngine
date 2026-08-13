@@ -1268,6 +1268,13 @@ public class BetaChunkProvider {
         int glowMaxY = Math.max(128, (maxSectionCY + 1) << 4);
         for (int i = 0; i < 60; ++i) { genOreVein(world, var4+rand.nextInt(16), rand.nextInt(glowMaxY), var5+rand.nextInt(16), veGlowstone, 12); }
 
+        // Water fill + beaches carve the terrain BEFORE trees/flowers/grass, so
+        // vegetation never spawns inside a river/lake or on a not-yet-sanded beach.
+        for (int i=0;i<8;++i){generateLake(world,var4+rand.nextInt(16),rand.nextInt(120)+4,var5+rand.nextInt(16),veWaterStill);}
+        for (int i=0;i<4;++i){generateSurfaceLake(world,var4+rand.nextInt(16),var5+rand.nextInt(16));}
+        for (int i=0;i<50;++i){generateLake(world,var4+rand.nextInt(16),rand.nextInt(rand.nextInt(10)+8),var5+rand.nextInt(16),veLavaStill);}
+        generateBeaches(world,cx,cz); generateClay(world,cx,cz);
+
         double var11 = 0.5D;
         int treeBase = (int)((this.mobSpawnerNoise.func_806_a((double)var4*var11, (double)var5*var11)/8.0D+rand.nextDouble()*4.0D+4.0D)/3.0D);
         // Vanilla clamps the noise-derived base at 0 so a negative swing can't
@@ -1299,10 +1306,6 @@ public class BetaChunkProvider {
         switch (biomeId) { case BetaBiomeGenBase.FOREST: grassCount=2; break; case BetaBiomeGenBase.RAINFOREST: grassCount=10; break; case BetaBiomeGenBase.SEASONAL_FOREST: grassCount=2; break; case BetaBiomeGenBase.TAIGA: grassCount=1; break; case BetaBiomeGenBase.PLAINS: grassCount=10; break; }
         for (int i=0; i<grassCount; ++i) { int gx=var4+rand.nextInt(16)+8, gy=rand.nextInt(128), gz=var5+rand.nextInt(16)+8; if (world.getVoxel(gx,gy,gz)==veGrass||world.getVoxel(gx,gy,gz)==veDirt) if (world.getVoxel(gx,gy+1,gz)==0) setVoxelColumnAware(world,gx,gy+1,gz,veTallGrass,BETA_TALL_GRASS); }
         if (rand.nextInt(2)==0) { int rx=var4+rand.nextInt(16)+8, ry=rand.nextInt(128), rz=var5+rand.nextInt(16)+8; if (world.getVoxel(rx,ry,rz)==veGrass||world.getVoxel(rx,ry,rz)==veDirt) if (world.getVoxel(rx,ry+1,rz)==0) setVoxelColumnAware(world,rx,ry+1,rz,veRose,BETA_PLANT_RED); }
-        for (int i=0;i<24;++i){generateLake(world,var4+rand.nextInt(16),rand.nextInt(120)+4,var5+rand.nextInt(16),veWaterStill);}
-        for (int i=0;i<12;++i){generateSurfaceLake(world,var4+rand.nextInt(16),var5+rand.nextInt(16));}
-        for (int i=0;i<50;++i){generateLake(world,var4+rand.nextInt(16),rand.nextInt(rand.nextInt(10)+8),var5+rand.nextInt(16),veLavaStill);}
-        generateBeaches(world,cx,cz); generateClay(world,cx,cz);
         for (int i=0;i<1;++i){generateDungeon(world,var4+rand.nextInt(16),rand.nextInt(30)+6,var5+rand.nextInt(16));}
         if (biomeId==BetaBiomeGenBase.DESERT) for (int i=0;i<2;++i){int dx=var4+rand.nextInt(16)+8,dy=rand.nextInt(128),dz=var5+rand.nextInt(16)+8;if(world.getVoxel(dx,dy,dz)==veSand)if(world.getVoxel(dx,dy+1,dz)==0)setVoxelColumnAware(world,dx,dy+1,dz,veDeadBush,BETA_DEAD_BUSH);}
         for (int i=0;i<64;++i){generatePumpkinPatch(world,var4+rand.nextInt(16)+8,rand.nextInt(128),var5+rand.nextInt(16)+8);}
@@ -1464,7 +1467,7 @@ public class BetaChunkProvider {
         if(ac>sc/4)return;
         for(int s=0;s<4;s++){int ox=cx+rand.nextInt(radius)-radius/2,oy=cy+rand.nextInt(3),oz=cz+rand.nextInt(radius)-radius/2,r=2+rand.nextInt(3);
             for(int x=ox-r;x<=ox+r;x++)for(int y=oy-r;y<=oy+r;y++)for(int z=oz-r;z<=oz+r;z++){
-                int dx=x-ox,dy=y-oy,dz=z-oz;if(dx*dx+dy*dy+dz*dz<=r*r){int ex=world.getVoxel(x,y,z);if(ex==0||ex==blockId)continue;world.setVoxel(x,y,z,y>oy?0:blockId);}
+                int dx=x-ox,dy=y-oy,dz=z-oz;if(dx*dx+dy*dy+dz*dz<=r*r){int ex=world.getVoxel(x,y,z);if(ex==0||ex==blockId||ex==veLeaves||ex==veWood)continue;world.setVoxel(x,y,z,y>oy?0:blockId);}
             }
         }
     }
@@ -1488,10 +1491,13 @@ public class BetaChunkProvider {
             if(d2>1.0f)continue;
             int g=worldGetTopY(x,z);
             if(g<=0||g>topY+4||g<topY-6)continue; // stay on the same terrace
+            int topBlock=world.getVoxel(x,g,z);
+            if(topBlock==veLeaves||topBlock==veWood)continue; // don't carve lakes through trees
             int digTo=Math.max(1,topY-(int)(depth*(1.0f-d2)));
             for(int y=g;y>=digTo;y--){
                 int cur=world.getVoxel(x,y,z);
                 if(cur==0)break; // don't tunnel under overhangs
+                if(cur==veLeaves||cur==veWood)break; // never carve through trees (cross-column canopies)
                 if(y>digTo)setVoxelColumnAware(world,x,y,z,veWaterStill,betaWaterStill);
                 else setVoxelColumnAware(world,x,y,z,veSand,betaSand);
             }
