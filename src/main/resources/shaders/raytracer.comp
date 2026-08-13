@@ -1351,6 +1351,11 @@ void main() {
                 float swirlTime = u_Time * 1.5;
                 finalUv += vec2(sin(swirlTime + hp.y * 2.0 + hp.x), cos(swirlTime * 0.7 + hp.z * 2.0)) * distortion * 0.004;
             }
+            // Water: scroll the surface texture over time so it visibly flows
+            // instead of relying on a flat tint + procedural shimmer.
+            if (effectId == 2 && voxel != 21u) {
+                finalUv += vec2(u_Time * 0.05, u_Time * 0.035);
+            }
 
             vec4 texSample = texture(u_BlockTextures, vec3(finalUv, float(tex)));
             float diffuseFactor = float((animPacked >> 8) & 0xFF) / 255.0;
@@ -1384,18 +1389,13 @@ void main() {
                 if (liquidTint.r > liquidTint.b * 1.5) { // Likely Lava
                     trans = 0.0; refl = 0.05;
                     alb = mix(alb, liquidTint, 0.3);
-                } else { // Likely Water — Minecraft-shader style surface
+                } else { // Water — animated water texture surface
                     trans = 0.55; refl = 0.15;
-                    alb = mix(alb, liquidTint, 0.5);
+                    alb = mix(alb, liquidTint, 0.15);
                     // Fresnel: see-through straight-on, reflective at grazing
                     // angles (real reflection ray, chosen in the continuation).
                     float fres = pow(1.0 - max(0.0, dot(n, -rd)), 3.0);
                     refl = mix(0.04, 0.65, fres);
-                    if (!underWater) {
-                        // Gentle animated shimmer on the visible surface
-                        float shimmer = 0.5 + 0.5 * sin(hp.x * 5.0 + u_Time * 2.2) * sin(hp.z * 4.0 + u_Time * 1.7);
-                        alb = mix(alb, alb * (0.82 + 0.36 * shimmer), 0.4);
-                    }
                 }
             } else if (effectId == 3) { // WIRE (Redstone)
                 if (texSample.a >= 0.1) {
