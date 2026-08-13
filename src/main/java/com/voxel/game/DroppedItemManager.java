@@ -414,14 +414,18 @@ public class DroppedItemManager {
      * @return number of valid entries written into {@code out} starting at index 0
      */
     public int buildUpload(float[] out) {
-        return buildUpload(out, 0, 0, 0);
+        return buildUpload(out, 0, 0, 0, 0);
     }
 
     /**
      * Build upload with world-offset subtraction so the shader receives buffer-relative
      * positions (always in [0,2048] range → full float32 sub-block precision).
+     *
+     * @param baseIndex number of crafting-grid entries already packed at the head of
+     *                  {@code out}; dropped items are appended after them (8 floats each)
+     *                  so they never overwrite the crafting-grid slice.
      */
-    public int buildUpload(float[] out, int wox, int woy, int woz) {
+    public int buildUpload(float[] out, int baseIndex, int wox, int woy, int woz) {
         // Atomic snapshot — buildUpload must not see a torn read or live remove().
         // Synchronized with update() to avoid ConcurrentModificationException.
         DroppedItem[] snapshot = snapshotBuf;
@@ -436,6 +440,7 @@ public class DroppedItemManager {
         final long nowNs = System.nanoTime();
         final float tSec = nowNs / 1_000_000_000.0f;
         final float twoPi = (float)(2.0 * Math.PI);
+        int written = 0;
         for (int i = 0; i < n; i++) {
             DroppedItem di = snapshot[i];
             if (di == null || !di.alive) continue;
@@ -447,7 +452,7 @@ public class DroppedItemManager {
             double elapsedSec = (nowNs - di.spawnTimeNs) / 1_000_000_000.0;
             double rawAngle = elapsedSec * DroppedItem.SPIN_RAD_PER_SEC;
             float spinAngle = (float)(rawAngle - Math.floor(rawAngle / twoPi) * twoPi);
-            int idx = i * 8;
+            int idx = (baseIndex + written) * 8;
             out[idx] = di.baseX - wox;
             out[idx + 1] = di.baseY + bobY - woy;
             out[idx + 2] = di.baseZ - woz;
@@ -456,7 +461,8 @@ public class DroppedItemManager {
             out[idx + 5] = spinAngle;       // blockInfo.y — Y-axis spin (radians). 0 → static.
             out[idx + 6] = 0f;
             out[idx + 7] = 0f;
+            written++;
         }
-        return n;
+        return written;
     }
 }

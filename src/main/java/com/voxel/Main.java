@@ -3806,7 +3806,7 @@ public class Main {
         // and the per-entry scale field in itemData[idx + 4] picks the right one.
         int dropCount = 0;
         if (ctx.droppedItemManager != null) {
-            dropCount = ctx.droppedItemManager.buildUpload(reusableItemDataBuf, world.getOffsetX(), world.getOffsetY(), world.getOffsetZ());
+            dropCount = ctx.droppedItemManager.buildUpload(reusableItemDataBuf, craftCount, world.getOffsetX(), world.getOffsetY(), world.getOffsetZ());
         }
         int totalCount = craftCount + dropCount;
 
