@@ -912,11 +912,6 @@ public class Main {
         if (world == null || chunkManager == null) return;
         int bx = (int) Math.floor(player.getPosition().x);
         int bz = (int) Math.floor(player.getPosition().z);
-        // Surface under the spawn point.
-        int baseY = 100;
-        for (int y = 100; y >= 0; y--) {
-            if (world.getVoxel(bx, y, bz) > 0) { baseY = y; break; }
-        }
         // Build 8 blocks to the +z so the player faces the showcase.
         bz += 8;
 
@@ -929,20 +924,59 @@ public class Main {
         final int TANK = 398, TANK1 = 399;
         final int R_TORCH = 27, LAMP = 28;
         final int PLANKS = 72, GLASS = 3, BRICK = 131, CHEST = 118, TORCH = 211;
-        final int GRAVEL = 54, POPPY = 34, DANDELION = 121, SAPLING = 45;
+        final int GRAVEL = 54, POPPY = 34, DANDELION = 121, SAPLING = 45, GLOWSTONE = 17;
+        final int COBBLE = 71, RAIL_EW = 392, MINECART = 393;
+        final int PUMPKIN = 42, MELON = 43, REEDS = 40, WOOL = 91;
+        final int CRAFT_TABLE = 115, FURNACE = 116;
 
-        // ── Level the plaza (31×23) and clear the air above it ──
+        // ── Level the plaza (31×23) ON TOP of the procedural terrain ──
+        // The pad height is read from the real terrain: it is the median surface
+        // across the build footprint, so the showcase sits at the natural level of
+        // whatever seed generated the world. Low columns are filled and high
+        // columns trimmed, and the land outside the footprint is left untouched.
+        com.voxel.world.TerrainSampler terrain =
+                new com.voxel.world.TerrainSampler(world, blockDataManager);
+        final int scanMin = 32, scanMax = 128;
+        int padY = terrain.medianSurface(bx - 6, bz - 12, bx + 24, bz + 10, scanMin, scanMax);
+        if (padY < 0) padY = 64; // fallback if the footprint has no solid ground
+        final int baseY = padY;
+
         for (int dx = -6; dx <= 24; dx++) {
             for (int dz = -12; dz <= 10; dz++) {
                 int x = bx + dx, z = bz + dz;
-                for (int y = baseY + 1; y <= baseY + 14; y++) {
+                int s = terrain.surfaceHeight(x, z, scanMin, scanMax);
+                // Clear everything above the pad (trees, flowers, floating
+                // blocks), including any hill top rising past the clear height.
+                int clearTop = Math.max(baseY + 14, s >= 0 ? s + 1 : baseY + 1);
+                for (int y = baseY + 1; y <= clearTop; y++) {
                     chunkManager.setVoxelWithFlags(x, y, z, 0, 0, 0);
                 }
+                // Fill depressions up to the pad so the plaza is flat.
+                if (s >= 0 && s < baseY) {
+                    for (int y = s + 1; y < baseY; y++) {
+                        chunkManager.setVoxelWithFlags(x, y, z, DIRT, 0, 0);
+                    }
+                }
+                // Fresh grass cap + subsoil.
                 chunkManager.setVoxelWithFlags(x, baseY, z, GRASS, 0, 0);
                 chunkManager.setVoxelWithFlags(x, baseY - 1, z, DIRT, 0, 0);
                 chunkManager.setVoxelWithFlags(x, baseY - 2, z, DIRT, 0, 0);
                 chunkManager.setVoxelWithFlags(x, baseY - 3, z, DIRT, 0, 0);
             }
+        }
+
+        // Windmill foundation: a 3x3 stone-brick pad under the tower.
+        for (int dx = 6; dx <= 8; dx++) {
+            for (int dz = -8; dz <= -6; dz++) {
+                placeTutorial(dx, baseY, dz, BRICK, 0);
+            }
+        }
+
+        // Plaza corner lamp posts (stone-brick post + glowstone beacon).
+        int[][] lampCorners = { {-6, -12}, {24, -12}, {-6, 10}, {24, 10} };
+        for (int[] c : lampCorners) {
+            placeTutorial(c[0], baseY + 1, c[1], BRICK, 0);
+            placeTutorial(c[0], baseY + 2, c[1], GLOWSTONE, 0);
         }
 
         // ── Zone 1: Windmill tower (rotation source 1) ──
@@ -1119,6 +1153,97 @@ public class Main {
         placeTutorial(-3, baseY, -4, 41, 0);
         placeTutorial(-2, baseY, -5, 41, 0);
 
+        // ── Zone 10: Welcome tower + beacon at the spawn end of the plaza ──
+        // Hollow 3x3 cobble tower (dx -1..1, dz -12..-10) north of the spawn pad,
+        // with a glowstone beacon and a walk leading south into the showcase.
+        for (int h = 1; h <= 5; h++) {
+            for (int tx = -1; tx <= 1; tx++) {
+                for (int tz = -12; tz <= -10; tz++) {
+                    boolean rim = (tx == -1 || tx == 1) || (tz == -12 || tz == -10);
+                    boolean window = h == 3 && ((tx == -1 && tz == -11) || (tx == 1 && tz == -11));
+                    if (rim && !window) placeTutorial(tx, baseY + h, tz, COBBLE, 0);
+                    else if (window) placeTutorial(tx, baseY + h, tz, GLASS, 0);
+                }
+            }
+        }
+        placeTutorial(0, baseY + 1, -10, 0, 0); // door (south face)
+        placeTutorial(0, baseY + 2, -10, 0, 0);
+        placeTutorial(0, baseY + 6, -11, GLOWSTONE, 0); // beacon
+        for (int tx = -1; tx <= 1; tx++) {
+            for (int tz = -12; tz <= -10; tz++) {
+                placeTutorial(tx, baseY, tz, BRICK, 0); // stone-brick apron
+            }
+        }
+        for (int d = -7; d <= -5; d++) {
+            placeTutorial(0, baseY, d, COBBLE, 0); // walk toward the machines
+        }
+        // Crafting nook right by spawn: crafting table + furnace on a small pad.
+        placeTutorial(2, baseY, -8, COBBLE, 0);
+        placeTutorial(3, baseY, -8, COBBLE, 0);
+        placeTutorial(2, baseY + 1, -8, CRAFT_TABLE, 0);
+        placeTutorial(3, baseY + 1, -8, FURNACE, 0);
+
+        // ── Zone 11: Redstone lab — two puzzles + component showcase ──
+        // A stone-brick lab (dx 12..17, dz -12..-9). Puzzle 1: place a redstone
+        // torch on top of the lamp to light it. Puzzle 2: place a redstone block
+        // beside the piston to raise it. A repeater + comparator round out the
+        // redstone palette, and a chest holds the parts to solve both puzzles.
+        for (int tx = 12; tx <= 17; tx++) {
+            for (int tz = -12; tz <= -9; tz++) {
+                placeTutorial(tx, baseY, tz, BRICK, 0);
+            }
+        }
+        placeTutorial(13, baseY + 1, -11, LAMP, 0);                          // puzzle 1 target
+        placeTutorial(15, baseY + 1, -11, RedstoneManager.BLOCK_PISTON, 0);  // puzzle 2 piston (up)
+        placeTutorial(15, baseY + 2, -11, COBBLE, 0);                        // block the piston pushes
+        placeTutorial(17, baseY + 1, -11, RedstoneManager.BLOCK_REPEATER_BASE, 0);
+        placeTutorial(17, baseY + 1, -10, RedstoneManager.BLOCK_COMPARATOR_BASE, 0);
+        placeTutorial(13, baseY, -11, WOOL, 0);  // floor marker for the torch socket
+        placeTutorial(15, baseY, -10, WOOL, 0);  // floor marker for the block socket
+        placeTutorial(12, baseY + 1, -9, CHEST, 0);   // parts chest
+        if (ctx.chestManager != null) {
+            com.voxel.game.ItemDefinitions.ItemStack[] labInv =
+                    new com.voxel.game.ItemDefinitions.ItemStack[com.voxel.game.ChestManager.CHEST_SLOTS];
+            labInv[0] = new com.voxel.game.ItemDefinitions.ItemStack("redstone_torch", 16);
+            labInv[1] = new com.voxel.game.ItemDefinitions.ItemStack("redstone_block", 8);
+            labInv[2] = new com.voxel.game.ItemDefinitions.ItemStack("redstone_lamp", 4);
+            labInv[3] = new com.voxel.game.ItemDefinitions.ItemStack("torch", 8);
+            ctx.chestManager.setInventory(bx + 12, baseY + 1, bz - 9, labInv);
+        }
+
+        // ── Zone 12: Minecart ride (cobble platform + rail + minecart) ──
+        for (int tx = -5; tx <= -1; tx++) {
+            placeTutorial(tx, baseY, 9, COBBLE, 0);
+            placeTutorial(tx, baseY, 10, RAIL_EW, 0);
+        }
+        placeTutorial(-3, baseY + 1, 10, MINECART, 0);
+        placeTutorial(-5, baseY + 1, 9, TORCH, 0);
+        placeTutorial(-1, baseY + 1, 9, TORCH, 0);
+
+        // ── Zone 13: Irrigated pumpkin & melon farm (south of the workshop) ──
+        for (int tx = 20; tx <= 23; tx++) {
+            placeTutorial(tx, baseY, 7, COBBLE, 0);
+            placeTutorial(tx, baseY, 9, COBBLE, 0);
+        }
+        placeTutorial(20, baseY, 8, COBBLE, 0);
+        placeTutorial(23, baseY, 8, COBBLE, 0);
+        placeTutorial(21, baseY, 8, WATER, 0); // irrigation trough
+        placeTutorial(22, baseY, 8, WATER, 0);
+        if (ctx.fluidManager != null) {
+            ctx.fluidManager.notifyBlockChanged(bx + 21, baseY, bz + 8);
+            ctx.fluidManager.notifyBlockChanged(bx + 22, baseY, bz + 8);
+        }
+        placeTutorial(21, baseY + 1, 7, REEDS, 0);
+        placeTutorial(22, baseY + 1, 9, REEDS, 0);
+        placeTutorial(20, baseY + 1, 7, PUMPKIN, 0);
+        placeTutorial(23, baseY + 1, 7, MELON, 0);
+        placeTutorial(20, baseY + 1, 9, MELON, 0);
+        placeTutorial(23, baseY + 1, 9, PUMPKIN, 0);
+
+        // ── Workshop interior: crafting table + furnace (near-spawn crafting) ──
+        placeTutorial(23, baseY + 1, 1, CRAFT_TABLE, 0);
+        placeTutorial(23, baseY + 1, 3, FURNACE, 0);
+
         // ── Live machine feed items ──
         if (ctx.droppedItemManager != null) {
             // Millstone: cobblestone on top -> gravel -> flint.
@@ -1151,10 +1276,17 @@ public class Main {
             playerInventory.addItem(item, 4);
         }
 
+        // Stand the player on the freshly-leveled pad (its height may differ a
+        // few blocks from the raw spawn surface).
+        player.setPosition(player.getPosition().x, baseY + 1, player.getPosition().z);
+        player.resetVelocity();
+
         setStatus("Welcome to the Tutorial World! The windmill + water wheel power one network — "
-            + "right-click the hand crank for a boost, the goggles inspect power states, the "
-            + "wrench rotates machines. Redstone torches above the gearshift/clutch reverse/stop "
-            + "their branches; the deployer auto-places brass; the workshop chest holds supplies.");
+            + "right-click the hand crank for a boost, the goggles inspect power states, the wrench "
+            + "rotates machines. PUZZLES (redstone lab, NE corner): place a redstone torch on the lamp "
+            + "to light it, and a redstone block beside the piston to raise it. Torches above the "
+            + "gearshift/clutch reverse/stop their branches. Near spawn: crafting + furnace, a welcome "
+            + "tower, a minecart track, an irrigated farm, and a garden by the pond.");
     }
 
     /** Builds a small oak tree (trunk + leaf blob) at a tutorial plaza offset. */
