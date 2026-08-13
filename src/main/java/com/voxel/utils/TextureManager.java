@@ -225,6 +225,7 @@ public class TextureManager {
         }
 
         try {
+            Path dirPath = Paths.get(directoryPath).toAbsolutePath().normalize();
             Path[] files = Files.walk(Paths.get(directoryPath))
                     .filter(Files::isRegularFile)
                     .filter(p -> p.toString().endsWith(".png"))
@@ -232,11 +233,26 @@ public class TextureManager {
 
             for (Path path : files) {
                 String fileName = path.getFileName().toString();
-                String name = fileName.substring(0, fileName.lastIndexOf('.'));
+                String baseName = fileName.substring(0, fileName.lastIndexOf('.'));
 
-                if (!entityTextureToIndex.containsKey(name)) {
-                    entityTextureToIndex.put(name, entityTexturePaths.size());
+                // Subdirectory-qualified key (e.g. "creeper/creeper", "spider/spider")
+                // so models referencing a nested texture name resolve correctly.
+                String relName = dirPath.relativize(path.toAbsolutePath().normalize())
+                        .toString().replace('\\', '/');
+                relName = relName.substring(0, relName.lastIndexOf('.'));
+
+                // Every file claims its unique relative-path layer...
+                int idx;
+                if (entityTextureToIndex.containsKey(relName)) {
+                    idx = entityTextureToIndex.get(relName);
+                } else {
+                    idx = entityTexturePaths.size();
                     entityTexturePaths.add(path.toString());
+                    entityTextureToIndex.put(relName, idx);
+                }
+                // ...and the bare basename aliases the first file that owns it.
+                if (!entityTextureToIndex.containsKey(baseName)) {
+                    entityTextureToIndex.put(baseName, idx);
                 }
             }
         } catch (IOException e) {

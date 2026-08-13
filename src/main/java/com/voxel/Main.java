@@ -1477,15 +1477,85 @@ public class Main {
     }
 
     public void spawnInitialEnemies(Player p) {
+        com.voxel.entity.CreeperEntity.setChunkManager(chunkManager);
         for (int i = 0; i < 3; i++) {
             com.voxel.entity.ZombieEntity zombie = new com.voxel.entity.ZombieEntity(100 + i, new Vector3f(6 + i * 12, 64, 6), textureManager, p);
             zombie.dimension = activeDimension;
             zombie.setWorld(world);
             entityManager.addEntity(zombie);
         }
-        
+
+        // Creepers near spawn, biome-tinted to blend with the surrounding grass.
+        for (int i = 0; i < 2; i++) {
+            float cx = 10 + i * 16;
+            float cz = -6 - i * 4;
+            int cy = 64;
+            for (int y = 127; y >= 0; y--) {
+                if (world.getVoxel((int) cx, y, (int) cz) > 0) { cy = y + 1; break; }
+            }
+            com.voxel.entity.CreeperEntity creeper = new com.voxel.entity.CreeperEntity(
+                200 + i, new Vector3f(cx, cy, cz), textureManager, p);
+            creeper.dimension = activeDimension;
+            creeper.setWorld(world);
+            // Sample the grass colormap at the spawn position so the creeper's
+            // grayscale skin re-greens to match the surrounding grass blocks.
+            int grassRGB = biomeManager.getGrassColorAt((int) cx, (int) cz);
+            creeper.tintColor.set(
+                ((grassRGB >> 16) & 0xFF) / 255.0f,
+                ((grassRGB >> 8) & 0xFF) / 255.0f,
+                (grassRGB & 0xFF) / 255.0f);
+            creeper.tintAmount = 1.0f;
+            entityManager.addEntity(creeper);
+        }
+
         // Spawn initial villagers near villages
         spawnInitialVillagers();
+    }
+
+    /**
+     * Debug helper: spawns a creeper where the player is looking. If the look
+     * ray hits a block, the creeper appears in the empty cell in front of that
+     * block face; otherwise it spawns 10 blocks along the ray. It then drops
+     * straight down to stand on the first solid block, and is biome-tinted to
+     * match the surrounding grass.
+     */
+    private void spawnCreeperAtLook() {
+        Vector3f spawnPos;
+        int[] hit = raycastBlock(64.0f);
+        if (hit != null) {
+            // hit[3..5] is the empty cell the ray crossed just before the block.
+            spawnPos = new Vector3f(hit[3] + 0.5f, hit[4], hit[5] + 0.5f);
+        } else {
+            // No block in view: spawn 10 blocks along the look ray.
+            Vector3f dir = getLookDirection();
+            Vector3f eye = getActiveCameraPosition();
+            spawnPos = new Vector3f(eye.x + dir.x * 10.0f, eye.y + dir.y * 10.0f, eye.z + dir.z * 10.0f);
+        }
+
+        // Drop straight down to stand on the first solid block below.
+        int sx = (int) Math.floor(spawnPos.x);
+        int sz = (int) Math.floor(spawnPos.z);
+        int sy = (int) Math.floor(spawnPos.y);
+        int ground = -1;
+        for (int y = Math.min(sy, 255); y >= 0; y--) {
+            if (world.getVoxel(sx, y, sz) != 0) { ground = y; break; }
+        }
+        if (ground >= 0) sy = ground + 1;
+
+        com.voxel.entity.CreeperEntity creeper = new com.voxel.entity.CreeperEntity(
+            60000 + (int) (Math.random() * 1000),
+            new Vector3f(sx + 0.5f, sy, sz + 0.5f), textureManager, player);
+        creeper.dimension = activeDimension;
+        creeper.setWorld(world);
+        com.voxel.entity.CreeperEntity.setChunkManager(chunkManager);
+        int grassRGB = biomeManager.getGrassColorAt(sx, sz);
+        creeper.tintColor.set(
+            ((grassRGB >> 16) & 0xFF) / 255.0f,
+            ((grassRGB >> 8) & 0xFF) / 255.0f,
+            (grassRGB & 0xFF) / 255.0f);
+        creeper.tintAmount = 1.0f;
+        entityManager.addEntity(creeper);
+        setStatus("Spawned creeper");
     }
 
     public void spawnNetherMobs(Player p) {
@@ -2077,6 +2147,7 @@ public class Main {
         // Pick up that reference before checking spawn-generation readiness.
         if (chunkManager != ctx.chunkManager) {
             chunkManager = ctx.chunkManager;
+            com.voxel.entity.CreeperEntity.setChunkManager(chunkManager);
             world = ctx.world;
             activeDimension = ctx.activeDimension;
             redstoneManager = ctx.redstoneManager;
@@ -2469,6 +2540,7 @@ public class Main {
         }            // Sync fields after potential dimension switch from PortalSystem/CommandProcessor
         if (chunkManager != ctx.chunkManager) {
             chunkManager = ctx.chunkManager;
+            com.voxel.entity.CreeperEntity.setChunkManager(chunkManager);
             world = ctx.world;
             activeDimension = ctx.activeDimension;
             redstoneManager = ctx.redstoneManager;
@@ -2842,6 +2914,7 @@ public class Main {
             // Sync dimension changes from GameContext (render loop needs current world)
             if (chunkManager != ctx.chunkManager) {
                 chunkManager = ctx.chunkManager;
+                com.voxel.entity.CreeperEntity.setChunkManager(chunkManager);
                 world = ctx.world;
                 activeDimension = ctx.activeDimension;
                 redstoneManager = ctx.redstoneManager;
@@ -3303,6 +3376,11 @@ public class Main {
             }
 
             if (key == GLFW_KEY_C) {
+                spawnCreeperAtLook();
+                return;
+            }
+
+            if (key == GLFW_KEY_X) {
                 combatMode = !combatMode;
                 ctx.combatMode = combatMode;
                 if (combatMode) {
