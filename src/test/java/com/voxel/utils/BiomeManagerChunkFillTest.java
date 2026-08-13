@@ -129,6 +129,9 @@ public class BiomeManagerChunkFillTest {
         com.voxel.biome.Biome biome = provider.getBiome(x, z);
         float t = Math.max(0.0f, Math.min(1.0f, biome.getTemperature(x, z)));
         float h = Math.max(0.0f, Math.min(1.0f, biome.getHumidity(x, z)));
+        // Mirror BiomeManager's temp+humidity<=1 colormap clamp.
+        float sum = t + h;
+        if (sum > 1.0f) { t /= sum; h /= sum; }
         return new byte[]{(byte) (t * 255), (byte) (h * 255)};
     }
 }

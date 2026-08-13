@@ -6,6 +6,10 @@ import org.lwjgl.stb.STBImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
@@ -26,6 +30,10 @@ public class BiomeManager {
     private int grassColormapId;
     private int foliageColormapId;
     private int biomeMapId;
+
+    // CPU copy of the grass colormap for CPU-side sampling (entity biome tint).
+    private int[] grassColormapPixels;
+    private int grassColormapW, grassColormapH;
     
     // Biome provider that drives temperature and humidity values for the tint map.
     private BiomeProvider biomeProvider;
@@ -329,6 +337,21 @@ public class BiomeManager {
     public void loadColormaps(String grassPath, String foliagePath) {
         grassColormapId = loadTexture(grassPath);
         foliageColormapId = loadTexture(foliagePath);
+        loadGrassColormapCPU(grassPath);
+    }
+
+    /** Loads a CPU-side copy of the grass colormap for {@link #getGrassColorAt}. */
+    private void loadGrassColormapCPU(String grassPath) {
+        try {
+            BufferedImage img = ImageIO.read(new File(grassPath));
+            if (img == null) return;
+            grassColormapW = img.getWidth();
+            grassColormapH = img.getHeight();
+            grassColormapPixels = new int[grassColormapW * grassColormapH];
+            img.getRGB(0, 0, grassColormapW, grassColormapH, grassColormapPixels, 0, grassColormapW);
+        } catch (IOException e) {
+            System.err.println("Failed to load grass colormap for CPU sampling: " + grassPath);
+        }
     }
 
     /** Helper to load a simple 2D texture from a file. */
@@ -374,14 +397,62 @@ public class BiomeManager {
                 // Use getTemperature()/getHumidity() so biome overrides and noise are respected.
                 tempHumBuf[0] = Math.max(0.0f, Math.min(1.0f, biome.getTemperature(x, z)));
                 tempHumBuf[1] = Math.max(0.0f, Math.min(1.0f, biome.getHumidity(x, z)));
+                // Keep the sample inside the colormap's valid temp+humidity<=1 triangle.
+                float climateSum = tempHumBuf[0] + tempHumBuf[1];
+                if (climateSum > 1.0f) { tempHumBuf[0] /= climateSum; tempHumBuf[1] /= climateSum; }
                 return tempHumBuf;
             }
         }
         // Fallback: uniform temperate values when the provider is unset or the
         // registry momentarily cannot resolve a biome (never NPE on the gen thread).
-        tempHumBuf[0] = 0.7f;
-        tempHumBuf[1] = 0.5f;
+        tempHumBuf[0] = 0.5f;
+        tempHumBuf[1] = 0.4f;
         return tempHumBuf;
+    }
+
+    /**
+     * Samples the grass colormap at a world position (temperature/humidity
+     * lookup), matching the shader's u_GrassColormap tint so CPU-side consumers
+     * (e.g. entity biome tinting) agree with block grass tinting. Returns a
+     * packed 0xRRGGBB color.
+     */
+    public int getGrassColorAt(int x, int z) {
+        if (grassColormapPixels == null) return 0x7CBD4F; // neutral grass green
+        BiomeProvider provider = biomeProvider;
+        float t = 0.5f, h = 0.4f;
+        if (provider != null) {
+            Biome biome = provider.getBiome(x, z);
+            if (biome != null) {
+                t = Math.max(0.0f, Math.min(1.0f, biome.getTemperature(x, z)));
+                h = Math.max(0.0f, Math.min(1.0f, biome.getHumidity(x, z)));
+            }
+        }
+        // Keep the sample inside the colormap's valid temp+humidity<=1 triangle.
+        float sum = t + h;
+        if (sum > 1.0f) { t /= sum; h /= sum; }
+        return sampleGrassColormap(1.0f - t, 1.0f - h);
+    }
+
+    private int sampleGrassColormap(float u, float v) {
+        int w = grassColormapW, h = grassColormapH;
+        float fx = u * (w - 1), fy = v * (h - 1);
+        int x0 = (int) Math.floor(fx), y0 = (int) Math.floor(fy);
+        int x1 = Math.min(x0 + 1, w - 1), y1 = Math.min(y0 + 1, h - 1);
+        float tx = fx - x0, ty = fy - y0;
+        int c00 = grassColormapPixels[y0 * w + x0];
+        int c10 = grassColormapPixels[y0 * w + x1];
+        int c01 = grassColormapPixels[y1 * w + x0];
+        int c11 = grassColormapPixels[y1 * w + x1];
+        int r = bilerpByte((c00 >> 16) & 0xFF, (c10 >> 16) & 0xFF, (c01 >> 16) & 0xFF, (c11 >> 16) & 0xFF, tx, ty);
+        int g = bilerpByte((c00 >> 8) & 0xFF, (c10 >> 8) & 0xFF, (c01 >> 8) & 0xFF, (c11 >> 8) & 0xFF, tx, ty);
+        int b = bilerpByte(c00 & 0xFF, c10 & 0xFF, c01 & 0xFF, c11 & 0xFF, tx, ty);
+        return (r << 16) | (g << 8) | b;
+    }
+
+    private static int bilerpByte(int a, int b, int c, int d, float tx, float ty) {
+        float top = a + (b - a) * tx;
+        float bot = c + (d - c) * tx;
+        return (int) (top + (bot - top) * ty);
     }
 
     // Getters for the various texture IDs.
