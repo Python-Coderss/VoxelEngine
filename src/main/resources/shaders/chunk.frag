@@ -27,8 +27,8 @@ void main() {
     if (texSample.a < 0.1) discard;
     
     // Get block data for material properties
-    ivec4 d1 = texelFetch(u_BlockData, int(blockId) * 3 + 1);
-    ivec4 d2 = texelFetch(u_BlockData, int(blockId) * 3 + 2);
+    ivec4 d1 = texelFetch(u_BlockData, int(blockId) * 4 + 1);
+    ivec4 d2 = texelFetch(u_BlockData, int(blockId) * 4 + 2);
     
     // Albedo from texture * block color
     vec3 albedo = texSample.rgb * (vec3(d2.rgb) / 255.0);
@@ -41,7 +41,8 @@ void main() {
         // Animation already handled by vertex UV offset — skip in fragment
     }
     
-    // Biome tinting
+    // Fixed per-block tint: grass/leaf variants carry their own color (a block-type
+    // property) instead of a location-based biome colormap lookup.
     int tintIndex = (d1.w >> 22) & 3;
     if (tintIndex > 0) {
         // Determine face index from normal
@@ -52,10 +53,8 @@ void main() {
         else face = (vNormal.x > 0.0) ? 5 : 4;
         int tintFaceMask = (d1.w >> 24) & 0x3F;
         if (((tintFaceMask >> face) & 1) == 1 && texSample.a > 0.5) {
-            vec2 bp = texture(u_BiomeMap, (vWorldPos.xz - vec2(u_WorldOffset.xz)) / 2048.0).rg;
-            vec2 cmUV = vec2(1.0 - bp.x, 1.0 - bp.y);
-            if (tintIndex == 1) albedo *= texture(u_GrassColormap, cmUV).rgb;
-            else albedo *= texture(u_FoliageColormap, cmUV).rgb;
+            ivec4 d3 = texelFetch(u_BlockData, int(blockId) * 4 + 3);
+            albedo *= vec3(d3.rgb) / 255.0;
         }
     }
     

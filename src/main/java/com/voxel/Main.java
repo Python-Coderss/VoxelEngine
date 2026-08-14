@@ -148,7 +148,8 @@ public class Main {
     // A hand-crafted voxel scene rendered by the raytracer behind the menu
     // (Minecraft-panorama style) while the real world is still uninitialized.
     public volatile boolean panoramaActive = false;
-    private boolean tutorialBuilt = false;   // one-shot Tutorial World showcase build
+    private int currentTutorialZone = -1; // last showcase zone the popup announced
+    private boolean tutorialMinecartsSpawned = false; // rideable coaster carts spawned yet
     private com.voxel.World panoramaWorld;
     private int panoramaNextSlot = 0;
     private float panoramaAngle = 0f;    // orbit angle (radians)
@@ -228,6 +229,10 @@ public class Main {
     public String statusMessage = "";
     public double statusUntil = 0.0;
     public int statusLineOffset = 0;
+    // Tutorial World zone title-card popup (driven by the logic thread, read by HudUI).
+    public String tutorialPopupTitle = "";
+    public String tutorialPopupSubtitle = "";
+    public double tutorialPopupUntil = 0.0;
     public int lastMeasuredFps = 0;
 
     public boolean leftMouseHeld = false;
@@ -240,6 +245,44 @@ public class Main {
 
     public static final int CRAFTING_SLOTS = 5;
     public static final int CRAFTING_RESULT_SLOT = 4;
+
+    // Fixed biome-category tint colors (0xRRGGBB). Grass block variants and the
+    // creeper's re-greened skin use the GRASS_* constants; leaves use FOLIAGE_*.
+    // These replace the old location-based biome colormap sampling.
+    private static final int GRASS_PLAINS = 0x91BD59;
+    private static final int GRASS_TAIGA   = 0x86B783;
+    private static final int GRASS_JUNGLE  = 0x59C93C;
+    private static final int GRASS_SWAMP   = 0x6A7039;
+    private static final int GRASS_SAVANNA = 0xBFB755;
+    private static final int GRASS_TUNDRA  = 0x80B497;
+    private static final int FOLIAGE_OAK      = 0x48B518;
+    private static final int FOLIAGE_SPRUCE   = 0x619961;
+    private static final int FOLIAGE_JUNGLE   = 0x30BB0B;
+    private static final int FOLIAGE_DARK_OAK = 0x2E7D2E;
+
+    /** Fixed grass tint color for a biome category (0xRRGGBB). */
+    private static int grassColorForCategory(com.voxel.biome.Biome.Category cat) {
+        switch (cat) {
+            case TAIGA:   return GRASS_TAIGA;
+            case JUNGLE:  return GRASS_JUNGLE;
+            case SWAMP:   return GRASS_SWAMP;
+            case SAVANNA: return GRASS_SAVANNA;
+            case ICY:     return GRASS_TUNDRA;
+            default:      return GRASS_PLAINS;
+        }
+    }
+
+    /** Fixed grass tint at a world position, chosen by biome category. */
+    private int grassColorAt(int x, int z) {
+        if (biomeManager != null) {
+            com.voxel.biome.BiomeProvider provider = biomeManager.getBiomeProvider();
+            if (provider != null) {
+                com.voxel.biome.Biome biome = provider.getBiome(x, z);
+                if (biome != null) return grassColorForCategory(biome.getCategory());
+            }
+        }
+        return GRASS_PLAINS;
+    }
 
     public Thread logicThread;
     public volatile boolean running = true;
@@ -891,446 +934,6 @@ public class Main {
         panoramaWorld.setVoxelInPool(slot, x & 15, y & 15, z & 15, type, extra, flags);
     }
 
-    /**
-     * Tutorial World: levels a large plaza at spawn and builds a fully-wired
-     * Create showcase across several zones —
-     *   • Windmill + water wheel (two rotation sources on one network)
-     *   • Cogwheel power line with a large cogwheel, gearshift (reversed branch)
-     *     and redstone-controlled clutch (stopped branch)
-     *   • Live machines: millstone grinding cobble, press compacting sand +
-     *     alloying brass, crushing wheel doubling ore off the belt, saw chewing
-     *     a log pile, drill excavating a stone quarry wall
-     *   • Mechanical belt feeding an item vault, hand crank boost, encased fan,
-     *     lit blaze burner + steam engine, copper tanks
-     *   • Deployer station (pre-loaded, auto-places brass casings), redstone
-     *     lamp demo, workshop building with a stocked chest, garden and path.
-     * Registers every block with the kinetic + machine + redstone managers so
-     * the sources actually power the network, and stocks the player with a full
-     * kit. Runs on the logic thread once, right after spawn resolution.
-     */
-    private void buildTutorialWorld() {
-        if (world == null || chunkManager == null) return;
-        int bx = (int) Math.floor(player.getPosition().x);
-        int bz = (int) Math.floor(player.getPosition().z);
-        // Build 8 blocks to the +z so the player faces the showcase.
-        bz += 8;
-
-        final int GRASS = 1, DIRT = 13, STONE = 2, LOG = 5, WATER = 15;
-        final int SHAFT = 291, COG = 294, BIG_COG = 295, WHEEL = 296;
-        final int CLUTCH = 353, GEARSHIFT = 355;
-        final int CRANK = 404, BEARING = 405, SAIL = 406, PRESS = 407, MILL = 408;
-        final int CRUSHER = 409, DRILL = 410, SAW = 411, DEPLOYER = 412, BELT = 413;
-        final int VAULT = 414, CASING = 415, FAN = 263, BURNER = 395, ENGINE = 397;
-        final int TANK = 398, TANK1 = 399;
-        final int R_TORCH = 27, LAMP = 28;
-        final int PLANKS = 72, GLASS = 3, BRICK = 131, CHEST = 118, TORCH = 211;
-        final int GRAVEL = 54, POPPY = 34, DANDELION = 121, SAPLING = 45, GLOWSTONE = 17;
-        final int COBBLE = 71, RAIL_EW = 392, MINECART = 393;
-        final int PUMPKIN = 42, MELON = 43, REEDS = 40, WOOL = 91;
-        final int CRAFT_TABLE = 115, FURNACE = 116;
-
-        // ── Level the plaza (31×23) ON TOP of the procedural terrain ──
-        // The pad height is read from the real terrain: it is the median surface
-        // across the build footprint, so the showcase sits at the natural level of
-        // whatever seed generated the world. Low columns are filled and high
-        // columns trimmed, and the land outside the footprint is left untouched.
-        com.voxel.world.TerrainSampler terrain =
-                new com.voxel.world.TerrainSampler(world, blockDataManager);
-        final int scanMin = 32, scanMax = 128;
-        int padY = terrain.medianSurface(bx - 6, bz - 12, bx + 24, bz + 10, scanMin, scanMax);
-        if (padY < 0) padY = 64; // fallback if the footprint has no solid ground
-        final int baseY = padY;
-
-        for (int dx = -6; dx <= 24; dx++) {
-            for (int dz = -12; dz <= 10; dz++) {
-                int x = bx + dx, z = bz + dz;
-                int s = terrain.surfaceHeight(x, z, scanMin, scanMax);
-                // Clear everything above the pad (trees, flowers, floating
-                // blocks), including any hill top rising past the clear height.
-                int clearTop = Math.max(baseY + 14, s >= 0 ? s + 1 : baseY + 1);
-                for (int y = baseY + 1; y <= clearTop; y++) {
-                    chunkManager.setVoxelWithFlags(x, y, z, 0, 0, 0);
-                }
-                // Fill depressions up to the pad so the plaza is flat.
-                if (s >= 0 && s < baseY) {
-                    for (int y = s + 1; y < baseY; y++) {
-                        chunkManager.setVoxelWithFlags(x, y, z, DIRT, 0, 0);
-                    }
-                }
-                // Fresh grass cap + subsoil.
-                chunkManager.setVoxelWithFlags(x, baseY, z, GRASS, 0, 0);
-                chunkManager.setVoxelWithFlags(x, baseY - 1, z, DIRT, 0, 0);
-                chunkManager.setVoxelWithFlags(x, baseY - 2, z, DIRT, 0, 0);
-                chunkManager.setVoxelWithFlags(x, baseY - 3, z, DIRT, 0, 0);
-            }
-        }
-
-        // Windmill foundation: a 3x3 stone-brick pad under the tower.
-        for (int dx = 6; dx <= 8; dx++) {
-            for (int dz = -8; dz <= -6; dz++) {
-                placeTutorial(dx, baseY, dz, BRICK, 0);
-            }
-        }
-
-        // Plaza corner lamp posts (stone-brick post + glowstone beacon).
-        int[][] lampCorners = { {-6, -12}, {24, -12}, {-6, 10}, {24, 10} };
-        for (int[] c : lampCorners) {
-            placeTutorial(c[0], baseY + 1, c[1], BRICK, 0);
-            placeTutorial(c[0], baseY + 2, c[1], GLOWSTONE, 0);
-        }
-
-        // ── Zone 1: Windmill tower (rotation source 1) ──
-        // Bearing + 4 sails on a vertical shaft; a cogwheel foots the tower.
-        placeTutorial(7, baseY + 1, -7, SHAFT, 0); // vertical shaft (4 tall)
-        placeTutorial(7, baseY + 2, -7, SHAFT, 0);
-        placeTutorial(7, baseY + 3, -7, SHAFT, 0);
-        placeTutorial(7, baseY + 4, -7, SHAFT, 0);
-        placeTutorial(7, baseY + 5, -7, BEARING, 0);
-        placeTutorial(6, baseY + 5, -7, SAIL, 0); // sails N/S/E/W
-        placeTutorial(8, baseY + 5, -7, SAIL, 0);
-        placeTutorial(7, baseY + 5, -8, SAIL, 0);
-        placeTutorial(7, baseY + 5, -6, SAIL, 0);
-        placeTutorial(8, baseY + 1, -7, COG, 0);  // foot cogwheel (network junction)
-
-        // ── Zone 2: Water wheel pond (rotation source 2) ──
-        // A cobble-rimmed 4×4 pond with a water wheel dipping into it; a shaft +
-        // cog line carries its rotation east to join the windmill network.
-        for (int dx = -5; dx <= -2; dx++) {
-            for (int dz = -6; dz <= -3; dz++) {
-                placeTutorial(dx, baseY, dz, 0, 0);        // open the surface (sunken pond)
-                placeTutorial(dx, baseY - 1, dz, WATER, 0);
-                placeTutorial(dx, baseY - 2, dz, WATER, 0);
-                if (ctx.fluidManager != null) {
-                    ctx.fluidManager.notifyBlockChanged(bx + dx, baseY - 1, bz + dz);
-                    ctx.fluidManager.notifyBlockChanged(bx + dx, baseY - 2, bz + dz);
-                }
-            }
-        }
-        for (int dx = -6; dx <= -1; dx++) {
-            for (int dz = -7; dz <= -2; dz++) {
-                boolean rim = (dx == -6 || dx == -1) || (dz == -7 || dz == -2);
-                boolean cornerInside = dx >= -5 && dx <= -2 && dz >= -6 && dz <= -3;
-                if (rim && !cornerInside) placeTutorial(dx, baseY, dz, BRICK, 0);
-            }
-        }
-        placeTutorial(-4, baseY, -6, WHEEL, 0);    // wheel, water below
-        placeTutorial(-4, baseY + 1, -6, SHAFT, 0); // riser shaft
-        for (int n = -3; n <= 2; n++) {
-            placeTutorial(n, baseY + 1, -6, COG, 0);
-        }
-        for (int n = 2; n <= 6; n++) {
-            placeTutorial(n, baseY + 1, -7, COG, 0); // junction into main line (shaft at 7 stays)
-        }
-
-        // ── Zone 3: Deployer station (pre-loaded, auto-places) ──
-        placeTutorial(-1, baseY + 1, -5, DEPLOYER, 5); // facing +X
-        if (ctx.machineManager != null) {
-            int dx = -1 + (int) Math.floor(player.getPosition().x);
-            int dz = -5 + (int) Math.floor(player.getPosition().z) + 8;
-            for (int i = 0; i < 8; i++) {
-                ctx.machineManager.loadDeployer(dx, baseY + 1, dz, "brass_casing");
-            }
-        }
-
-        // ── Zone 4: Main cogwheel power line + redstone demos ──
-        for (int n = 9; n <= 13; n++) {
-            placeTutorial(n, baseY + 1, -7, COG, 0);
-        }
-        placeTutorial(12, baseY + 1, -7, BIG_COG, 0); // large cogwheel (gear ratio)
-        // Gearshift branch: redstone torch above powers it -> everything east
-        // of it spins REVERSED.
-        placeTutorial(14, baseY + 1, -7, GEARSHIFT, 0);
-        placeTutorialRedstone(14, baseY + 2, -7, R_TORCH, 0);
-        placeTutorial(15, baseY + 1, -7, COG, 0); // reversed branch
-        // Clutch branch: redstone torch above powers it -> everything east of it
-        // STOPS (disengaged). Break the torch to re-engage.
-        placeTutorial(16, baseY + 1, -7, CLUTCH, 0);
-        placeTutorialRedstone(16, baseY + 2, -7, R_TORCH, 0);
-        placeTutorial(17, baseY + 1, -7, COG, 0); // stopped branch
-        placeTutorial(18, baseY + 1, -7, CRANK, 0); // end-of-line hand crank
-        // Redstone lamp demo: torch above turns the lamp on.
-        placeTutorial(16, baseY + 1, -8, LAMP, 0);
-        placeTutorialRedstone(16, baseY + 2, -8, R_TORCH, 0);
-
-        // ── Zone 5: Machine row (south of the power line) ──
-        placeTutorial(8, baseY + 1, -6, MILL, 0);      // grinds cobble -> gravel -> flint
-        placeTutorial(9, baseY + 1, -6, PRESS, 0);     // sand x4 -> sandstone; copper+zinc -> brass
-        placeTutorial(10, baseY + 1, -6, CRUSHER, 5);  // facing +X: doubles ore thrown in front
-        placeTutorial(12, baseY + 1, -6, SAW, 5);      // facing +X: converts logs in front to planks
-        placeTutorial(15, baseY + 1, -6, DRILL, 5);    // facing +X: mines the quarry wall in front
-
-        // Saw log feed (2 logs the saw chews through).
-        placeTutorial(13, baseY + 1, -6, LOG, 0);
-        placeTutorial(14, baseY + 1, -6, LOG, 0);
-        // Quarry wall for the drill (2×2 stone it excavates, dropping cobble).
-        for (int dx = 16; dx <= 17; dx++) {
-            for (int h = 1; h <= 2; h++) {
-                placeTutorial(dx, baseY + h, -6, STONE, 0);
-            }
-        }
-
-        // ── Zone 6: Belt feeding the item vault (south of the machine row) ──
-        // Facing must be horizontal (2-5) or the belt won't run; east (5)
-        // carries items toward the vault at +X.
-        for (int n = 0; n <= 3; n++) {
-            placeTutorial(8 + n, baseY + 1, -5, BELT, 5);
-        }
-        placeTutorial(12, baseY + 1, -5, VAULT, 0);
-
-        // ── Zone 7: Encased fan + steam setup along the back row ──
-        placeTutorial(9, baseY + 1, -8, FAN, 5);        // encased fan, facing +X
-        placeTutorial(10, baseY + 1, -8, BURNER, 0);    // lit blaze burner
-        placeTutorial(10, baseY + 2, -8, ENGINE, 0);    // active steam engine (source 3)
-        placeTutorial(11, baseY + 1, -8, TANK, 0);      // copper tank (2 high)
-        placeTutorial(11, baseY + 2, -8, TANK1, 0);
-
-        // ── Zone 8: Workshop building (planks + glass, stocked chest, torch) ──
-        for (int dx = 18; dx <= 24; dx++) {
-            for (int dz = -3; dz <= 5; dz++) {
-                placeTutorial(dx, baseY, dz, BRICK, 0); // stone-brick floor
-                boolean wall = (dx == 18 || dx == 24) || (dz == -3 || dz == 5);
-                if (wall) {
-                    for (int h = 1; h <= 3; h++) {
-                        placeTutorial(dx, baseY + h, dz, PLANKS, 0);
-                    }
-                    // Glass windows on the south/east faces.
-                    boolean glass = (dz == 5 && (dx == 19 || dx == 23))
-                            || (dx == 24 && (dz == -1 || dz == 3));
-                    if (glass) {
-                        placeTutorial(dx, baseY + 2, dz, GLASS, 0);
-                    }
-                }
-            }
-        }
-        // Door gap on the south face (2 tall; the roof above stays intact).
-        placeTutorial(21, baseY + 1, 5, 0, 0);
-        placeTutorial(21, baseY + 2, 5, 0, 0);
-        // Roof.
-        for (int dx = 18; dx <= 24; dx++) {
-            for (int dz = -3; dz <= 5; dz++) {
-                placeTutorial(dx, baseY + 4, dz, PLANKS, 0);
-            }
-        }
-        // Interior torch + stocked chest.
-        placeTutorial(22, baseY + 1, 1, TORCH, 0);
-        placeTutorial(20, baseY + 1, 2, CHEST, 0);
-        if (ctx.chestManager != null) {
-            com.voxel.game.ItemDefinitions.ItemStack[] inv =
-                    new com.voxel.game.ItemDefinitions.ItemStack[com.voxel.game.ChestManager.CHEST_SLOTS];
-            String[] items = {"brass_ingot", "cogwheel", "shaft", "redstone_torch", "torch",
-                    "glass", "oak_planks", "wool", "gravel", "stone_brick",
-                    "deployer", "clutch", "gearshift", "water_wheel", "large_cogwheel",
-                    "oak_sapling", "poppy", "dandelion", "sand", "cobblestone"};
-            int[] counts = {16, 8, 8, 8, 8, 8, 32, 8, 16, 16, 2, 2, 2, 2, 2, 4, 4, 4, 8, 16};
-            for (int i = 0; i < items.length && i < inv.length; i++) {
-                inv[i] = new com.voxel.game.ItemDefinitions.ItemStack(items[i], counts[i]);
-            }
-            ctx.chestManager.setInventory(bx + 20, baseY + 1, bz + 2, inv);
-        }
-
-        // ── Zone 9: Garden, trees, path and lights ──
-        // Oak trees flanking the plaza.
-        buildTutorialTree(bx, bz, baseY, -2, -1);
-        buildTutorialTree(bx, bz, baseY, 3, 9);
-        buildTutorialTree(bx, bz, baseY, 12, 8);
-        // Gravel path across the plaza (dz=6) + torch lamps every 4 blocks.
-        for (int dx = -6; dx <= 24; dx++) {
-            placeTutorial(dx, baseY, 6, GRAVEL, 0);
-        }
-        for (int dx = -2; dx <= 22; dx += 4) {
-            placeTutorial(dx, baseY + 1, 6, TORCH, 0);
-        }
-        // Flowers + saplings.
-        placeTutorial(1, baseY + 1, 8, POPPY, 0);
-        placeTutorial(-3, baseY + 1, 8, DANDELION, 0);
-        placeTutorial(5, baseY + 1, 8, POPPY, 0);
-        placeTutorial(-4, baseY + 1, 2, DANDELION, 0);
-        placeTutorial(6, baseY + 1, -2, POPPY, 0);
-        placeTutorial(-3, baseY + 1, 4, SAPLING, 0);
-        placeTutorial(3, baseY + 1, 8, SAPLING, 0);
-        placeTutorial(5, baseY + 1, -2, SAPLING, 0);
-        // Water lilies on the pond.
-        placeTutorial(-3, baseY, -4, 41, 0);
-        placeTutorial(-2, baseY, -5, 41, 0);
-
-        // ── Zone 10: Welcome tower + beacon at the spawn end of the plaza ──
-        // Hollow 3x3 cobble tower (dx -1..1, dz -12..-10) north of the spawn pad,
-        // with a glowstone beacon and a walk leading south into the showcase.
-        for (int h = 1; h <= 5; h++) {
-            for (int tx = -1; tx <= 1; tx++) {
-                for (int tz = -12; tz <= -10; tz++) {
-                    boolean rim = (tx == -1 || tx == 1) || (tz == -12 || tz == -10);
-                    boolean window = h == 3 && ((tx == -1 && tz == -11) || (tx == 1 && tz == -11));
-                    if (rim && !window) placeTutorial(tx, baseY + h, tz, COBBLE, 0);
-                    else if (window) placeTutorial(tx, baseY + h, tz, GLASS, 0);
-                }
-            }
-        }
-        placeTutorial(0, baseY + 1, -10, 0, 0); // door (south face)
-        placeTutorial(0, baseY + 2, -10, 0, 0);
-        placeTutorial(0, baseY + 6, -11, GLOWSTONE, 0); // beacon
-        for (int tx = -1; tx <= 1; tx++) {
-            for (int tz = -12; tz <= -10; tz++) {
-                placeTutorial(tx, baseY, tz, BRICK, 0); // stone-brick apron
-            }
-        }
-        for (int d = -7; d <= -5; d++) {
-            placeTutorial(0, baseY, d, COBBLE, 0); // walk toward the machines
-        }
-        // Crafting nook right by spawn: crafting table + furnace on a small pad.
-        placeTutorial(2, baseY, -8, COBBLE, 0);
-        placeTutorial(3, baseY, -8, COBBLE, 0);
-        placeTutorial(2, baseY + 1, -8, CRAFT_TABLE, 0);
-        placeTutorial(3, baseY + 1, -8, FURNACE, 0);
-
-        // ── Zone 11: Redstone lab — two puzzles + component showcase ──
-        // A stone-brick lab (dx 12..17, dz -12..-9). Puzzle 1: place a redstone
-        // torch on top of the lamp to light it. Puzzle 2: place a redstone block
-        // beside the piston to raise it. A repeater + comparator round out the
-        // redstone palette, and a chest holds the parts to solve both puzzles.
-        for (int tx = 12; tx <= 17; tx++) {
-            for (int tz = -12; tz <= -9; tz++) {
-                placeTutorial(tx, baseY, tz, BRICK, 0);
-            }
-        }
-        placeTutorial(13, baseY + 1, -11, LAMP, 0);                          // puzzle 1 target
-        placeTutorial(15, baseY + 1, -11, RedstoneManager.BLOCK_PISTON, 0);  // puzzle 2 piston (up)
-        placeTutorial(15, baseY + 2, -11, COBBLE, 0);                        // block the piston pushes
-        placeTutorial(17, baseY + 1, -11, RedstoneManager.BLOCK_REPEATER_BASE, 0);
-        placeTutorial(17, baseY + 1, -10, RedstoneManager.BLOCK_COMPARATOR_BASE, 0);
-        placeTutorial(13, baseY, -11, WOOL, 0);  // floor marker for the torch socket
-        placeTutorial(15, baseY, -10, WOOL, 0);  // floor marker for the block socket
-        placeTutorial(12, baseY + 1, -9, CHEST, 0);   // parts chest
-        if (ctx.chestManager != null) {
-            com.voxel.game.ItemDefinitions.ItemStack[] labInv =
-                    new com.voxel.game.ItemDefinitions.ItemStack[com.voxel.game.ChestManager.CHEST_SLOTS];
-            labInv[0] = new com.voxel.game.ItemDefinitions.ItemStack("redstone_torch", 16);
-            labInv[1] = new com.voxel.game.ItemDefinitions.ItemStack("redstone_block", 8);
-            labInv[2] = new com.voxel.game.ItemDefinitions.ItemStack("redstone_lamp", 4);
-            labInv[3] = new com.voxel.game.ItemDefinitions.ItemStack("torch", 8);
-            ctx.chestManager.setInventory(bx + 12, baseY + 1, bz - 9, labInv);
-        }
-
-        // ── Zone 12: Minecart ride (cobble platform + rail + minecart) ──
-        for (int tx = -5; tx <= -1; tx++) {
-            placeTutorial(tx, baseY, 9, COBBLE, 0);
-            placeTutorial(tx, baseY, 10, RAIL_EW, 0);
-        }
-        placeTutorial(-3, baseY + 1, 10, MINECART, 0);
-        placeTutorial(-5, baseY + 1, 9, TORCH, 0);
-        placeTutorial(-1, baseY + 1, 9, TORCH, 0);
-
-        // ── Zone 13: Irrigated pumpkin & melon farm (south of the workshop) ──
-        for (int tx = 20; tx <= 23; tx++) {
-            placeTutorial(tx, baseY, 7, COBBLE, 0);
-            placeTutorial(tx, baseY, 9, COBBLE, 0);
-        }
-        placeTutorial(20, baseY, 8, COBBLE, 0);
-        placeTutorial(23, baseY, 8, COBBLE, 0);
-        placeTutorial(21, baseY, 8, WATER, 0); // irrigation trough
-        placeTutorial(22, baseY, 8, WATER, 0);
-        if (ctx.fluidManager != null) {
-            ctx.fluidManager.notifyBlockChanged(bx + 21, baseY, bz + 8);
-            ctx.fluidManager.notifyBlockChanged(bx + 22, baseY, bz + 8);
-        }
-        placeTutorial(21, baseY + 1, 7, REEDS, 0);
-        placeTutorial(22, baseY + 1, 9, REEDS, 0);
-        placeTutorial(20, baseY + 1, 7, PUMPKIN, 0);
-        placeTutorial(23, baseY + 1, 7, MELON, 0);
-        placeTutorial(20, baseY + 1, 9, MELON, 0);
-        placeTutorial(23, baseY + 1, 9, PUMPKIN, 0);
-
-        // ── Workshop interior: crafting table + furnace (near-spawn crafting) ──
-        placeTutorial(23, baseY + 1, 1, CRAFT_TABLE, 0);
-        placeTutorial(23, baseY + 1, 3, FURNACE, 0);
-
-        // ── Live machine feed items ──
-        if (ctx.droppedItemManager != null) {
-            // Millstone: cobblestone on top -> gravel -> flint.
-            ctx.droppedItemManager.spawn("cobblestone", 2, bx + 8, baseY + 2, bz - 6);
-            // Press: sand x4 (sandstone) + copper/zinc (brass alloy).
-            ctx.droppedItemManager.spawn("sand", 4, bx + 9, baseY + 2, bz - 6);
-            ctx.droppedItemManager.spawn("copper_ingot", 1, bx + 9, baseY + 2, bz - 6);
-            ctx.droppedItemManager.spawn("zinc_ingot", 1, bx + 9, baseY + 2, bz - 6);
-            // Crusher: iron ore thrown in front of its face -> 2 ingots.
-            ctx.droppedItemManager.spawn("iron_ore", 1, bx + 11, baseY + 1, bz - 6);
-            // Belt items riding toward the vault (spawn one cell above the belt so
-            // moveOnBelt's by+1 pickup rule carries them east to the vault).
-            ctx.droppedItemManager.spawn("brass_ingot", 2, bx + 9, baseY + 2, bz - 5);
-            ctx.droppedItemManager.spawn("cobblestone", 1, bx + 10, baseY + 2, bz - 5);
-            ctx.droppedItemManager.spawn("coal", 1, bx + 11, baseY + 2, bz - 5);
-        }
-
-        // ── Starter kit so the player can build more machines ──
-        String[] kit = {
-            "wrench", "goggles", "brass_ingot", "hand_crank", "windmill_bearing",
-            "windmill_sail", "shaft", "cogwheel", "large_cogwheel", "millstone",
-            "mechanical_press", "crushing_wheel", "mechanical_drill", "mechanical_saw",
-            "belt_conveyor", "item_vault", "brass_casing", "blaze_burner", "steam_engine",
-            "copper_tank", "encased_fan", "water_wheel", "deployer", "clutch",
-            "gearshift", "redstone_torch", "redstone_block", "redstone_lamp", "torch",
-            "glass", "oak_planks", "wool", "oak_sapling", "poppy", "dandelion",
-            "gravel", "stone_brick", "chest", "sand"
-        };
-        for (String item : kit) {
-            playerInventory.addItem(item, 4);
-        }
-
-        // Stand the player on the freshly-leveled pad (its height may differ a
-        // few blocks from the raw spawn surface).
-        player.setPosition(player.getPosition().x, baseY + 1, player.getPosition().z);
-        player.resetVelocity();
-
-        setStatus("Welcome to the Tutorial World! The windmill + water wheel power one network — "
-            + "right-click the hand crank for a boost, the goggles inspect power states, the wrench "
-            + "rotates machines. PUZZLES (redstone lab, NE corner): place a redstone torch on the lamp "
-            + "to light it, and a redstone block beside the piston to raise it. Torches above the "
-            + "gearshift/clutch reverse/stop their branches. Near spawn: crafting + furnace, a welcome "
-            + "tower, a minecart track, an irrigated farm, and a garden by the pond.");
-    }
-
-    /** Builds a small oak tree (trunk + leaf blob) at a tutorial plaza offset. */
-    private void buildTutorialTree(int bx, int bz, int baseY, int dx, int dz) {
-        for (int h = 1; h <= 4; h++) {
-            placeTutorial(dx, baseY + h, dz, 5, 0);
-        }
-        for (int lx = -2; lx <= 2; lx++) {
-            for (int lz = -2; lz <= 2; lz++) {
-                if (lx == 0 && lz == 0) continue;
-                placeTutorial(dx + lx, baseY + 4, dz + lz, 4, 0);
-            }
-        }
-        for (int lx = -1; lx <= 1; lx++) {
-            for (int lz = -1; lz <= 1; lz++) {
-                placeTutorial(dx + lx, baseY + 5, dz + lz, 4, 0);
-            }
-        }
-        placeTutorial(dx, baseY + 6, dz, 4, 0);
-    }
-
-    /** Places one tutorial-world voxel and registers it with the kinetic/machine managers. */
-    private void placeTutorial(int dx, int dy, int dz, int block, int facing) {
-        int x = (int) Math.floor(player.getPosition().x) + dx;
-        int y = dy;
-        int z = (int) Math.floor(player.getPosition().z) + 8 + dz;
-        chunkManager.setVoxelWithFlags(x, y, z, block, facing, 0);
-        if (ctx.kineticManager != null) ctx.kineticManager.onBlockChanged(x, y, z);
-        if (ctx.machineManager != null) ctx.machineManager.onBlockChanged(x, y, z);
-        if (ctx.redstoneManager != null) ctx.redstoneManager.onBlockChanged(x, y, z);
-    }
-
-    /** Places a redstone component and notifies neighbors so power propagates immediately. */
-    private void placeTutorialRedstone(int dx, int dy, int dz, int block, int facing) {
-        int x = (int) Math.floor(player.getPosition().x) + dx;
-        int y = dy;
-        int z = (int) Math.floor(player.getPosition().z) + 8 + dz;
-        chunkManager.setVoxelWithFlags(x, y, z, block, facing, 0);
-        if (ctx.redstoneManager != null) {
-            ctx.redstoneManager.onBlockChanged(x, y, z);
-            ctx.redstoneManager.notifyNeighbors(x, y, z);
-        }
-    }
-
     /** Builds a grass-topped floating mound (classic panorama floating island). */
     private void buildPanoramaIsland(int cx, int baseY, int cz, int radius, int grass, int dirt, int stone) {
         for (int dx = -radius; dx <= radius; dx++) {
@@ -1497,9 +1100,9 @@ public class Main {
                 200 + i, new Vector3f(cx, cy, cz), textureManager, p);
             creeper.dimension = activeDimension;
             creeper.setWorld(world);
-            // Sample the grass colormap at the spawn position so the creeper's
-            // grayscale skin re-greens to match the surrounding grass blocks.
-            int grassRGB = biomeManager.getGrassColorAt((int) cx, (int) cz);
+            // Re-green the creeper's grayscale skin with the fixed color of its
+            // biome category (matches the grass block variant beneath it).
+            int grassRGB = grassColorAt((int) cx, (int) cz);
             creeper.tintColor.set(
                 ((grassRGB >> 16) & 0xFF) / 255.0f,
                 ((grassRGB >> 8) & 0xFF) / 255.0f,
@@ -1548,7 +1151,7 @@ public class Main {
         creeper.dimension = activeDimension;
         creeper.setWorld(world);
         com.voxel.entity.CreeperEntity.setChunkManager(chunkManager);
-        int grassRGB = biomeManager.getGrassColorAt(sx, sz);
+        int grassRGB = grassColorAt(sx, sz);
         creeper.tintColor.set(
             ((grassRGB >> 16) & 0xFF) / 255.0f,
             ((grassRGB >> 8) & 0xFF) / 255.0f,
@@ -1607,9 +1210,14 @@ public class Main {
      * resource creation stay in init() — they're not moved.
      */
     private void initializeWorldPhase() {
+        // A fresh world instance: reset the zone popup so a new or reloaded
+        // tutorial world re-fires title cards.
+        currentTutorialZone = -1;
+        tutorialMinecartsSpawned = false;
         // Create only Overworld at startup; other dimensions lazy-load.
         dimensionManager = new DimensionManager(blockDataManager, ctx.worldSaveManager, biomeManager);
         dimensionManager.setWorldSeed(ctx.worldSeed);
+        dimensionManager.setTutorialWorld(ctx.tutorialWorld);
         dimensionManager.createDimension(DimensionType.OVERWORLD, 8);
         // Push the configured X/Z int bits into the Beta terrain precision tuning
         com.voxel.world.WorldGenerator activeGen = dimensionManager.getActiveGenerator();
@@ -1622,6 +1230,11 @@ public class Main {
         ctx.world = world;
         ctx.chunkManager = chunkManager;
         ctx.dimensionManager = dimensionManager;
+
+        // The Tutorial World is a bundled handcrafted map that was copied into
+        // the save dir and is streamed in from disk by ChunkManager — no runtime
+        // builder is needed. Chunks outside the template fall back to the flat
+        // TutorialWorldGenerator selected above via setTutorialWorld().
 
         redstoneManager = new RedstoneManager(world, chunkManager);
         ctx.redstoneManager = redstoneManager;
@@ -1643,6 +1256,9 @@ public class Main {
         playerEntity = new com.voxel.entity.PlayerEntity(10_000, new Vector3f(player.getPosition()), textureManager);
         ctx.worldSaveManager.loadCommandBlockData(activeDimension, ctx.commandBlockManager);
         ctx.worldSaveManager.loadSurfaceCraftingData(activeDimension, ctx.surfaceCraftingManager);
+        ctx.worldSaveManager.loadCraftingData(activeDimension, ctx.craftingTableManager);
+        ctx.worldSaveManager.loadFurnaceData(activeDimension, ctx.furnaceManager);
+        ctx.worldSaveManager.loadChestData(activeDimension, ctx.chestManager);
         playerEntity.dimension = activeDimension;
         entityManager.addEntity(playerEntity);
 
@@ -1863,24 +1479,16 @@ public class Main {
                             ctx.menuTextInput.setLength(0);
                             ctx.menuTextInput.append("New World");
                             break;
-                        case 1: // Tutorial World (Create showcase)
+                        case 1: // Tutorial World (load the bundled handcrafted world)
                             ctx.tutorialWorld = true;
                             ctx.saveName = "tutorial";
-                            ctx.worldSeed = 1234567L;
-                            ctx.randomSeed = false;
-                            ctx.menuSeed = ctx.worldSeed;
-                            ctx.worldSize = com.voxel.world.WorldSize.MEDIUM;
+                            // The handcrafted world ships in git-tracked resources
+                            // (not the git-ignored saves/ dir). Copy it into the
+                            // save folder, then load it from disk like any save.
+                            copyTutorialTemplate();
+                            loadSaveIntoContext("tutorial");
                             ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
-                            // Fresh showcase every time: drop any previous tutorial save.
-                            com.voxel.world.WorldSaveManager.deleteSave(ctx.saveName);
-                            ctx.worldSaveManager = com.voxel.world.WorldSaveManager.forSave(ctx.saveName);
-                            ctx.loadPending = false;
-                            ctx.worldSizeConfirmed = true;
-                            ctx.worldSizeMenu = false;
-                            ctx.menuScreen = GameContext.MenuScreen.IN_GAME;
-                            ctx.menuTextActive = false;
-                            ctx.spawnLoadingMessage = "Generating tutorial world...";
-                            setStatus("Starting Tutorial World — a Create machines showcase!");
+                            setStatus("Entering Tutorial World — a hand-built Create showcase!");
                             break;
                         case 2: // Load Save
                             ctx.saveList = com.voxel.world.WorldSaveManager.listSaves();
@@ -2004,6 +1612,33 @@ public class Main {
 
             default:
                 break;
+        }
+    }
+
+    /** Copies the bundled handcrafted Tutorial World template into the save dir. */
+    private void copyTutorialTemplate() {
+        java.io.File src = new java.io.File("src/main/resources/tutorial_world");
+        java.io.File dst = new java.io.File(com.voxel.world.WorldSaveManager.SAVES_DIR, "tutorial");
+        com.voxel.world.WorldSaveManager.deleteSave("tutorial");
+        if (!src.isDirectory()) {
+            System.err.println("Tutorial template missing: " + src.getAbsolutePath());
+            return;
+        }
+        copyDir(src, dst);
+    }
+
+    private static void copyDir(java.io.File src, java.io.File dst) {
+        if (src.isDirectory()) {
+            dst.mkdirs();
+            java.io.File[] children = src.listFiles();
+            if (children == null) return;
+            for (java.io.File c : children) copyDir(c, new java.io.File(dst, c.getName()));
+        } else {
+            try {
+                java.nio.file.Files.copy(src.toPath(), dst.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.io.IOException e) {
+                System.err.println("Failed to copy " + src + ": " + e.getMessage());
+            }
         }
     }
 
@@ -2190,11 +1825,27 @@ public class Main {
             // Compatibility call; resolution is already complete by this point.
             ctx.adjustSpawnYAfterChunkLoad();
 
-            // Tutorial World: build the Create showcase once, right after the
-            // player is standing on terrain.
-            if (ctx.tutorialWorld && !tutorialBuilt) {
-                buildTutorialWorld();
-                tutorialBuilt = true;
+            // Tutorial World: show a title card when the player enters a new
+            // showcase zone. The world itself is the bundled handcrafted map
+            // loaded from disk; nothing is built at runtime here.
+            if (ctx.tutorialWorld) {
+                int zoneIdx = com.voxel.world.TutorialWorldAuthor.zoneAt(player.getPosition().x, player.getPosition().z);
+                if (zoneIdx != currentTutorialZone) {
+                    currentTutorialZone = zoneIdx;
+                    if (zoneIdx >= 0) {
+                        com.voxel.world.TutorialWorldAuthor.Zone zone = com.voxel.world.TutorialWorldAuthor.zones()[zoneIdx];
+                        showTutorialPopup(zone.name, zone.subtitle);
+                    }
+                }
+                // Rideable minecarts: spawn live entities (not static blocks) once
+                // the player reaches the coaster, when its chunks are loaded so
+                // each cart snaps straight onto its rail.
+                if (!tutorialMinecartsSpawned && currentTutorialZone == com.voxel.world.TutorialWorldAuthor.MINECART_ZONE) {
+                    for (float[] s : com.voxel.world.TutorialWorldAuthor.minecartSpawns()) {
+                        ctx.minecartSpawnQueue.add(new Vector3f(s[0], s[1], s[2]));
+                    }
+                    tutorialMinecartsSpawned = true;
+                }
             }
 
             handleInput(dt);
@@ -2970,6 +2621,7 @@ public class Main {
             updateInventoryUi();
             hud.updateTVOverlay(glfwGetTime(), worldTime);
             hud.updateSpawnLoadingOverlay(glfwGetTime());
+            hud.updateTutorialPopup(glfwGetTime());
             hud.updateWindowTitle();
 
             hud.uiManager.begin();
@@ -3911,6 +3563,13 @@ public class Main {
         System.out.println(message);
     }
 
+    /** Shows the Tutorial World zone title-card popup for a few seconds. */
+    public void showTutorialPopup(String title, String subtitle) {
+        tutorialPopupTitle = title;
+        tutorialPopupSubtitle = subtitle;
+        tutorialPopupUntil = glfwGetTime() + 6.0;
+    }
+
     // (buildVisibleChunkList removed — depth prepass is gone.)
 
     public void updateInventoryUi() { hud.updateInventoryUi(); }
@@ -4091,6 +3750,29 @@ public class Main {
         blockRegistry.register("grass_block", 1);
         shaderBlockRegistry.register(1, 1);
         blockDataManager.registerBlock(1, "grass_block", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.setBlockTintColor(1, GRASS_PLAINS);
+        // Per-biome-category grass variants: same model as grass_block, but each
+        // carries a fixed category tint color instead of a location-based sample.
+        blockRegistry.register("taiga_grass", 86);
+        shaderBlockRegistry.register(86, 86);
+        blockDataManager.registerBlock(86, "taiga_grass", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.setBlockTintColor(86, GRASS_TAIGA);
+        blockRegistry.register("jungle_grass", 87);
+        shaderBlockRegistry.register(87, 87);
+        blockDataManager.registerBlock(87, "jungle_grass", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.setBlockTintColor(87, GRASS_JUNGLE);
+        blockRegistry.register("swamp_grass", 88);
+        shaderBlockRegistry.register(88, 88);
+        blockDataManager.registerBlock(88, "swamp_grass", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.setBlockTintColor(88, GRASS_SWAMP);
+        blockRegistry.register("savanna_grass", 89);
+        shaderBlockRegistry.register(89, 89);
+        blockDataManager.registerBlock(89, "savanna_grass", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.setBlockTintColor(89, GRASS_SAVANNA);
+        blockRegistry.register("tundra_grass", 90);
+        shaderBlockRegistry.register(90, 90);
+        blockDataManager.registerBlock(90, "tundra_grass", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.setBlockTintColor(90, GRASS_TUNDRA);
         blockRegistry.register("stone", 2);
         shaderBlockRegistry.register(2, 2);
         blockDataManager.registerBlock(2, "stone", textureManager, "src/main/resources/assets/minecraft/models/block");
@@ -4100,6 +3782,7 @@ public class Main {
         blockRegistry.register("oak_leaves", 4);
         shaderBlockRegistry.register(4, 4);
         blockDataManager.registerBlock(4, "oak_leaves", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.setBlockTintColor(4, FOLIAGE_OAK);
         blockRegistry.register("oak_log", 5);
         shaderBlockRegistry.register(5, 5);
         blockDataManager.registerBlock(5, "oak_log", textureManager, "src/main/resources/assets/minecraft/models/block");
@@ -4317,6 +4000,7 @@ public class Main {
         blockRegistry.register("tallgrass", 123);
         shaderBlockRegistry.register(123, 123);
         blockDataManager.registerBlock(123, "tallgrass", textureManager, "src/main/resources/assets/minecraft/models/block");
+        blockDataManager.setBlockTintColor(123, GRASS_PLAINS);
         blockRegistry.register("blue_aercloud", 124);
         shaderBlockRegistry.register(124, 124);
         blockDataManager.registerBlock(124, "blue_aercloud", textureManager, aetherModels, 100, 0, 255);
@@ -4334,6 +4018,7 @@ public class Main {
         blockRegistry.register("tallgrass", 35);
         shaderBlockRegistry.register(35, 35);
         blockDataManager.registerBlock(35, "tallgrass", textureManager, mcModels);
+        blockDataManager.setBlockTintColor(35, GRASS_PLAINS);
         blockRegistry.register("dead_bush", 36);
         shaderBlockRegistry.register(36, 36);
         blockDataManager.registerBlock(36, "dead_bush", textureManager, mcModels);
@@ -4352,6 +4037,7 @@ public class Main {
         blockRegistry.register("waterlily", 41);
         shaderBlockRegistry.register(41, 41);
         blockDataManager.registerBlock(41, "waterlily", textureManager, mcModels);
+        blockDataManager.setBlockTintColor(41, 0x2E7D32);
         blockRegistry.register("pumpkin", 42);
         shaderBlockRegistry.register(42, 42);
         blockDataManager.registerBlock(42, "pumpkin", textureManager, mcModels);
@@ -4373,12 +4059,14 @@ public class Main {
         blockRegistry.register("spruce_leaves", 48);
         shaderBlockRegistry.register(48, 48);
         blockDataManager.registerBlock(48, "spruce_leaves", textureManager, mcModels);
+        blockDataManager.setBlockTintColor(48, FOLIAGE_SPRUCE);
         blockRegistry.register("jungle_log", 49);
         shaderBlockRegistry.register(49, 49);
         blockDataManager.registerBlock(49, "jungle_log", textureManager, mcModels);
         blockRegistry.register("jungle_leaves", 50);
         shaderBlockRegistry.register(50, 50);
         blockDataManager.registerBlock(50, "jungle_leaves", textureManager, mcModels);
+        blockDataManager.setBlockTintColor(50, FOLIAGE_JUNGLE);
         blockRegistry.register("acacia_log", 51);
         shaderBlockRegistry.register(51, 51);
         blockDataManager.registerBlock(51, "acacia_log", textureManager, mcModels);
@@ -4388,6 +4076,7 @@ public class Main {
         blockRegistry.register("dark_oak_leaves", 53);
         shaderBlockRegistry.register(53, 53);
         blockDataManager.registerBlock(53, "dark_oak_leaves", textureManager, mcModels);
+        blockDataManager.setBlockTintColor(53, FOLIAGE_DARK_OAK);
         blockRegistry.register("gravel", 54);
         shaderBlockRegistry.register(54, 54);
         blockDataManager.registerBlock(54, "gravel", textureManager, mcModels);
@@ -4422,6 +4111,7 @@ public class Main {
         blockRegistry.register("fern", 64);
         shaderBlockRegistry.register(64, 64);
         blockDataManager.registerBlock(64, "fern", textureManager, mcModels);
+        blockDataManager.setBlockTintColor(64, GRASS_PLAINS);
         blockRegistry.register("hardened_clay", 65);
         shaderBlockRegistry.register(65, 65);
         blockDataManager.registerBlock(65, "hardened_clay", textureManager, mcModels);

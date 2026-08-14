@@ -31,6 +31,13 @@ import java.util.zip.GZIPOutputStream;
 public class WorldSaveManager {
     public static final String SAVES_DIR = "saves";
 
+    /**
+     * Version marker written as the first int of every chunk file. Older saves
+     * (no marker) begin with the chunk X, so {@link #loadChunk} detects this
+     * magic and falls back to the legacy short-only format.
+     */
+    public static final int CHUNK_MAGIC = 0x564F5856; // "VOXV"
+
     private final String basePath;
 
     public WorldSaveManager(String basePath) {
@@ -125,10 +132,10 @@ public class WorldSaveManager {
                             int wx = (cx << 4) + lx;
                             int wy = (cy << 4) + ly;
                             int wz = (cz << 4) + lz;
-                            int block = world.getVoxel(wx, wy, wz);
+                            int raw = world.getRawVoxel(wx, wy, wz);
                             int idx = (cy * 16 + ly) * 256 + lx * 16 + lz;
-                            data[idx] = block;
-                            if (block > 0) count++;
+                            data[idx] = raw;
+                            if ((raw & 0xFFFF) > 0) count++;
                         }
                     }
                 }
@@ -136,13 +143,16 @@ public class WorldSaveManager {
 
             try (DataOutputStream out = new DataOutputStream(
                     new BufferedOutputStream(new GZIPOutputStream(new FileOutputStream(file))))) {
+                out.writeInt(CHUNK_MAGIC);
                 out.writeInt(cx);
                 out.writeInt(cz);
                 out.writeInt(count);
                 for (int i = 0; i < data.length; i++) {
-                    if (data[i] > 0) {
+                    int raw = data[i];
+                    if ((raw & 0xFFFF) > 0) {
                         out.writeShort(i);
-                        out.writeShort(data[i]);
+                        out.writeShort(raw & 0xFFFF);       // block type
+                        out.writeByte((raw >>> 16) & 0xFF); // extra (facing)
                     }
                 }
             }
@@ -163,8 +173,17 @@ public class WorldSaveManager {
 
         try (DataInputStream in = new DataInputStream(
                 new BufferedInputStream(new GZIPInputStream(new FileInputStream(file))))) {
-            int fileCX = in.readInt();
-            int fileCZ = in.readInt();
+            int first = in.readInt();
+            int fileCX, fileCZ;
+            if (first == CHUNK_MAGIC) {
+                // v2: magic, cx, cz, count, then (short idx, short type, byte extra)
+                fileCX = in.readInt();
+                fileCZ = in.readInt();
+            } else {
+                // v1 (legacy): cx, cz, count, then (short idx, short type)
+                fileCX = first;
+                fileCZ = in.readInt();
+            }
             if (fileCX != cx || fileCZ != cz) {
                 WorldGenLogger.log("DISK_LOAD_MISMATCH dim=" + dim.name + " expected(" + cx + "," + cz + ") got(" + fileCX + "," + fileCZ + ")");
                 System.err.println("Chunk file mismatch: expected (" + cx + "," + cz + "), got (" + fileCX + "," + fileCZ + ")");
@@ -175,6 +194,7 @@ public class WorldSaveManager {
             for (int i = 0; i < count; i++) {
                 int idx = in.readShort() & 0xFFFF;
                 int blockType = in.readShort() & 0xFFFF;
+                int extra = (first == CHUNK_MAGIC) ? in.readUnsignedByte() : 0;
 
                 int cy = idx / 4096;
                 int rem = idx % 4096;
@@ -187,7 +207,7 @@ public class WorldSaveManager {
                 int wy = (cy << 4) + ly;
                 int wz = (cz << 4) + lz;
 
-                world.setVoxel(wx, wy, wz, blockType);
+                world.setVoxelWithData(wx, wy, wz, blockType, extra);
             }
 
             WorldGenLogger.log("DISK_LOAD dim=" + dim.name + " chunk(" + cx + "," + cz + ") blocks=" + count + " <- " + file.getPath());
@@ -228,6 +248,7 @@ public class WorldSaveManager {
             root.put("worldSize", ctx.worldSize != null ? ctx.worldSize.name() : WorldSize.MEDIUM.name());
             root.put("gameMode", ctx.gameMode != null ? ctx.gameMode.name() : GameContext.GameMode.SURVIVAL.name());
             root.put("worldTime", ctx.worldTime);
+            root.put("tutorial", ctx.tutorialWorld);
             root.put("lastPlayed", System.currentTimeMillis());
 
             JSONObject playerJson = new JSONObject();
@@ -279,6 +300,7 @@ public class WorldSaveManager {
             ctx.worldSize = WorldSize.fromString(root.optString("worldSize", "MEDIUM"));
             ctx.gameMode = GameContext.GameMode.valueOf(root.optString("gameMode", "SURVIVAL"));
             ctx.worldTime = (float) root.optDouble("worldTime", 720.0);
+            ctx.tutorialWorld = root.optBoolean("tutorial", false);
 
             JSONObject playerJson = root.optJSONObject("player");
             if (playerJson == null) return null;

@@ -95,6 +95,11 @@ public class BetaChunkProvider {
     private final int veWaterStill, veLavaStill, veSand, veGravel;
     private final int veSandStone, veIce, veSnow, veObsidian;
     private final int veLeaves, veWood;
+
+    // Per-biome-category grass variants (set after construction; default to veGrass
+    // when unset so generation and tests keep vanilla behavior).
+    private int veGrassTaiga = -1, veGrassJungle = -1, veGrassSwamp = -1;
+    private int veGrassSavanna = -1, veGrassTundra = -1;
     private final int veDandelion, veRose, veTallGrass, veDeadBush;
     private final int veCactus, vePumpkin;
     private final int veCoalOre, veIronOre, veGoldOre;
@@ -132,6 +137,32 @@ public class BetaChunkProvider {
     private static final byte BETA_CACTUS = 81;
     private static final byte BETA_PUMPKIN = 86;
     private static final byte BETA_GLOWSTONE = 89;
+
+    // Virtual Beta block ids for per-biome grass surface variants. Beta 1.7.3 only
+    // has a single grass id, so these encode the biome category at surface-write
+    // time and are resolved to the matching tinted engine block in mapToVeBlock.
+    private static final byte BETA_GRASS_TAIGA   = 100;
+    private static final byte BETA_GRASS_JUNGLE  = 101;
+    private static final byte BETA_GRASS_SWAMP   = 102;
+    private static final byte BETA_GRASS_SAVANNA = 103;
+    private static final byte BETA_GRASS_TUNDRA  = 104;
+
+    /** True if this Beta block id is grass (vanilla or a biome variant). */
+    private static boolean isGrassBeta(byte b) {
+        return b == BETA_GRASS || (b >= BETA_GRASS_TAIGA && b <= BETA_GRASS_TUNDRA);
+    }
+
+    /** Maps a Beta biome id to the grass surface block id (variant or vanilla). */
+    private static byte grassBetaForBiome(int betaBiomeId) {
+        switch (betaBiomeId) {
+            case BetaBiomeGenBase.TAIGA:      return BETA_GRASS_TAIGA;
+            case BetaBiomeGenBase.RAINFOREST: return BETA_GRASS_JUNGLE;
+            case BetaBiomeGenBase.SWAMPLAND:  return BETA_GRASS_SWAMP;
+            case BetaBiomeGenBase.SAVANNA:    return BETA_GRASS_SAVANNA;
+            case BetaBiomeGenBase.TUNDRA:     return BETA_GRASS_TUNDRA;
+            default:                          return BETA_GRASS;
+        }
+    }
 
     private BetaWorldChunkManager worldChunkManager;
     private int[] biomesForGeneration;
@@ -755,6 +786,7 @@ public class BetaChunkProvider {
                 int var13 = (int)(this.stoneNoise[var8 + var9 * 16] / 3.0D + 3.0D + this.rand.nextDouble() * 0.25D);
                 int var14 = -1;
                 byte var15 = (byte)BetaBiomeGenBase.TOP_BLOCKS[biomeId];
+                if (var15 == BETA_GRASS) var15 = grassBetaForBiome(biomeId);
                 byte var16 = (byte)BetaBiomeGenBase.FILLER_BLOCKS[biomeId];
 
                 for (int var17 = maxY; var17 >= minY; --var17) {
@@ -932,10 +964,30 @@ public class BetaChunkProvider {
         return (n1 / 512.0 * (1.0 - sel) + n2 / 512.0 * sel) > 0.0;
     }
 
+    /** Configures the per-biome grass variant block ids (called after construction). */
+    public void setGrassVariants(int taiga, int jungle, int swamp, int savanna, int tundra) {
+        this.veGrassTaiga = taiga;
+        this.veGrassJungle = jungle;
+        this.veGrassSwamp = swamp;
+        this.veGrassSavanna = savanna;
+        this.veGrassTundra = tundra;
+    }
+
+    /** True if this engine block id is any grass variant (including vanilla grass). */
+    private boolean isVeGrass(int veId) {
+        return veId == veGrass || veId == veGrassTaiga || veId == veGrassJungle
+            || veId == veGrassSwamp || veId == veGrassSavanna || veId == veGrassTundra;
+    }
+
     public int mapToVeBlock(int betaId) {
         switch (betaId) {
             case BETA_STONE:       return veStone;
             case BETA_GRASS:       return veGrass;
+            case BETA_GRASS_TAIGA:   return veGrassTaiga   >= 0 ? veGrassTaiga   : veGrass;
+            case BETA_GRASS_JUNGLE:  return veGrassJungle  >= 0 ? veGrassJungle  : veGrass;
+            case BETA_GRASS_SWAMP:   return veGrassSwamp   >= 0 ? veGrassSwamp   : veGrass;
+            case BETA_GRASS_SAVANNA: return veGrassSavanna >= 0 ? veGrassSavanna : veGrass;
+            case BETA_GRASS_TUNDRA:  return veGrassTundra  >= 0 ? veGrassTundra  : veGrass;
             case BETA_DIRT:        return veDirt;
             case BETA_BEDROCK:     return veBedrock;
             case BETA_WATER_STILL: case BETA_WATER_MOVING: return veWaterStill;
@@ -1068,6 +1120,7 @@ public class BetaChunkProvider {
                 int var13 = (int)(this.stoneNoise[var8 + var9 * 16] / 3.0D + 3.0D + this.rand.nextDouble() * 0.25D);
                 int var14 = -1;
                 byte var15 = (byte)BetaBiomeGenBase.TOP_BLOCKS[biomeId];
+                if (var15 == BETA_GRASS) var15 = grassBetaForBiome(biomeId);
                 byte var16 = (byte)BetaBiomeGenBase.FILLER_BLOCKS[biomeId];
 
                 for (int var17 = topY; var17 >= 0; --var17) {
@@ -1081,6 +1134,7 @@ public class BetaChunkProvider {
                                 if (var13 <= 0) { var15 = 0; var16 = BETA_STONE; }
                                 else if (var17 >= var5 - 4 && var17 <= var5 + 1) {
                                     var15 = (byte)BetaBiomeGenBase.TOP_BLOCKS[biomeId];
+                                    if (var15 == BETA_GRASS) var15 = grassBetaForBiome(biomeId);
                                     var16 = (byte)BetaBiomeGenBase.FILLER_BLOCKS[biomeId];
                                     if (var12) { var15 = 0; var16 = BETA_GRAVEL; }
                                     if (var11) { var15 = BETA_SAND; var16 = BETA_SAND; }
@@ -1301,11 +1355,11 @@ public class BetaChunkProvider {
         }
         int flowerCount=0;
         switch (biomeId) { case BetaBiomeGenBase.FOREST: case BetaBiomeGenBase.TAIGA: flowerCount=2; break; case BetaBiomeGenBase.SEASONAL_FOREST: flowerCount=4; break; case BetaBiomeGenBase.PLAINS: flowerCount=3; break; }
-        for (int i=0; i<flowerCount; ++i) { int fx=var4+rand.nextInt(16)+8, fy=rand.nextInt(128), fz=var5+rand.nextInt(16)+8; if (world.getVoxel(fx,fy,fz)==veGrass||world.getVoxel(fx,fy,fz)==veDirt) if (world.getVoxel(fx,fy+1,fz)==0) setVoxelColumnAware(world,fx,fy+1,fz,veDandelion,BETA_PLANT_YELLOW); }
+        for (int i=0; i<flowerCount; ++i) { int fx=var4+rand.nextInt(16)+8, fy=rand.nextInt(128), fz=var5+rand.nextInt(16)+8; if (isVeGrass(world.getVoxel(fx,fy,fz))||world.getVoxel(fx,fy,fz)==veDirt) if (world.getVoxel(fx,fy+1,fz)==0) setVoxelColumnAware(world,fx,fy+1,fz,veDandelion,BETA_PLANT_YELLOW); }
         int grassCount=0;
         switch (biomeId) { case BetaBiomeGenBase.FOREST: grassCount=2; break; case BetaBiomeGenBase.RAINFOREST: grassCount=10; break; case BetaBiomeGenBase.SEASONAL_FOREST: grassCount=2; break; case BetaBiomeGenBase.TAIGA: grassCount=1; break; case BetaBiomeGenBase.PLAINS: grassCount=10; break; }
-        for (int i=0; i<grassCount; ++i) { int gx=var4+rand.nextInt(16)+8, gy=rand.nextInt(128), gz=var5+rand.nextInt(16)+8; if (world.getVoxel(gx,gy,gz)==veGrass||world.getVoxel(gx,gy,gz)==veDirt) if (world.getVoxel(gx,gy+1,gz)==0) setVoxelColumnAware(world,gx,gy+1,gz,veTallGrass,BETA_TALL_GRASS); }
-        if (rand.nextInt(2)==0) { int rx=var4+rand.nextInt(16)+8, ry=rand.nextInt(128), rz=var5+rand.nextInt(16)+8; if (world.getVoxel(rx,ry,rz)==veGrass||world.getVoxel(rx,ry,rz)==veDirt) if (world.getVoxel(rx,ry+1,rz)==0) setVoxelColumnAware(world,rx,ry+1,rz,veRose,BETA_PLANT_RED); }
+        for (int i=0; i<grassCount; ++i) { int gx=var4+rand.nextInt(16)+8, gy=rand.nextInt(128), gz=var5+rand.nextInt(16)+8; if (isVeGrass(world.getVoxel(gx,gy,gz))||world.getVoxel(gx,gy,gz)==veDirt) if (world.getVoxel(gx,gy+1,gz)==0) setVoxelColumnAware(world,gx,gy+1,gz,veTallGrass,BETA_TALL_GRASS); }
+        if (rand.nextInt(2)==0) { int rx=var4+rand.nextInt(16)+8, ry=rand.nextInt(128), rz=var5+rand.nextInt(16)+8; if (isVeGrass(world.getVoxel(rx,ry,rz))||world.getVoxel(rx,ry,rz)==veDirt) if (world.getVoxel(rx,ry+1,rz)==0) setVoxelColumnAware(world,rx,ry+1,rz,veRose,BETA_PLANT_RED); }
         for (int i=0;i<1;++i){generateDungeon(world,var4+rand.nextInt(16),rand.nextInt(30)+6,var5+rand.nextInt(16));}
         if (biomeId==BetaBiomeGenBase.DESERT) for (int i=0;i<2;++i){int dx=var4+rand.nextInt(16)+8,dy=rand.nextInt(128),dz=var5+rand.nextInt(16)+8;if(world.getVoxel(dx,dy,dz)==veSand)if(world.getVoxel(dx,dy+1,dz)==0)setVoxelColumnAware(world,dx,dy+1,dz,veDeadBush,BETA_DEAD_BUSH);}
         for (int i=0;i<64;++i){generatePumpkinPatch(world,var4+rand.nextInt(16)+8,rand.nextInt(128),var5+rand.nextInt(16)+8);}
@@ -1426,7 +1480,7 @@ public class BetaChunkProvider {
         // is the water surface — without this check trees spawn on water.
         // Checked BEFORE any RNG consumption so rejected trees don't waste rand().
         byte ground=getSectionBlock(tb,lx,y-1,lz);
-        if(ground!=BETA_GRASS&&ground!=BETA_DIRT){
+        if(!isGrassBeta(ground)&&ground!=BETA_DIRT){
             // Exposed rock counts as growable ground too: on slopes the
             // 8-block-air check in replaceBlocksForBiome converts the surface
             // to bare stone, which the strict grass/dirt rule then rejected.
@@ -1510,12 +1564,12 @@ public class BetaChunkProvider {
             for(int y=scanFrom;y>=60;y--){int v=world.getVoxel(wx,y,wz);if(v!=0&&v!=veWaterStill&&v!=veIce){topY=y;topBeta=betaForVe(v);break;}}
             if(topY==0)continue;boolean nearWater=false;
             for(int dx=-8;dx<=8;dx+=2){for(int dz=-8;dz<=8;dz+=2){if(dx==0&&dz==0)continue;for(int dy=-2;dy<=2;dy++){int ny=topY+dy;if(world.getVoxel(wx+dx,ny,wz+dz)==veWaterStill){nearWater=true;break;}}if(nearWater)break;}if(nearWater)break;}
-            if(nearWater&&(topBeta==BETA_GRASS||topBeta==BETA_DIRT)){world.setVoxel(wx,topY,wz,veSand);for(int dy=1;dy<=3&&(topY-dy)>=60;dy++){int below=world.getVoxel(wx,topY-dy,wz);if(below==veDirt||below==veGrass)world.setVoxel(wx,topY-dy,wz,veSand);else break;}}
+            if(nearWater&&(isGrassBeta(topBeta)||topBeta==BETA_DIRT)){world.setVoxel(wx,topY,wz,veSand);for(int dy=1;dy<=3&&(topY-dy)>=60;dy++){int below=world.getVoxel(wx,topY-dy,wz);if(below==veDirt||isVeGrass(below))world.setVoxel(wx,topY-dy,wz,veSand);else break;}}
         }
     }
 
     private boolean isSnowLevel(int veId){for(int l=1;l<=8;l++)if(veSnowLevels[l]==veId)return true;return veId==veSnow;}
-    private byte betaForVe(int veId){if(veId==veStone)return BETA_STONE;if(veId==veGrass)return BETA_GRASS;if(veId==veDirt)return BETA_DIRT;if(veId==veSand)return BETA_SAND;if(veId==veGravel)return BETA_GRAVEL;if(veId==veWaterStill)return BETA_WATER_STILL;if(veId==veIce)return BETA_ICE;return 0;}
+    private byte betaForVe(int veId){if(veId==veStone)return BETA_STONE;if(veId==veGrass||veId==veGrassTaiga||veId==veGrassJungle||veId==veGrassSwamp||veId==veGrassSavanna||veId==veGrassTundra)return BETA_GRASS;if(veId==veDirt)return BETA_DIRT;if(veId==veSand)return BETA_SAND;if(veId==veGravel)return BETA_GRAVEL;if(veId==veWaterStill)return BETA_WATER_STILL;if(veId==veIce)return BETA_ICE;return 0;}
 
     private void generateClay(com.voxel.World world,int cx,int cz){int bx=cx*16,bz=cz*16;
         for(int i=0;i<4;i++){int wx=bx+rand.nextInt(16),wz=bz+rand.nextInt(16);
@@ -1530,11 +1584,11 @@ public class BetaChunkProvider {
         world.setVoxel(cx,cy,cz,veSpawner);int cc=1+rand.nextInt(2);for(int i=0;i<cc;i++){int chX=cx+(rand.nextInt(width)-half),chZ=cz+(rand.nextInt(width)-half);if(Math.abs(chX-cx)<Math.abs(chZ-cz))chX=cx+(chX>cx?half:-half);else chZ=cz+(chZ>cz?half:-half);if(world.getVoxel(chX,cy+1,chZ)==0)world.setVoxel(chX,cy,chZ,veChest);}
     }
 
-    private void generatePumpkinPatch(com.voxel.World world,int x,int y,int z){for(int dy=y;dy>0;dy--)if(world.getVoxel(x,dy,z)!=0){y=dy+1;break;}if(y<=0||world.getVoxel(x,y-1,z)!=veGrass||world.getVoxel(x,y,z)!=0)return;setVoxelColumnAware(world,x,y,z,vePumpkin,BETA_PUMPKIN);int cluster=1+rand.nextInt(3);for(int i=0;i<cluster;i++){int px=x+rand.nextInt(5)-2,pz=z+rand.nextInt(5)-2;if(px==x&&pz==z)continue;int py=y;for(int dy=py;dy>0;dy--)if(world.getVoxel(px,dy,pz)!=0){py=dy+1;break;}if(py<=0||world.getVoxel(px,py-1,pz)!=veGrass||world.getVoxel(px,py,pz)!=0)continue;setVoxelColumnAware(world,px,py,pz,vePumpkin,BETA_PUMPKIN);}}
+    private void generatePumpkinPatch(com.voxel.World world,int x,int y,int z){for(int dy=y;dy>0;dy--)if(world.getVoxel(x,dy,z)!=0){y=dy+1;break;}if(y<=0||!isVeGrass(world.getVoxel(x,y-1,z))||world.getVoxel(x,y,z)!=0)return;setVoxelColumnAware(world,x,y,z,vePumpkin,BETA_PUMPKIN);int cluster=1+rand.nextInt(3);for(int i=0;i<cluster;i++){int px=x+rand.nextInt(5)-2,pz=z+rand.nextInt(5)-2;if(px==x&&pz==z)continue;int py=y;for(int dy=py;dy>0;dy--)if(world.getVoxel(px,dy,pz)!=0){py=dy+1;break;}if(py<=0||!isVeGrass(world.getVoxel(px,py-1,pz))||world.getVoxel(px,py,pz)!=0)continue;setVoxelColumnAware(world,px,py,pz,vePumpkin,BETA_PUMPKIN);}}
 
     private void generateCactusPatch(com.voxel.World world,int x,int y,int z){if(y<=0||world.getVoxel(x,y-1,z)!=veSand)return;int h=1+rand.nextInt(3);for(int dy=0;dy<h;dy++){if(world.getVoxel(x,y+dy,z)!=0)return;for(int dx=-1;dx<=1;dx++)for(int dz=-1;dz<=1;dz++){if((dx==0&&dz==0)||Math.abs(dx)+Math.abs(dz)!=1)continue;if(world.getVoxel(x+dx,y+dy,z+dz)!=0)return;}}for(int dy=0;dy<h;dy++)setVoxelColumnAware(world,x,y+dy,z,veCactus,BETA_CACTUS);}
 
-    private void generateSugarCanePatch(com.voxel.World world,int x,int y,int z){if(y<=0)return;int g=world.getVoxel(x,y-1,z);if(g!=veGrass&&g!=veDirt&&g!=veSand)return;boolean nw=false;for(int dx=-1;dx<=1;dx++){for(int dz=-1;dz<=1;dz++){if(Math.abs(dx)+Math.abs(dz)!=1)continue;if(world.getVoxel(x+dx,y-1,z+dz)==veWaterStill){nw=true;break;}}if(nw)break;}if(!nw)return;int h=2+rand.nextInt(3);for(int dy=0;dy<h;dy++){if(world.getVoxel(x,y+dy,z)!=0)break;setVoxelColumnAware(world,x,y+dy,z,veSugarCane,(byte)0);}}
+    private void generateSugarCanePatch(com.voxel.World world,int x,int y,int z){if(y<=0)return;int g=world.getVoxel(x,y-1,z);if(!isVeGrass(g)&&g!=veDirt&&g!=veSand)return;boolean nw=false;for(int dx=-1;dx<=1;dx++){for(int dz=-1;dz<=1;dz++){if(Math.abs(dx)+Math.abs(dz)!=1)continue;if(world.getVoxel(x+dx,y-1,z+dz)==veWaterStill){nw=true;break;}}if(nw)break;}if(!nw)return;int h=2+rand.nextInt(3);for(int dy=0;dy<h;dy++){if(world.getVoxel(x,y+dy,z)!=0)break;setVoxelColumnAware(world,x,y+dy,z,veSugarCane,(byte)0);}}
 
     private void generateSnow(com.voxel.World world,int cx,int cz){if(biomesForGeneration==null)return;int bx=cx*16,bz=cz*16;int scanFrom=maxSectionCY>=0?(maxSectionCY<<4)+15:127;
         for(int lx=0;lx<16;lx++)for(int lz=0;lz<16;lz++){int biomeId=biomesForGeneration[lx+lz*16];if(biomeId!=BetaBiomeGenBase.TAIGA&&biomeId!=BetaBiomeGenBase.TUNDRA&&biomeId!=BetaBiomeGenBase.ICE_DESERT)continue;int wx=bx+lx,wz=bz+lz;

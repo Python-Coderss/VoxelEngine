@@ -168,6 +168,20 @@
                 <configuration>
                     <mainClass>com.voxel.Main</mainClass>
                 </configuration>
+                <executions>
+                    <!-- One-time dev tool: build the handcrafted tutorial world and
+                         export it into src/main/resources/tutorial_world. Run with:
+                         MAVEN_OPTS="-Xmx2g" ./mvnw compile exec:java@export-tutorial -->
+                    <execution>
+                        <id>export-tutorial</id>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>com.voxel.tools.TutorialWorldExporter</mainClass>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

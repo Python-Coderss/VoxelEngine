@@ -123,4 +123,24 @@ public class TutorialTerrainDumpTest {
 
         assertTrue("spawn surface should be a sane height (40..120)", height[half][half] >= 40 && height[half][half] <= 120);
     }
+
+    @Test
+    public void dumpFocusedGrid() {
+        long typeSeed = 1234567L ^ 0x9E3779B97F4A7C15L;
+        BetaChunkProvider provider = makeProvider(typeSeed);
+        int x0 = -12, x1 = 40, z0 = -16, z1 = 32;
+        System.out.println("=== Focused numeric heightmap (x=" + x0 + ".." + x1 + " horizontal, z=" + z0 + ".." + z1 + " vertical, z=" + z0 + " top) ===");
+        for (int z = z0; z <= z1; z++) {
+            StringBuilder line = new StringBuilder();
+            for (int x = x0; x <= x1; x++) {
+                int h = -1;
+                for (int y = 127; y >= 0; y--) {
+                    if (provider.mapToVeBlock(provider.getBetaBlock(x, z, y)) != 0) { h = y; break; }
+                }
+                if (h < 0) line.append("  .");
+                else line.append(String.format("%3d", h));
+            }
+            System.out.println(line.toString());
+        }
+    }
 }

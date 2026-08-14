@@ -102,6 +102,11 @@ public class HudUI {
     public UILayer.UITextElement statusTextElement;
     public UILayer.UITextElement gogglesOverlayElement;
 
+    // ── Tutorial World zone title-card popup ──
+    public UILayer.UIElement tutorialPopupBg;
+    public UILayer.UITextElement tutorialTitleElement;
+    public UILayer.UITextElement tutorialSubtitleElement;
+
     // ── Map overlay elements ──
     public UILayer.UIElement mapPanelBg;
     public UILayer.UIElement mapZoomInBtn, mapZoomOutBtn, mapCenterBtn, mapResetBtn;
@@ -555,6 +560,28 @@ public class HudUI {
         statusTextElement.charLineLimit = 40;
         statusTextElement.visible = false;
         layer.addElement(statusTextElement);
+
+        // ── Tutorial World zone title-card popup (centered band) ──
+        tutorialPopupBg = new UILayer.UIElement(
+            new Vector2f(main.width / 2f - 360, main.height / 2f - 70),
+            new Vector2f(720, 110),
+            new Vector4f(0.05f, 0.06f, 0.10f, 0.72f)
+        );
+        tutorialPopupBg.visible = false;
+        tutorialPopupBg.onClick = null;
+        layer.addElement(tutorialPopupBg);
+
+        tutorialTitleElement = new UILayer.UITextElement(
+            new Vector2f(main.width / 2f - 160, main.height / 2f - 50), "", 3.0f, new Vector4f(1, 0.88f, 0.3f, 1), fontTextureId);
+        tutorialTitleElement.charLineLimit = 40;
+        tutorialTitleElement.visible = false;
+        layer.addElement(tutorialTitleElement);
+
+        tutorialSubtitleElement = new UILayer.UITextElement(
+            new Vector2f(main.width / 2f - 330, main.height / 2f + 8), "", 1.5f, new Vector4f(1, 1, 1, 1), fontTextureId);
+        tutorialSubtitleElement.charLineLimit = 55;
+        tutorialSubtitleElement.visible = false;
+        layer.addElement(tutorialSubtitleElement);
 
         // Goggles overlay: machine name + power state under the crosshair.
         gogglesOverlayElement = new UILayer.UITextElement(new Vector2f(main.width / 2f - 200, main.height / 2f + 14), "", 1.5f, new Vector4f(0.4f, 1, 0.9f, 1), fontTextureId);
@@ -1585,6 +1612,22 @@ public class HudUI {
      *  - Runtime (spawn generation): a compact toast panel in the top-right
      *    corner, leaving the world visible behind it.
      */
+    /** Shows/hides the Tutorial World zone title-card popup. */
+    public void updateTutorialPopup(double time) {
+        boolean visible = time < main.tutorialPopupUntil && !main.tutorialPopupTitle.isEmpty();
+        tutorialPopupBg.visible = visible;
+        tutorialTitleElement.visible = visible;
+        tutorialSubtitleElement.visible = visible;
+        if (visible) {
+            float alpha = (float) Math.min(1.0, (main.tutorialPopupUntil - time) / 0.5);
+            tutorialTitleElement.text = main.tutorialPopupTitle;
+            tutorialSubtitleElement.text = main.tutorialPopupSubtitle;
+            tutorialPopupBg.color.w = 0.72f * alpha;
+            tutorialTitleElement.color.w = alpha;
+            tutorialSubtitleElement.color.w = alpha;
+        }
+    }
+
     public void updateSpawnLoadingOverlay(double time) {
         boolean inMenu = ctx.menuScreen != GameContext.MenuScreen.IN_GAME;
         boolean loading = ctx.spawnLoading;

@@ -228,6 +228,24 @@ public class ChunkManager {
     }
 
     /**
+     * Defensive copy of a column's slot map for use on the lighting thread.
+     * The live per-column TreeMap is mutated by the generation thread (section
+     * loads/expansions); iterating it from the light loop throws
+     * {@code ConcurrentModificationException}, which kills that relight pass and
+     * leaves the chunk unlit until something re-triggers lighting. Returns null
+     * if the column is unloaded or mid-mutation — callers simply skip.
+     */
+    private NavigableMap<Integer, Integer> snapshotColumnSlots(long colKey) {
+        NavigableMap<Integer, Integer> slots = loadedChunks.get(colKey);
+        if (slots == null) return null;
+        try {
+            return new TreeMap<>(slots);
+        } catch (ConcurrentModificationException e) {
+            return null; // column mid-mutation; the next change re-lights it
+        }
+    }
+
+    /**
      * Posts a lighting task to the dedicated light thread.
      * The task checks cancellation and verifies slots haven't changed (prevents stale-slot
      * corruption when a chunk is unloaded and immediately reloaded).
@@ -578,7 +596,7 @@ public class ChunkManager {
         postLightTask(colKey, () -> {
             try {
                 Set<Integer> aff = mcLightEngine.onBlockChanged(x, y, z, fOldBlockId, lightRebuildPending);
-                NavigableMap<Integer, Integer> colSlots = loadedChunks.get(colKey);
+                NavigableMap<Integer, Integer> colSlots = snapshotColumnSlots(colKey);
                 if (colSlots != null) {
                     aff.addAll(mcLightEngine.generateSkyLight(colCx, colCz, colSlots));
                 }
@@ -616,7 +634,7 @@ public class ChunkManager {
         postLightTask(colKey2, () -> {
             try {
                 Set<Integer> aff = mcLightEngine.onBlockChanged(x, y, z, fOldBlockId2, lightRebuildPending);
-                NavigableMap<Integer, Integer> colSlots = loadedChunks.get(colKey2);
+                NavigableMap<Integer, Integer> colSlots = snapshotColumnSlots(colKey2);
                 if (colSlots != null) {
                     aff.addAll(mcLightEngine.generateSkyLight(colCx2, colCz2, colSlots));
                 }
@@ -731,6 +749,14 @@ public class ChunkManager {
     private void manageChunks(int pcx, int pcy, int pcz, float yaw) {
         long t0 = System.currentTimeMillis();
 
+        // Recenter the buffer FIRST so the sync 3×3×3 below loads at the new
+        // origin. Loading the 3×3 at an origin that does not cover the player
+        // (e.g. the Tutorial World spawn at negative X/Z against the initial
+        // (0,0,0) buffer) silently drops the section writes of the out-of-range
+        // columns — they end up claimed-but-empty and the player falls straight
+        // through them.
+        recenterIfNeeded(pcx, pcy, pcz);
+
         // ── 3×3×3 grid: ensure all 27 chunks around player are loaded synchronously ──
         ensure3x3x3Loaded(pcx, pcy, pcz);
 
@@ -738,7 +764,6 @@ public class ChunkManager {
         // The initial 3×3×3 cube above is enough for surface detection and keeps
         // Beta's expensive decoration/noise work off the critical startup path.
         if (spawnBootstrap) {
-            recenterIfNeeded(pcx, pcy, pcz);
             return;
         }
 
@@ -785,9 +810,11 @@ public class ChunkManager {
             }
         }
 
-        // ── Unload chunks outside keep set BEFORE recenter ──
-        // Must unload (save) first: recenterIfNeeded clears the indirection table,
-        // and saveChunk reads voxels via world.getVoxel() which depends on it.
+        // ── Unload chunks outside the keep set ──
+        // Safe to run after the recenter above: the recenter saves any
+        // out-of-buffer column before clearing the table (so nothing is lost)
+        // and re-registers every kept column, so saveChunk below still reads
+        // voxels through a valid indirection table.
         int unloadedCount = 0;
         List<Long> toUnload = new ArrayList<>();
         for (Map.Entry<Long, NavigableMap<Integer, Integer>> entry : loadedChunks.entrySet()) {
@@ -807,8 +834,6 @@ public class ChunkManager {
                 unloadedCount++;
             }
         }
-
-        recenterIfNeeded(pcx, pcy, pcz);
 
         // ── Compute current Y-range ──
         int yMin = pcy - yLoadRadius;
@@ -960,6 +985,32 @@ public class ChunkManager {
             biomeMapDirty.set(true);
         }
 
+        // Evict loaded chunks that fall outside the new buffer's XZ footprint
+        // WHILE their slots are still registered. Saving them later (after the
+        // table is cleared below) would persist an all-air column —
+        // getRawVoxel() returns 0 for unregistered sections — silently erasing
+        // the on-disk chunk file (e.g. the handcrafted Tutorial World builds).
+        int evictedBeforeRecenter = 0;
+        for (Long key : new ArrayList<>(loadedChunks.keySet())) {
+            int absCX = unpackX(key);
+            int absCZ = unpackZ(key);
+            int relCX = absCX - (newOffsetX >> 4);
+            int relCZ = absCZ - (newOffsetZ >> 4);
+            if (relCX < 0 || relCX >= World.REGION_SIZE || relCZ < 0 || relCZ >= World.REGION_SIZE) {
+                NavigableMap<Integer, Integer> slots = loadedChunks.get(key);
+                if (slots == null || hasPinnedSlot(slots)) continue; // light thread is reading these slots
+                if (loadedChunks.remove(key, slots)) {
+                    fullyGeneratedColumns.remove(key);
+                    unloadChunk(key, slots);
+                    evictedBeforeRecenter++;
+                }
+            }
+        }
+        if (evictedBeforeRecenter > 0) {
+            WorldGenLogger.log("RECENTER evicted " + evictedBeforeRecenter
+                + " out-of-buffer chunks before clearing the indirection table");
+        }
+
         // Clear the indirection table
         world.setOrigin(newOffsetX, newOffsetY, newOffsetZ);
 
@@ -1022,6 +1073,20 @@ public class ChunkManager {
         return count != null && count.get() > 0;
     }
 
+    /**
+     * True when at least one of the column's pool slots is still registered in
+     * the world indirection table. False for columns dropped by a buffer
+     * recenter (the table was cleared and never re-registered them).
+     */
+    private boolean isColumnRegistered(int cx, int cz, NavigableMap<Integer, Integer> slots) {
+        for (Map.Entry<Integer, Integer> se : slots.entrySet()) {
+            if (world.getChunkSlot((cx << 4) + 8, (se.getKey() << 4) + 8, (cz << 4) + 8) == se.getValue()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void unloadChunk(long key, NavigableMap<Integer, Integer> slots) {
         int cx = unpackX(key);
         int cz = unpackZ(key);
@@ -1038,7 +1103,24 @@ public class ChunkManager {
         relightAgain.remove(key);
 
         if (saveManager != null) {
-            saveManager.saveChunk(dimension, cx, cz, world);
+            // Only persist the column if its voxels are still readable. A column
+            // dropped by a buffer recenter while its light slots were pinned
+            // stays in loadedChunks until the pin clears, but the indirection
+            // table is already gone — saving now would write an all-air column
+            // over the valid chunk file on disk.
+            boolean registered = false;
+            for (Map.Entry<Integer, Integer> se : slots.entrySet()) {
+                if (world.getChunkSlot((cx << 4) + 8, (se.getKey() << 4) + 8, (cz << 4) + 8) == se.getValue()) {
+                    registered = true;
+                    break;
+                }
+            }
+            if (registered) {
+                saveManager.saveChunk(dimension, cx, cz, world);
+            } else {
+                WorldGenLogger.logChunk("UNLOAD_SKIP_SAVE", cx, -1, cz,
+                    "column no longer registered; preserving on-disk chunk");
+            }
         }
         int freed = 0;
         for (int cy : slots.keySet()) {
@@ -1257,8 +1339,10 @@ public class ChunkManager {
             if (nslots == null) continue;
             if (is5x5Loaded(cx, cz)) {
                 postLightTask(nk, nslots, () -> {
-                    dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, nslots));
-                    for (Map.Entry<Integer, Integer> se : nslots.entrySet()) {
+                    NavigableMap<Integer, Integer> snap = snapshotColumnSlots(nk);
+                    if (snap == null) return; // column unloaded/mid-mutation
+                    dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, snap));
+                    for (Map.Entry<Integer, Integer> se : snap.entrySet()) {
                         dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, se.getKey(), cz, se.getValue()));
                     }
                     lightsNeedUpload = true;
@@ -1286,8 +1370,10 @@ public class ChunkManager {
                     if (nslots != null) {
                         int finalNx = nx, finalNz = nz; // capture for lambda
                         postLightTask(nk, nslots, () -> {
-                            dirtySlots.addAll(mcLightEngine.generateSkyLight(finalNx, finalNz, nslots));
-                            for (Map.Entry<Integer, Integer> se : nslots.entrySet()) {
+                            NavigableMap<Integer, Integer> snap = snapshotColumnSlots(nk);
+                            if (snap == null) return; // column unloaded/mid-mutation
+                            dirtySlots.addAll(mcLightEngine.generateSkyLight(finalNx, finalNz, snap));
+                            for (Map.Entry<Integer, Integer> se : snap.entrySet()) {
                                 dirtySlots.addAll(mcLightEngine.propagateBlockLight(finalNx, se.getKey(), finalNz, se.getValue()));
                             }
                             lightsNeedUpload = true;
@@ -1325,6 +1411,15 @@ public class ChunkManager {
                 long colKey = chunkKey(cx, cz);
 
                 NavigableMap<Integer, Integer> slots = loadedChunks.get(colKey);
+
+                // Stale column dropped by a buffer recenter — recreate it from
+                // disk (see loadOneSection for the full comment).
+                if (slots != null && !isColumnRegistered(cx, cz, slots) && !hasPinnedSlot(slots)) {
+                    loadedChunks.remove(colKey);
+                    fullyGeneratedColumns.remove(colKey);
+                    unloadChunk(colKey, slots); // skips save: column is not registered
+                    slots = null;
+                }
 
                 if (slots == null) {
                     // Column not loaded at all — sync create it
@@ -1596,6 +1691,17 @@ public class ChunkManager {
     private void loadOneSection(int cx, int cy, int cz) {
         long colKey = chunkKey(cx, cz);
         NavigableMap<Integer, Integer> slots = loadedChunks.get(colKey);
+
+        // A column can survive in loadedChunks after a buffer recenter dropped it
+        // from the indirection table (its light slots were pinned when the
+        // recenter ran). Its slot map is stale — reclaim it so the column
+        // reloads from disk instead of leaving an invisible void.
+        if (slots != null && !isColumnRegistered(cx, cz, slots) && !hasPinnedSlot(slots)) {
+            loadedChunks.remove(colKey);
+            fullyGeneratedColumns.remove(colKey);
+            unloadChunk(colKey, slots); // skips save: column is not registered
+            slots = null;
+        }
 
         if (slots == null) {
             // First section of this column: create the column, try disk load
