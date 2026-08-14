@@ -129,6 +129,7 @@ public class ItemDefinitions {
         registerBlock("pumpkin", "Pumpkin", 42, "pumpkin_face_off");
         registerBlock("melon", "Melon", 43, "melon_side");
         registerBlock("vine", "Vines", 44, "vine");
+        registerBlock("oak_sapling", "Oak Sapling", 45, "sapling_oak");
         registerBlock("birch_log", "Birch Log", 46, "log_birch");
         registerBlock("spruce_log", "Spruce Log", 47, "log_spruce");
         registerBlock("spruce_leaves", "Spruce Leaves", 48, "leaves_spruce");
@@ -292,6 +293,15 @@ public class ItemDefinitions {
         registerBlock("belt_conveyor", "Mechanical Belt", 413, "belt_conveyor");
         registerBlock("item_vault", "Item Vault", 414, "item_vault");
         registerBlock("brass_casing", "Brass Casing", 415, "brass_casing");
+        // --- Steam-power blocks (lit/active/fluid-level variants drop the base item) ---
+        registerBlock("blaze_burner", "Blaze Burner", 394, "blaze_burner");
+        blockItemByBlockId.put(395, "blaze_burner");
+        registerBlock("steam_engine", "Steam Engine", 396, "steam_engine");
+        blockItemByBlockId.put(397, "steam_engine");
+        registerBlock("copper_tank", "Copper Tank", 398, "copper_tank");
+        for (int lvl = 399; lvl <= 403; lvl++) {
+            blockItemByBlockId.put(lvl, "copper_tank");
+        }
         // --- Create tools & materials (416-421) ---
         registerItemBlock("wrench", "Wrench", "wrench", 416, 417, ToolType.HAND, 1.0f, 1, 0);
         registerItemBlock("goggles", "Goggles", "goggles", 418, 419, ToolType.HAND, 1.0f, 1, 0);
@@ -368,13 +378,19 @@ public class ItemDefinitions {
         // Horizontal shaft variants (292/293) drop the regular shaft item.
         blockItemByBlockId.put(292, "shaft");
         blockItemByBlockId.put(293, "shaft");
+        // Biome grass variants (86-90) drop the regular grass block item.
+        blockItemByBlockId.put(86, "grass");
+        blockItemByBlockId.put(87, "grass");
+        blockItemByBlockId.put(88, "grass");
+        blockItemByBlockId.put(89, "grass");
+        blockItemByBlockId.put(90, "grass");
     }
 
     private void registerBlock(String itemId, String displayName, int blockId, String textureName) {
         if (blockItemByBlockId.containsKey(blockId)) {
             throw new RuntimeException("Item block ID collision! ID " + blockId + " is already registered to '" + blockItemByBlockId.get(blockId) + "'. Attempted to register '" + itemId + "'.");
         }
-        Color albedo = blockDataManager.getAlbedo(blockId);
+        Color albedo = blockDataManager.getTintColorOrAlbedo(blockId);
         Vector4f color = new Vector4f(albedo.getRed() / 255.0f, albedo.getGreen() / 255.0f, albedo.getBlue() / 255.0f, 1.0f);
         int iconLayer = textureManager.getTextureIndex(textureName);
         ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.BLOCK, blockId, iconLayer, ToolType.HAND, 1.0f, 64, color);

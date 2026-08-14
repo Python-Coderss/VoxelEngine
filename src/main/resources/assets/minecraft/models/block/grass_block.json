@@ -14,10 +14,10 @@
             "faces": {
                 "down":  { "texture": "#bottom", "cullface": "down" },
                 "up":    { "texture": "#top",    "cullface": "up",    "tintindex": 0 },
-                "north": { "texture": "#side",   "cullface": "north" },
-                "south": { "texture": "#side",   "cullface": "south" },
-                "west":  { "texture": "#side",   "cullface": "west"  },
-                "east":  { "texture": "#side",   "cullface": "east"  }
+                "north": { "texture": "#side",   "cullface": "north", "tintindex": 0 },
+                "south": { "texture": "#side",   "cullface": "south", "tintindex": 0 },
+                "west":  { "texture": "#side",   "cullface": "west",  "tintindex": 0 },
+                "east":  { "texture": "#side",   "cullface": "east",  "tintindex": 0 }
             }
         },
         {

@@ -117,6 +117,16 @@ public class BetaWorldGenerator extends WorldGenerator {
             veChest, veSpawner, veSnowLevels
         );
 
+        // Point the provider at the registered per-biome grass variants so each
+        // biome category surfaces its own tinted grass block.
+        betaProvider.setGrassVariants(
+            findOr(blockDataManager, "taiga_grass", veGrass),
+            findOr(blockDataManager, "jungle_grass", veGrass),
+            findOr(blockDataManager, "swamp_grass", veGrass),
+            findOr(blockDataManager, "savanna_grass", veGrass),
+            findOr(blockDataManager, "tundra_grass", veGrass)
+        );
+
         // Expose Beta 1.7.3 biomes as a VoxelEngine BiomeProvider
         this.biomeProvider = new BiomeProvider(seed) {
             @Override

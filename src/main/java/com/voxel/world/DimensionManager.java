@@ -19,6 +19,8 @@ public class DimensionManager {
     private final BiomeManager biomeManager;
     /** World generation seed shared by all dimensions (0 = classic defaults). */
     private long worldSeed = 0L;
+    /** When true, the Overworld is built as a flat Tutorial World showcase. */
+    private boolean tutorialWorld = false;
 
     public DimensionManager(BlockDataManager blockDataManager, WorldSaveManager saveManager, BiomeManager biomeManager) {
         this.blockDataManager = blockDataManager;
@@ -33,6 +35,11 @@ public class DimensionManager {
     }
 
     public long getWorldSeed() { return worldSeed; }
+
+    /** Selects the flat Tutorial World generator for the Overworld. */
+    public void setTutorialWorld(boolean tutorialWorld) {
+        this.tutorialWorld = tutorialWorld;
+    }
 
     /** Mixes the world seed into a per-dimension noise seed, keeping 0 → classic. */
     public long seedFor(DimensionType type) {
@@ -65,6 +72,13 @@ public class DimensionManager {
         if (type == DimensionType.AETHER) {
             generator = new AetherGenerator(typeSeed, blockDataManager);
         } else if (type == DimensionType.OVERWORLD) {
+            if (tutorialWorld) {
+                // The Tutorial World's showcase area is a bundled handcrafted map
+                // streamed in from disk; this flat generator is the fallback base
+                // for any chunk outside the template (and matches the template's
+                // grass/dirt/stone profile at the boundary).
+                generator = new TutorialWorldGenerator(typeSeed, blockDataManager);
+            } else {
             // The normal Overworld uses the coordinate-tuned far-lands policy
             // (OverworldBetaPrecision): classic integer far lands (~3,060
             // blocks) with near-full float precision in bands 0–1, then
@@ -73,6 +87,7 @@ public class DimensionManager {
             // Y follows the same full-through-4,000 degradation bands.
             generator = new BetaWorldGenerator(typeSeed, blockDataManager,
                     com.voxel.world.beta.BetaNumericProfile.OVERWORLD);
+            }
         } else if (type == DimensionType.ERROR502) {
             // ERROR502 remains the isolated experimental world using the
             // aggressive coordinate-aware degradation switches

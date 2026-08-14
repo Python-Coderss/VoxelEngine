@@ -82,6 +82,11 @@ public class BlockDataManager {
         // Whether the block color should be modified by the biome (e.g., grass).
         public int isTintable;
 
+        // Fixed per-block tint color (0xRRGGBB). Applied to tintable faces
+        // instead of the old location-based biome colormap lookup. Defaults to
+        // white (no visible change).
+        public int tintColor = 0xFFFFFF;
+
         // Tint index: 0=none, 1=grass colormap, 2=foliage colormap.
         // Maps from Minecraft JSON "tintindex" values (0→1, 1→2).
         public int tintIndex;
@@ -93,6 +98,13 @@ public class BlockDataManager {
         // Animated texture properties
         public boolean isAnimated;
         public int frameCount = 1;
+
+        // Per-face animation mask: bit i (0-5) set if face i uses a texture with
+        // more than one frame. The shader only applies the animation frame offset
+        // to faces in this mask, so static faces on mixed-texture models (e.g. the
+        // water wheel's axis ends) aren't shifted onto garbage atlas layers when
+        // a kinetic network spins the block.
+        public int faceAnimMask = 0;
 
         // Color of emitted block light. Packed as 0x00RRGGBB (each 0-255). Default white.
         // Applied at the light intensity level determined by emissive.
@@ -230,16 +242,21 @@ public class BlockDataManager {
             data.diffuse = 255;
         }
 
-        // Detect animated textures from the texture manager
-        for (int faceTex : data.tex) {
+        // Detect animated textures from the texture manager. The animation flag is
+        // set per-face (faceAnimMask) as well as block-wide, so spinning create
+        // blocks keep their static faces intact.
+        data.faceAnimMask = 0;
+        data.frameCount = 1;
+        for (int i = 0; i < 6; i++) {
+            int faceTex = data.tex[i];
             if (faceTex >= 0) {
                 String texName = textureManager.getTextureNameByIndex(faceTex);
                 if (texName != null) {
                     int fc = textureManager.getFrameCount(texName);
                     if (fc > 1) {
+                        data.faceAnimMask |= (1 << i);
                         data.isAnimated = true;
-                        data.frameCount = fc;
-                        break;
+                        if (fc > data.frameCount) data.frameCount = fc;
                     }
                 }
             }
@@ -513,7 +530,7 @@ public class BlockDataManager {
         }
 
         // Allocate memory for the property buffer (12 ints per block).
-        IntBuffer buffer = MemoryUtil.memAllocInt((maxId + 1) * 12);
+        IntBuffer buffer = MemoryUtil.memAllocInt((maxId + 1) * 16);
         for (int i = 0; i <= maxId; i++) {
             BlockData data = blockRegistry.get(i);
             if (data != null) {
@@ -545,9 +562,18 @@ public class BlockDataManager {
                         | ((data.distortion & 0xFF) << 16)
                         | ((data.facingDirection & 0x7) << 24);
                 buffer.put(packedAnim); // bit0: anim, bit1-6: frames, bit8-15: diffuse, bit16-23: distortion, bit24-26: facingDir
+
+                // ivec4 3: (tintR, tintG, tintB, faceAnimMask) — fixed per-block tint
+                // color replacing the old location-based biome colormap lookup, plus
+                // the per-face animation mask (bit i = face i animated) so spinning
+                // kinetic blocks never shift static faces onto garbage atlas layers.
+                buffer.put((data.tintColor >> 16) & 0xFF);
+                buffer.put((data.tintColor >> 8) & 0xFF);
+                buffer.put(data.tintColor & 0xFF);
+                buffer.put(data.faceAnimMask);
             } else {
                 // Fill with -1 for unused IDs.
-                for (int j = 0; j < 12; j++)
+                for (int j = 0; j < 16; j++)
                     buffer.put(-1);
             }
         }
@@ -812,6 +838,33 @@ public class BlockDataManager {
                 data.tintFaceMask = 0;
             }
         }
+    }
+
+    /**
+     * Sets the fixed tint color for a block (0xRRGGBB) and neutralizes its
+     * grayscale albedo so the tint alone drives the face color. Blocks tinted
+     * this way no longer vary with world location — their color is a property
+     * of the block type (e.g. jungle grass vs. plains grass).
+     */
+    public void setBlockTintColor(int blockId, int rgb) {
+        BlockData data = blockRegistry.get(blockId);
+        if (data != null) {
+            data.tintColor = rgb & 0xFFFFFF;
+            data.isTintable = 1;
+        }
+    }
+
+    /**
+     * The color an item icon should render with: the block's fixed tint if it
+     * has one, otherwise its average texture albedo.
+     */
+    public java.awt.Color getTintColorOrAlbedo(int blockId) {
+        BlockData data = blockRegistry.get(blockId);
+        if (data == null) return java.awt.Color.WHITE;
+        if (data.isTintable == 1 && data.tintColor != 0xFFFFFF) {
+            return new java.awt.Color((data.tintColor >> 16) & 0xFF, (data.tintColor >> 8) & 0xFF, data.tintColor & 0xFF);
+        }
+        return data.albedo;
     }
 
     public String getName(int blockId) {

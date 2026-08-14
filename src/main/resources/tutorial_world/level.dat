@@ -1,0 +1,140 @@
+{
+  "worldTime": 720,
+  "seed": 1234567,
+  "saveName": "tutorial",
+  "tutorial": true,
+  "gameMode": "SURVIVAL",
+  "lastPlayed": 1786678166201,
+  "worldSize": "MEDIUM",
+  "player": {
+    "x": 0.5,
+    "y": 69,
+    "health": 20,
+    "z": 6.5,
+    "pitch": 0,
+    "inventory": [
+      {
+        "item": "wrench",
+        "durability": 0,
+        "count": 1,
+        "slot": 0
+      },
+      {
+        "item": "goggles",
+        "durability": 0,
+        "count": 1,
+        "slot": 1
+      },
+      {
+        "item": "brass_ingot",
+        "durability": 0,
+        "count": 1,
+        "slot": 2
+      },
+      {
+        "item": "hand_crank",
+        "durability": 0,
+        "count": 1,
+        "slot": 3
+      },
+      {
+        "item": "windmill_bearing",
+        "durability": 0,
+        "count": 1,
+        "slot": 4
+      },
+      {
+        "item": "windmill_sail",
+        "durability": 0,
+        "count": 1,
+        "slot": 5
+      },
+      {
+        "item": "shaft",
+        "durability": 0,
+        "count": 4,
+        "slot": 6
+      },
+      {
+        "item": "cogwheel",
+        "durability": 0,
+        "count": 4,
+        "slot": 7
+      },
+      {
+        "item": "large_cogwheel",
+        "durability": 0,
+        "count": 1,
+        "slot": 8
+      },
+      {
+        "item": "millstone",
+        "durability": 0,
+        "count": 1,
+        "slot": 9
+      },
+      {
+        "item": "mechanical_press",
+        "durability": 0,
+        "count": 1,
+        "slot": 10
+      },
+      {
+        "item": "crushing_wheel",
+        "durability": 0,
+        "count": 1,
+        "slot": 11
+      },
+      {
+        "item": "mechanical_drill",
+        "durability": 0,
+        "count": 1,
+        "slot": 12
+      },
+      {
+        "item": "mechanical_saw",
+        "durability": 0,
+        "count": 1,
+        "slot": 13
+      },
+      {
+        "item": "belt_conveyor",
+        "durability": 0,
+        "count": 1,
+        "slot": 14
+      },
+      {
+        "item": "item_vault",
+        "durability": 0,
+        "count": 1,
+        "slot": 15
+      },
+      {
+        "item": "brass_casing",
+        "durability": 0,
+        "count": 1,
+        "slot": 16
+      },
+      {
+        "item": "blaze_burner",
+        "durability": 0,
+        "count": 1,
+        "slot": 17
+      },
+      {
+        "item": "steam_engine",
+        "durability": 0,
+        "count": 1,
+        "slot": 18
+      },
+      {
+        "item": "copper_tank",
+        "durability": 0,
+        "count": 1,
+        "slot": 19
+      }
+    ],
+    "dimension": "overworld",
+    "yaw": -90
+  }
+}
