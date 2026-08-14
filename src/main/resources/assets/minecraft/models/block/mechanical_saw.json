@@ -1,1 +1,11 @@
-{"textures": {"up": "mechanical_saw", "down": "mechanical_saw", "north": "mechanical_saw", "south": "mechanical_saw", "west": "mechanical_saw", "east": "mechanical_saw", "particle": "mechanical_saw"}}
+{
+  "textures": {
+    "up": "saw_top",
+    "down": "saw_bottom",
+    "north": "saw_side",
+    "south": "saw_side",
+    "west": "saw_side",
+    "east": "saw_blade",
+    "particle": "saw_top"
+  }
+}

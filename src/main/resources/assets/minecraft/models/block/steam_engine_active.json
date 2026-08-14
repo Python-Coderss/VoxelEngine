@@ -1,6 +1,11 @@
 {
-    "parent": "block/cube_all",
-    "textures": {
-        "all": "steam_engine_active"
-    }
+  "textures": {
+    "up": "engine_active_top",
+    "down": "engine_active_top",
+    "north": "engine_active_side",
+    "south": "engine_active_side",
+    "west": "engine_active_side",
+    "east": "engine_active_side",
+    "particle": "engine_active_top"
+  }
 }

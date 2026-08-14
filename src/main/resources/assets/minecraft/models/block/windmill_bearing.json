@@ -1,1 +1,11 @@
-{"textures": {"up": "windmill_bearing", "down": "windmill_bearing", "north": "windmill_bearing", "south": "windmill_bearing", "west": "windmill_bearing", "east": "windmill_bearing", "particle": "windmill_bearing"}}
+{
+  "textures": {
+    "up": "bearing_top",
+    "down": "bearing_top",
+    "north": "bearing_side",
+    "south": "bearing_side",
+    "west": "bearing_side",
+    "east": "bearing_side",
+    "particle": "bearing_top"
+  }
+}

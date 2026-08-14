@@ -139,8 +139,14 @@ public class BlockInteraction {
         ctx.furnaceCutsceneCameraTarget.set(camX, camY, camZ);
         ctx.furnaceCutsceneStartYaw = ctx.yaw;
         ctx.furnaceCutsceneStartPitch = ctx.pitch;
-        // Look from the camera back toward the furnace center
-        ctx.furnaceCutsceneTargetYaw = (float) Math.toDegrees(Math.atan2(fx + 0.5f - camX, fz + 0.5f - camZ));
+        // Look from the camera back toward the furnace center. Yaw convention is
+        // look.x = cos(yaw), look.z = sin(yaw), so yaw = atan2(dz, dx) — the
+        // previous atan2(dx, dz) framed the furnace 90° off.
+        float targetYaw = (float) Math.toDegrees(Math.atan2(fz + 0.5f - camZ, fx + 0.5f - camX));
+        // Take the shortest angular path so the camera pans directly to face the
+        // furnace instead of spinning the long way across the ±180° seam.
+        float dYaw = ((targetYaw - ctx.furnaceCutsceneStartYaw + 540.0f) % 360.0f) - 180.0f;
+        ctx.furnaceCutsceneTargetYaw = ctx.furnaceCutsceneStartYaw + dYaw;
         ctx.furnaceCutsceneTargetPitch = -15;
 
         ctx.furnaceCutsceneActive = true;

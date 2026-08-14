@@ -424,11 +424,13 @@ public void setBlockLight(int slot, int lx, int ly, int lz, int value) {
 
         int poolIdx = (slot << 12) | ((rx & 15) | ((ry & 15) << 4) | ((rz & 15) << 8));
         int raw = lightPool[poolIdx];
-        int sky = raw & 0xFF;
-        int r = (raw >> LIGHT_BLOCK_R_SHIFT) & 0xFF;
-        int g = (raw >> LIGHT_BLOCK_G_SHIFT) & 0xFF;
-        int b = (raw >> LIGHT_BLOCK_B_SHIFT) & 0xFF;
-        return (sky << 24) | (r << 16) | (g << 8) | b;
+        // Each channel is stored 0-255 (level × 17); shrink to 4-bit (0-15) so
+        // the shifted fields never overflow and bleed into a neighbouring nibble.
+        int sky = (raw & 0xFF) / 17;
+        int r = ((raw >>> LIGHT_BLOCK_R_SHIFT) & 0xFF) / 17;
+        int g = ((raw >>> LIGHT_BLOCK_G_SHIFT) & 0xFF) / 17;
+        int b = ((raw >>> LIGHT_BLOCK_B_SHIFT) & 0xFF) / 17;
+        return (sky << 20) | (r << 16) | (g << 12) | (b << 8);
     }
 
 /**

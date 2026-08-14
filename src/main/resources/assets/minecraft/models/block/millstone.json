@@ -1,1 +1,11 @@
-{"textures": {"up": "millstone", "down": "millstone", "north": "millstone", "south": "millstone", "west": "millstone", "east": "millstone", "particle": "millstone"}}
+{
+  "textures": {
+    "up": "millstone_top",
+    "down": "millstone_bottom",
+    "north": "millstone_side",
+    "south": "millstone_side",
+    "west": "millstone_side",
+    "east": "millstone_side",
+    "particle": "millstone_top"
+  }
+}

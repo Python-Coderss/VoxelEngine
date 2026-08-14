@@ -1,1 +1,25 @@
-{"textures": {"up": "windmill_sail", "down": "windmill_sail", "north": "windmill_sail", "south": "windmill_sail", "west": "windmill_sail", "east": "windmill_sail", "particle": "windmill_sail"}}
+{
+  "textures": {
+    "north": "sail_face",
+    "south": "sail_face",
+    "up": "sail_edge",
+    "down": "sail_edge",
+    "west": "sail_edge",
+    "east": "sail_edge",
+    "particle": "sail_face"
+  },
+  "elements": [
+    {
+      "from": [
+        2,
+        0,
+        7
+      ],
+      "to": [
+        14,
+        16,
+        9
+      ]
+    }
+  ]
+}

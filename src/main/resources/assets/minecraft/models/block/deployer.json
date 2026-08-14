@@ -1,1 +1,11 @@
-{"textures": {"up": "deployer", "down": "deployer", "north": "deployer", "south": "deployer", "west": "deployer", "east": "deployer", "particle": "deployer"}}
+{
+  "textures": {
+    "up": "deployer_top",
+    "down": "deployer_bottom",
+    "north": "deployer_side",
+    "south": "deployer_side",
+    "west": "deployer_side",
+    "east": "deployer_front",
+    "particle": "deployer_top"
+  }
+}

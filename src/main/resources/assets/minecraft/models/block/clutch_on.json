@@ -1,5 +1,11 @@
 {
   "textures": {
-    "all": "clutch_on"
+    "up": "clutch_top",
+    "down": "clutch_top",
+    "north": "clutch_on",
+    "south": "clutch_on",
+    "west": "clutch_on",
+    "east": "clutch_on",
+    "particle": "clutch_top"
   }
 }

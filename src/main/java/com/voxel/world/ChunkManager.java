@@ -1342,9 +1342,7 @@ public class ChunkManager {
                     NavigableMap<Integer, Integer> snap = snapshotColumnSlots(nk);
                     if (snap == null) return; // column unloaded/mid-mutation
                     dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, snap));
-                    for (Map.Entry<Integer, Integer> se : snap.entrySet()) {
-                        dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, se.getKey(), cz, se.getValue()));
-                    }
+                    dirtySlots.addAll(mcLightEngine.propagateBlockLightColumn(cx, cz, snap));
                     lightsNeedUpload = true;
                     tableDirty.set(true);
                     runPendingLightingIn5x5(cx, cz);
@@ -1373,9 +1371,7 @@ public class ChunkManager {
                             NavigableMap<Integer, Integer> snap = snapshotColumnSlots(nk);
                             if (snap == null) return; // column unloaded/mid-mutation
                             dirtySlots.addAll(mcLightEngine.generateSkyLight(finalNx, finalNz, snap));
-                            for (Map.Entry<Integer, Integer> se : snap.entrySet()) {
-                                dirtySlots.addAll(mcLightEngine.propagateBlockLight(finalNx, se.getKey(), finalNz, se.getValue()));
-                            }
+                            dirtySlots.addAll(mcLightEngine.propagateBlockLightColumn(finalNx, finalNz, snap));
                             lightsNeedUpload = true;
                             tableDirty.set(true);
                         });
@@ -1853,9 +1849,7 @@ public class ChunkManager {
             postLightTask(key, slots, () -> {
                 try {
                     dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, snapshot));
-                    for (Map.Entry<Integer, Integer> se : snapshot.entrySet()) {
-                        dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, se.getKey(), cz, se.getValue()));
-                    }
+                    dirtySlots.addAll(mcLightEngine.propagateBlockLightColumn(cx, cz, snapshot));
                     lightsNeedUpload = true;
                     tableDirty.set(true);
                     runPendingLightingIn5x5(cx, cz);
@@ -1882,9 +1876,7 @@ public class ChunkManager {
         postLightTask(key, slots, () -> {
             try {
                 dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, snapshot));
-                for (Map.Entry<Integer, Integer> entry : snapshot.entrySet()) {
-                    dirtySlots.addAll(mcLightEngine.propagateBlockLight(cx, entry.getKey(), cz, entry.getValue()));
-                }
+                dirtySlots.addAll(mcLightEngine.propagateBlockLightColumn(cx, cz, snapshot));
                 lightsNeedUpload = true;
                 tableDirty.set(true);
             } finally {

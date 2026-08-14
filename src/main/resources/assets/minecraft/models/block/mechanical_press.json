@@ -1,1 +1,11 @@
-{"textures": {"up": "mechanical_press", "down": "mechanical_press", "north": "mechanical_press", "south": "mechanical_press", "west": "mechanical_press", "east": "mechanical_press", "particle": "mechanical_press"}}
+{
+  "textures": {
+    "up": "press_top",
+    "down": "press_bottom",
+    "north": "press_side",
+    "south": "press_side",
+    "west": "press_side",
+    "east": "press_front",
+    "particle": "press_top"
+  }
+}

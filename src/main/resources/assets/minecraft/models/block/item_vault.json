@@ -1,1 +1,11 @@
-{"textures": {"up": "item_vault", "down": "item_vault", "north": "item_vault", "south": "item_vault", "west": "item_vault", "east": "item_vault", "particle": "item_vault"}}
+{
+  "textures": {
+    "up": "vault_top",
+    "down": "vault_top",
+    "north": "vault_side",
+    "south": "vault_side",
+    "west": "vault_side",
+    "east": "vault_front",
+    "particle": "vault_top"
+  }
+}

@@ -317,6 +317,36 @@ public class LightEngine {
     private static int nodeZ(long p) { return (int)(p & 0x7FF); }
     private static int nodeIntensityScalar(long p) { return (int)((p >>> 33) & 0xF); }
 
+    // ── Direction-tracking state (block-light flood fill) ──
+    // The scalar node above uses bits 0-36. Block-light BFS additionally packs
+    // path state into bits 37-63:
+    //   lastAxis : bits 37-38 (0=none, 1=x, 2=y, 3=z)
+    //   lastSign : bit 39     (0=negative, 1=positive)
+    //   tally[i] : bits 40 + i*4 .. 43 + i*4 (4 bits each), i = 0..5 → +x,-x,+y,-y,+z,-z
+    private static final int AXIS_NONE = 0, AXIS_X = 1, AXIS_Y = 2, AXIS_Z = 3;
+    private static final int SIGN_NEG = 0, SIGN_POS = 1;
+    private static final long TALLY_MASK = 0xFFFFFF0000000000L;
+
+    // Direction.values() order: NORTH(-z), SOUTH(+z), EAST(+x), WEST(-x), UP(+y), DOWN(-y)
+    private static final int[] DIR_AXIS  = {AXIS_Z, AXIS_Z, AXIS_X, AXIS_X, AXIS_Y, AXIS_Y};
+    private static final int[] DIR_SIGN  = {SIGN_NEG, SIGN_POS, SIGN_POS, SIGN_NEG, SIGN_POS, SIGN_NEG};
+    private static final int[] DIR_TALLY = {5, 4, 0, 1, 2, 3};
+
+    private static long packNodeTracked(int rx, int ry, int rz, int intensity,
+                                        int lastAxis, int lastSign, long tallyBits) {
+        return ((long)(rx & 0x7FF) << 22)
+             | ((long)(ry & 0x7FF) << 11)
+             | ((long)(rz & 0x7FF))
+             | ((long)(intensity & 0xF) << 33)
+             | ((long)(lastAxis & 0x3) << 37)
+             | ((long)(lastSign & 0x1) << 39)
+             | tallyBits;
+    }
+
+    private static int nodeLastAxis(long p) { return (int)((p >>> 37) & 0x3); }
+    private static int nodeLastSign(long p) { return (int)((p >>> 39) & 0x1); }
+    private static int nodeTally(long p, int i) { return (int)((p >>> (40 + i * 4)) & 0xF); }
+
     // ══════════════════════════════════════════════════════════════════
     //  TEMP FIELD HELPERS
     // ══════════════════════════════════════════════════════════════════
@@ -336,6 +366,12 @@ public class LightEngine {
      * Flood-fill BFS: propagates scalar intensity (0-15) from a seeded queue
      * into the temp byte field (stored as 0-255 = intensity × 17).
      *
+     * Attenuation uses the furthest distance travelled on any single axis
+     * (Chebyshev distance) rather than distance-to-source or path length.
+     * Each node tracks a 6-way step tally (+x,-x,+y,-y,+z,-z, tallied
+     * separately — never netted back to the source), and the last axis used.
+     * A step that reverses along the last-used axis halves the brightness.
+     *
      * All coordinates in the queue are BUFFER-RELATIVE (0..bufSize-1).
      * This avoids 11-bit overflow at extreme world positions (Far Lands).
      *
@@ -352,8 +388,21 @@ public class LightEngine {
             // Unpack buffer-relative coordinates
             int rnx0 = nodeX(node), rny0 = nodeY(node), rnz0 = nodeZ(node);
             int cur = nodeIntensityScalar(node);
+            int lastAxis = nodeLastAxis(node);
+            int lastSign = nodeLastSign(node);
 
-            for (Direction dir : dirs) {
+            long tallyBits = node & TALLY_MASK;
+            // Chebyshev distance = furthest travelled on any single axis.
+            int t0 = (int)((tallyBits >>> 40) & 0xF);
+            int t1 = (int)((tallyBits >>> 44) & 0xF);
+            int t2 = (int)((tallyBits >>> 48) & 0xF);
+            int t3 = (int)((tallyBits >>> 52) & 0xF);
+            int t4 = (int)((tallyBits >>> 56) & 0xF);
+            int t5 = (int)((tallyBits >>> 60) & 0xF);
+            int oldMax = Math.max(Math.max(t0, t1), Math.max(Math.max(t2, t3), Math.max(t4, t5)));
+
+            for (int d = 0; d < 6; d++) {
+                Direction dir = dirs[d];
                 int rnx = rnx0 + dir.x;
                 int rny = rny0 + dir.y;
                 int rnz = rnz0 + dir.z;
@@ -367,8 +416,22 @@ public class LightEngine {
                 // Convert to absolute for world.getVoxel() lookup
                 int nx = rnx + ox, ny = rny + oy, nz = rnz + oz;
                 int opacity = getBlockOpacity(world.getVoxel(nx, ny, nz));
-                int step = Math.max(1, opacity);
-                int next = Math.max(0, cur - step);
+
+                int axis = DIR_AXIS[d];
+                int sign = DIR_SIGN[d];
+                int ti = DIR_TALLY[d];
+                int t = nodeTally(node, ti);
+                int nt = t + 1;
+
+                // Distance grows only when this step pushes past the furthest
+                // extent reached on any axis (Chebyshev, not Manhattan).
+                int distIncrease = (t == oldMax) ? 1 : 0;
+                int next = cur - distIncrease - opacity;
+                // Reversing along the last-used axis halves the brightness.
+                if (lastAxis != AXIS_NONE && lastAxis == axis && lastSign != sign) {
+                    next >>= 1;
+                }
+                next = Math.max(0, next);
                 if (next <= 0) continue;
 
                 int nidx = (nSlot << 12) | ((rnx & 15) | ((rny & 15) << 4) | ((rnz & 15) << 8));
@@ -379,8 +442,8 @@ public class LightEngine {
                     tempField[nidx] = (byte) next255;
                     dirtySlots.add(nSlot);
                     if (next > 1) {
-                        // Pack relative coords so they stay within 11-bit range
-                        queue.add(packNodeScalar(rnx, rny, rnz, next));
+                        long newTallyBits = (tallyBits & ~(0xFL << (40 + ti * 4))) | ((long) nt << (40 + ti * 4));
+                        queue.add(packNodeTracked(rnx, rny, rnz, next, axis, sign, newTallyBits));
                     }
                 }
             }
@@ -431,9 +494,9 @@ public class LightEngine {
                 int cb = level * tb / 15;
 
                 int current = mainPool[idx];
-                int curR = (current >> 8) & 0xFF;
-                int curG = (current >> 16) & 0xFF;
-                int curB = (current >> 24) & 0xFF;
+                int curR = (current >>> 8) & 0xFF;
+                int curG = (current >>> 16) & 0xFF;
+                int curB = (current >>> 24) & 0xFF;
 
                 int newR, newG, newB;
                 if (add) {
@@ -447,8 +510,12 @@ public class LightEngine {
                 }
 
                 if (newR != curR || newG != curG || newB != curB) {
+                    // Mask every channel before shifting so a value can never
+                    // overflow past 8 bits and bleed into a neighbouring channel.
                     mainPool[idx] = (current & 0xFF) // preserve sky
-                        | (newR << 8) | (newG << 16) | (newB << 24);
+                        | ((newR & 0xFF) << 8)
+                        | ((newG & 0xFF) << 16)
+                        | ((newB & 0xFF) << 24);
                     slotChanged = true;
                 }
             }
@@ -593,6 +660,101 @@ public class LightEngine {
         }
 
         return dirtySlots;
+    }
+
+    /**
+     * Block-light pass over a set of columns (chunkKey -> section slots).
+     * Collects every emissive source across ALL given sections, groups them by
+     * light type, then floods each type exactly once. This replaces the
+     * per-section batching which re-flooded overlapping volume and — for a dense
+     * field of same-type sources spanning sections (a nether lava lake) — summed
+     * the light twice. One flood per type is both faster and more correct.
+     */
+    public Set<Integer> propagateBlockLightRegion(java.util.Map<Long, java.util.NavigableMap<Integer, Integer>> columns) {
+        Set<Integer> dirtySlots = new HashSet<>();
+        int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
+
+        // Clean the temp field for every source section so stale values from an
+        // earlier pass can't short-circuit this flood.
+        for (java.util.NavigableMap<Integer, Integer> slots : columns.values()) {
+            for (int slot : slots.values()) {
+                if (slot != World.EMPTY) clearTempFieldSlot(slot);
+            }
+        }
+
+        // Phase 1: collect sources grouped by type across the whole region.
+        java.util.Map<Integer, java.util.List<int[]>> sourcesByType = new java.util.HashMap<>();
+        for (java.util.Map.Entry<Long, java.util.NavigableMap<Integer, Integer>> column : columns.entrySet()) {
+            long key = column.getKey();
+            int cx = (int) (key >> 32);
+            int cz = (int) key;
+            int worldBaseX = cx << 4;
+            int worldBaseZ = cz << 4;
+            for (java.util.Map.Entry<Integer, Integer> se : column.getValue().entrySet()) {
+                int cy = se.getKey();
+                int worldBaseY = cy << 4;
+                for (int ly = 0; ly < 16; ly++) {
+                    for (int lz = 0; lz < 16; lz++) {
+                        for (int lx = 0; lx < 16; lx++) {
+                            int wx = worldBaseX + lx;
+                            int wy = worldBaseY + ly;
+                            int wz = worldBaseZ + lz;
+                            int blockId = world.getVoxel(wx, wy, wz);
+                            int emissive = blockDataManager.getEmissive(blockId);
+                            if (emissive <= 0) continue;
+                            int lightColor = blockDataManager.getLightColor(blockId);
+                            int typeKey = (emissive << 24) | (lightColor & 0xFFFFFF);
+                            int intensity = Math.min(emissive, 15);
+                            sourcesByType.computeIfAbsent(typeKey, k -> new java.util.ArrayList<>())
+                                .add(new int[]{wx, wy, wz, intensity, blockId});
+                        }
+                    }
+                }
+            }
+        }
+
+        if (sourcesByType.isEmpty()) return dirtySlots;
+
+        // Phase 2: flood + tint once per type.
+        for (java.util.Map.Entry<Integer, java.util.List<int[]>> entry : sourcesByType.entrySet()) {
+            int blockId = entry.getValue().get(0)[4];
+            int typeKey = entry.getKey();
+            WorldGenLogger.logChunk("LIGHT_BLOCK_REGION", 0, 0, 0,
+                "sources=" + entry.getValue().size() + " type=#" + Integer.toHexString(typeKey));
+
+            LongQueue queue = new LongQueue(256);
+            Set<Integer> typeDirty = new HashSet<>();
+            for (int[] src : entry.getValue()) {
+                int sx = src[0], sy = src[1], sz = src[2];
+                int intensity = src[3];
+
+                int slot = getSlotForWorldPos(sx, sy, sz, ox, oy, oz);
+                if (slot == World.EMPTY) continue;
+                int slx = sx & 15, sly = sy & 15, slz = sz & 15;
+                int sidx = (slot << 12) | (slx | (sly << 4) | (slz << 8));
+                int existing = tempField[sidx] & 0xFF;
+                int intensity255 = intensity * 17;
+                if (intensity255 > existing) {
+                    tempField[sidx] = (byte) intensity255;
+                    typeDirty.add(slot);
+                }
+                int rsx = sx - ox, rsy = sy - oy, rsz = sz - oz;
+                queue.add(packNodeScalar(rsx, rsy, rsz, intensity));
+            }
+
+            floodFillScalar(queue, ox, oy, oz, typeDirty);
+            applyTintToMain(blockId, true, typeDirty);
+            dirtySlots.addAll(typeDirty);
+        }
+
+        return dirtySlots;
+    }
+
+    /** Single-column convenience wrapper for {@link #propagateBlockLightRegion}. */
+    public Set<Integer> propagateBlockLightColumn(int cx, int cz, java.util.NavigableMap<Integer, Integer> slots) {
+        java.util.Map<Long, java.util.NavigableMap<Integer, Integer>> one = new java.util.HashMap<>(1);
+        one.put(((long) cx << 32) | (cz & 0xFFFFFFFFL), slots);
+        return propagateBlockLightRegion(one);
     }
 
     /**
@@ -750,30 +912,16 @@ public class LightEngine {
         }
         System.out.println("\r  Sky light: " + colDone + "/" + totalCols + " columns done");
 
-        // Phase 3: Block light for all sections
-        GameLogger.log("LIGHT Block light propagation...");
-        int secDone = 0;
-        int totalSecs = 0;
-        for (java.util.NavigableMap<Integer, Integer> slots : loadedChunks.values()) {
-            totalSecs += slots.size();
-        }
-        for (java.util.Map.Entry<Long, java.util.NavigableMap<Integer, Integer>> entry : loadedChunks.entrySet()) {
-            long key = entry.getKey();
-            int cx = (int) (key >> 32);
-            int cz = (int) key;
-            java.util.NavigableMap<Integer, Integer> slots = entry.getValue();
-            for (java.util.Map.Entry<Integer, Integer> se : slots.entrySet()) {
-                Set<Integer> dirty = propagateBlockLight(cx, se.getKey(), cz, se.getValue());
-                allDirty.addAll(dirty);
-            }
-            secDone += slots.size();
-            if (secDone % 800 == 0 && totalSecs > 0) {
-                System.out.print("\r  Block light: " + secDone + "/" + totalSecs + " sections");
-            }
-        }
-        if (totalSecs > 0) {
-            System.out.println("\r  Block light: " + secDone + "/" + totalSecs + " sections done");
-        }
+        // Phase 3: Block light — one global pass grouped by light type. Flooding
+        // each type once across the whole loaded region (instead of once per
+        // section) keeps dense source fields (nether lava lakes) from re-flooding
+        // overlapping volume or double-counting same-type light.
+        GameLogger.log("LIGHT Block light propagation (global by type)...");
+        long blockT0 = System.currentTimeMillis();
+        Set<Integer> blockDirty = propagateBlockLightRegion(loadedChunks);
+        allDirty.addAll(blockDirty);
+        System.out.println("\r  Block light: " + blockDirty.size() + " dirty slots in "
+            + (System.currentTimeMillis() - blockT0) + "ms");
 
         return allDirty;
     }

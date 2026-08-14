@@ -1,1 +1,73 @@
-{"textures": {"up": "belt_conveyor", "down": "belt_conveyor", "north": "belt_conveyor", "south": "belt_conveyor", "west": "belt_conveyor", "east": "belt_conveyor", "particle": "belt_conveyor"}}
+{
+  "textures": {
+    "up": "belt_top",
+    "down": "belt_side",
+    "north": "belt_side",
+    "south": "belt_side",
+    "west": "belt_side",
+    "east": "belt_side",
+    "particle": "belt_top"
+  },
+  "elements": [
+    {
+      "from": [
+        0,
+        9,
+        0
+      ],
+      "to": [
+        16,
+        11,
+        16
+      ]
+    },
+    {
+      "from": [
+        0,
+        5,
+        0
+      ],
+      "to": [
+        2,
+        9,
+        16
+      ]
+    },
+    {
+      "from": [
+        14,
+        5,
+        0
+      ],
+      "to": [
+        16,
+        9,
+        16
+      ]
+    },
+    {
+      "from": [
+        0,
+        5,
+        0
+      ],
+      "to": [
+        16,
+        9,
+        2
+      ]
+    },
+    {
+      "from": [
+        0,
+        5,
+        14
+      ],
+      "to": [
+        16,
+        9,
+        16
+      ]
+    }
+  ]
+}

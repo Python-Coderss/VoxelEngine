@@ -4646,6 +4646,7 @@ public class Main {
         blockRegistry.register("windmill_sail", 406);
         shaderBlockRegistry.register(406, 406);
         blockDataManager.registerBlock(406, "windmill_sail", textureManager, mcModels);
+        blockDataManager.setFullBlock(406, false); // thin canvas panel (AABB model)
         blockRegistry.register("mechanical_press", 407);
         shaderBlockRegistry.register(407, 407);
         blockDataManager.registerBlock(407, "mechanical_press", textureManager, mcModels);
