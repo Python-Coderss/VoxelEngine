@@ -1,1 +1,11 @@
-{"textures": {"up": "brass_casing", "down": "brass_casing", "north": "brass_casing", "south": "brass_casing", "west": "brass_casing", "east": "brass_casing", "particle": "brass_casing"}}
+{
+  "textures": {
+    "up": "brass_top",
+    "down": "brass_top",
+    "north": "brass_side",
+    "south": "brass_side",
+    "west": "brass_side",
+    "east": "brass_side",
+    "particle": "brass_top"
+  }
+}

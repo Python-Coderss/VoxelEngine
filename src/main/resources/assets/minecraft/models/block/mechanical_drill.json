@@ -1,1 +1,11 @@
-{"textures": {"up": "mechanical_drill", "down": "mechanical_drill", "north": "mechanical_drill", "south": "mechanical_drill", "west": "mechanical_drill", "east": "mechanical_drill", "particle": "mechanical_drill"}}
+{
+  "textures": {
+    "up": "drill_top",
+    "down": "drill_front",
+    "north": "drill_side",
+    "south": "drill_side",
+    "west": "drill_side",
+    "east": "drill_front",
+    "particle": "drill_top"
+  }
+}

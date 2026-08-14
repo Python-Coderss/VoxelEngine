@@ -237,23 +237,48 @@ public final class TutorialWorldAuthor {
         private void buildMachineWorks(Zone z) {
             int x = z.cx, zz = z.cz;
             floor(x - 14, zz - 10, x + 14, zz + 10, G, STONE_BRICK);
-            for (int wx = x - 11; wx <= x - 8; wx++) water(wx, G, zz - 7);
-            place(x - 10, G, zz - 6, 0); place(x - 10, G + 1, zz - 6, WHEEL); place(x - 10, G + 2, zz - 6, COG);
-            stamp(WINDMILL, x - 2, G, zz - 8);
-            for (int sx = x - 10; sx <= x + 12; sx++) place(sx, G + 1, zz - 4, SHAFT);
-            place(x - 10, G + 1, zz - 4, GEARSHIFT); place(x - 2, G + 1, zz - 4, CLUTCH);
-            place(x + 2, G + 1, zz + 1, MILL, 5);
-            place(x + 4, G + 1, zz + 1, PRESS, 5);
-            place(x + 6, G + 1, zz + 1, CRUSHER, 5);
-            place(x + 8, G + 1, zz + 1, SAW, 5);
-            place(x + 10, G + 1, zz + 1, DRILL, 5);
-            for (int n = 0; n <= 4; n++) place(x + 2 + n * 2, G + 1, zz + 3, BELT, 5);
-            place(x + 12, G + 1, zz + 3, VAULT);
-            place(x - 4, G + 1, zz + 1, CRANK);
+
+            // Water channel feeding the water wheel. The wheel sits directly above
+            // it, so KineticManager.hasAdjacentWater() sees the wheel as a rotation
+            // source and the whole network actually spins.
+            for (int wx = x - 11; wx <= x - 8; wx++) water(wx, G, zz - 8);
+            place(x - 10, G + 1, zz - 8, WHEEL);
+            place(x - 10, G + 2, zz - 8, LARGE_COG);
+
+            // Shaft line running east from the wheel (an adjacent kinetic chain).
+            for (int sx = x - 9; sx <= x + 12; sx++) place(sx, G + 1, zz - 8, SHAFT);
+            place(x - 8, G + 1, zz - 8, GEARSHIFT);
+            place(x + 1, G + 1, zz - 8, CLUTCH);
+
+            // Machines one block south of the shaft line: adjacent, so they're
+            // powered and their textures spin.
+            place(x + 2, G + 1, zz - 7, MILL, 5);
+            place(x + 4, G + 1, zz - 7, PRESS, 5);
+            place(x + 6, G + 1, zz - 7, CRUSHER, 5);
+            place(x + 8, G + 1, zz - 7, SAW, 5);
+            place(x + 10, G + 1, zz - 7, DRILL, 5);
+
+            // Belt conveyor feeding the item vault (adjacent to the machine row).
+            for (int n = 0; n <= 4; n++) place(x + 2 + n * 2, G + 1, zz - 6, BELT, 5);
+            place(x + 12, G + 1, zz - 6, VAULT);
+
+            // Hand crank: right-click it to jump-start the whole line manually.
+            place(x - 4, G + 1, zz - 7, CRANK);
+
+            // Windmill (a second rotation source): bearing with sails exposed to
+            // open air on three sides.
+            place(x + 11, G + 1, zz + 8, BEARING);
+            place(x + 11, G + 1, zz + 7, SAIL);   // north
+            place(x + 11, G + 1, zz + 9, SAIL);   // south
+            place(x + 10, G + 1, zz + 8, SAIL);   // west
+            place(x + 12, G + 1, zz + 8, SAIL);   // east
+
+            // Heat line (blaze burner -> steam engine -> copper tank -> fan).
             place(x + 4, G + 1, zz + 5, BURNER);
             place(x + 5, G + 1, zz + 5, ENGINE_COLD); place(x + 5, G + 2, zz + 5, ENGINE);
             place(x + 6, G + 1, zz + 5, TANK); place(x + 6, G + 2, zz + 5, TANK + 5);
             place(x + 7, G + 1, zz + 5, FAN, 5);
+
             stamp(BARN, x - 14, G, zz + 2);
             for (int fx = x - 14; fx <= x + 14; fx += 4) { place(fx, G + 1, zz - 10, ANDESITE); place(fx, G + 1, zz + 10, ANDESITE); }
             for (int fz = zz - 10; fz <= zz + 10; fz += 4) { place(x - 14, G + 1, fz, ANDESITE); place(x + 14, G + 1, fz, ANDESITE); }

@@ -1,6 +1,11 @@
 {
-    "parent": "block/cube_all",
-    "textures": {
-        "all": "copper_tank_l5"
-    }
+  "textures": {
+    "up": "copper_tank",
+    "down": "copper_tank",
+    "north": "copper_tank_l5",
+    "south": "copper_tank_l5",
+    "west": "copper_tank_l5",
+    "east": "copper_tank_l5",
+    "particle": "copper_tank"
+  }
 }

@@ -90,6 +90,8 @@ public class HudUI {
     public UILayer.UIElement creativePanelBg;
     public UILayer.UITextElement creativeSearchText;
     public UILayer.UITextElement creativeCountText;
+    public UILayer.UIElement creativeCloseBtn;
+    public UILayer.UITextElement creativeCloseText;
     public final UILayer.UIElement[] creativeSlotBackgrounds = new UILayer.UIElement[CREATIVE_COLS * CREATIVE_ROWS];
     public final UILayer.UIElement[] creativeSlotItems       = new UILayer.UIElement[CREATIVE_COLS * CREATIVE_ROWS];
     /** Current item id shown in each slot (updated every refresh). */
@@ -612,6 +614,21 @@ public class HudUI {
         creativeCountText.visible = false;
         creativeCountText.charLineLimit = 20;
         layer.addElement(creativeCountText);
+
+        // Clear "X" close button in the panel's top-right corner.
+        float cCloseSize = 30;
+        float cCloseX = (cX + cGridW + 14) - cCloseSize - 8;
+        float cCloseY = (cY - 44) + 8;
+        creativeCloseBtn = new UILayer.UIElement(
+            new Vector2f(cCloseX, cCloseY), new Vector2f(cCloseSize, cCloseSize),
+            new Vector4f(0.72f, 0.22f, 0.22f, 0.95f));
+        creativeCloseBtn.visible = false;
+        creativeCloseBtn.onClick = () -> main.toggleCreativeMenu();
+        layer.addElement(creativeCloseBtn);
+        creativeCloseText = new UILayer.UITextElement(
+            new Vector2f(cCloseX + 9, cCloseY + 4), "X", 2.0f, new Vector4f(1, 1, 1, 1), fontTextureId);
+        creativeCloseText.visible = false;
+        layer.addElement(creativeCloseText);
 
         for (int i = 0; i < CREATIVE_COLS * CREATIVE_ROWS; i++) {
             int col = i % CREATIVE_COLS;
@@ -1327,6 +1344,8 @@ public class HudUI {
             creativeSearchText.text = "SEARCH: " + ctx.creativeSearch + "_";
             creativeCountText.visible = true;
             creativeCountText.text = all.size() + " items";
+            creativeCloseBtn.visible = true;
+            creativeCloseText.visible = true;
 
             for (int i = 0; i < CREATIVE_COLS * CREATIVE_ROWS; i++) {
                 int col = i % CREATIVE_COLS;
@@ -1362,6 +1381,8 @@ public class HudUI {
             creativePanelBg.visible = false;
             creativeSearchText.visible = false;
             creativeCountText.visible = false;
+            creativeCloseBtn.visible = false;
+            creativeCloseText.visible = false;
             for (int i = 0; i < CREATIVE_COLS * CREATIVE_ROWS; i++) {
                 creativeSlotBackgrounds[i].visible = false;
                 creativeSlotItems[i].visible = false;

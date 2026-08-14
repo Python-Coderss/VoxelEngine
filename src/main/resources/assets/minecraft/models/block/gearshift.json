@@ -1,5 +1,11 @@
 {
   "textures": {
-    "all": "gearshift_off"
+    "up": "gearshift_top",
+    "down": "gearshift_top",
+    "north": "gearshift_off",
+    "south": "gearshift_off",
+    "west": "gearshift_off",
+    "east": "gearshift_off",
+    "particle": "gearshift_top"
   }
 }
