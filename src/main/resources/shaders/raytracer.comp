@@ -1456,8 +1456,14 @@ void main() {
             }
             if (lightMap.x < 0.0) lightMap = vec4(0.0);
             float skyContrib = (lightMap.x / 255.0) * 1.12; // brighter sunlight
-            // Block light: RGB channels with intensity + color tint
-            float blockR = lightMap.y, blockG = lightMap.z, blockB = lightMap.w;
+            // Block light: RGB channels with intensity + color tint.
+            // The CPU writes each source's tint scaled by 1/LIGHT_TINT_HEADROOM
+            // (see LightEngine) so overlapping lights sum without colour-clamping;
+            // multiply back here to restore full brightness and tint.
+            const float TINT_HEADROOM = 4.0;
+            float blockR = lightMap.y * TINT_HEADROOM;
+            float blockG = lightMap.z * TINT_HEADROOM;
+            float blockB = lightMap.w * TINT_HEADROOM;
             float blockIntensity = max(max(blockR, blockG), blockB);
             float blockContrib = max(blockIntensity * 5.0, 1.0) / 255.0;
             float totalLightContrib = max(skyContrib, blockContrib);

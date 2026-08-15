@@ -2,7 +2,6 @@ package com.voxel.lighting;
 
 import com.voxel.World;
 import com.voxel.utils.BlockDataManager;
-import com.voxel.utils.Direction;
 import com.voxel.GameLogger;
 import com.voxel.world.WorldGenLogger;
 
@@ -49,6 +48,21 @@ public class LightEngine {
 
     /** Maximum light value (both sky and block). */
     public static final int MAX_LIGHT = 15;
+
+    /**
+     * Additive headroom for block-light tint contributions.
+     *
+     * Block RGB is the additive sum of every overlapping per-type tint, each of
+     * which can be up to 255 in its brightest channel. With no headroom a single
+     * max-intensity source already saturates its channel, so two overlapping
+     * lights clip at 255 and their hue shifts toward white (colour clamping).
+     *
+     * Dividing each contribution by this factor keeps the tint RATIO intact
+     * (hue preserved) while leaving room for up to this many full sources to
+     * sum before any channel hits 255. The raytracer compensates with a matching
+     * ×HEADROOM gain on block light so overall brightness is unchanged.
+     */
+    public static final int LIGHT_TINT_HEADROOM = 4;
 
     /**
      * Vertical run of clear (air / non-full) blocks that counts as direct sun.
@@ -123,7 +137,7 @@ public class LightEngine {
                         changedVoxels++;
                     }
 
-                    if (blockId > 0 && blockDataManager.isFullBlock(blockId)) {
+                    if (blockId > 0 && blockDataManager.isFullBlockFast(blockId)) {
                         // Opaque solid: blocks light and restarts the clear run.
                         // Deliberately NOT followed by a break — air below can
                         // still accumulate SUN_CLEAR_RUN clear voxels and relight.
@@ -331,6 +345,11 @@ public class LightEngine {
     private static final int[] DIR_AXIS  = {AXIS_Z, AXIS_Z, AXIS_X, AXIS_X, AXIS_Y, AXIS_Y};
     private static final int[] DIR_SIGN  = {SIGN_NEG, SIGN_POS, SIGN_POS, SIGN_NEG, SIGN_POS, SIGN_NEG};
     private static final int[] DIR_TALLY = {5, 4, 0, 1, 2, 3};
+    // Precomputed 6-dir unit offsets (same order as above) so the flood fill
+    // inner loop never allocates Direction.values() nor dereferences the enum.
+    private static final int[] DIR_DX = {0, 0, 1, -1, 0, 0};
+    private static final int[] DIR_DY = {0, 0, 0, 0, 1, -1};
+    private static final int[] DIR_DZ = {-1, 1, 0, 0, 0, 0};
 
     private static long packNodeTracked(int rx, int ry, int rz, int intensity,
                                         int lastAxis, int lastSign, long tallyBits) {
@@ -381,7 +400,13 @@ public class LightEngine {
      */
     private void floodFillScalar(LongQueue queue, int ox, int oy, int oz, Set<Integer> dirtySlots) {
         int maxRel = bufSize - 1;
-        Direction[] dirs = Direction.values();
+        // Cache the world tables and the flat opacity array up front: the hot loop
+        // runs millions of times with thousands of light sources, so we avoid a
+        // HashMap lookup + String.toLowerCase per neighbour and read the block ID
+        // straight from the chunk pool using the slot we already resolved.
+        int[] indirectionTable = world.getIndirectionTable();
+        int[] chunkPool = world.getChunkPool();
+        int[] opacityArr = blockDataManager.getOpacityArray();
 
         while (!queue.isEmpty()) {
             long node = queue.poll();
@@ -402,20 +427,22 @@ public class LightEngine {
             int oldMax = Math.max(Math.max(t0, t1), Math.max(Math.max(t2, t3), Math.max(t4, t5)));
 
             for (int d = 0; d < 6; d++) {
-                Direction dir = dirs[d];
-                int rnx = rnx0 + dir.x;
-                int rny = rny0 + dir.y;
-                int rnz = rnz0 + dir.z;
+                int dx = DIR_DX[d], dy = DIR_DY[d], dz = DIR_DZ[d];
+                int rnx = rnx0 + dx;
+                int rny = rny0 + dy;
+                int rnz = rnz0 + dz;
 
                 // Direct bounds check on relative coords
                 if (rnx < 0 || rny < 0 || rnz < 0 || rnx > maxRel || rny > maxRel || rnz > maxRel) continue;
 
-                int nSlot = world.getIndirectionTable()[(rnx >> 4) + (rny >> 4) * World.REGION_SIZE + (rnz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
+                int nSlot = indirectionTable[(rnx >> 4) + (rny >> 4) * World.REGION_SIZE + (rnz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
                 if (nSlot == World.EMPTY) continue;
 
-                // Convert to absolute for world.getVoxel() lookup
-                int nx = rnx + ox, ny = rny + oy, nz = rnz + oz;
-                int opacity = getBlockOpacity(world.getVoxel(nx, ny, nz));
+                // Read the block ID directly from the chunk pool (no second bounds
+                // check or indirection-table hop), then look up its opacity in the
+                // flat array.
+                int blockId = chunkPool[(nSlot << 12) | ((rnx & 15) | ((rny & 15) << 4) | ((rnz & 15) << 8))] & 0xFFFF;
+                int opacity = (blockId > 0 && blockId < opacityArr.length) ? opacityArr[blockId] : 0;
 
                 int axis = DIR_AXIS[d];
                 int sign = DIR_SIGN[d];
@@ -464,7 +491,7 @@ public class LightEngine {
      * @param dirtySlots Set of slot indices to process (also receives any new dirty slots from main pool changes)
      */
     private void applyTintToMain(int blockId, boolean add, Set<Integer> dirtySlots) {
-        int lightColor = blockDataManager.getLightColor(blockId);
+        int lightColor = blockDataManager.getLightColorFast(blockId);
         int tr = (lightColor >> 16) & 0xFF;
         int tg = (lightColor >> 8) & 0xFF;
         int tb = lightColor & 0xFF;
@@ -488,10 +515,12 @@ public class LightEngine {
                 // Clip to valid range (should be 0-15 already, but guard)
                 if (level > 15) level = 15;
 
-                // Compute tinted contribution in 0-255 range
-                int cr = level * tr / 15;
-                int cg = level * tg / 15;
-                int cb = level * tb / 15;
+                // Tinted contribution, scaled by LIGHT_TINT_HEADROOM so
+                // overlapping sources add without saturating a channel. The
+                // tint ratio (hue) is unchanged — only the magnitude shrinks.
+                int cr = level * tr / (15 * LIGHT_TINT_HEADROOM);
+                int cg = level * tg / (15 * LIGHT_TINT_HEADROOM);
+                int cb = level * tb / (15 * LIGHT_TINT_HEADROOM);
 
                 int current = mainPool[idx];
                 int curR = (current >>> 8) & 0xFF;
@@ -593,6 +622,9 @@ public class LightEngine {
         // Phase 1: Collect sources grouped by light type key.
         // Key = (emissive << 24) | (lightColor & 0xFFFFFF) — unique per emissive×color pair.
         java.util.Map<Integer, java.util.List<int[]>> sourcesByType = new java.util.HashMap<>();
+        int[] chunkPool = world.getChunkPool();
+        int[] emissiveArr = blockDataManager.getEmissiveArray();
+        int[] lightColorArr = blockDataManager.getLightColorArray();
 
         for (int ly = 0; ly < 16; ly++) {
             for (int lz = 0; lz < 16; lz++) {
@@ -601,11 +633,11 @@ public class LightEngine {
                     int wy = worldBaseY + ly;
                     int wz = worldBaseZ + lz;
 
-                    int blockId = world.getVoxel(wx, wy, wz);
-                    int emissive = blockDataManager.getEmissive(blockId);
+                    int blockId = chunkPool[(slot << 12) | (lx | (ly << 4) | (lz << 8))] & 0xFFFF;
+                    int emissive = (blockId > 0 && blockId < emissiveArr.length) ? emissiveArr[blockId] : 0;
                     if (emissive <= 0) continue;
 
-                    int lightColor = blockDataManager.getLightColor(blockId);
+                    int lightColor = (blockId < lightColorArr.length) ? lightColorArr[blockId] : 0xFFFFFF;
                     int typeKey = (emissive << 24) | (lightColor & 0xFFFFFF);
                     int intensity = Math.min(emissive, 15);
 
@@ -684,6 +716,9 @@ public class LightEngine {
 
         // Phase 1: collect sources grouped by type across the whole region.
         java.util.Map<Integer, java.util.List<int[]>> sourcesByType = new java.util.HashMap<>();
+        int[] chunkPool = world.getChunkPool();
+        int[] emissiveArr = blockDataManager.getEmissiveArray();
+        int[] lightColorArr = blockDataManager.getLightColorArray();
         for (java.util.Map.Entry<Long, java.util.NavigableMap<Integer, Integer>> column : columns.entrySet()) {
             long key = column.getKey();
             int cx = (int) (key >> 32);
@@ -692,6 +727,7 @@ public class LightEngine {
             int worldBaseZ = cz << 4;
             for (java.util.Map.Entry<Integer, Integer> se : column.getValue().entrySet()) {
                 int cy = se.getKey();
+                int slot = se.getValue();
                 int worldBaseY = cy << 4;
                 for (int ly = 0; ly < 16; ly++) {
                     for (int lz = 0; lz < 16; lz++) {
@@ -699,10 +735,10 @@ public class LightEngine {
                             int wx = worldBaseX + lx;
                             int wy = worldBaseY + ly;
                             int wz = worldBaseZ + lz;
-                            int blockId = world.getVoxel(wx, wy, wz);
-                            int emissive = blockDataManager.getEmissive(blockId);
+                            int blockId = chunkPool[(slot << 12) | (lx | (ly << 4) | (lz << 8))] & 0xFFFF;
+                            int emissive = (blockId > 0 && blockId < emissiveArr.length) ? emissiveArr[blockId] : 0;
                             if (emissive <= 0) continue;
-                            int lightColor = blockDataManager.getLightColor(blockId);
+                            int lightColor = (blockId < lightColorArr.length) ? lightColorArr[blockId] : 0xFFFFFF;
                             int typeKey = (emissive << 24) | (lightColor & 0xFFFFFF);
                             int intensity = Math.min(emissive, 15);
                             sourcesByType.computeIfAbsent(typeKey, k -> new java.util.ArrayList<>())
@@ -981,7 +1017,7 @@ public class LightEngine {
         int slot = world.getIndirectionTable()[(rx >> 4) + (ry >> 4) * World.REGION_SIZE + (rz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
         if (slot == World.EMPTY) return false;
         int id = world.getChunkPool()[(slot << 12) | ((rx & 15) | ((ry & 15) << 4) | ((rz & 15) << 8))] & 0xFFFF;
-        return id > 0 && blockDataManager.isFullBlock(id);
+        return id > 0 && blockDataManager.isFullBlockFast(id);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -990,7 +1026,7 @@ public class LightEngine {
 
     private int getBlockOpacity(int blockId) {
         if (blockId <= 0) return 0;
-        return blockDataManager.getOpacity(blockId);
+        return blockDataManager.getOpacityFast(blockId);
     }
 
     private int getSlotForWorldPos(int x, int y, int z) {

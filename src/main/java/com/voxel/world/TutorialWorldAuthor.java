@@ -73,7 +73,7 @@ public final class TutorialWorldAuthor {
 
     /** The tour, laid out on the 768x768 handcrafted grid centred on spawn. */
     private static final Zone[] ZONES = {
-        new Zone("Spawn Plaza", "Welcome! The castle is north. Explore every compass point for a feature tour.", 0, 0, 26),
+        new Zone("Tutorial Castle", "The moated tutorial hub. Each compass gate leads to a feature tour.", 0, 0, 26),
         new Zone("Create Machine Works", "Kinetic power: water wheel + windmill drive belts, presses, crushers, drills & saws.", 0, -160, 22),
         new Zone("Redstone Laboratory", "Lamps, pistons, repeaters & comparators — redstone logic in action.", 160, 0, 22),
         new Zone("Minecart Coaster", "Rails + a rideable minecart. Right-click the cart to hop in.", 0, 160, 22),
@@ -195,43 +195,86 @@ public final class TutorialWorldAuthor {
 
         private void buildSpawnPlaza(Zone z) {
             int x = z.cx, zz = z.cz;
-            floor(x - 11, zz - 11, x + 11, zz + 11, G, STONE_BRICK);
-            for (int fx = x - 2; fx <= x + 2; fx++) { place(fx, G + 1, zz - 2, STONE_BRICK); place(fx, G + 1, zz + 2, STONE_BRICK); }
-            for (int fz = zz - 2; fz <= zz + 2; fz++) { place(x - 2, G + 1, fz, STONE_BRICK); place(x + 2, G + 1, fz, STONE_BRICK); }
+
+            // Courtyard.
+            floor(x - 12, zz - 12, x + 12, zz + 12, G, STONE_BRICK);
+
+            // Curtain wall with crenellations.
+            int w0 = -13, w1 = 13, wh = 4;
+            for (int a = w0; a <= w1; a++) {
+                for (int b = w0; b <= w1; b++) {
+                    if (a != w0 && a != w1 && b != w0 && b != w1) continue;
+                    for (int h = 1; h <= wh; h++) place(x + a, G + h, zz + b, STONE_BRICK);
+                    if (((a + b) & 1) == 0) place(x + a, G + wh + 1, zz + b, STONE_BRICK);
+                }
+            }
+
+            // Four gates + drawbridges (N/S/E/W).
+            for (int g = -1; g <= 1; g++) for (int h = 1; h <= 3; h++) set(x + g, G + h, zz - 13, 0);
+            place(x, G + 4, zz - 13, GLOWSTONE);
+            for (int g = -1; g <= 1; g++) for (int s = 1; s <= 3; s++) place(x + g, G + 1, zz - 13 - s, PLANKS);
+            for (int g = -1; g <= 1; g++) for (int h = 1; h <= 3; h++) set(x + g, G + h, zz + 13, 0);
+            place(x, G + 4, zz + 13, GLOWSTONE);
+            for (int g = -1; g <= 1; g++) for (int s = 1; s <= 3; s++) place(x + g, G + 1, zz + 13 + s, PLANKS);
+            for (int g = -1; g <= 1; g++) for (int h = 1; h <= 3; h++) set(x + 13, G + h, zz + g, 0);
+            place(x + 13, G + 4, zz, GLOWSTONE);
+            for (int g = -1; g <= 1; g++) for (int s = 1; s <= 3; s++) place(x + 13 + s, G + 1, zz + g, PLANKS);
+            for (int g = -1; g <= 1; g++) for (int h = 1; h <= 3; h++) set(x - 13, G + h, zz + g, 0);
+            place(x - 13, G + 4, zz, GLOWSTONE);
+            for (int g = -1; g <= 1; g++) for (int s = 1; s <= 3; s++) place(x - 13 - s, G + 1, zz + g, PLANKS);
+
+            // Moat ring (skips the four drawbridge crossings).
+            for (int mx = -16; mx <= 16; mx++) {
+                for (int mz = -16; mz <= 16; mz++) {
+                    int md = Math.max(Math.abs(mx), Math.abs(mz));
+                    if (md != 15 && md != 16) continue;
+                    boolean bridge = (mz <= -14 && Math.abs(mx) <= 1)
+                        || (mz >= 14 && Math.abs(mx) <= 1)
+                        || (mx >= 14 && Math.abs(mz) <= 1)
+                        || (mx <= -14 && Math.abs(mz) <= 1);
+                    if (!bridge) water(x + mx, G, zz + mz);
+                }
+            }
+
+            // Corner towers.
+            tower(x - 13, zz - 13, G, 7, STONE_BRICK);
+            tower(x + 13, zz - 13, G, 7, STONE_BRICK);
+            tower(x - 13, zz + 13, G, 7, STONE_BRICK);
+            tower(x + 13, zz + 13, G, 7, STONE_BRICK);
+
+            // Central keep (north courtyard): throne hall with treasury.
+            int kx0 = x - 3, kx1 = x + 3, kz0 = zz - 10, kz1 = zz - 5;
+            hollow(kx0, G, kz0, kx1, G + 8, kz1, STONE_BRICK);
+            for (int c = kx0; c <= kx1; c += 2) { place(c, G + 9, kz0, STONE_BRICK); place(c, G + 9, kz1, STONE_BRICK); }
+            for (int c = kz0; c <= kz1; c += 2) { place(kx0, G + 9, c, STONE_BRICK); place(kx1, G + 9, c, STONE_BRICK); }
+            for (int g = -1; g <= 1; g++) for (int h = 1; h <= 3; h++) set(x + g, G + h, kz1, 0);
+            place(x - 3, G + 1, kz0 + 1, GOLD_BLOCK); place(x - 2, G + 1, kz0 + 1, GOLD_BLOCK);
+            place(x + 2, G + 1, kz0 + 1, GOLD_BLOCK); place(x + 3, G + 1, kz0 + 1, GOLD_BLOCK);
+            place(x - 3, G + 2, kz0 + 1, GOLD_BLOCK); place(x + 3, G + 2, kz0 + 1, GOLD_BLOCK);
+            place(x - 3, G + 3, kz0 + 1, WOOL); place(x + 3, G + 3, kz0 + 1, WOOL);
+            place(x, G + 1, kz0 + 1, WOOL); place(x, G + 2, kz0 + 1, WOOL); place(x, G + 3, kz0 + 1, GLOWSTONE);
+            for (int b = 0; b < 4; b++) { place(x - 2 + b, G + 1, kz0 + 3, BOOKSHELF); place(x - 2 + b, G + 2, kz0 + 3, BOOKSHELF); }
+            place(x - 3, G + 1, kz0 + 2, CHEST);
+            chestAt(x - 3, G + 1, kz0 + 2, new String[]{"gold_block","diamond_block","emerald_block","stone_brick","torch","bread","iron_ingot"}, new int[]{4,2,2,64,32,16,16});
+
+            // Courtyard fountain (spawn centre).
             for (int fx = x - 1; fx <= x + 1; fx++)
                 for (int fz = zz - 1; fz <= zz + 1; fz++) water(fx, G, fz);
             place(x, G + 1, zz, GLOWSTONE); place(x, G + 2, zz, GLOWSTONE); place(x, G + 3, zz, GLOWSTONE);
-            for (int t = -10; t <= 10; t += 5) {
-                place(x + t, G + 1, zz - 10, TORCH); place(x + t, G + 1, zz + 10, TORCH);
-                place(x - 10, G + 1, zz + t, TORCH); place(x + 10, G + 1, zz + t, TORCH);
+
+            // Tutorial stations along the east wall.
+            place(x + 11, G + 1, zz - 4, CRAFT_TABLE);
+            place(x + 11, G + 1, zz - 3, FURNACE);
+            for (int b = 0; b < 4; b++) place(x + 8 + b, G + 1, zz - 6, BOOKSHELF);
+            for (int b = 0; b < 4; b++) place(x + 8 + b, G + 2, zz - 6, BOOKSHELF);
+            place(x + 11, G + 1, zz + 4, CHEST);
+            chestAt(x + 11, G + 1, zz + 4, new String[]{"stone_brick","cobblestone","oak_planks","glass","torch","bread","gold_block","glowstone","iron_ingot","coal"}, new int[]{64,64,64,16,32,16,4,8,16,32});
+
+            // Torches ringing the courtyard.
+            for (int t = -8; t <= 8; t += 4) {
+                place(x + t, G + 1, zz - 12, TORCH); place(x + t, G + 1, zz + 12, TORCH);
+                place(x - 12, G + 1, zz + t, TORCH); place(x + 12, G + 1, zz + t, TORCH);
             }
-            int kx0 = x - 7, kx1 = x + 7, kz0 = zz - 16, kz1 = zz - 9;
-            hollow(kx0, G, kz0, kx1, G + 8, kz1, STONE_BRICK);
-            for (int gx = -1; gx <= 1; gx++) for (int h = 1; h <= 3; h++) set(kx0 + 4 + gx, G + h, kz1, 0);
-            for (int c = kx0; c <= kx1; c += 2) { place(c, G + 9, kz0, STONE_BRICK); place(c, G + 9, kz1, STONE_BRICK); }
-            for (int c = kz0; c <= kz1; c += 2) { place(kx0, G + 9, c, STONE_BRICK); place(kx1, G + 9, c, STONE_BRICK); }
-            place(x - 4, G + 1, kz0 + 2, GOLD_BLOCK); place(x - 3, G + 1, kz0 + 2, GOLD_BLOCK);
-            place(x + 3, G + 1, kz0 + 2, GOLD_BLOCK); place(x + 4, G + 1, kz0 + 2, GOLD_BLOCK);
-            place(x - 4, G + 2, kz0 + 2, GOLD_BLOCK); place(x - 3, G + 2, kz0 + 2, GOLD_BLOCK);
-            place(x + 3, G + 2, kz0 + 2, GOLD_BLOCK); place(x + 4, G + 2, kz0 + 2, GOLD_BLOCK);
-            place(x - 4, G + 3, kz0 + 2, WOOL); place(x + 4, G + 3, kz0 + 2, WOOL);
-            place(x, G + 1, kz0 + 2, WOOL); place(x, G + 2, kz0 + 2, WOOL); place(x, G + 3, kz0 + 2, GLOWSTONE);
-            for (int c = -5; c <= 5; c++) place(x + c, G, kz1 - 1, WOOL);
-            place(x + 5, G + 1, kz0 + 3, CHEST);
-            chestAt(x + 5, G + 1, kz0 + 3, new String[]{"stone_brick","cobblestone","oak_planks","glass","torch","bread","gold_block","glowstone"}, new int[]{32,32,32,16,16,8,2,4});
-            for (int b = 0; b < 4; b++) place(x - 5 + b, G + 1, kz0 + 5, BOOKSHELF);
-            for (int b = 0; b < 4; b++) place(x - 5 + b, G + 2, kz0 + 5, BOOKSHELF);
-            place(x + 5, G + 1, kz1 - 2, CRAFT_TABLE); place(x + 5, G + 1, kz1 - 3, FURNACE);
-            place(kx1, G + 4, zz - 3, WOOL); place(kx1, G + 5, zz - 3, WOOL);
-            place(kx1, G + 4, zz + 3, WOOL); place(kx1, G + 5, zz + 3, WOOL);
-            tower(kx0, kz0, G + 8, 5, STONE_BRICK);
-            tower(kx1, kz0, G + 8, 5, STONE_BRICK);
-            tower(kx0, kz1, G + 8, 5, STONE_BRICK);
-            tower(kx1, kz1, G + 8, 5, STONE_BRICK);
-            stamp(STATUE, x - 13, G, zz - 4);
-            stamp(STATUE, x + 11, G, zz - 4);
-            stamp(WATCHTOWER, x - 14, G, zz - 14);
-            stamp(WATCHTOWER, x + 12, G, zz - 14);
         }
 
         private void buildMachineWorks(Zone z) {

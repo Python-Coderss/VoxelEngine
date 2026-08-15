@@ -69,9 +69,11 @@ public class AtmosphereRenderer {
             float horB = mix(0.08f, mix(0.2f, 0.9f, smoothstep(0f, 0.3f, h)), smoothstep(-0.15f, 0.1f, h));
             glUniform3f(locSkyHorizon, horR, horG, horB);
 
-            float scR = mix(1f, 1f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
-            float scG = mix(0.5f, 0.98f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
-            float scB = mix(0.2f, 0.9f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
+            // Sun intensity scaled to 0.7× — the previous full-white noon sun
+            // (1.0, 0.98, 0.9) washed out open-air scenes like the tutorial world.
+            float scR = mix(0.7f, 0.7f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
+            float scG = mix(0.35f, 0.68f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
+            float scB = mix(0.14f, 0.63f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
             glUniform3f(locSunColor, scR, scG, scB);
 
             glUniform3f(locMoonColor, 0.2f * smoothstep(-0.1f, 0.1f, -h), 0.25f * smoothstep(-0.1f, 0.1f, -h), 0.4f * smoothstep(-0.1f, 0.1f, -h));

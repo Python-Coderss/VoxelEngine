@@ -4334,7 +4334,7 @@ public class Main {
         // --- Torch ---
         blockRegistry.register("torch", 211);
         shaderBlockRegistry.register(211, 211);
-        blockDataManager.registerBlock(211, "normal_torch", textureManager, mcModels, 0, 0, 255, 200);
+        blockDataManager.registerBlock(211, "normal_torch", textureManager, mcModels, 0, 0, 255, 12);
         blockDataManager.setLightColor(211, 255, 220, 140);
 
         // --- Flat item models (for crafting-table item rendering) ---
