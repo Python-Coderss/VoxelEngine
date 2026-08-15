@@ -56,6 +56,21 @@ public class KineticGearTest {
     }
 
     @Test
+    public void spinningSquareShaftHitboxRotates() {
+        // Axis-aligned square (spinAng=0) of circumradius 0.125: half-extent 0.0884.
+        float half = (float) (0.125 / Math.sqrt(2.0));
+        // A ray at y=0.1 clears the axis-aligned square but is swept by the corner
+        // of the same square once it has spun 45 deg (π/4): the corner then points
+        // along -x at x=-0.125 and the left edge crosses y=0.1 at x=-0.025.
+        assertEquals(-1f, KineticManager.intersectGearEntry(-2f, 0.1f, 1f, 0f, 0f, 0f, 0.125f, 4, 0.0f), 1e-6f);
+        assertEquals(1.975f, KineticManager.intersectGearEntry(-2f, 0.1f, 1f, 0f, 0f, 0f, 0.125f, 4, (float) (Math.PI / 4.0)), 1e-3f);
+        // Along the axis (y=0), the corner spins out to the full circumradius:
+        assertEquals(2.0f - 0.125f, KineticManager.intersectGearEntry(-2f, 0f, 1f, 0f, 0f, 0f, 0.125f, 4, (float) (Math.PI / 4.0)), 1e-4f);
+        // And at rest it stops short at the flat face:
+        assertEquals(2.0f - half, KineticManager.intersectGearEntry(-2f, 0f, 1f, 0f, 0f, 0f, 0.125f, 4, 0.0f), 1e-4f);
+    }
+
+    @Test
     public void shaftThroughOnlyOnGearCenters() {
         assertTrue(KineticManager.isShaftThrough(294));
         assertTrue(KineticManager.isShaftThrough(295));

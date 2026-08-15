@@ -324,9 +324,21 @@ public class KineticManager {
      */
     public static float intersectGearEntry(float ox, float oz, float dx, float dz,
                                            float cx, float cz, float radius, int sides) {
+        return intersectGearEntry(ox, oz, dx, dz, cx, cz, radius, sides, 0.0f);
+    }
+
+    /**
+     * Same slab test with an explicit cross-section rotation `spinAng` (radians),
+     * mirroring the raytracer's spin-aware hitbox so a spinning square shaft's
+     * corners sweep in step with its keyway texture.
+     */
+    public static float intersectGearEntry(float ox, float oz, float dx, float dz,
+                                           float cx, float cz, float radius, int sides,
+                                           float spinAng) {
         float tEnter = -1e30f, tExit = 1e30f;
-        // π/4 offset turns a 4-gon into an axis-aligned square (shafts).
-        double rot = (sides == 4) ? Math.PI / 4.0 : 0.0;
+        // π/4 offset turns a 4-gon into an axis-aligned square (shafts); the whole
+        // cross-section then rotates by spinAng, matching the raytracer.
+        double rot = (sides == 4) ? Math.PI / 4.0 + spinAng : spinAng;
         for (int i = 0; i < sides; i++) {
             double a0 = rot + i * 2.0 * Math.PI / sides;
             double a1 = rot + (i + 1) * 2.0 * Math.PI / sides;
