@@ -4510,23 +4510,26 @@ public class Main {
         blockRegistry.register("shaft", 291);
         shaderBlockRegistry.register(291, 291);
         blockDataManager.registerBlock(291, "shaft", textureManager, mcModels);
-        blockDataManager.setFullBlock(291, false);
+        // Full block for collision/placement: the visual is a thin rod, but the
+        // cell must be solid so blocks can be placed against it and the player
+        // can't stand inside it (which previously broke placement entirely).
+        blockDataManager.setFullBlock(291, true);
         blockRegistry.register("shaft_x", 292);
         shaderBlockRegistry.register(292, 292);
         blockDataManager.registerBlock(292, "shaft_x", textureManager, mcModels);
-        blockDataManager.setFullBlock(292, false);
+        blockDataManager.setFullBlock(292, true);
         blockRegistry.register("shaft_z", 293);
         shaderBlockRegistry.register(293, 293);
         blockDataManager.registerBlock(293, "shaft_z", textureManager, mcModels);
-        blockDataManager.setFullBlock(293, false);
+        blockDataManager.setFullBlock(293, true);
         blockRegistry.register("cogwheel", 294);
         shaderBlockRegistry.register(294, 294);
         blockDataManager.registerBlock(294, "cogwheel", textureManager, mcModels);
-        blockDataManager.setFullBlock(294, false);
+        blockDataManager.setFullBlock(294, true);
         blockRegistry.register("large_cogwheel", 295);
         shaderBlockRegistry.register(295, 295);
         blockDataManager.registerBlock(295, "large_cogwheel", textureManager, mcModels);
-        blockDataManager.setFullBlock(295, false);
+        blockDataManager.setFullBlock(295, true);
         // Large cogwheel multiblock parts (422-429): one per cell of the 3x1x3
         // footprint around the center (295). Each renders its own slice of the
         // 3-block gear via the raytracer's getGear() center-offset + per-cell clip.
@@ -4539,12 +4542,12 @@ public class Main {
             blockRegistry.register(largeCogParts[i], partId);
             shaderBlockRegistry.register(partId, partId);
             blockDataManager.registerBlock(partId, "large_cogwheel_part", textureManager, mcModels);
-            blockDataManager.setFullBlock(partId, false);
+            blockDataManager.setFullBlock(partId, true);
         }
         blockRegistry.register("water_wheel", 296);
         shaderBlockRegistry.register(296, 296);
         blockDataManager.registerBlock(296, "water_wheel", textureManager, mcModels);
-        blockDataManager.setFullBlock(296, false);
+        blockDataManager.setFullBlock(296, true);
         // "water_wheel" trips the name-based liquid heuristic — reset it to an
         // opaque, matte block so the shader draws it as a wooden wheel, not water.
         blockDataManager.setEffect(296, BlockDataManager.MaterialEffect.NONE);
@@ -4562,7 +4565,7 @@ public class Main {
             blockRegistry.register(waterWheelParts[i], partId);
             shaderBlockRegistry.register(partId, partId);
             blockDataManager.registerBlock(partId, "water_wheel_part", textureManager, mcModels);
-            blockDataManager.setFullBlock(partId, false);
+            blockDataManager.setFullBlock(partId, true);
             blockDataManager.setEffect(partId, BlockDataManager.MaterialEffect.NONE);
             blockDataManager.setTransparency(partId, 0);
             blockDataManager.setReflectivity(partId, 0);
