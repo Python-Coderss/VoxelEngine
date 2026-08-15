@@ -29,6 +29,12 @@ WOOD_DARK = (118, 84, 50, 255)
 WOOD_SHADE = (92, 63, 36, 255)
 AXLE = (46, 34, 24, 255)
 
+# Andesite alloy palette (Create's shaft material): medium gray with a faint warm tint.
+ALLOY = (150, 150, 153, 255)
+ALLOY_LIGHT = (178, 178, 181, 255)
+ALLOY_DARK = (112, 112, 115, 255)
+ALLOY_SHADE = (86, 86, 89, 255)
+
 
 def _canvas():
     """SS*SIZE supersampled RGBA canvas + draw handle (coords in SS-scale)."""
@@ -113,27 +119,32 @@ def draw_large_cog(angle_deg):
 
 
 def draw_axis():
-    """Shaft rod side texture: vertical wood grain (wraps around the rod)."""
+    """Shaft rod side texture: andesite alloy, four subtly-shaded faces.
+
+    The raytracer wraps the rim texture once around the 4-sided square rod
+    (uv.x = angle), so X here is the four faces around the shaft and Y runs
+    along its length. Each 4-px face gets a slightly different shade so the
+    square cross-section reads on screen.
+    """
     img, d = _canvas()
     big = SS * SIZE
-    for x in range(0, big, SS):
-        d.line([(x, 0), (x, big)], fill=WOOD)
-    for x in range(3 * SS, big, 4 * SS):
-        d.line([(x, 0), (x, big)], fill=WOOD_DARK, width=SS)
-    for x in range(1 * SS, big, 4 * SS):
-        d.line([(x, 0), (x, big)], fill=WOOD_LIGHT, width=SS)
+    face = big // 4
+    shades = [ALLOY_LIGHT, ALLOY, ALLOY_DARK, ALLOY]
+    for i in range(4):
+        d.rectangle([i * face, 0, (i + 1) * face - 1, big], fill=shades[i])
+    d.line([(0, 0), (big, 0)], fill=ALLOY_LIGHT, width=SS)
+    d.line([(0, big - 1), (big, big - 1)], fill=ALLOY_SHADE, width=SS)
     return _finish(img)
 
 
 def draw_axis_top():
-    """Shaft end cap: wood disc with a square axle keyway."""
+    """Shaft end cap: full-bleed andesite-alloy square with a keyed inner hole."""
     img, d = _canvas()
     c = SIZE * SS / 2.0
-    d.ellipse(_box(c, 4.0 * SS), fill=WOOD)
-    d.ellipse(_box(c, 4.0 * SS), outline=WOOD_SHADE, width=SS)
-    d.ellipse(_box(c, 2.4 * SS), outline=WOOD_DARK, width=SS)
-    d.rectangle([c - 1.2 * SS, c - 1.2 * SS, c + 1.2 * SS, c + 1.2 * SS], fill=AXLE)
-    d.rectangle([c - 0.6 * SS, c - 1.6 * SS, c + 0.6 * SS, c + 1.6 * SS], fill=AXLE)
+    d.rectangle([0, 0, SS * SIZE - 1, SS * SIZE - 1], fill=ALLOY)
+    d.rectangle([0, 0, SS * SIZE - 1, SS * SIZE - 1], outline=ALLOY_SHADE, width=SS)
+    d.rectangle([c - 1.6 * SS, c - 1.6 * SS, c + 1.6 * SS, c + 1.6 * SS], fill=ALLOY_DARK)
+    d.rectangle([c - 0.8 * SS, c - 0.8 * SS, c + 0.8 * SS, c + 0.8 * SS], fill=ALLOY_SHADE)
     return _finish(img)
 
 

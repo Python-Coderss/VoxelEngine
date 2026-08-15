@@ -111,6 +111,23 @@ public class KineticManager {
             || isLargeCogPart(block) || isWaterWheelPart(block);
     }
 
+    /** True for the three shaft blocks (291 Y-axis, 292 X-axis, 293 Z-axis). */
+    public static boolean isShaft(int block) {
+        return block == BLOCK_SHAFT || block == BLOCK_SHAFT_X || block == BLOCK_SHAFT_Z;
+    }
+
+    /** Spin axis of a shaft, fixed by its block id (291 Y, 292 X, 293 Z). */
+    public static int shaftAxis(int block) {
+        if (block == BLOCK_SHAFT_X) return 0;
+        if (block == BLOCK_SHAFT_Z) return 2;
+        return 1;
+    }
+
+    /** True for cogs, large cogs and water wheels (directional discs) + their parts. */
+    public static boolean isDisc(int block) {
+        return block == BLOCK_COGWHEEL || isLargeCog(block) || isWaterWheel(block);
+    }
+
     public static boolean isClutch(int block) {
         return block == BLOCK_CLUTCH || block == BLOCK_CLUTCH_ON;
     }
@@ -164,6 +181,11 @@ public class KineticManager {
         }
     }
 
+    /** True for the cog/large-cog/water-wheel CENTER blocks that carry a coaxial shaft. */
+    public static boolean isShaftThrough(int block) {
+        return block == BLOCK_COGWHEEL || block == BLOCK_LARGE_COGWHEEL || block == BLOCK_WATER_WHEEL;
+    }
+
     /** True for the large cogwheel center (295) or any of its 8 multiblock parts. */
     public static boolean isLargeCog(int block) {
         return block == BLOCK_LARGE_COGWHEEL || isLargeCogPart(block);
@@ -208,6 +230,32 @@ public class KineticManager {
         return a;
     }
 
+    /** Axis (0=X,1=Y,2=Z) of a unit direction {dx,dy,dz}. */
+    private static int dirAxisOf(int[] dir) {
+        if (dir[0] != 0) return 0;
+        if (dir[1] != 0) return 1;
+        return 2;
+    }
+
+    /**
+     * Orientation-aware coupling between two adjacent kinetic blocks.
+     * {@code axisA}/{@code axisB} are spin axes (0=X,1=Y,2=Z) or -1 for a
+     * non-directional component (machines, clutch, gearshift, engines, cranks,
+     * bearings, sails, belts); {@code dir} is the unit offset from A to B.
+     *
+     * Non-directional components accept rotation from any side. Directional
+     * components must share an axle: shafts couple only end-to-end along that
+     * axle (or into a disc's hub), and discs mesh in their plane or stack
+     * coaxially.
+     */
+    public static boolean canConnect(int blockA, int axisA, int blockB, int axisB, int[] dir) {
+        if (axisA < 0 || axisB < 0) return true;  // non-directional couples to anything
+        if (axisA != axisB) return false;          // different axles don't mesh
+        int dirAxis = dirAxisOf(dir);
+        if (isShaft(blockA) || isShaft(blockB)) return dirAxis == axisA; // along the axle
+        return true; // two discs sharing an axle: in-plane mesh or coaxial stack
+    }
+
     /** Horizontal offset {dx, dz} of a large-cog part from its center, or null. */
     public static int[] largeCogPartOffset(int block) {
         switch (block) {
@@ -243,9 +291,9 @@ public class KineticManager {
     public static GearDescriptor gearDescriptor(int block, int facing) {
         final float P = 1.0f / 16.0f;
         switch (block) {
-            case 291: return new GearDescriptor(1, 1, 0, 0, 0, 2*P, 16, 8*P);
-            case 292: return new GearDescriptor(0, 0, 0, 0, 0, 2*P, 16, 8*P);
-            case 293: return new GearDescriptor(2, 2, 0, 0, 0, 2*P, 16, 8*P);
+            case 291: return new GearDescriptor(1, 1, 0, 0, 0, 2*P, 4, 8*P);  // square 4x4x16
+            case 292: return new GearDescriptor(0, 0, 0, 0, 0, 2*P, 4, 8*P);  // square 4x4x16
+            case 293: return new GearDescriptor(2, 2, 0, 0, 0, 2*P, 4, 8*P);  // square 4x4x16
             case 294: return new GearDescriptor(axisFromFacing(facing), 1, 0, 0, 0, 8*P, 16, 3*P); // cogwheel fills the block
             case 295: return new GearDescriptor(axisFromFacing(facing), 1, 0, 0, 0, 24*P, 16, 3*P);
             case 296: return new GearDescriptor(gearAxis(296, facing), 1, 0, 0, 0, 24*P, 16, 4*P); // water wheel is a 3x3 multiblock
@@ -275,9 +323,11 @@ public class KineticManager {
     public static float intersectGearEntry(float ox, float oz, float dx, float dz,
                                            float cx, float cz, float radius, int sides) {
         float tEnter = -1e30f, tExit = 1e30f;
+        // π/4 offset turns a 4-gon into an axis-aligned square (shafts).
+        double rot = (sides == 4) ? Math.PI / 4.0 : 0.0;
         for (int i = 0; i < sides; i++) {
-            double a0 = i * 2.0 * Math.PI / sides;
-            double a1 = (i + 1) * 2.0 * Math.PI / sides;
+            double a0 = rot + i * 2.0 * Math.PI / sides;
+            double a1 = rot + (i + 1) * 2.0 * Math.PI / sides;
             double p0x = cx + Math.cos(a0) * radius, p0z = cz + Math.sin(a0) * radius;
             double p1x = cx + Math.cos(a1) * radius, p1z = cz + Math.sin(a1) * radius;
             double ex = p1x - p0x, ez = p1z - p0z;
@@ -462,6 +512,8 @@ public class KineticManager {
             int x = (int) cur[0], y = (int) cur[1], z = (int) cur[2];
             boolean reverse = cur[3] != 0;
             writeFlags(x, y, z, reverse ? (FLAG_SPINNING | FLAG_REVERSE) : FLAG_SPINNING);
+            int block = world.getVoxel(x, y, z);
+            int axis = axisOf(x, y, z, block);
             for (int[] off : DIRS) {
                 int nx = x + off[0], ny = y + off[1], nz = z + off[2];
                 long nkey = pack(nx, ny, nz);
@@ -469,12 +521,33 @@ public class KineticManager {
                 int nb = world.getVoxel(nx, ny, nz);
                 if (!isKinetic(nb) || nb <= 0) continue;
                 if (nb == BLOCK_CLUTCH_ON) continue; // powered clutch disengages
+                // Orientation-aware coupling: shafts mesh end-to-end along their
+                // axle, discs mesh in their plane, and non-directional components
+                // (machines, clutch, gearshift, engines, cranks, etc.) couple
+                // from any side.
+                if (!canConnect(block, axis, nb, axisOf(nx, ny, nz, nb), off)) continue;
                 boolean nrev = reverse;
                 if (nb == BLOCK_GEARSHIFT_ON) nrev = !reverse;
                 visited.add(nkey);
                 queue.add(new long[]{nx, ny, nz, nrev ? 1 : 0});
             }
         }
+    }
+
+    /** Facing bits (16-18) of a voxel: 0=down,1=up,2=north,3=south,4=west,5=east. */
+    private int facingOf(int x, int y, int z) {
+        return (world.getRawVoxel(x, y, z) >> 16) & 0x7;
+    }
+
+    /**
+     * Spin axis of a directional kinetic block (shaft or disc), reading its
+     * per-voxel facing; -1 for non-directional components (machines, clutch,
+     * gearshift, engines, cranks, bearings, sails, belts).
+     */
+    private int axisOf(int x, int y, int z, int block) {
+        if (isShaft(block)) return shaftAxis(block);
+        if (isDisc(block)) return gearAxis(block, facingOf(x, y, z));
+        return -1;
     }
 
     private void writeFlags(int x, int y, int z, int flags) {
