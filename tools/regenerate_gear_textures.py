@@ -148,6 +148,31 @@ def draw_axis_top():
     return _finish(img)
 
 
+def draw_hand_crank():
+    """Hand crank: left half oak (the arm), right half andesite alloy (shaft + handle).
+
+    The model maps the shaft/handle faces to the right half and the wooden arm
+    faces to the left half via per-face UVs, so a single 16x16 texture carries
+    both materials and the shader's AABB UV regions select the right one.
+    """
+    img, d = _canvas()
+    big = SS * SIZE
+    half = big // 2
+    # Oak arm (left half): horizontal plank grain.
+    d.rectangle([0, 0, half - 1, big - 1], fill=WOOD)
+    for y in range(SS, big, 2 * SS):
+        d.rectangle([0, y, half - 1, y + SS - 1], fill=WOOD_LIGHT)
+    for y in range(0, big, 4 * SS):
+        d.rectangle([0, y, half - 1, y + SS // 2 - 1], fill=WOOD_DARK)
+    d.line([(half - 1, 0), (half - 1, big)], fill=WOOD_SHADE, width=SS)
+    # Andesite alloy (right half): flat gray with subtle banding.
+    d.rectangle([half, 0, big - 1, big - 1], fill=ALLOY)
+    for y in range(0, big, 3 * SS):
+        d.rectangle([half, y, big - 1, y + SS // 2 - 1], fill=ALLOY_DARK)
+    d.line([(half, 0), (half, big)], fill=ALLOY_LIGHT, width=SS // 2)
+    return _finish(img)
+
+
 def draw_water_wheel(angle_deg):
     """Water wheel side view: rim + paddles + 4 thick spokes + hub (full bleed,
     with wide open gaps between spokes so it reads as a wheel, not a disc)."""
@@ -246,6 +271,8 @@ if __name__ == "__main__":
     print(f"wrote cog_side.png {SIZE}x{SIZE}")
     draw_wheel_side().save(f"{BASE}/wheel_side.png")
     print(f"wrote wheel_side.png {SIZE}x{SIZE}")
+    draw_hand_crank().save(f"{BASE}/hand_crank.png")
+    print(f"wrote hand_crank.png {SIZE}x{SIZE}")
     # Fully transparent texture for the invisible large-cog multiblock parts
     # (kept as a fallback; the parts now render as gear slices via the shader).
     Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0)).save(f"{BASE}/invisible.png")
