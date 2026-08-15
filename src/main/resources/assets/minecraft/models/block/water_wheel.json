@@ -2,10 +2,10 @@
     "textures": {
         "north": "wheel",
         "south": "wheel",
-        "up": "axis",
-        "down": "axis",
-        "west": "axis",
-        "east": "axis",
+        "up": "wheel_side",
+        "down": "wheel_side",
+        "west": "wheel_side",
+        "east": "wheel_side",
         "particle": "wheel"
     },
     "elements": [

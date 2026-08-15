@@ -178,6 +178,24 @@ public class CreateMachineManagerTest {
     }
 
     @Test
+    public void directionalFacingRoundTripsThroughVoxelData() throws Exception {
+        try (Harness h = new Harness()) {
+            h.ready();
+            // The raytracer reads facing from voxel extra-data bits 16-18 to rotate
+            // directional machine models. Verify every facing value survives the
+            // World<->voxel packing that CreateMachineManager.facingOf() consumes.
+            for (int facing = 0; facing <= 5; facing++) {
+                h.placeFacing(MX + facing, MY, MZ, CreateMachineManager.BLOCK_MECHANICAL_SAW, facing);
+            }
+            for (int facing = 0; facing <= 5; facing++) {
+                int raw = h.ctx.world.getRawVoxel(MX + facing, MY, MZ);
+                assertEquals("block type must survive", CreateMachineManager.BLOCK_MECHANICAL_SAW, raw & 0xFFFF);
+                assertEquals("facing must live in bits 16-18", facing, (raw >> 16) & 0x7);
+            }
+        }
+    }
+
+    @Test
     public void unpoweredSawLeavesLogAlone() throws Exception {
         try (Harness h = new Harness()) {
             h.ready();

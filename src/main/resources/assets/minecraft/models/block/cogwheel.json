@@ -2,10 +2,10 @@
     "textures": {
         "up": "cogwheel",
         "down": "cogwheel",
-        "north": "cogwheel",
-        "south": "cogwheel",
-        "west": "cogwheel",
-        "east": "cogwheel",
+        "north": "cog_side",
+        "south": "cog_side",
+        "west": "cog_side",
+        "east": "cog_side",
         "particle": "cogwheel"
     },
     "elements": [

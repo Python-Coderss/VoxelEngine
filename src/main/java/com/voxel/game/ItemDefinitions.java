@@ -378,6 +378,10 @@ public class ItemDefinitions {
         // Horizontal shaft variants (292/293) drop the regular shaft item.
         blockItemByBlockId.put(292, "shaft");
         blockItemByBlockId.put(293, "shaft");
+        // Large cogwheel multiblock parts (422-429) drop the large_cogwheel item.
+        for (int id = 422; id <= 429; id++) blockItemByBlockId.put(id, "large_cogwheel");
+        // Water wheel multiblock parts (430-437) drop the water_wheel item.
+        for (int id = 430; id <= 437; id++) blockItemByBlockId.put(id, "water_wheel");
         // Biome grass variants (86-90) drop the regular grass block item.
         blockItemByBlockId.put(86, "grass");
         blockItemByBlockId.put(87, "grass");

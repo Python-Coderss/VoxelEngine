@@ -130,6 +130,15 @@ public class CreateMachineManager {
         return block >= BLOCK_HAND_CRANK && block <= BLOCK_BRASS_CASING;
     }
 
+    /**
+     * Directional machines whose facing is encoded in voxel extra-data bits 16-18:
+     * encased fan, crushing wheel, drill, saw, deployer, belt conveyor. The raytracer
+     * rotates these models to their facing (see {@link #remapDirectionalFace}).
+     */
+    public static boolean isDirectionalMachine(int block) {
+        return block == 263 || block == 409 || block == 410 || block == 411 || block == 412 || block == 413;
+    }
+
     /** Machines that consume power and do work each tick (excludes sails/vault/brass). */
     private static boolean isProcessingMachine(int block) {
         return block >= BLOCK_MECHANICAL_PRESS && block <= BLOCK_BELT_CONVEYOR;
@@ -512,6 +521,61 @@ public class CreateMachineManager {
     public static String directionName(int dir) {
         if (dir >= 0 && dir < DIR_NAMES.length) return DIR_NAMES[dir];
         return "?";
+    }
+
+    /**
+     * Mirror of the raytracer's {@code remapDirectionalFace}: remaps a world-space
+     * face (0=down,1=up,2=north,3=south,4=west,5=east) to the canonical model face
+     * for a directional machine whose front texture sits on the +X (east, face 5)
+     * face of its model JSON, when the machine faces {@code facing}. The result is
+     * the model face whose texture should be drawn on the hit {@code face}, so the
+     * front texture always lands on the world face the machine points at. The
+     * compute shader holds an identical copy — keep the two in sync.
+     */
+    public static int remapDirectionalFace(int face, int facing) {
+        switch (facing) {
+            case 5: return face; // east: identity
+            case 4: // west: 180 degrees about Y
+                switch (face) {
+                    case 2: return 3;
+                    case 3: return 2;
+                    case 4: return 5;
+                    case 5: return 4;
+                    default: return face;
+                }
+            case 2: // north
+                switch (face) {
+                    case 2: return 5;
+                    case 3: return 4;
+                    case 4: return 2;
+                    case 5: return 3;
+                    default: return face;
+                }
+            case 3: // south
+                switch (face) {
+                    case 2: return 4;
+                    case 3: return 5;
+                    case 4: return 3;
+                    case 5: return 2;
+                    default: return face;
+                }
+            case 1: // up
+                switch (face) {
+                    case 0: return 4;
+                    case 1: return 5;
+                    case 4: return 1;
+                    case 5: return 0;
+                    default: return face;
+                }
+            default: // down (0)
+                switch (face) {
+                    case 0: return 5;
+                    case 1: return 4;
+                    case 4: return 0;
+                    case 5: return 1;
+                    default: return face;
+                }
+        }
     }
 
     // ---- Position packing (matches KineticManager) ----

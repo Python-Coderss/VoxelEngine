@@ -7,6 +7,7 @@ import com.voxel.game.GameContext.ActiveUI;
 import com.voxel.game.GameContext.CameraMode;
 import com.voxel.game.GameContext.GameMode;
 import com.voxel.game.ItemDefinitions.ItemStack;
+import com.voxel.world.KineticManager;
 
 /**
  * Handles mining, block breaking, block placement, and raycasting.
@@ -87,7 +88,7 @@ public class BlockInteraction {
 
     /** Directional machines whose facing is encoded in extra-data bits 16-18. */
     private static boolean isDirectionalMachine(int block) {
-        return block == 263 || block == 409 || block == 410 || block == 411 || block == 412 || block == 413;
+        return com.voxel.game.CreateMachineManager.isDirectionalMachine(block);
     }
 
     /**
@@ -214,6 +215,17 @@ public class BlockInteraction {
     }
 
     public void breakBlock(int x, int y, int z, int blockId, boolean collectDrop) {
+        // Large cogwheel multiblock: breaking any part (or the center) removes the
+        // whole 3x3 structure and drops a single large_cogwheel item.
+        if (KineticManager.isLargeCog(blockId)) {
+            breakLargeCogwheel(x, y, z, blockId, collectDrop);
+            return;
+        }
+        // Water wheel multiblock: same whole-structure removal for the 3x3x1 wheel.
+        if (KineticManager.isWaterWheel(blockId)) {
+            breakWaterWheel(x, y, z, blockId, collectDrop);
+            return;
+        }
         // Piston base: derive facing direction from directional block ID before clearing
         int pistonDir = getPistonDirection(blockId);
         if (!ctx.chunkManager.setVoxel(x, y, z, 0)) return;
@@ -331,6 +343,113 @@ public class BlockInteraction {
                 ctx.droppedItemManager.spawn(dropItem, dropCount, x, y, z);
             }
         }
+    }
+
+    /**
+     * Stamps a 3x3 large-cogwheel footprint (center 295 + 8 ghost parts) at the
+     * placement position. Returns false (and leaves nothing behind) if any of the
+     * 9 target cells is occupied or overlaps the player.
+     */
+    private boolean placeLargeCogwheel(int px, int py, int pz) {
+        int[][] footprint = { {0,0}, {0,-1}, {0,1}, {-1,0}, {1,0}, {-1,-1}, {1,-1}, {-1,1}, {1,1} };
+        int[] ids = { 295, 422, 423, 424, 425, 426, 427, 428, 429 };
+        for (int i = 0; i < footprint.length; i++) {
+            int x = px + footprint[i][0], z = pz + footprint[i][1];
+            if (ctx.world.getVoxel(x, py, z) != 0) {
+                ctx.setStatus("Not enough room for the large cogwheel");
+                return false;
+            }
+            if (intersectsPlayer(x, py, z)) return false;
+        }
+        for (int i = 0; i < footprint.length; i++) {
+            int x = px + footprint[i][0], z = pz + footprint[i][1];
+            if (!ctx.chunkManager.setVoxel(x, py, z, ids[i])) return false;
+        }
+        for (int i = 0; i < footprint.length; i++) {
+            int x = px + footprint[i][0], z = pz + footprint[i][1];
+            notifyManagersOfBlockChange(x, py, z);
+        }
+        return true;
+    }
+
+    /** Removes the whole 3x3 large-cogwheel structure, dropping a single item. */
+    private void breakLargeCogwheel(int x, int y, int z, int blockId, boolean collectDrop) {
+        int cx = x, cz = z;
+        int[] off = KineticManager.largeCogPartOffset(blockId);
+        if (off != null) { cx -= off[0]; cz -= off[1]; }
+        int[][] footprint = { {0,0}, {0,-1}, {0,1}, {-1,0}, {1,0}, {-1,-1}, {1,-1}, {-1,1}, {1,1} };
+        for (int[] o : footprint) {
+            int bx = cx + o[0], bz = cz + o[1];
+            int b = ctx.world.getVoxel(bx, y, bz);
+            if (!KineticManager.isLargeCog(b)) continue;
+            ctx.chunkManager.setVoxel(bx, y, bz, 0);
+            notifyManagersOfBlockChange(bx, y, bz);
+            if (ctx.droppedItemManager != null) ctx.droppedItemManager.onBlockDestroyed(bx, y, bz);
+        }
+        if (collectDrop && ctx.droppedItemManager != null) {
+            String dropItem = ctx.itemDefinitions.getBlockItemByBlockId().get(KineticManager.BLOCK_LARGE_COGWHEEL);
+            if (dropItem == null) dropItem = "large_cogwheel";
+            ctx.droppedItemManager.spawn(dropItem, 1, x, y, z);
+        }
+    }
+
+    /**
+     * Stamps a 3x3x1 water-wheel footprint (center 296 + 8 parts) at the placement
+     * position. The wheel is a vertical disc (axis Z), so the parts sit in the XY
+     * plane. Returns false (leaving nothing behind) if any target cell is occupied
+     * or overlaps the player.
+     */
+    private boolean placeWaterWheel(int px, int py, int pz) {
+        int[][] footprint = { {0,0}, {0,1}, {0,-1}, {-1,0}, {1,0}, {-1,1}, {1,1}, {-1,-1}, {1,-1} };
+        int[] ids = { 296, 430, 431, 432, 433, 434, 435, 436, 437 };
+        for (int i = 0; i < footprint.length; i++) {
+            int x = px + footprint[i][0], y = py + footprint[i][1];
+            if (ctx.world.getVoxel(x, y, pz) != 0) {
+                ctx.setStatus("Not enough room for the water wheel");
+                return false;
+            }
+            if (intersectsPlayer(x, y, pz)) return false;
+        }
+        for (int i = 0; i < footprint.length; i++) {
+            int x = px + footprint[i][0], y = py + footprint[i][1];
+            if (!ctx.chunkManager.setVoxel(x, y, pz, ids[i])) return false;
+        }
+        for (int i = 0; i < footprint.length; i++) {
+            int x = px + footprint[i][0], y = py + footprint[i][1];
+            notifyManagersOfBlockChange(x, y, pz);
+        }
+        return true;
+    }
+
+    /** Removes the whole 3x3x1 water-wheel structure, dropping a single item. */
+    private void breakWaterWheel(int x, int y, int z, int blockId, boolean collectDrop) {
+        int cx = x, cy = y;
+        int[] off = KineticManager.waterWheelPartOffset(blockId);
+        if (off != null) { cx -= off[0]; cy -= off[1]; }
+        int[][] footprint = { {0,0}, {0,1}, {0,-1}, {-1,0}, {1,0}, {-1,1}, {1,1}, {-1,-1}, {1,-1} };
+        for (int[] o : footprint) {
+            int bx = cx + o[0], by = cy + o[1];
+            int b = ctx.world.getVoxel(bx, by, z);
+            if (!KineticManager.isWaterWheel(b)) continue;
+            ctx.chunkManager.setVoxel(bx, by, z, 0);
+            notifyManagersOfBlockChange(bx, by, z);
+            if (ctx.droppedItemManager != null) ctx.droppedItemManager.onBlockDestroyed(bx, by, z);
+        }
+        if (collectDrop && ctx.droppedItemManager != null) {
+            String dropItem = ctx.itemDefinitions.getBlockItemByBlockId().get(KineticManager.BLOCK_WATER_WHEEL);
+            if (dropItem == null) dropItem = "water_wheel";
+            ctx.droppedItemManager.spawn(dropItem, 1, x, y, z);
+        }
+    }
+
+    /** Fires every block-change notification for a single placed/removed cell. */
+    private void notifyManagersOfBlockChange(int x, int y, int z) {
+        ctx.redstoneManager.onBlockChanged(x, y, z);
+        ctx.redstoneManager.notifyNeighbors(x, y, z);
+        if (ctx.kineticManager != null) ctx.kineticManager.onBlockChanged(x, y, z);
+        if (ctx.encasedFanSystem != null) ctx.encasedFanSystem.onBlockChanged(x, y, z);
+        if (ctx.machineManager != null) ctx.machineManager.onBlockChanged(x, y, z);
+        if (ctx.fluidManager != null) ctx.fluidManager.notifyBlockChanged(x, y, z);
     }
 
     /**
@@ -926,6 +1045,26 @@ public class BlockInteraction {
         if (existing != 0) return;
         if (intersectsPlayer(px, py, pz)) return;
         int placeBlockId = def.blockId;
+        // Large cogwheel: stamp a 3x3 multiblock footprint (center 295 + 8 ghost parts).
+        if (placeBlockId == 295) {
+            if (!placeLargeCogwheel(px, py, pz)) return;
+            if (ctx.gameMode == GameMode.SURVIVAL) {
+                selected.count--;
+                if (selected.count <= 0) ctx.playerInventory.setSlot(ctx.playerInventory.getSelectedSlot(), null);
+            }
+            if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
+            return;
+        }
+        // Water wheel: stamp a 3x3x1 multiblock footprint (center 296 + 8 parts).
+        if (placeBlockId == 296) {
+            if (!placeWaterWheel(px, py, pz)) return;
+            if (ctx.gameMode == GameMode.SURVIVAL) {
+                selected.count--;
+                if (selected.count <= 0) ctx.playerInventory.setSlot(ctx.playerInventory.getSelectedSlot(), null);
+            }
+            if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
+            return;
+        }
         // Orientable logs: choose the axis variant from the clicked face normal
         if (placeBlockId == 5) { // oak_log -> 5 (Y axis), 260 (X axis), 261 (Z axis)
             int ldx = hit[0] - px, ldz = hit[2] - pz;

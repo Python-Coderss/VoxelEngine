@@ -1,7 +1,7 @@
 {
   "textures": {
     "up": "drill_top",
-    "down": "drill_front",
+    "down": "drill_side",
     "north": "drill_side",
     "south": "drill_side",
     "west": "drill_side",
