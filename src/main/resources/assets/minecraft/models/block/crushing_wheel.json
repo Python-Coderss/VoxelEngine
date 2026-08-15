@@ -2,10 +2,10 @@
   "textures": {
     "up": "crusher_rim",
     "down": "crusher_rim",
-    "north": "crusher_wheel",
-    "south": "crusher_wheel",
-    "west": "crusher_rim",
-    "east": "crusher_rim",
+    "north": "crusher_rim",
+    "south": "crusher_rim",
+    "west": "crusher_wheel",
+    "east": "crusher_wheel",
     "particle": "crusher_rim"
   }
 }

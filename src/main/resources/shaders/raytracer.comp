@@ -87,6 +87,7 @@ layout(location = 34) uniform vec3 u_MoonPoolRight;  // ACTIVE MOON pool right b
 layout(location = 35) uniform vec3 u_MoonPoolUp;     // ACTIVE MOON pool up basis
 layout(location = 36) uniform vec3 u_MoonPoolDir;    // ACTIVE MOON pool light direction
 layout(location = 37) uniform int u_UnderWater;       // 1 = camera eye inside a water block
+layout(location = 38) uniform int u_LargeCogPresent;  // 1 when any large cogwheel (295) is loaded
 
 // Entities
 struct EntityData { vec3 position; float health; vec3 rotation; float maxHealth; int partCount; int partOffset; float hitFlash; float tintR; float tintG; float tintB; float tintAmount; float padding; };
@@ -295,6 +296,57 @@ vec2 remapDirectionalUV(vec2 uv, int faceType, int facingDir) {
     }
     // default: standard mapping
     return uv;
+}
+
+// Create directional machine block IDs: encased fan (263), crushing wheel (409),
+// mechanical drill (410), mechanical saw (411), deployer (412), belt conveyor (413).
+// Their facing is stored per-voxel in extra-data bits 16-18 (see BlockInteraction).
+bool isDirectionalMachineBlock(int id) {
+    return id == 263 || id == 409 || id == 410 || id == 411 || id == 412 || id == 413;
+}
+
+// Remap a world-space face to the canonical model face for a directional machine
+// whose model JSON puts its "front" texture on the +X (east, face 5) face.
+// facing: 0=down, 1=up, 2=north, 3=south, 4=west, 5=east. The returned face is the
+// model face whose texture should be drawn on the hit `face`, so the front texture
+// always lands on the world face the machine points at. This is a rigid cube
+// rotation: east->facing with up preserved for horizontal facings.
+int remapDirectionalFace(int face, int facing) {
+    if (facing == 5) return face;               // east: identity
+    if (facing == 4) {                          // west: 180° about Y
+        if (face == 2) return 3;
+        if (face == 3) return 2;
+        if (face == 4) return 5;
+        if (face == 5) return 4;
+        return face;
+    }
+    if (facing == 2) {                          // north
+        if (face == 2) return 5;
+        if (face == 3) return 4;
+        if (face == 4) return 2;
+        if (face == 5) return 3;
+        return face;
+    }
+    if (facing == 3) {                          // south
+        if (face == 2) return 4;
+        if (face == 3) return 5;
+        if (face == 4) return 3;
+        if (face == 5) return 2;
+        return face;
+    }
+    if (facing == 1) {                          // up
+        if (face == 0) return 4;
+        if (face == 1) return 5;
+        if (face == 4) return 1;
+        if (face == 5) return 0;
+        return face;
+    }
+    // facing == 0 (down)
+    if (face == 0) return 5;
+    if (face == 1) return 4;
+    if (face == 4) return 0;
+    if (face == 5) return 1;
+    return face;
 }
 
 bool intersectOrientedBox(vec3 ro, vec3 rd, vec3 center, vec3 halfSize, mat3 rotation, out float hitT, out vec3 hitNormal, out vec3 hitLocalPos, out vec3 hitLocalNormal) {
@@ -588,11 +640,147 @@ float fastShadow(vec3 ro, vec3 rd, float maxDist) {
 // strips (windmill sail 406, millstone 408, crushing wheel 409, drill 410, saw 411,
 // belt 413) animate the same way when their network is powered.
 bool isKineticBlock(int id) {
-    return (id >= 291 && id <= 296) || id == 353 || id == 354 || id == 355 || id == 356
+    return (id >= 291 && id <= 296) || (id >= 422 && id <= 437)
+        || id == 353 || id == 354 || id == 355 || id == 356
         || id == 406 || (id >= 408 && id <= 411) || id == 413;
 }
 
-bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out ivec4 resBlockData1, out uint resKineticActive, out uint resKineticReverse) {
+// Raw packed voxel at a world position (0 when out of bounds or unloaded).
+uint worldRawVoxel(ivec3 p) {
+    if (any(lessThan(p, ivec3(0))) || any(greaterThanEqual(p, ivec3(WORLD_SIZE)))) return 0u;
+    uint slot = chunkSlots[(p.x >> 4) | ((p.y >> 4) << 7) | ((p.z >> 4) << 14)];
+    if (slot == EMPTY) return 0u;
+    int bi = (p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8);
+    return voxelPool[(slot << 12) | bi];
+}
+
+// Texture index for a block face (0=down,1=up,2=north,3=south,4=west,5=east).
+int faceTex(int face, ivec4 d0, ivec4 d1) {
+    if (face == 0) return d0.x;
+    if (face == 1) return d0.y;
+    if (face == 2) return d0.z;
+    if (face == 3) return d0.w;
+    if (face == 4) return d1.x;
+    return d1.y;
+}
+
+// Gear prism descriptors for the kinetic blocks (shafts 291-293, cogwheel 294,
+// large cogwheel 295, water wheel 296) plus the multiblock part blocks
+// (large cogwheel 422-429, water wheel 430-437). axis: 0=X,1=Y,2=Z; radius and
+// halfThick are in block units (1 block = 1.0). The cross-section is a regular
+// convex `sides`-gon (16-sided) extruded along the axis; the gear teeth and
+// spokes are drawn by the block textures (cogwheel/large_cogwheel/wheel), not
+// by geometry.
+//
+// centerOff is the voxel offset from the OWNING cell to the gear's true center
+// (nonzero only for multiblock parts). Every block of a multiblock renders the
+// same full gear prism but clipped to its own cell (done by the caller's
+// `gT < cellExitT` test), so the 3x3 footprint stitches into one big gear and
+// each part block shows its slice.
+// Kept in sync with the Java mirror in KineticManager.gearDescriptor.
+bool getGear(int id, out ivec3 centerOff, out int axis, out float radius, out int sides, out float halfThick) {
+    const float P = 1.0 / 16.0;
+    centerOff = ivec3(0);
+    if (id == 291) { axis = 1; radius = 2.0*P; sides = 16; halfThick = 8.0*P; return true; } // shaft Y
+    if (id == 292) { axis = 0; radius = 2.0*P; sides = 16; halfThick = 8.0*P; return true; } // shaft X
+    if (id == 293) { axis = 2; radius = 2.0*P; sides = 16; halfThick = 8.0*P; return true; } // shaft Z
+    if (id == 294) { axis = 1; radius = 8.0*P; sides = 16; halfThick = 3.0*P; return true; } // cogwheel (full block)
+    if (id == 295) { axis = 1; radius = 24.0*P; sides = 16; halfThick = 3.0*P; return true; } // large cogwheel (3x1x3)
+    if (id == 296) { axis = 2; radius = 24.0*P; sides = 16; halfThick = 4.0*P; return true; } // water wheel (3x3x1)
+    // Large cogwheel multiblock parts (axis Y, footprint in XZ).
+    if (id >= 422 && id <= 429) {
+        axis = 1; radius = 24.0*P; sides = 16; halfThick = 3.0*P;
+        if (id == 422) centerOff = ivec3( 0, 0,  1); // N (z-1)
+        if (id == 423) centerOff = ivec3( 0, 0, -1); // S (z+1)
+        if (id == 424) centerOff = ivec3( 1, 0,  0); // W (x-1)
+        if (id == 425) centerOff = ivec3(-1, 0,  0); // E (x+1)
+        if (id == 426) centerOff = ivec3( 1, 0,  1); // NW (x-1,z-1)
+        if (id == 427) centerOff = ivec3(-1, 0,  1); // NE (x+1,z-1)
+        if (id == 428) centerOff = ivec3( 1, 0, -1); // SW (x-1,z+1)
+        if (id == 429) centerOff = ivec3(-1, 0, -1); // SE (x+1,z+1)
+        return true;
+    }
+    // Water wheel multiblock parts (axis Z, footprint in XY).
+    if (id >= 430 && id <= 437) {
+        axis = 2; radius = 24.0*P; sides = 16; halfThick = 4.0*P;
+        if (id == 430) centerOff = ivec3( 0, -1, 0); // up (y+1)
+        if (id == 431) centerOff = ivec3( 0,  1, 0); // down (y-1)
+        if (id == 432) centerOff = ivec3( 1,  0, 0); // left (x-1)
+        if (id == 433) centerOff = ivec3(-1,  0, 0); // right (x+1)
+        if (id == 434) centerOff = ivec3( 1, -1, 0); // up-left (x-1,y+1)
+        if (id == 435) centerOff = ivec3(-1, -1, 0); // up-right (x+1,y+1)
+        if (id == 436) centerOff = ivec3( 1,  1, 0); // down-left (x-1,y-1)
+        if (id == 437) centerOff = ivec3(-1,  1, 0); // down-right (x+1,y-1)
+        return true;
+    }
+    return false;
+}
+
+// Ray vs a convex N-sided prism (gear) extruded along a world axis.
+// axis: 0=X, 1=Y, 2=Z. The cross-section is a regular `sides`-gon of the given
+// radius. Returns the entry distance and surface normal.
+bool intersectGear(vec3 ro, vec3 rd, vec3 center, int axis, float radius, int sides, float halfThick, out float hitT, out vec3 hitNormal) {
+    float ca, oa, da;
+    vec2 o, d, c;
+    if (axis == 0)      { ca = center.x; oa = ro.x; da = rd.x; c = center.yz; o = ro.yz; d = rd.yz; }
+    else if (axis == 1) { ca = center.y; oa = ro.y; da = rd.y; c = center.xz; o = ro.xz; d = rd.xz; }
+    else                { ca = center.z; oa = ro.z; da = rd.z; c = center.xy; o = ro.xy; d = rd.xy; }
+
+    float tNearA = -1e30, tFarA = 1e30;
+    if (abs(da) > 1e-6) {
+        float t1 = (ca - halfThick - oa) / da;
+        float t2 = (ca + halfThick - oa) / da;
+        tNearA = min(t1, t2);
+        tFarA = max(t1, t2);
+    } else if (oa < ca - halfThick || oa > ca + halfThick) {
+        return false;
+    }
+
+    float tEnter = -1e30, tExit = 1e30;
+    vec2 enterN = vec2(1.0, 0.0);
+    for (int i = 0; i < sides; i++) {
+        float a0 = float(i) * 6.2831853 / float(sides);
+        float a1 = float(i + 1) * 6.2831853 / float(sides);
+        vec2 p0 = c + vec2(cos(a0), sin(a0)) * radius;
+        vec2 p1 = c + vec2(cos(a1), sin(a1)) * radius;
+        vec2 edge = p1 - p0;
+        vec2 nrm = normalize(vec2(edge.y, -edge.x));
+        if (dot(nrm, (p0 + p1) * 0.5 - c) < 0.0) nrm = -nrm;
+        float planeDist = dot(nrm, p0);
+        float denom = dot(nrm, d);
+        float rhs = planeDist - dot(nrm, o);
+        if (abs(denom) < 1e-7) {
+            if (rhs < 0.0) return false;
+            continue;
+        }
+        // denom > 0: ray is leaving this half-plane (t <= tE) -> exit bound.
+        // denom < 0: ray is entering it (t >= tE) -> entry bound.
+        float tE = rhs / denom;
+        if (denom > 0.0) {
+            if (tE < tExit) tExit = tE;
+        } else {
+            if (tE > tEnter) { tEnter = tE; enterN = nrm; }
+        }
+    }
+    if (tEnter > tExit) return false;
+
+    float t0 = max(tEnter, tNearA);
+    float t1 = min(tExit, tFarA);
+    if (t0 > t1) return false;
+
+    if (tNearA > tEnter) {
+        hitNormal = vec3(0.0);
+        hitNormal[axis] = (da > 0.0) ? -1.0 : 1.0;
+    } else {
+        if (axis == 0)      hitNormal = vec3(0.0, enterN.x, enterN.y);
+        else if (axis == 1) hitNormal = vec3(enterN.x, 0.0, enterN.y);
+        else                hitNormal = vec3(enterN.x, enterN.y, 0.0);
+    }
+    hitT = t0;
+    return true;
+}
+
+bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out ivec4 resBlockData1, out uint resKineticActive, out uint resKineticReverse, out uint resFacing, out vec3 resNormal, out ivec3 resGearOrigin) {
     ivec3 bufMin = ivec3(0);
     ivec3 bufMax = ivec3(WORLD_SIZE);
     float tn, tf; if (!intersectAABB(ro, rd, vec3(bufMin), vec3(bufMax), tn, tf)) return false;
@@ -601,7 +789,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
     vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
     int side = 0; if (skipFirst) side = advanceDDA(mp, sd, dd, s);
     resBlockData1 = ivec4(0); // block-data d1 threaded to the caller (avoids a redundant texelFetch in main)
-    resKineticActive = 0u; resKineticReverse = 0u;
+    resKineticActive = 0u; resKineticReverse = 0u; resFacing = 1u; resNormal = vec3(0.0, 1.0, 0.0); resGearOrigin = ivec3(0);
     // Per-chunk SDF sphere-trace step is gated at SDF>1.5; when close to surface
     // (SDF<=1.5) or crossing a chunk boundary, fallback to per-voxel DDA.
     for (int i = 0; i < 256; i++) {  // bumped from 72: sphere-trace skips chunks fast
@@ -690,6 +878,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                     uint voxelType = rawVoxel & 0xFFFFu;
                     uint wirePower = (rawVoxel >> 16) & 0xFu;
                     uint wireConn = (rawVoxel >> 20) & 0xFu;
+                    uint facingVox = (rawVoxel >> 16) & 0x7u;
                     // Kinetic flags (bits 24-25) written by KineticManager: bit 24 = spinning,
                     // bit 25 = reversed. Consumed by the main loop to gate cog/wheel animation.
                     uint kinActive = (rawVoxel >> 24) & 1u;
@@ -700,18 +889,49 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                     int thisEff = (d1.w >> 10) & 0xF;
                     if (thisEff == 2) { thisMediumTag = (voxelType == 21u) ? 2u : 1u; }
                     if (thisMediumTag != lastMediumTag) {
-                        if (((d1.w >> 9) & 1) == 1) {
+                        // Non-AABB gear blocks (shafts/cogs/wheel) and multiblock
+                        // gear parts. Each block renders its own slice of the gear:
+                        // the prism is clipped to the owning cell (gT < cell exit),
+                        // and UVs are centered on the multiblock's true center.
+                        ivec3 gCenterOff; int gAxis; float gOuter, gHalf; int gSides;
+                        bool isGear = getGear(int(voxelType), gCenterOff, gAxis, gOuter, gSides, gHalf);
+                        if (isGear) {
+                            float gT; vec3 gN;
+                            vec3 gCenter = vec3(mp + gCenterOff) + 0.5;
+                            if (intersectGear(ro, rd, gCenter, gAxis, gOuter, gSides, gHalf, gT, gN)) {
+                                if (gT > 0.0 && gT < st + min(sd.x, min(sd.y, sd.z))) {
+                                    resVoxel = voxelType;
+                                    resWirePower = wirePower;
+                                    resWireConn = wireConn;
+                                    resKineticActive = kinActive;
+                                    resKineticReverse = kinReverse;
+                                    resFacing = facingVox;
+                                    resT = gT;
+                                    resAabbIdx = -1;
+                                    resBlockData1 = d1;
+                                    resNormal = gN;
+                                    resGearOrigin = mp + gCenterOff;
+                                    return true;
+                                }
+                            }
+                        }
+                        // Gears (and their multiblock parts) render exclusively via the
+                        // prism — no AABB/full-block fallback, so a part never shows its
+                        // slab model outside the round gear silhouette.
+                        if (!isGear && ((d1.w >> 9) & 1) == 1) {
                             resVoxel = voxelType;
                             resWirePower = wirePower;
                             resWireConn = wireConn;
                             resKineticActive = kinActive;
                             resKineticReverse = kinReverse;
+                            resFacing = facingVox;
                             resSide = side;
                             resT = (side == 0 ? sd.x - dd.x : (side == 1 ? sd.y - dd.y : sd.z - dd.z)) + st;
                             resAabbIdx = -1;
                             resBlockData1 = d1;
                             return true;
                         }
+                        if (!isGear) {
                         ivec4 info = texelFetch(u_BlockAABBInfo, int(voxelType));
                         int aabbOffset = info.x;
                         int aabbCount = info.y;
@@ -721,6 +941,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                             resWireConn = wireConn;
                             resKineticActive = kinActive;
                             resKineticReverse = kinReverse;
+                            resFacing = facingVox;
                             resSide = side;
                             resT = (side == 0 ? sd.x - dd.x : (side == 1 ? sd.y - dd.y : sd.z - dd.z)) + st;
                             resAabbIdx = -1;
@@ -740,6 +961,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                                     resWireConn = wireConn;
                                     resKineticActive = kinActive;
                                     resKineticReverse = kinReverse;
+                                    resFacing = facingVox;
                                     resT = aTn;
                                     resAabbIdx = (aabbOffset / 2) + k;
                                     resBlockData1 = d1;
@@ -754,6 +976,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                                 }
                             }
                         }
+                        }
                     }
                 }
                 side = advanceDDA(mp, sd, dd, s);
@@ -765,17 +988,21 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
     return false;
 }
 
-bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out int resEntIdx, out int resCraftingIdx, out ivec4 resBlockData1, out uint resKineticActive, out uint resKineticReverse) {
-    resT = 1e30; resEntUv = vec2(0.5); isEnt = false; isHpBar = false; hpRatio = 1.0; resWirePower = 0u; resWireConn = 0u; resAabbIdx = -1; resEntIdx = -1; resCraftingIdx = -1; resBlockData1 = ivec4(0); resKineticActive = 0u; resKineticReverse = 0u;
-    float tV; int sideV; uint voxelV, wirePowerV, wireConnV, kinActiveV, kinReverseV; int aabbIdxV;
-    if (traceWorld(ro, rd, skipFirst, airVoxel, lastMediumTag, tV, sideV, voxelV, wirePowerV, wireConnV, aabbIdxV, resBlockData1, kinActiveV, kinReverseV)) {
+bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out int resEntIdx, out int resCraftingIdx, out ivec4 resBlockData1, out uint resKineticActive, out uint resKineticReverse, out uint resFacing, out ivec3 resGearOrigin) {
+    resT = 1e30; resEntUv = vec2(0.5); isEnt = false; isHpBar = false; hpRatio = 1.0; resWirePower = 0u; resWireConn = 0u; resAabbIdx = -1; resEntIdx = -1; resCraftingIdx = -1; resBlockData1 = ivec4(0); resKineticActive = 0u; resKineticReverse = 0u; resFacing = 1u; resGearOrigin = ivec3(0);
+    float tV; int sideV; uint voxelV, wirePowerV, wireConnV, kinActiveV, kinReverseV, facingV; int aabbIdxV; vec3 normalV; ivec3 gearOriginV;
+    if (traceWorld(ro, rd, skipFirst, airVoxel, lastMediumTag, tV, sideV, voxelV, wirePowerV, wireConnV, aabbIdxV, resBlockData1, kinActiveV, kinReverseV, facingV, normalV, gearOriginV)) {
         resT = tV; resVoxel = voxelV;
         resWirePower = wirePowerV;
         resWireConn = wireConnV;
         resKineticActive = kinActiveV;
         resKineticReverse = kinReverseV;
+        resFacing = facingV;
         resAabbIdx = aabbIdxV;
-        resN = (sideV == 0) ? vec3(-sign(rd.x), 0, 0) : ((sideV == 1) ? vec3(0, -sign(rd.y), 0) : vec3(0, 0, -sign(rd.z)));
+        resGearOrigin = gearOriginV;
+        resN = ((voxelV >= 291u && voxelV <= 296u) || (voxelV >= 422u && voxelV <= 437u))
+            ? normalV
+            : (sideV == 0) ? vec3(-sign(rd.x), 0, 0) : ((sideV == 1) ? vec3(0, -sign(rd.y), 0) : vec3(0, 0, -sign(rd.z)));
     }
     // Early cull: skip entities far from the ray origin or behind the camera
     vec3 roToEnt;
@@ -1141,7 +1368,7 @@ void main() {
 
 
     for (int b = 0; b < 2; b++) {  // reduced from 4 → 2 bounces for perf
-        float t; vec3 n; uint voxel, eTex, wirePower, wireConn, kineticActive, kineticReverse; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx; ivec4 blockData1;
+        float t; vec3 n; uint voxel, eTex, wirePower, wireConn, kineticActive, kineticReverse, facing; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx; ivec4 blockData1; ivec3 gearOrigin;
         // Camera eye clipped inside a solid voxel: treat that voxel (buffer-relative
         // _camBlock, the cell the eye is in) as air until the first real hit — the
         // ray passes through it and hits the next surface at its true distance, so
@@ -1151,7 +1378,7 @@ void main() {
         // normal solidity on every later trace. Water has its own skipNearWater pass.
         bool skipFirstBounce = skip;
         ivec3 airVoxel = (b == 0 && camClipped) ? _camBlock : ivec3(0x7FFFFFFF);
-        if (!traceAll(ro, rd, skipFirstBounce, airVoxel, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx, blockData1, kineticActive, kineticReverse)) { final += throu * GetSky(rd, at); break; }
+        if (!traceAll(ro, rd, skipFirstBounce, airVoxel, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx, blockData1, kineticActive, kineticReverse, facing, gearOrigin)) { final += throu * GetSky(rd, at); break; }
         int waterEff = (blockData1.w >> 10) & 0xF;
         bool waterHit = !isEnt && craftingIdx < 0 && waterEff == 2 && voxel != 21u;
         bool skipNearWater = underWater && b == 0 && waterHit;
@@ -1282,44 +1509,78 @@ void main() {
         } else {
             ivec4 d0 = texelFetch(u_BlockData, int(voxel)*4), d1 = blockData1, d2 = texelFetch(u_BlockData, int(voxel)*4+2);
             ivec4 d3 = texelFetch(u_BlockData, int(voxel)*4+3);
-            int face = (n.y > 0.9) ? 1 : ((n.y < -0.9) ? 0 : ((n.z < -0.9) ? 2 : ((n.z > 0.9) ? 3 : ((n.x < -0.9) ? 4 : 5))));
-            int tex = (face == 0) ? d0.x : (face == 1 ? d0.y : (face == 2 ? d0.z : (face == 3 ? d0.w : (face == 4 ? d1.x : d1.y))));
+            int texFace;
+            int tex;
             vec2 uv;
-            if (aabbIdx >= 0) {
-                // Use model-defined UVs from u_BlockAABBUVs for non-full blocks
-                vec3 bMin = texelFetch(u_BlockAABBs, aabbIdx * 2).xyz;
-                vec3 bMax = texelFetch(u_BlockAABBs, aabbIdx * 2 + 1).xyz;
-                vec3 blockFrac = hp - floor(hp);
-                vec3 rel = (blockFrac - bMin) / max(bMax - bMin, vec3(0.0001));
-                // Compute relative UV within face
-                float relU, relV;
-                if (abs(n.x) > 0.5) {
-                    relU = rel.z; relV = 1.0 - rel.y;
-                } else if (abs(n.y) > 0.5) {
-                    relU = rel.x; relV = rel.z;
+            int gAxis = 0; float gOuter = 0.0, gHalf = 0.0; int gSides = 0; ivec3 gCOff = ivec3(0);
+            if (getGear(int(voxel), gCOff, gAxis, gOuter, gSides, gHalf)) {
+                // Non-AABB gear prism (shafts/cogs/wheel). Flat faces lie perpendicular
+                // to the spin axis; the rim wraps around it. gearOrigin is the owning
+                // block, so multi-block large cogs sample against their true center.
+                vec3 gCenter = vec3(gearOrigin) + 0.5;
+                if (abs(n[gAxis]) > 0.5) {
+                    texFace = (gAxis == 0) ? (n.x > 0.0 ? 5 : 4)
+                            : (gAxis == 1) ? (n.y > 0.0 ? 1 : 0)
+                            : (n.z > 0.0 ? 3 : 2);
+                    vec2 p2 = (gAxis == 0) ? hp.yz : (gAxis == 1 ? hp.xz : hp.xy);
+                    vec2 c2 = (gAxis == 0) ? gCenter.yz : (gAxis == 1 ? gCenter.xz : gCenter.xy);
+                    uv = (p2 - c2) / (2.0 * gOuter) + 0.5;
                 } else {
-                    relU = rel.x; relV = 1.0 - rel.y;
+                    texFace = (gAxis == 1) ? 2 : 1;
+                    vec2 p2 = (gAxis == 0) ? hp.yz : (gAxis == 1 ? hp.xz : hp.xy);
+                    vec2 c2 = (gAxis == 0) ? gCenter.yz : (gAxis == 1 ? gCenter.xz : gCenter.xy);
+                    float ang = atan(p2.y - c2.y, p2.x - c2.x) * (0.5 / 3.14159265);
+                    float ax = (gAxis == 0) ? (hp.x - gCenter.x) : (gAxis == 1 ? (hp.y - gCenter.y) : (hp.z - gCenter.z));
+                    uv = vec2(fract(ang + 0.5), clamp(ax / (2.0 * gHalf) + 0.5, 0.0, 1.0));
                 }
-                // Fetch model UVs for this face from AABB UV buffer (packed int)
-                int packedUv = texelFetch(u_BlockAABBUVs, aabbIdx * 6 + face).r;
-                int u1 = packedUv & 0xFF;
-                int v1 = (packedUv >> 8) & 0xFF;
-                int u2 = (packedUv >> 16) & 0xFF;
-                int v2 = (packedUv >> 24) & 0xFF;
-                // Map relative UV through the model-specified texture region, normalized to [0,1]
-                uv = vec2(float(u1) + relU * float(u2 - u1), float(v1) + relV * float(v2 - v1)) / 16.0;
+                tex = faceTex(texFace, d0, d1);
             } else {
-                // Full-block planar UV
-                if (abs(n.x) > 0.5) uv = vec2(fract(hp.z), 1.0 - fract(hp.y));
-                else if (abs(n.y) > 0.5) uv = fract(hp.xz);
-                else uv = vec2(fract(hp.x), 1.0 - fract(hp.y));
+                int face = (n.y > 0.9) ? 1 : ((n.y < -0.9) ? 0 : ((n.z < -0.9) ? 2 : ((n.z > 0.9) ? 3 : ((n.x < -0.9) ? 4 : 5))));
+                // Directional Create machines rotate their model to their per-voxel facing
+                // (bits 16-18): the canonical front face (east, 5) is drawn on whichever
+                // world face the machine points at. UVs stay in world space so the front
+                // texture fills the whole face (these textures are radially symmetric).
+                texFace = face;
+                if (isDirectionalMachineBlock(int(voxel)) && facing <= 5u) {
+                    texFace = remapDirectionalFace(face, int(facing));
+                }
+                tex = faceTex(texFace, d0, d1);
+                if (aabbIdx >= 0) {
+                    // Use model-defined UVs from u_BlockAABBUVs for non-full blocks
+                    vec3 bMin = texelFetch(u_BlockAABBs, aabbIdx * 2).xyz;
+                    vec3 bMax = texelFetch(u_BlockAABBs, aabbIdx * 2 + 1).xyz;
+                    vec3 blockFrac = hp - floor(hp);
+                    vec3 rel = (blockFrac - bMin) / max(bMax - bMin, vec3(0.0001));
+                    // Compute relative UV within face
+                    float relU, relV;
+                    if (abs(n.x) > 0.5) {
+                        relU = rel.z; relV = 1.0 - rel.y;
+                    } else if (abs(n.y) > 0.5) {
+                        relU = rel.x; relV = rel.z;
+                    } else {
+                        relU = rel.x; relV = 1.0 - rel.y;
+                    }
+                    // Fetch model UVs for this face from AABB UV buffer (packed int)
+                    int packedUv = texelFetch(u_BlockAABBUVs, aabbIdx * 6 + face).r;
+                    int u1 = packedUv & 0xFF;
+                    int v1 = (packedUv >> 8) & 0xFF;
+                    int u2 = (packedUv >> 16) & 0xFF;
+                    int v2 = (packedUv >> 24) & 0xFF;
+                    // Map relative UV through the model-specified texture region, normalized to [0,1]
+                    uv = vec2(float(u1) + relU * float(u2 - u1), float(v1) + relV * float(v2 - v1)) / 16.0;
+                } else {
+                    // Full-block planar UV
+                    if (abs(n.x) > 0.5) uv = vec2(fract(hp.z), 1.0 - fract(hp.y));
+                    else if (abs(n.y) > 0.5) uv = fract(hp.xz);
+                    else uv = vec2(fract(hp.x), 1.0 - fract(hp.y));
 
-                // UV remapping for directional blocks (e.g. pistons) based on facing direction.
-                // d2.w bits 24-26 hold facing direction: 0=down,1=up,2=north,3=south,4=west,5=east.
-                int facingDir = (d2.w >> 24) & 0x7;
-                int faceType = (abs(n.x) > 0.5) ? 0 : ((abs(n.y) > 0.5) ? 1 : 2);
-                if (facingDir != 1) {
-                    uv = remapDirectionalUV(uv, faceType, facingDir);
+                    // UV remapping for directional blocks (e.g. pistons) based on facing direction.
+                    // d2.w bits 24-26 hold facing direction: 0=down,1=up,2=north,3=south,4=west,5=east.
+                    int facingDir = (d2.w >> 24) & 0x7;
+                    int faceType = (abs(n.x) > 0.5) ? 0 : ((abs(n.y) > 0.5) ? 1 : 2);
+                    if (facingDir != 1) {
+                        uv = remapDirectionalUV(uv, faceType, facingDir);
+                    }
                 }
             }
 
@@ -1330,7 +1591,7 @@ void main() {
             int animPacked = d2.w;
             bool isAnimated = (animPacked & 1) == 1;
             int frameCount = (animPacked >> 1) & 0x3F;
-            if (isAnimated && frameCount > 1 && ((d3.w >> face) & 1) == 1) {
+            if (isAnimated && frameCount > 1 && ((d3.w >> texFace) & 1) == 1) {
                 // Cycle through frames based on time (at ~20 fps)
                 int frame = int(floor(u_Time * 20.0)) % frameCount;
                 // Kinetic blocks (shafts/cogs/wheel) spin only when their network is
@@ -1443,7 +1704,7 @@ void main() {
             // Per-face tint mask in bits 24-29: bit j (0-5) set if face j should tint.
             { int ti = (d1.w >> 22) & 3;
               int tintFaceMask = (d1.w >> 24) & 0x3F;
-              if (ti > 0 && ((tintFaceMask >> face) & 1) == 1 && texSample.a > 0.5) {
+              if (ti > 0 && ((tintFaceMask >> texFace) & 1) == 1 && texSample.a > 0.5) {
                 alb *= vec3(d3.rgb) / 255.0;
               } }
 

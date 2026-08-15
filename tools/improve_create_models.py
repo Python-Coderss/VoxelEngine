@@ -552,8 +552,8 @@ model("millstone", cube_faces("millstone_top", "millstone_bottom",
                               "millstone_side", "millstone_side"))
 
 model("crushing_wheel", cube_faces("crusher_rim", "crusher_rim",
-                                   "crusher_wheel", "crusher_wheel",
-                                   "crusher_rim", "crusher_rim"))
+                                   "crusher_rim", "crusher_rim",
+                                   "crusher_wheel", "crusher_wheel"))
 model("crushing_wheel_standalone", cube_faces("crusher_rim", "crusher_rim",
                                               "crusher_wheel", "crusher_wheel",
                                               "crusher_rim", "crusher_rim"),
@@ -563,7 +563,7 @@ model("mechanical_press", cube_faces("press_top", "press_bottom",
                                      "press_side", "press_side",
                                      "press_side", "press_front"))
 
-model("mechanical_drill", cube_faces("drill_top", "drill_front",
+model("mechanical_drill", cube_faces("drill_top", "drill_side",
                                      "drill_side", "drill_side",
                                      "drill_side", "drill_front"))
 

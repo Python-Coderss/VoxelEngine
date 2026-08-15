@@ -55,6 +55,14 @@ public final class TutorialWorldAuthor {
     private static final int RS_REPEATER = com.voxel.world.RedstoneManager.BLOCK_REPEATER_BASE;
     private static final int RS_COMPARATOR = com.voxel.world.RedstoneManager.BLOCK_COMPARATOR_BASE;
 
+    // Multiblock gear part IDs (mirror KineticManager). Each block of a large cog
+    // (3x1x3) or water wheel (3x3x1) has a unique id and renders its own slice.
+    private static final int
+            LCOG_N = 422, LCOG_S = 423, LCOG_W = 424, LCOG_E = 425,
+            LCOG_NW = 426, LCOG_NE = 427, LCOG_SW = 428, LCOG_SE = 429,
+            WWHEEL_UP = 430, WWHEEL_DOWN = 431, WWHEEL_LEFT = 432, WWHEEL_RIGHT = 433,
+            WWHEEL_UPLEFT = 434, WWHEEL_UPRIGHT = 435, WWHEEL_DOWNLEFT = 436, WWHEEL_DOWNRIGHT = 437;
+
     /** A named showcase zone (used for the in-game title-card popups). */
     public static final class Zone {
         public final String name;
@@ -281,15 +289,16 @@ public final class TutorialWorldAuthor {
             int x = z.cx, zz = z.cz;
             floor(x - 14, zz - 10, x + 14, zz + 10, G, STONE_BRICK);
 
-            // Water channel feeding the water wheel. The wheel sits directly above
-            // it, so KineticManager.hasAdjacentWater() sees the wheel as a rotation
+            // Water channel feeding the water wheel. The wheel's bottom row sits in
+            // the channel, so KineticManager.hasAdjacentWater() sees it as a rotation
             // source and the whole network actually spins.
             for (int wx = x - 11; wx <= x - 8; wx++) water(wx, G, zz - 8);
-            place(x - 10, G + 1, zz - 8, WHEEL);
-            place(x - 10, G + 2, zz - 8, LARGE_COG);
+            placeWaterWheel(x - 10, G + 1, zz - 8);
+            placeLargeCog(x - 10, G + 3, zz - 8);
 
-            // Shaft line running east from the wheel (an adjacent kinetic chain).
-            for (int sx = x - 9; sx <= x + 12; sx++) place(sx, G + 1, zz - 8, SHAFT);
+            // Shaft line running east from the wheel's right edge (adjacent, so it's
+            // powered by the wheel). The large cog meshes on top of the wheel.
+            for (int sx = x - 8; sx <= x + 12; sx++) place(sx, G + 1, zz - 8, SHAFT);
             place(x - 8, G + 1, zz - 8, GEARSHIFT);
             place(x + 1, G + 1, zz - 8, CLUTCH);
 
@@ -1076,6 +1085,24 @@ public final class TutorialWorldAuthor {
         private void place(int x, int y, int z, int b, int facing) { sink.set(x, y, z, b, facing); }
 
         private void water(int x, int y, int z) { set(x, y, z, WATER); }
+
+        /** Stamps the 3x1x3 large cogwheel footprint (center 295 + 8 parts) at (cx, cy, cz). */
+        private void placeLargeCog(int cx, int cy, int cz) {
+            set(cx, cy, cz, LARGE_COG);
+            set(cx, cy, cz - 1, LCOG_N); set(cx, cy, cz + 1, LCOG_S);
+            set(cx - 1, cy, cz, LCOG_W); set(cx + 1, cy, cz, LCOG_E);
+            set(cx - 1, cy, cz - 1, LCOG_NW); set(cx + 1, cy, cz - 1, LCOG_NE);
+            set(cx - 1, cy, cz + 1, LCOG_SW); set(cx + 1, cy, cz + 1, LCOG_SE);
+        }
+
+        /** Stamps the 3x3x1 water-wheel footprint (center 296 + 8 parts) at (cx, cy, cz). */
+        private void placeWaterWheel(int cx, int cy, int cz) {
+            set(cx, cy, cz, WHEEL);
+            set(cx, cy + 1, cz, WWHEEL_UP); set(cx, cy - 1, cz, WWHEEL_DOWN);
+            set(cx - 1, cy, cz, WWHEEL_LEFT); set(cx + 1, cy, cz, WWHEEL_RIGHT);
+            set(cx - 1, cy + 1, cz, WWHEEL_UPLEFT); set(cx + 1, cy + 1, cz, WWHEEL_UPRIGHT);
+            set(cx - 1, cy - 1, cz, WWHEEL_DOWNLEFT); set(cx + 1, cy - 1, cz, WWHEEL_DOWNRIGHT);
+        }
 
         private void floor(int x0, int z0, int x1, int z1, int y, int b) {
             for (int x = x0; x <= x1; x++) for (int z = z0; z <= z1; z++) set(x, y, z, b);

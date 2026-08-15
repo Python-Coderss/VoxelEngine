@@ -177,6 +177,7 @@ public class Main {
     private static final int LOC_MOON_POOL_UP = 35;
     private static final int LOC_MOON_POOL_DIR = 36;
     private static final int LOC_UNDER_WATER = 37; // 1 when the camera eye is inside a water block
+    private static final int LOC_LARGE_COG = 38;   // 1 when any large cogwheel (295) is loaded
 
     /** True for any water block id (source 15 + flowing levels 150-164). */
     private static boolean isWaterId(int id) {
@@ -2763,6 +2764,7 @@ public class Main {
                 underWater = isWaterId(world.getVoxel(uwx, uwy - 1, uwz));
             }
             glProgramUniform1i(computeProgram, LOC_UNDER_WATER, underWater ? 1 : 0);
+            glProgramUniform1i(computeProgram, LOC_LARGE_COG, (ctx.kineticManager != null && ctx.kineticManager.hasLargeCog()) ? 1 : 0);
             // No camera-clipped uniform: the raytracer now detects the eye voxel
             // itself (reads _camBlock's solidity straight from the GPU pools) and
             // treats it as air on the first bounce — no CPU→GPU handoff to go stale.
@@ -4515,10 +4517,38 @@ public class Main {
         shaderBlockRegistry.register(295, 295);
         blockDataManager.registerBlock(295, "large_cogwheel", textureManager, mcModels);
         blockDataManager.setFullBlock(295, false);
+        // Large cogwheel multiblock parts (422-429): one per cell of the 3x1x3
+        // footprint around the center (295). Each renders its own slice of the
+        // 3-block gear via the raytracer's getGear() center-offset + per-cell clip.
+        String[] largeCogParts = {
+            "large_cogwheel_n", "large_cogwheel_s", "large_cogwheel_w", "large_cogwheel_e",
+            "large_cogwheel_nw", "large_cogwheel_ne", "large_cogwheel_sw", "large_cogwheel_se"
+        };
+        for (int i = 0; i < largeCogParts.length; i++) {
+            int partId = 422 + i;
+            blockRegistry.register(largeCogParts[i], partId);
+            shaderBlockRegistry.register(partId, partId);
+            blockDataManager.registerBlock(partId, "large_cogwheel_part", textureManager, mcModels);
+            blockDataManager.setFullBlock(partId, false);
+        }
         blockRegistry.register("water_wheel", 296);
         shaderBlockRegistry.register(296, 296);
         blockDataManager.registerBlock(296, "water_wheel", textureManager, mcModels);
         blockDataManager.setFullBlock(296, false);
+        // Water wheel multiblock parts (430-437): one per cell of the 3x3x1
+        // footprint around the center (296), rendered the same way as the large
+        // cogwheel parts (getGear center-offset + per-cell clip).
+        String[] waterWheelParts = {
+            "water_wheel_up", "water_wheel_down", "water_wheel_left", "water_wheel_right",
+            "water_wheel_upleft", "water_wheel_upright", "water_wheel_downleft", "water_wheel_downright"
+        };
+        for (int i = 0; i < waterWheelParts.length; i++) {
+            int partId = 430 + i;
+            blockRegistry.register(waterWheelParts[i], partId);
+            shaderBlockRegistry.register(partId, partId);
+            blockDataManager.registerBlock(partId, "water_wheel_part", textureManager, mcModels);
+            blockDataManager.setFullBlock(partId, false);
+        }
 
         // --- Colored redstone lamps (297-328): off = 297+2c, on = 297+2c+1 ---
         String[] lampColors = {"white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
