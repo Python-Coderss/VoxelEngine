@@ -134,7 +134,20 @@ public class BlazeBurnerManager {
         return (ux << 42) | (uy << 21) | uz;
     }
 
-    private static int unpackX(long key) { return (int) ((key >> 42) & 0x1FFFFFL); }
-    private static int unpackY(long key) { return (int) ((key >> 21) & 0x1FFFFFL); }
-    private static int unpackZ(long key) { return (int) (key & 0x1FFFFFL); }
+    // Sign-extend the 21-bit field back to a full int, so negative world
+    // coordinates (e.g. the tutorial machine works at z=-160) round-trip.
+    private static int unpackX(long key) {
+        long v = (key >> 42) & 0x1FFFFFL;
+        return (v & 0x100000L) != 0 ? (int) (v | 0xFFFFFFFFFFE00000L) : (int) v;
+    }
+
+    private static int unpackY(long key) {
+        long v = (key >> 21) & 0x1FFFFFL;
+        return (v & 0x100000L) != 0 ? (int) (v | 0xFFFFFFFFFFE00000L) : (int) v;
+    }
+
+    private static int unpackZ(long key) {
+        long v = key & 0x1FFFFFL;
+        return (v & 0x100000L) != 0 ? (int) (v | 0xFFFFFFFFFFE00000L) : (int) v;
+    }
 }

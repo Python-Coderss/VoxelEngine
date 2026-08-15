@@ -88,6 +88,8 @@ public class KineticManager {
     public static final int FLAG_REVERSE = 2;
 
     private static final int BLOCK_WATER = 15;
+    private static final int BLOCK_WATER_FLOWING_MIN = 150;
+    private static final int BLOCK_WATER_FLOWING_MAX = 156;
 
     private static final int[][] DIRS = {
         {-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}
@@ -394,16 +396,30 @@ public class KineticManager {
     private final Set<Long> scannedColumns = ConcurrentHashMap.newKeySet();
     private int rescanCooldown = 0;
 
-    private static long pack(int x, int y, int z) {
+    // Package-private so the negative-coordinate round-trip is regression-tested.
+    static long pack(int x, int y, int z) {
         long ux = x & 0x1FFFFFL;
         long uy = y & 0x1FFFFFL;
         long uz = z & 0x1FFFFFL;
         return (ux << 42) | (uy << 21) | uz;
     }
 
-    private static int unpackX(long key) { return (int) ((key >> 42) & 0x1FFFFFL); }
-    private static int unpackY(long key) { return (int) ((key >> 21) & 0x1FFFFFL); }
-    private static int unpackZ(long key) { return (int) (key & 0x1FFFFFL); }
+    // Sign-extend the 21-bit field back to a full int, so negative world
+    // coordinates (e.g. the tutorial machine works at z=-160) round-trip.
+    static int unpackX(long key) {
+        long v = (key >> 42) & 0x1FFFFFL;
+        return (v & 0x100000L) != 0 ? (int) (v | 0xFFFFFFFFFFE00000L) : (int) v;
+    }
+
+    static int unpackY(long key) {
+        long v = (key >> 21) & 0x1FFFFFL;
+        return (v & 0x100000L) != 0 ? (int) (v | 0xFFFFFFFFFFE00000L) : (int) v;
+    }
+
+    static int unpackZ(long key) {
+        long v = key & 0x1FFFFFL;
+        return (v & 0x100000L) != 0 ? (int) (v | 0xFFFFFFFFFFE00000L) : (int) v;
+    }
 
     public KineticManager(World world, ChunkManager chunkManager, RedstoneManager redstoneManager) {
         this.world = world;
@@ -565,10 +581,15 @@ public class KineticManager {
         }
     }
 
+    /** True when the block is water (source or flowing), mirroring FluidManager. */
+    static boolean isWaterBlock(int block) {
+        return block == BLOCK_WATER || (block >= BLOCK_WATER_FLOWING_MIN && block <= BLOCK_WATER_FLOWING_MAX);
+    }
+
     private boolean hasAdjacentWater(int x, int y, int z) {
         int[][] offs = {{-1, 0, 0}, {1, 0, 0}, {0, 0, -1}, {0, 0, 1}, {0, -1, 0}};
         for (int[] off : offs) {
-            if (world.getVoxel(x + off[0], y + off[1], z + off[2]) == BLOCK_WATER) return true;
+            if (isWaterBlock(world.getVoxel(x + off[0], y + off[1], z + off[2]))) return true;
         }
         return false;
     }
