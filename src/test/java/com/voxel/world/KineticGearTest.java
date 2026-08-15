@@ -3,8 +3,10 @@ package com.voxel.world;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Pins down the gear prism shapes used to render the kinetic blocks as
@@ -31,16 +33,35 @@ public class KineticGearTest {
     }
 
     @Test
-    public void shaftsAreRoundRodsOnTheirAxis() {
+    public void shaftsAreFourSidedSquareRods() {
         assertEquals(1, KineticManager.gearDescriptor(291).axis); // Y
         assertEquals(0, KineticManager.gearDescriptor(292).axis); // X
         assertEquals(2, KineticManager.gearDescriptor(293).axis); // Z
         for (int block = 291; block <= 293; block++) {
             KineticManager.GearDescriptor g = KineticManager.gearDescriptor(block);
-            assertEquals("shaft radius", 2 * P, g.radius, 1e-6f);
-            assertEquals("shaft spans the full block", 0.5f, g.halfThickness, 1e-6f);
-            assertEquals(16, g.sides);
+            assertEquals("shaft radius (2px -> 4x4)", 2 * P, g.radius, 1e-6f);
+            assertEquals("shaft spans the full block (16px)", 0.5f, g.halfThickness, 1e-6f);
+            assertEquals("square cross-section", 4, g.sides);
         }
+    }
+
+    @Test
+    public void squareShaftEntryIsAxisAligned() {
+        // Axis-aligned square (4-gon) of circumradius 0.125: half-extent 0.125/√2.
+        float half = (float) (0.125 / Math.sqrt(2.0));
+        // Ray from the left hits the left face at t = 2 - half.
+        assertEquals(2.0f - half, KineticManager.intersectGearEntry(-2f, 0f, 1f, 0f, 0f, 0f, 0.125f, 4), 1e-4f);
+        // Ray offset above the square misses.
+        assertEquals(-1f, KineticManager.intersectGearEntry(-2f, 0.2f, 1f, 0f, 0f, 0f, 0.125f, 4), 1e-6f);
+    }
+
+    @Test
+    public void shaftThroughOnlyOnGearCenters() {
+        assertTrue(KineticManager.isShaftThrough(294));
+        assertTrue(KineticManager.isShaftThrough(295));
+        assertTrue(KineticManager.isShaftThrough(296));
+        for (int id = 422; id <= 437; id++) assertFalse("part " + id, KineticManager.isShaftThrough(id));
+        for (int id : new int[]{291, 292, 293, 2, 0}) assertFalse(KineticManager.isShaftThrough(id));
     }
 
     @Test

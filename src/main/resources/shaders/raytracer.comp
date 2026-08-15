@@ -668,9 +668,9 @@ int faceTex(int face, ivec4 d0, ivec4 d1) {
 // large cogwheel 295, water wheel 296) plus the multiblock part blocks
 // (large cogwheel 422-429, water wheel 430-437). axis: 0=X,1=Y,2=Z; radius and
 // halfThick are in block units (1 block = 1.0). The cross-section is a regular
-// convex `sides`-gon (16-sided) extruded along the axis; the gear teeth and
-// spokes are drawn by the block textures (cogwheel/large_cogwheel/wheel), not
-// by geometry.
+// convex `sides`-gon extruded along the axis: shafts are 4-sided (square, 4x4
+// pixels) and gears are 16-sided; the gear teeth and spokes are drawn by the
+// block textures (cogwheel/large_cogwheel/wheel), not by geometry.
 //
 // centerOff is the voxel offset from the OWNING cell to the gear's true center
 // (nonzero only for multiblock parts). Every block of a multiblock renders the
@@ -727,9 +727,9 @@ bool getGear(int id, int facing, out ivec3 centerOff, out int axis, out int mode
     const float P = 1.0 / 16.0;
     centerOff = ivec3(0);
     modelAxis = 1; // orientable gears + their parts use the horizontal (axis-Y) model
-    if (id == 291) { axis = 1; modelAxis = 1; radius = 2.0*P; sides = 16; halfThick = 8.0*P; return true; } // shaft Y
-    if (id == 292) { axis = 0; modelAxis = 0; radius = 2.0*P; sides = 16; halfThick = 8.0*P; return true; } // shaft X
-    if (id == 293) { axis = 2; modelAxis = 2; radius = 2.0*P; sides = 16; halfThick = 8.0*P; return true; } // shaft Z
+    if (id == 291) { axis = 1; modelAxis = 1; radius = 2.0*P; sides = 4; halfThick = 8.0*P; return true; } // shaft Y (square 4x4x16)
+    if (id == 292) { axis = 0; modelAxis = 0; radius = 2.0*P; sides = 4; halfThick = 8.0*P; return true; } // shaft X (square 4x4x16)
+    if (id == 293) { axis = 2; modelAxis = 2; radius = 2.0*P; sides = 4; halfThick = 8.0*P; return true; } // shaft Z (square 4x4x16)
     if (id == 294) { axis = axisFromFacing(facing); radius = 8.0*P; sides = 16; halfThick = 3.0*P; return true; } // cogwheel (full block)
     if (id == 295) { axis = axisFromFacing(facing); radius = 24.0*P; sides = 16; halfThick = 3.0*P; return true; } // large cogwheel (3x1x3)
     if (id == 296) { axis = axisFromFacing(facing); if (axis == 1) axis = 2; radius = 24.0*P; sides = 16; halfThick = 4.0*P; return true; } // water wheel (vertical disc)
@@ -767,6 +767,13 @@ bool getGear(int id, int facing, out ivec3 centerOff, out int axis, out int mode
     return false;
 }
 
+// Whether a block carries a coaxial shaft through its hub. Only the center
+// blocks of the cogs/wheels do (294/295/296); the multiblock rim/spoke parts
+// (422-437) don't, so the shaft pokes out of the gear's center faces only.
+bool getShaftThrough(int id) {
+    return id == 294 || id == 295 || id == 296;
+}
+
 // Ray vs a convex N-sided prism (gear) extruded along a world axis.
 // axis: 0=X, 1=Y, 2=Z. The cross-section is a regular `sides`-gon of the given
 // radius. Returns the entry distance and surface normal.
@@ -789,9 +796,12 @@ bool intersectGear(vec3 ro, vec3 rd, vec3 center, int axis, float radius, int si
 
     float tEnter = -1e30, tExit = 1e30;
     vec2 enterN = vec2(1.0, 0.0);
+    // π/4 offset turns a 4-gon into an axis-aligned square (shafts), so the four
+    // flat faces align with the world axes instead of reading as a diamond.
+    float rot = (sides == 4) ? 0.78539816 : 0.0;
     for (int i = 0; i < sides; i++) {
-        float a0 = float(i) * 6.2831853 / float(sides);
-        float a1 = float(i + 1) * 6.2831853 / float(sides);
+        float a0 = rot + float(i) * 6.2831853 / float(sides);
+        float a1 = rot + float(i + 1) * 6.2831853 / float(sides);
         vec2 p0 = c + vec2(cos(a0), sin(a0)) * radius;
         vec2 p1 = c + vec2(cos(a1), sin(a1)) * radius;
         vec2 edge = p1 - p0;
@@ -831,7 +841,7 @@ bool intersectGear(vec3 ro, vec3 rd, vec3 center, int axis, float radius, int si
     return true;
 }
 
-bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out ivec4 resBlockData1, out uint resKineticActive, out uint resKineticReverse, out uint resFacing, out vec3 resNormal, out ivec3 resGearOrigin) {
+bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out ivec4 resBlockData1, out uint resKineticActive, out uint resKineticReverse, out uint resFacing, out vec3 resNormal, out ivec3 resGearOrigin, out int resGearShaft) {
     ivec3 bufMin = ivec3(0);
     ivec3 bufMax = ivec3(WORLD_SIZE);
     float tn, tf; if (!intersectAABB(ro, rd, vec3(bufMin), vec3(bufMax), tn, tf)) return false;
@@ -840,7 +850,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
     vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
     int side = 0; if (skipFirst) side = advanceDDA(mp, sd, dd, s);
     resBlockData1 = ivec4(0); // block-data d1 threaded to the caller (avoids a redundant texelFetch in main)
-    resKineticActive = 0u; resKineticReverse = 0u; resFacing = 1u; resNormal = vec3(0.0, 1.0, 0.0); resGearOrigin = ivec3(0);
+    resKineticActive = 0u; resKineticReverse = 0u; resFacing = 1u; resNormal = vec3(0.0, 1.0, 0.0); resGearOrigin = ivec3(0); resGearShaft = 0;
     // Per-chunk SDF sphere-trace step is gated at SDF>1.5; when close to surface
     // (SDF<=1.5) or crossing a chunk boundary, fallback to per-voxel DDA.
     for (int i = 0; i < 256; i++) {  // bumped from 72: sphere-trace skips chunks fast
@@ -947,23 +957,34 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                         ivec3 gCenterOff; int gAxis, gModelAxis; float gOuter, gHalf; int gSides;
                         bool isGear = getGear(int(voxelType), int(facingVox), gCenterOff, gAxis, gModelAxis, gOuter, gSides, gHalf);
                         if (isGear) {
-                            float gT; vec3 gN;
+                            const float P = 1.0 / 16.0;
                             vec3 gCenter = vec3(mp + gCenterOff) + 0.5;
-                            if (intersectGear(ro, rd, gCenter, gAxis, gOuter, gSides, gHalf, gT, gN)) {
-                                if (gT > 0.0 && gT < st + min(sd.x, min(sd.y, sd.z))) {
-                                    resVoxel = voxelType;
-                                    resWirePower = wirePower;
-                                    resWireConn = wireConn;
-                                    resKineticActive = kinActive;
-                                    resKineticReverse = kinReverse;
-                                    resFacing = facingVox;
-                                    resT = gT;
-                                    resAabbIdx = -1;
-                                    resBlockData1 = d1;
-                                    resNormal = gN;
-                                    resGearOrigin = mp + gCenterOff;
-                                    return true;
-                                }
+                            float cellExit = st + min(sd.x, min(sd.y, sd.z));
+                            // Disc prism hit.
+                            float gT; vec3 gN;
+                            bool discHit = intersectGear(ro, rd, gCenter, gAxis, gOuter, gSides, gHalf, gT, gN)
+                                        && gT > 0.0 && gT < cellExit;
+                            // Coaxial 4x4x16 square shaft through the hub (cog/large
+                            // cog/water wheel centers only) — pokes out both faces.
+                            float sT = 0.0; vec3 sN = vec3(0.0);
+                            bool shaftHit = getShaftThrough(int(voxelType))
+                                        && intersectGear(ro, rd, gCenter, gAxis, 2.0*P, 4, 8.0*P, sT, sN)
+                                        && sT > 0.0 && sT < cellExit;
+                            if (discHit || shaftHit) {
+                                if (shaftHit && (!discHit || sT <= gT)) { gT = sT; gN = sN; resGearShaft = 1; }
+                                else resGearShaft = 0;
+                                resVoxel = voxelType;
+                                resWirePower = wirePower;
+                                resWireConn = wireConn;
+                                resKineticActive = kinActive;
+                                resKineticReverse = kinReverse;
+                                resFacing = facingVox;
+                                resT = gT;
+                                resAabbIdx = -1;
+                                resBlockData1 = d1;
+                                resNormal = gN;
+                                resGearOrigin = mp + gCenterOff;
+                                return true;
                             }
                         }
                         // Gears (and their multiblock parts) render exclusively via the
@@ -1039,10 +1060,10 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
     return false;
 }
 
-bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out int resEntIdx, out int resCraftingIdx, out ivec4 resBlockData1, out uint resKineticActive, out uint resKineticReverse, out uint resFacing, out ivec3 resGearOrigin) {
-    resT = 1e30; resEntUv = vec2(0.5); isEnt = false; isHpBar = false; hpRatio = 1.0; resWirePower = 0u; resWireConn = 0u; resAabbIdx = -1; resEntIdx = -1; resCraftingIdx = -1; resBlockData1 = ivec4(0); resKineticActive = 0u; resKineticReverse = 0u; resFacing = 1u; resGearOrigin = ivec3(0);
-    float tV; int sideV; uint voxelV, wirePowerV, wireConnV, kinActiveV, kinReverseV, facingV; int aabbIdxV; vec3 normalV; ivec3 gearOriginV;
-    if (traceWorld(ro, rd, skipFirst, airVoxel, lastMediumTag, tV, sideV, voxelV, wirePowerV, wireConnV, aabbIdxV, resBlockData1, kinActiveV, kinReverseV, facingV, normalV, gearOriginV)) {
+bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out int resEntIdx, out int resCraftingIdx, out ivec4 resBlockData1, out uint resKineticActive, out uint resKineticReverse, out uint resFacing, out ivec3 resGearOrigin, out int resGearShaft) {
+    resT = 1e30; resEntUv = vec2(0.5); isEnt = false; isHpBar = false; hpRatio = 1.0; resWirePower = 0u; resWireConn = 0u; resAabbIdx = -1; resEntIdx = -1; resCraftingIdx = -1; resBlockData1 = ivec4(0); resKineticActive = 0u; resKineticReverse = 0u; resFacing = 1u; resGearOrigin = ivec3(0); resGearShaft = 0;
+    float tV; int sideV; uint voxelV, wirePowerV, wireConnV, kinActiveV, kinReverseV, facingV; int aabbIdxV; vec3 normalV; ivec3 gearOriginV; int gearShaftV;
+    if (traceWorld(ro, rd, skipFirst, airVoxel, lastMediumTag, tV, sideV, voxelV, wirePowerV, wireConnV, aabbIdxV, resBlockData1, kinActiveV, kinReverseV, facingV, normalV, gearOriginV, gearShaftV)) {
         resT = tV; resVoxel = voxelV;
         resWirePower = wirePowerV;
         resWireConn = wireConnV;
@@ -1051,6 +1072,7 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumT
         resFacing = facingV;
         resAabbIdx = aabbIdxV;
         resGearOrigin = gearOriginV;
+        resGearShaft = gearShaftV;
         resN = ((voxelV >= 291u && voxelV <= 296u) || (voxelV >= 422u && voxelV <= 437u))
             ? normalV
             : (sideV == 0) ? vec3(-sign(rd.x), 0, 0) : ((sideV == 1) ? vec3(0, -sign(rd.y), 0) : vec3(0, 0, -sign(rd.z)));
@@ -1419,7 +1441,7 @@ void main() {
 
 
     for (int b = 0; b < 2; b++) {  // reduced from 4 → 2 bounces for perf
-        float t; vec3 n; uint voxel, eTex, wirePower, wireConn, kineticActive, kineticReverse, facing; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx; ivec4 blockData1; ivec3 gearOrigin;
+        float t; vec3 n; uint voxel, eTex, wirePower, wireConn, kineticActive, kineticReverse, facing; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx; ivec4 blockData1; ivec3 gearOrigin; int gearShaft = 0;
         // Camera eye clipped inside a solid voxel: treat that voxel (buffer-relative
         // _camBlock, the cell the eye is in) as air until the first real hit — the
         // ray passes through it and hits the next surface at its true distance, so
@@ -1429,7 +1451,7 @@ void main() {
         // normal solidity on every later trace. Water has its own skipNearWater pass.
         bool skipFirstBounce = skip;
         ivec3 airVoxel = (b == 0 && camClipped) ? _camBlock : ivec3(0x7FFFFFFF);
-        if (!traceAll(ro, rd, skipFirstBounce, airVoxel, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx, blockData1, kineticActive, kineticReverse, facing, gearOrigin)) { final += throu * GetSky(rd, at); break; }
+        if (!traceAll(ro, rd, skipFirstBounce, airVoxel, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx, blockData1, kineticActive, kineticReverse, facing, gearOrigin, gearShaft)) { final += throu * GetSky(rd, at); break; }
         int waterEff = (blockData1.w >> 10) & 0xF;
         bool waterHit = !isEnt && craftingIdx < 0 && waterEff == 2 && voxel != 21u;
         bool skipNearWater = underWater && b == 0 && waterHit;
@@ -1569,6 +1591,18 @@ void main() {
                 // to the spin axis; the rim wraps around it. gearOrigin is the owning
                 // block, so multi-block large cogs sample against their true center.
                 vec3 gCenter = vec3(gearOrigin) + 0.5;
+                ivec4 tD0 = d0; ivec4 tD1 = d1;
+                if (gearShaft == 1) {
+                    // Coaxial 4x4x16 andesite shaft through the hub. Reuse the
+                    // canonical axis-Y shaft model (block 291) so axis/axis_top are
+                    // sampled, and remap the gear's actual axis back onto it below.
+                    gModelAxis = 1;
+                    gOuter = 2.0 / 16.0;
+                    gHalf = 8.0 / 16.0;
+                    gSides = 4;
+                    tD0 = texelFetch(u_BlockData, 291 * 4);
+                    tD1 = texelFetch(u_BlockData, 291 * 4 + 1);
+                }
                 if (abs(n[gAxis]) > 0.5) {
                     texFace = (gAxis == 0) ? (n.x > 0.0 ? 5 : 4)
                             : (gAxis == 1) ? (n.y > 0.0 ? 1 : 0)
@@ -1585,7 +1619,7 @@ void main() {
                     uv = vec2(fract(ang + 0.5), clamp(ax / (2.0 * gHalf) + 0.5, 0.0, 1.0));
                 }
                 texFace = remapGearFace(texFace, gAxis, gModelAxis);
-                tex = faceTex(texFace, d0, d1);
+                tex = faceTex(texFace, tD0, tD1);
             } else {
                 int face = (n.y > 0.9) ? 1 : ((n.y < -0.9) ? 0 : ((n.z < -0.9) ? 2 : ((n.z > 0.9) ? 3 : ((n.x < -0.9) ? 4 : 5))));
                 // Directional Create machines rotate their model to their per-voxel facing
@@ -1643,7 +1677,9 @@ void main() {
             int animPacked = d2.w;
             bool isAnimated = (animPacked & 1) == 1;
             int frameCount = (animPacked >> 1) & 0x3F;
-            if (isAnimated && frameCount > 1 && ((d3.w >> texFace) & 1) == 1) {
+            // The coaxial shaft through a gear's hub samples the static andesite
+            // axis/axis_top textures, so it must not inherit the gear's frame strip.
+            if (gearShaft == 0 && isAnimated && frameCount > 1 && ((d3.w >> texFace) & 1) == 1) {
                 // Cycle through frames based on time (at ~20 fps)
                 int frame = int(floor(u_Time * 20.0)) % frameCount;
                 // Kinetic blocks (shafts/cogs/wheel) spin only when their network is
