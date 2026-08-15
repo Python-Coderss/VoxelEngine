@@ -2017,6 +2017,7 @@ public class Main {
         ctx.worldTime = worldTime;
         VillagerEntity.setGlobalWorldTime(worldTime);
         blockInteraction.updateMining(dt);
+        blockInteraction.updatePlacementPreview();
 
         if (cameraShake > 0) cameraShake -= dt * 5.0f;
         if (ctx.cameraShake > 0) ctx.cameraShake -= dt * 5.0f;
@@ -2799,6 +2800,19 @@ public class Main {
             // Upload destroy stage base layer index (computed from Minecraft destroy_stage_0 texture)
             int destroyBaseLayer = textureManager.getTextureIndex("destroy_stage_0");
             glProgramUniform1i(computeProgram, 21, destroyBaseLayer < 0 ? -1 : destroyBaseLayer);
+
+            // Semi-transparent placement preview (ghost block). previewX/Y/Z are in
+            // ABSOLUTE world coords like breakTarget*, so subtract the sliding-window
+            // offset so the shader's buffer-relative DDA matches it.
+            if (ctx.previewBlock >= 0) {
+                glProgramUniform3i(computeProgram, 39, ctx.previewX - wox, ctx.previewY - woy, ctx.previewZ - woz);
+                glProgramUniform1i(computeProgram, 40, ctx.previewBlock);
+                glProgramUniform1i(computeProgram, 41, ctx.previewFacing);
+            } else {
+                glProgramUniform3i(computeProgram, 39, 0, 0, 0);
+                glProgramUniform1i(computeProgram, 40, -1);
+                glProgramUniform1i(computeProgram, 41, 0);
+            }
 
             // Upload UI UVs
             glUniform4f(locHeartUVs, hud.uvHeartFull.x, hud.uvHeartFull.y, hud.uvHeartFull.z, hud.uvHeartFull.w);

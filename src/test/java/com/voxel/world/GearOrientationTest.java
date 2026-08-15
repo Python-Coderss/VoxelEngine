@@ -119,6 +119,31 @@ public class GearOrientationTest {
     }
 
     @Test
+    public void facingForAxisIsTheInverseOfAxisFromFacing() {
+        assertEquals(1, KineticManager.facingForAxis(1)); // Y -> up
+        assertEquals(3, KineticManager.facingForAxis(2)); // Z -> south
+        assertEquals(5, KineticManager.facingForAxis(0)); // X -> east
+        // Round-trip: any facing maps back to the same axis.
+        for (int f = 0; f <= 5; f++) {
+            assertEquals("facing " + f, KineticManager.axisFromFacing(f),
+                    KineticManager.axisFromFacing(KineticManager.facingForAxis(KineticManager.axisFromFacing(f))));
+        }
+    }
+
+    @Test
+    public void cogInheritsAxleFromClickedShaft() {
+        // Create-style: a cog clicked onto a shaft mounts coaxially, so the resolved
+        // facing has the SAME axis as the shaft regardless of which face is clicked.
+        // Shafts: 291 = Y, 292 = X, 293 = Z.
+        assertEquals(1, KineticManager.axisFromFacing(
+                KineticManager.facingForAxis(KineticManager.shaftAxis(291))));
+        assertEquals(0, KineticManager.axisFromFacing(
+                KineticManager.facingForAxis(KineticManager.shaftAxis(292))));
+        assertEquals(2, KineticManager.axisFromFacing(
+                KineticManager.facingForAxis(KineticManager.shaftAxis(293))));
+    }
+
+    @Test
     public void placementFacingFollowsClickedFace() {
         int[] hit = {1, 0, 0, 0, 0, 0}; // clicked +X face (block at x=1, place at x=0)
         assertEquals(5, BlockInteraction.facingFromClickedFace(hit, 0, 0, 0));
