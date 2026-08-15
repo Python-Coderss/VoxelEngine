@@ -29,6 +29,17 @@ public class BlockDataManager {
     public final Map<Integer, BlockData> blockRegistry = new HashMap<>();
     private final Map<String, Integer> nameToId = new HashMap<>();
 
+    // ── Flat per-block property caches for the lighting hot path ──
+    // blockRegistry.get(id) + String manipulation on every BFS neighbour visit
+    // was the single largest cost in flood-fill with thousands of light sources
+    // (nether lava lakes). These arrays are built lazily and indexed by block ID
+    // so the flood fill does a plain array read instead of a HashMap + toLowerCase.
+    private int[] opacityById;
+    private int[] emissiveById;
+    private int[] lightColorById;
+    private byte[] fullBlockById;
+    private volatile boolean propertyArraysDirty = true;
+
     // OpenGL IDs for the Buffer and the Texture Buffer Object (TBO).
     private int tboId;
     private int textureId;
@@ -177,6 +188,7 @@ public class BlockDataManager {
         if (blockRegistry.containsKey(id)) {
             throw new RuntimeException("Block ID collision detected! ID " + id + " is already registered to '" + blockRegistry.get(id).name + "'. Attempted to register '" + name + "'.");
         }
+        propertyArraysDirty = true;
         BlockData data = new BlockData();
         data.name = name;
         Map<String, String> textureMap = new HashMap<>();
@@ -810,7 +822,11 @@ public class BlockDataManager {
     public int getOpacity(int blockId) {
         if (blockId <= 0) return 0;
         BlockData data = blockRegistry.get(blockId);
-        if (data == null) return 0;
+        return data == null ? 0 : opacityOf(data);
+    }
+
+    /** Static opacity derivation shared by {@link #getOpacity} and the flat cache. */
+    private static int opacityOf(BlockData data) {
         if (data.isFullBlock) return 16; // fully opaque
         if (data.effect == MaterialEffect.LIQUID) return 3; // water, lava
         if (data.effect == MaterialEffect.PORTAL) return 0; // portals don't block light
@@ -822,6 +838,70 @@ public class BlockDataManager {
         // Glass and most non-full blocks are transparent to light
         return 0;
     }
+
+    // ── Flat property-cache accessors (lighting hot path) ──
+
+    /** Rebuilds the flat per-block property arrays from the registry. */
+    private void ensurePropertyArrays() {
+        if (!propertyArraysDirty) return;
+        synchronized (this) {
+            if (!propertyArraysDirty) return;
+            int maxId = 0;
+            for (int id : blockRegistry.keySet()) if (id > maxId) maxId = id;
+            int[] op = new int[maxId + 1];
+            int[] em = new int[maxId + 1];
+            int[] lc = new int[maxId + 1];
+            byte[] fb = new byte[maxId + 1];
+            for (java.util.Map.Entry<Integer, BlockData> e : blockRegistry.entrySet()) {
+                int id = e.getKey();
+                BlockData d = e.getValue();
+                op[id] = opacityOf(d);
+                em[id] = Math.min(d.emissive, 255);
+                lc[id] = d.lightColor & 0xFFFFFF;
+                fb[id] = (byte) (d.isFullBlock ? 1 : 0);
+            }
+            opacityById = op;
+            emissiveById = em;
+            lightColorById = lc;
+            fullBlockById = fb;
+            propertyArraysDirty = false;
+        }
+    }
+
+    /** Opacity in a flat array (blockId → opacity), built lazily. Unknown IDs read 0. */
+    public int getOpacityFast(int blockId) {
+        ensurePropertyArrays();
+        int[] arr = opacityById;
+        return (blockId > 0 && blockId < arr.length) ? arr[blockId] : 0;
+    }
+
+    /** Emissive in a flat array (blockId → emissive), built lazily. Unknown IDs read 0. */
+    public int getEmissiveFast(int blockId) {
+        ensurePropertyArrays();
+        int[] arr = emissiveById;
+        return (blockId > 0 && blockId < arr.length) ? arr[blockId] : 0;
+    }
+
+    /** Light color in a flat array (blockId → 0xRRGGBB), built lazily. Unknown IDs read white. */
+    public int getLightColorFast(int blockId) {
+        ensurePropertyArrays();
+        int[] arr = lightColorById;
+        return (blockId > 0 && blockId < arr.length) ? arr[blockId] : 0xFFFFFF;
+    }
+
+    /** Full-block flag in a flat array (blockId → 0/1), built lazily. Unknown IDs read 0. */
+    public boolean isFullBlockFast(int blockId) {
+        ensurePropertyArrays();
+        byte[] arr = fullBlockById;
+        return blockId > 0 && blockId < arr.length && arr[blockId] != 0;
+    }
+
+    /** Direct reference to the opacity array (caller bounds-checks). Ensures the cache is built. */
+    public int[] getOpacityArray() { ensurePropertyArrays(); return opacityById; }
+    /** Direct reference to the emissive array. */
+    public int[] getEmissiveArray() { ensurePropertyArrays(); return emissiveById; }
+    /** Direct reference to the light-color array. */
+    public int[] getLightColorArray() { ensurePropertyArrays(); return lightColorById; }
 
     public java.awt.Color getAlbedo(int blockId) {
         BlockData data = blockRegistry.get(blockId);
