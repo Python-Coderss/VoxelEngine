@@ -248,6 +248,13 @@ public class GameContext {
     public boolean leftMousePressedThisFrame = false;
     public double lastPortalTeleportTime = 0;
 
+    // --- Block placement preview (semi-transparent ghost) ---
+    public int previewX = Integer.MIN_VALUE;   // placement cell (world coords)
+    public int previewY = Integer.MIN_VALUE;
+    public int previewZ = Integer.MIN_VALUE;
+    public int previewBlock = -1;              // block id being previewed, -1 = none
+    public int previewFacing = 0;              // facing/axle for directional blocks
+
     // --- Combat ---
     public int lockedEntityIndex = -1;
     public int comboCount = 0;

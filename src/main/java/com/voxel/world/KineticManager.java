@@ -211,6 +211,18 @@ public class KineticManager {
     }
 
     /**
+     * Inverse of {@link #axisFromFacing}: a canonical facing along the given spin
+     * axis (0=X,1=Y,2=Z). Used by placement to re-orient a cog/appliance onto an
+     * existing shaft or gear, so the two connect end-to-end/coaxially. Y -> up(1),
+     * Z -> south(3), X -> east(5).
+     */
+    public static int facingForAxis(int axis) {
+        if (axis == 1) return 1;
+        if (axis == 2) return 3;
+        return 5;
+    }
+
+    /**
      * Canonical disc-plane offset (du,dv) -> world offset {dx,dy,dz} for a gear
      * with the given spin axis, mirroring raytracer.comp's localToWorld().
      *   axis Y: (x,z)=(du,dv); axis X: (z,y)=(du,dv); axis Z: (x,y)=(du,dv).

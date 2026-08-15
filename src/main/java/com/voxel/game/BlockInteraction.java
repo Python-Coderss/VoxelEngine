@@ -1115,9 +1115,10 @@ public class BlockInteraction {
         if (existing != 0) return;
         if (intersectsPlayer(px, py, pz)) return;
         int placeBlockId = def.blockId;
-        // Gear axle facing (bits 16-18): the direction the axle points, derived from
-        // the clicked face — same rule as the directional Create machines.
-        int gearFacing = facingFromClickedFace(hit, px, py, pz);
+        // Gear axle facing (bits 16-18): the direction the axle points. Create-style:
+        // a cog/appliance clicked onto an existing shaft or gear inherits that
+        // component's axle so it connects; otherwise the clicked face decides.
+        int gearFacing = placementFacing(placeBlockId, hit, px, py, pz);
         // Large cogwheel: stamp a 3x3 multiblock footprint (center 295 + 8 ghost parts).
         if (placeBlockId == 295) {
             if (!placeLargeCogwheel(px, py, pz, gearFacing)) return;
@@ -1215,6 +1216,44 @@ public class BlockInteraction {
         if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
     }
 
+    /**
+     * Recomputes the semi-transparent placement preview each frame: the cell the
+     * selected block would occupy, its resolved block id (oriented variants), and
+     * its facing. Mirrors the head of {@link #attemptPlaceBlock()} without placing.
+     * Sets {@code ctx.previewBlock = -1} when there is nothing to preview.
+     */
+    public void updatePlacementPreview() {
+        ctx.previewBlock = -1;
+        if (ctx.inventoryOpen || ctx.commandMode || ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive
+                || ctx.tvCutsceneActive || ctx.chestOpen || ctx.player.isDead()) return;
+        ItemDefinitions.ItemStack selected = ctx.playerInventory.getSelected();
+        if (selected == null) return;
+        ItemDefinitions.ItemDefinition def = ctx.itemDefinitions.getDefinition(selected.itemId);
+        if (def == null || def.kind != ItemDefinitions.ItemKind.BLOCK) return;
+        int[] hit = raycastBlock(6.0f);
+        if (hit == null) return;
+        int px = hit[3], py = hit[4], pz = hit[5];
+        if (ctx.world.getVoxel(px, py, pz) != 0) return;
+        if (intersectsPlayer(px, py, pz)) return;
+        int placeBlockId = def.blockId;
+        // Orientable logs + shafts resolve their axis variant from the clicked face
+        // (same rule as attemptPlaceBlock; rails/pistons just preview their base id).
+        if (placeBlockId == 5) {
+            int ldx = hit[0] - px, ldz = hit[2] - pz;
+            if (ldx != 0) placeBlockId = 260;
+            else if (ldz != 0) placeBlockId = 261;
+        } else if (placeBlockId == 291) {
+            int ldx = hit[0] - px, ldz = hit[2] - pz;
+            if (ldx != 0) placeBlockId = 292;
+            else if (ldz != 0) placeBlockId = 293;
+        }
+        ctx.previewX = px;
+        ctx.previewY = py;
+        ctx.previewZ = pz;
+        ctx.previewBlock = placeBlockId;
+        ctx.previewFacing = placementFacing(def.blockId, hit, px, py, pz);
+    }
+
     public void resetMining() {
         ctx.breakTargetX = Integer.MIN_VALUE;
         ctx.breakTargetY = Integer.MIN_VALUE;
@@ -1235,6 +1274,25 @@ public class BlockInteraction {
         if (Math.abs(dx) >= Math.abs(dy) && Math.abs(dx) >= Math.abs(dz)) return dx > 0 ? 5 : 4;
         if (Math.abs(dy) >= Math.abs(dz)) return dy > 0 ? 1 : 0;
         return dz > 0 ? 3 : 2;
+    }
+
+    /**
+     * Create-style placement facing for a kinetic block: when the block is clicked
+     * onto an existing shaft/gear, inherit that component's axle (so a cog mounts
+     * coaxially on a shaft and appliances bolt onto shaft ends, connecting
+     * kinetically). Otherwise fall back to the clicked face normal. Shafts are
+     * excluded — their axis is the clicked face normal by definition.
+     */
+    private int placementFacing(int placingBlock, int[] hit, int px, int py, int pz) {
+        if (placingBlock == 291 || placingBlock == 292 || placingBlock == 293) {
+            return facingFromClickedFace(hit, px, py, pz);
+        }
+        int clicked = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
+        if (KineticManager.isGearBlock(clicked)) {
+            int cf = (ctx.world.getRawVoxel(hit[0], hit[1], hit[2]) >> 16) & 0x7;
+            return KineticManager.facingForAxis(KineticManager.gearAxis(clicked, cf));
+        }
+        return facingFromClickedFace(hit, px, py, pz);
     }
 
     /**
