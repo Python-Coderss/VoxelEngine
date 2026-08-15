@@ -595,7 +595,11 @@ public class HudUI {
         float cSlotW = 64, cSlotH = 64, cGap = 8;
         float cGridW = CREATIVE_COLS * cSlotW + (CREATIVE_COLS - 1) * cGap;
         float cGridH = CREATIVE_ROWS * cSlotH + (CREATIVE_ROWS - 1) * cGap;
-        float cX = (main.width - cGridW) / 2f;
+        // Sit to the RIGHT of the survival inventory (which occupies the left
+        // edge) instead of centering, so the two panes never overlap. On narrow
+        // windows fall back to centering.
+        float cX = Main.HOTBAR_X - 8 + Main.INVENTORY_PANEL_WIDTH + 16;
+        if (cX + cGridW + 28 > main.width) cX = (main.width - cGridW) / 2f;
         float cY = (main.height - cGridH) / 2f - 20;
         creativePanelBg = new UILayer.UIElement(
             new Vector2f(cX - 14, cY - 44),
