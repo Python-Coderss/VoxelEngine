@@ -762,6 +762,28 @@ public class BlockDataManager {
         if (data != null) data.isFullBlock = full;
     }
 
+    /**
+     * Overrides the material effect. Used to un-mark blocks whose name trips the
+     * "water"/"lava" liquid heuristic but are not actually liquid (e.g. the
+     * water wheel, which is a solid kinetic block).
+     */
+    public void setEffect(int blockId, MaterialEffect effect) {
+        BlockData data = blockRegistry.get(blockId);
+        if (data != null) data.effect = effect;
+    }
+
+    /** Overrides the base transparency level (0-255, 0 = opaque). */
+    public void setTransparency(int blockId, int transparency) {
+        BlockData data = blockRegistry.get(blockId);
+        if (data != null) data.transparency = transparency;
+    }
+
+    /** Overrides the reflectivity level (0-255, 0 = matte). */
+    public void setReflectivity(int blockId, int reflectivity) {
+        BlockData data = blockRegistry.get(blockId);
+        if (data != null) data.reflectivity = reflectivity;
+    }
+
     /** @return true if this block emits light (emissive > 0). */
     public boolean isEmissive(int blockId) {
         BlockData data = blockRegistry.get(blockId);

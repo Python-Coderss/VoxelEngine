@@ -350,41 +350,59 @@ public class BlockInteraction {
      * placement position. Returns false (and leaves nothing behind) if any of the
      * 9 target cells is occupied or overlaps the player.
      */
-    private boolean placeLargeCogwheel(int px, int py, int pz) {
-        int[][] footprint = { {0,0}, {0,-1}, {0,1}, {-1,0}, {1,0}, {-1,-1}, {1,-1}, {-1,1}, {1,1} };
-        int[] ids = { 295, 422, 423, 424, 425, 426, 427, 428, 429 };
-        for (int i = 0; i < footprint.length; i++) {
-            int x = px + footprint[i][0], z = pz + footprint[i][1];
-            if (ctx.world.getVoxel(x, py, z) != 0) {
+    /** The 9 cells (center + 8 parts) of a large-cogwheel footprint for a facing. */
+    private int[][] largeCogCells(int cx, int cy, int cz, int facing) {
+        int[][] cells = new int[9][3];
+        cells[0] = new int[]{cx, cy, cz};
+        for (int id = 422; id <= 429; id++) {
+            int[] o = KineticManager.largeCogPartWorldOffset(id, facing);
+            cells[id - 421] = new int[]{cx + o[0], cy + o[1], cz + o[2]};
+        }
+        return cells;
+    }
+
+    /** The 9 cells (center + 8 parts) of a water-wheel footprint for a facing. */
+    private int[][] waterWheelCells(int cx, int cy, int cz, int facing) {
+        int[][] cells = new int[9][3];
+        cells[0] = new int[]{cx, cy, cz};
+        for (int id = 430; id <= 437; id++) {
+            int[] o = KineticManager.waterWheelPartWorldOffset(id, facing);
+            cells[id - 429] = new int[]{cx + o[0], cy + o[1], cz + o[2]};
+        }
+        return cells;
+    }
+
+    private boolean placeLargeCogwheel(int px, int py, int pz, int facing) {
+        int[][] cells = largeCogCells(px, py, pz, facing);
+        for (int[] c : cells) {
+            if (ctx.world.getVoxel(c[0], c[1], c[2]) != 0) {
                 ctx.setStatus("Not enough room for the large cogwheel");
                 return false;
             }
-            if (intersectsPlayer(x, py, z)) return false;
+            if (intersectsPlayer(c[0], c[1], c[2])) return false;
         }
-        for (int i = 0; i < footprint.length; i++) {
-            int x = px + footprint[i][0], z = pz + footprint[i][1];
-            if (!ctx.chunkManager.setVoxel(x, py, z, ids[i])) return false;
+        if (!ctx.chunkManager.setVoxelWithData(px, py, pz, 295, facing)) return false;
+        for (int id = 422; id <= 429; id++) {
+            int[] c = cells[id - 421];
+            if (!ctx.chunkManager.setVoxelWithData(c[0], c[1], c[2], id, facing)) return false;
         }
-        for (int i = 0; i < footprint.length; i++) {
-            int x = px + footprint[i][0], z = pz + footprint[i][1];
-            notifyManagersOfBlockChange(x, py, z);
-        }
+        for (int[] c : cells) notifyManagersOfBlockChange(c[0], c[1], c[2]);
         return true;
     }
 
     /** Removes the whole 3x3 large-cogwheel structure, dropping a single item. */
     private void breakLargeCogwheel(int x, int y, int z, int blockId, boolean collectDrop) {
-        int cx = x, cz = z;
-        int[] off = KineticManager.largeCogPartOffset(blockId);
-        if (off != null) { cx -= off[0]; cz -= off[1]; }
-        int[][] footprint = { {0,0}, {0,-1}, {0,1}, {-1,0}, {1,0}, {-1,-1}, {1,-1}, {-1,1}, {1,1} };
-        for (int[] o : footprint) {
-            int bx = cx + o[0], bz = cz + o[1];
-            int b = ctx.world.getVoxel(bx, y, bz);
+        int facing = (ctx.world.getRawVoxel(x, y, z) >> 16) & 0x7;
+        int cx = x, cy = y, cz = z;
+        int[] off = KineticManager.largeCogPartWorldOffset(blockId, facing);
+        if (off != null) { cx -= off[0]; cy -= off[1]; cz -= off[2]; }
+        int[][] cells = largeCogCells(cx, cy, cz, facing);
+        for (int[] c : cells) {
+            int b = ctx.world.getVoxel(c[0], c[1], c[2]);
             if (!KineticManager.isLargeCog(b)) continue;
-            ctx.chunkManager.setVoxel(bx, y, bz, 0);
-            notifyManagersOfBlockChange(bx, y, bz);
-            if (ctx.droppedItemManager != null) ctx.droppedItemManager.onBlockDestroyed(bx, y, bz);
+            ctx.chunkManager.setVoxel(c[0], c[1], c[2], 0);
+            notifyManagersOfBlockChange(c[0], c[1], c[2]);
+            if (ctx.droppedItemManager != null) ctx.droppedItemManager.onBlockDestroyed(c[0], c[1], c[2]);
         }
         if (collectDrop && ctx.droppedItemManager != null) {
             String dropItem = ctx.itemDefinitions.getBlockItemByBlockId().get(KineticManager.BLOCK_LARGE_COGWHEEL);
@@ -399,47 +417,95 @@ public class BlockInteraction {
      * plane. Returns false (leaving nothing behind) if any target cell is occupied
      * or overlaps the player.
      */
-    private boolean placeWaterWheel(int px, int py, int pz) {
-        int[][] footprint = { {0,0}, {0,1}, {0,-1}, {-1,0}, {1,0}, {-1,1}, {1,1}, {-1,-1}, {1,-1} };
-        int[] ids = { 296, 430, 431, 432, 433, 434, 435, 436, 437 };
-        for (int i = 0; i < footprint.length; i++) {
-            int x = px + footprint[i][0], y = py + footprint[i][1];
-            if (ctx.world.getVoxel(x, y, pz) != 0) {
+    private boolean placeWaterWheel(int px, int py, int pz, int facing) {
+        int[][] cells = waterWheelCells(px, py, pz, facing);
+        for (int[] c : cells) {
+            if (ctx.world.getVoxel(c[0], c[1], c[2]) != 0) {
                 ctx.setStatus("Not enough room for the water wheel");
                 return false;
             }
-            if (intersectsPlayer(x, y, pz)) return false;
+            if (intersectsPlayer(c[0], c[1], c[2])) return false;
         }
-        for (int i = 0; i < footprint.length; i++) {
-            int x = px + footprint[i][0], y = py + footprint[i][1];
-            if (!ctx.chunkManager.setVoxel(x, y, pz, ids[i])) return false;
+        if (!ctx.chunkManager.setVoxelWithData(px, py, pz, 296, facing)) return false;
+        for (int id = 430; id <= 437; id++) {
+            int[] c = cells[id - 429];
+            if (!ctx.chunkManager.setVoxelWithData(c[0], c[1], c[2], id, facing)) return false;
         }
-        for (int i = 0; i < footprint.length; i++) {
-            int x = px + footprint[i][0], y = py + footprint[i][1];
-            notifyManagersOfBlockChange(x, y, pz);
-        }
+        for (int[] c : cells) notifyManagersOfBlockChange(c[0], c[1], c[2]);
         return true;
     }
 
     /** Removes the whole 3x3x1 water-wheel structure, dropping a single item. */
     private void breakWaterWheel(int x, int y, int z, int blockId, boolean collectDrop) {
-        int cx = x, cy = y;
-        int[] off = KineticManager.waterWheelPartOffset(blockId);
-        if (off != null) { cx -= off[0]; cy -= off[1]; }
-        int[][] footprint = { {0,0}, {0,1}, {0,-1}, {-1,0}, {1,0}, {-1,1}, {1,1}, {-1,-1}, {1,-1} };
-        for (int[] o : footprint) {
-            int bx = cx + o[0], by = cy + o[1];
-            int b = ctx.world.getVoxel(bx, by, z);
+        int facing = (ctx.world.getRawVoxel(x, y, z) >> 16) & 0x7;
+        int cx = x, cy = y, cz = z;
+        int[] off = KineticManager.waterWheelPartWorldOffset(blockId, facing);
+        if (off != null) { cx -= off[0]; cy -= off[1]; cz -= off[2]; }
+        int[][] cells = waterWheelCells(cx, cy, cz, facing);
+        for (int[] c : cells) {
+            int b = ctx.world.getVoxel(c[0], c[1], c[2]);
             if (!KineticManager.isWaterWheel(b)) continue;
-            ctx.chunkManager.setVoxel(bx, by, z, 0);
-            notifyManagersOfBlockChange(bx, by, z);
-            if (ctx.droppedItemManager != null) ctx.droppedItemManager.onBlockDestroyed(bx, by, z);
+            ctx.chunkManager.setVoxel(c[0], c[1], c[2], 0);
+            notifyManagersOfBlockChange(c[0], c[1], c[2]);
+            if (ctx.droppedItemManager != null) ctx.droppedItemManager.onBlockDestroyed(c[0], c[1], c[2]);
         }
         if (collectDrop && ctx.droppedItemManager != null) {
             String dropItem = ctx.itemDefinitions.getBlockItemByBlockId().get(KineticManager.BLOCK_WATER_WHEEL);
             if (dropItem == null) dropItem = "water_wheel";
             ctx.droppedItemManager.spawn(dropItem, 1, x, y, z);
         }
+    }
+
+    /** Wrench rotation for shafts, cogs, large cogs and water wheels. */
+    private void rotateGear(int x, int y, int z, int block) {
+        // Shafts: cycle the three axis variants (291 Y -> 292 X -> 293 Z -> 291).
+        if (block == 291 || block == 292 || block == 293) {
+            int next = block == 291 ? 292 : block == 292 ? 293 : 291;
+            ctx.chunkManager.setVoxel(x, y, z, next);
+            ctx.setStatus("Rotated shaft to " + (next == 291 ? "Y" : next == 292 ? "X" : "Z") + " axis");
+            return;
+        }
+        // Cogwheel: cycle the axle axis (Y -> X -> Z -> Y) through the facing bits.
+        if (block == 294) {
+            int facing = (ctx.world.getRawVoxel(x, y, z) >> 16) & 0x7;
+            int nf = nextGearFacing(block, facing);
+            ctx.chunkManager.setVoxelWithData(x, y, z, block, nf);
+            ctx.setStatus("Rotated cogwheel to " + axisName(KineticManager.gearAxis(block, nf)) + " axis");
+            return;
+        }
+        // Multiblock gears: break the old footprint and re-stamp it in the new plane.
+        rotateMultiblockGear(x, y, z, block);
+    }
+
+    private String axisName(int axis) {
+        return axis == 0 ? "X" : axis == 1 ? "Y" : "Z";
+    }
+
+    /**
+     * Re-stamps a large-cogwheel or water-wheel footprint in the next axle plane.
+     * The old structure is cleared first (no drop); if the new footprint is
+     * obstructed, the old one is restored and nothing is lost.
+     */
+    private void rotateMultiblockGear(int x, int y, int z, int block) {
+        boolean water = KineticManager.isWaterWheel(block);
+        int facing = (ctx.world.getRawVoxel(x, y, z) >> 16) & 0x7;
+        int nf = nextGearFacing(block, facing);
+        int cx = x, cy = y, cz = z;
+        int[] off = water ? KineticManager.waterWheelPartWorldOffset(block, facing)
+                          : KineticManager.largeCogPartWorldOffset(block, facing);
+        if (off != null) { cx -= off[0]; cy -= off[1]; cz -= off[2]; }
+
+        if (water) breakWaterWheel(x, y, z, block, false);
+        else breakLargeCogwheel(x, y, z, block, false);
+
+        boolean ok = water ? placeWaterWheel(cx, cy, cz, nf) : placeLargeCogwheel(cx, cy, cz, nf);
+        if (!ok) {
+            if (water) placeWaterWheel(cx, cy, cz, facing);
+            else placeLargeCogwheel(cx, cy, cz, facing);
+            ctx.setStatus("Not enough room to rotate");
+            return;
+        }
+        ctx.setStatus("Rotated " + (water ? "water wheel" : "large cogwheel"));
     }
 
     /** Fires every block-change notification for a single placed/removed cell. */
@@ -939,6 +1005,10 @@ public class BlockInteraction {
                 ctx.setStatus("Rotated facing " + com.voxel.game.CreateMachineManager.directionName(nd));
                 return;
             }
+            if (KineticManager.isGearBlock(hitBlock)) {
+                rotateGear(hit[0], hit[1], hit[2], hitBlock);
+                return;
+            }
             if (ctx.machineManager != null && com.voxel.game.CreateMachineManager.isMachineBlock(hitBlock)) {
                 boolean powered = ctx.machineManager.isMachinePowered(hit[0], hit[1], hit[2]);
                 ctx.setStatus(powered ? "Machine is Powered" : "Machine is Idle — connect rotation");
@@ -1045,9 +1115,12 @@ public class BlockInteraction {
         if (existing != 0) return;
         if (intersectsPlayer(px, py, pz)) return;
         int placeBlockId = def.blockId;
+        // Gear axle facing (bits 16-18): the direction the axle points, derived from
+        // the clicked face — same rule as the directional Create machines.
+        int gearFacing = facingFromClickedFace(hit, px, py, pz);
         // Large cogwheel: stamp a 3x3 multiblock footprint (center 295 + 8 ghost parts).
         if (placeBlockId == 295) {
-            if (!placeLargeCogwheel(px, py, pz)) return;
+            if (!placeLargeCogwheel(px, py, pz, gearFacing)) return;
             if (ctx.gameMode == GameMode.SURVIVAL) {
                 selected.count--;
                 if (selected.count <= 0) ctx.playerInventory.setSlot(ctx.playerInventory.getSelectedSlot(), null);
@@ -1057,7 +1130,7 @@ public class BlockInteraction {
         }
         // Water wheel: stamp a 3x3x1 multiblock footprint (center 296 + 8 parts).
         if (placeBlockId == 296) {
-            if (!placeWaterWheel(px, py, pz)) return;
+            if (!placeWaterWheel(px, py, pz, gearFacing)) return;
             if (ctx.gameMode == GameMode.SURVIVAL) {
                 selected.count--;
                 if (selected.count <= 0) ctx.playerInventory.setSlot(ctx.playerInventory.getSelectedSlot(), null);
@@ -1103,20 +1176,10 @@ public class BlockInteraction {
             }
             int dirBlockId = getDirectionalPistonId(placeBlockId, direction);
             if (!ctx.chunkManager.setVoxel(px, py, pz, dirBlockId)) return;
-        } else if (placeBlockId == 263 || (placeBlockId >= 409 && placeBlockId <= 413)) {
-            // Encased fan + directional Create machines: encode facing into extra data
-            int dx = hit[0] - px;
-            int dy = hit[1] - py;
-            int dz = hit[2] - pz;
-            int direction;
-            if (Math.abs(dx) >= Math.abs(dy) && Math.abs(dx) >= Math.abs(dz)) {
-                direction = dx > 0 ? 5 : 4;
-            } else if (Math.abs(dy) >= Math.abs(dz)) {
-                direction = dy > 0 ? 1 : 0;
-            } else {
-                direction = dz > 0 ? 3 : 2;
-            }
-            if (!ctx.chunkManager.setVoxelWithData(px, py, pz, placeBlockId, direction)) return;
+        } else if (placeBlockId == 294 || placeBlockId == 263 || (placeBlockId >= 409 && placeBlockId <= 413)) {
+            // Cogwheel (294) + encased fan + directional Create machines: encode the
+            // axle/facing direction into extra data (bits 16-18).
+            if (!ctx.chunkManager.setVoxelWithData(px, py, pz, placeBlockId, gearFacing)) return;
         } else if (placeBlockId >= 329 && placeBlockId <= 336) {
             // Repeater: horizontal facing from the clicked face, default 1-tick delay
             int dir = horizontalFacing(hit, px, py, pz);
@@ -1157,6 +1220,36 @@ public class BlockInteraction {
         ctx.breakTargetY = Integer.MIN_VALUE;
         ctx.breakTargetZ = Integer.MIN_VALUE;
         ctx.breakProgress = 0.0f;
+    }
+
+    /**
+     * Full 6-direction facing from the clicked face normal: 0=down, 1=up,
+     * 2=north, 3=south, 4=west, 5=east. Used for directional Create machines and
+     * orientable gears (the facing is the direction the axle/head points).
+     * Public static so it can be regression-tested without GL.
+     */
+    public static int facingFromClickedFace(int[] hit, int px, int py, int pz) {
+        int dx = hit[0] - px;
+        int dy = hit[1] - py;
+        int dz = hit[2] - pz;
+        if (Math.abs(dx) >= Math.abs(dy) && Math.abs(dx) >= Math.abs(dz)) return dx > 0 ? 5 : 4;
+        if (Math.abs(dy) >= Math.abs(dz)) return dy > 0 ? 1 : 0;
+        return dz > 0 ? 3 : 2;
+    }
+
+    /**
+     * Next facing when a wrench rotates a gear: cycle the axle through its axes.
+     * Cogs cycle Y -> X -> Z -> Y; water wheels skip Y (horizontal axle only),
+     * toggling Z <-> X.
+     */
+    private static int nextGearFacing(int block, int facing) {
+        int axis = KineticManager.gearAxis(block, facing);
+        if (KineticManager.isWaterWheel(block)) {
+            return axis == 0 ? 3 : 5; // X -> Z, Z -> X
+        }
+        if (axis == 1) return 5; // Y -> X
+        if (axis == 0) return 3; // X -> Z
+        return 1;                // Z -> Y
     }
 
     /**

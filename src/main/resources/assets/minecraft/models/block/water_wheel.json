@@ -1,14 +1,14 @@
 {
     "textures": {
-        "north": "wheel",
-        "south": "wheel",
-        "up": "wheel_side",
-        "down": "wheel_side",
+        "up": "wheel",
+        "down": "wheel",
+        "north": "wheel_side",
+        "south": "wheel_side",
         "west": "wheel_side",
         "east": "wheel_side",
         "particle": "wheel"
     },
     "elements": [
-        { "from": [ 0, 1, 4 ], "to": [ 16, 15, 12 ] }
+        { "from": [ 0, 4, 0 ], "to": [ 16, 12, 16 ] }
     ]
 }

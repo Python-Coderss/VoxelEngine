@@ -2945,6 +2945,16 @@ public class Main {
         // keys are polled by the logic thread, but block gameplay hotkeys here.
         if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME) return;
         if (action == GLFW_PRESS) {
+            // Creative mode: DELETE destroys the held stack (or the selected hotbar
+            // item when not holding anything). Non-printable, so it never collides
+            // with the creative search box's character capture.
+            if (key == GLFW_KEY_DELETE && gameMode == GameMode.CREATIVE) {
+                playerInventory.deleteCreativeItem();
+                hud.inventoryUiDirty = true;
+                showSelectedItemName();
+                setStatus("Deleted item");
+                return;
+            }
             // Creative picker search: BACKSPACE edits the filter.
             if (ctx.creativeMenuOpen && inventoryOpen) {
                 if (key == GLFW_KEY_BACKSPACE && ctx.creativeSearch.length() > 0) {
@@ -4535,6 +4545,11 @@ public class Main {
         shaderBlockRegistry.register(296, 296);
         blockDataManager.registerBlock(296, "water_wheel", textureManager, mcModels);
         blockDataManager.setFullBlock(296, false);
+        // "water_wheel" trips the name-based liquid heuristic — reset it to an
+        // opaque, matte block so the shader draws it as a wooden wheel, not water.
+        blockDataManager.setEffect(296, BlockDataManager.MaterialEffect.NONE);
+        blockDataManager.setTransparency(296, 0);
+        blockDataManager.setReflectivity(296, 0);
         // Water wheel multiblock parts (430-437): one per cell of the 3x3x1
         // footprint around the center (296), rendered the same way as the large
         // cogwheel parts (getGear center-offset + per-cell clip).
@@ -4548,6 +4563,9 @@ public class Main {
             shaderBlockRegistry.register(partId, partId);
             blockDataManager.registerBlock(partId, "water_wheel_part", textureManager, mcModels);
             blockDataManager.setFullBlock(partId, false);
+            blockDataManager.setEffect(partId, BlockDataManager.MaterialEffect.NONE);
+            blockDataManager.setTransparency(partId, 0);
+            blockDataManager.setReflectivity(partId, 0);
         }
 
         // --- Colored redstone lamps (297-328): off = 297+2c, on = 297+2c+1 ---

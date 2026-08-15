@@ -50,6 +50,18 @@ public class PlayerInventory {
         if (carriedStack != null && i == selectedSlot && !ctx.inventoryOpen) carriedStack = null;
     }
 
+    /**
+     * Creative mode: destroy the carried stack if one is held, otherwise clear
+     * the selected hotbar slot. Items are deleted outright (no world drop).
+     */
+    public void deleteCreativeItem() {
+        if (carriedStack != null) {
+            carriedStack = null;
+        } else {
+            inventory[selectedSlot] = null;
+        }
+    }
+
     public ItemDefinitions.ItemStack getSelected() { return inventory[selectedSlot]; }
 
     /**

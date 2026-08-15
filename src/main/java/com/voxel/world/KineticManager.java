@@ -105,6 +105,12 @@ public class KineticManager {
             || (block >= BLOCK_MECHANICAL_PRESS && block <= BLOCK_BELT_CONVEYOR);
     }
 
+    /** True for shafts, cogs, large cogs, water wheels and their multiblock parts. */
+    public static boolean isGearBlock(int block) {
+        return (block >= BLOCK_SHAFT && block <= BLOCK_WATER_WHEEL)
+            || isLargeCogPart(block) || isWaterWheelPart(block);
+    }
+
     public static boolean isClutch(int block) {
         return block == BLOCK_CLUTCH || block == BLOCK_CLUTCH_ON;
     }
@@ -121,6 +127,26 @@ public class KineticManager {
     /** True for the 8 ghost parts of a water wheel (430-437), not the center. */
     public static boolean isWaterWheelPart(int block) {
         return block >= BLOCK_WATER_WHEEL_PART_MIN && block <= BLOCK_WATER_WHEEL_PART_MAX;
+    }
+
+    /**
+     * World offset {dx,dy,dz} of a large-cog part from its center for a given
+     * facing, or null if the block is not a large-cog part.
+     */
+    public static int[] largeCogPartWorldOffset(int block, int facing) {
+        int[] duv = largeCogPartOffset(block);
+        if (duv == null) return null;
+        return localToWorld(duv[0], duv[1], gearAxis(block, facing));
+    }
+
+    /**
+     * World offset {dx,dy,dz} of a water-wheel part from its center for a given
+     * facing, or null if the block is not a water-wheel part.
+     */
+    public static int[] waterWheelPartWorldOffset(int block, int facing) {
+        int[] duv = waterWheelPartOffset(block);
+        if (duv == null) return null;
+        return localToWorld(duv[0], duv[1], gearAxis(block, facing));
     }
 
     /** Horizontal/vertical offset {dx, dy} of a water-wheel part from its center, or null. */
@@ -146,6 +172,40 @@ public class KineticManager {
     /** True for the 8 ghost parts of a large cogwheel (422-429), not the center. */
     public static boolean isLargeCogPart(int block) {
         return block >= BLOCK_LARGE_COG_PART_MIN && block <= BLOCK_LARGE_COG_PART_MAX;
+    }
+
+    /**
+     * Maps a facing (0=down,1=up,2=north,3=south,4=west,5=east) to a gear spin
+     * axis (0=X,1=Y,2=Z), mirroring raytracer.comp's axisFromFacing(). The facing
+     * is the direction the axle points: down/up -> Y, north/south -> Z,
+     * west/east -> X.
+     */
+    public static int axisFromFacing(int facing) {
+        if (facing == 0 || facing == 1) return 1;
+        if (facing == 2 || facing == 3) return 2;
+        return 0;
+    }
+
+    /**
+     * Canonical disc-plane offset (du,dv) -> world offset {dx,dy,dz} for a gear
+     * with the given spin axis, mirroring raytracer.comp's localToWorld().
+     *   axis Y: (x,z)=(du,dv); axis X: (z,y)=(du,dv); axis Z: (x,y)=(du,dv).
+     */
+    public static int[] localToWorld(int du, int dv, int axis) {
+        if (axis == 1) return new int[]{du, 0, dv};
+        if (axis == 0) return new int[]{0, dv, du};
+        return new int[]{du, dv, 0};
+    }
+
+    /**
+     * Spin axis for a gear block given its per-voxel facing. Water wheels are
+     * vertical discs (horizontal axle), so an up/down facing (axis Y) falls back
+     * to axis Z. Shafts ignore facing (their axis is fixed by block id).
+     */
+    public static int gearAxis(int block, int facing) {
+        int a = axisFromFacing(facing);
+        if (isWaterWheel(block) && a == 1) a = 2;
+        return a;
     }
 
     /** Horizontal offset {dx, dz} of a large-cog part from its center, or null. */
@@ -175,22 +235,31 @@ public class KineticManager {
      * teeth/spokes come from the block texture, not geometry. Returns null for
      * non-gear blocks. Keep in sync with raytracer.comp's getGear().
      */
+    /** Convenience overload: default facing 0 (down -> axis Y, or Z for water wheels). */
     public static GearDescriptor gearDescriptor(int block) {
+        return gearDescriptor(block, 0);
+    }
+
+    public static GearDescriptor gearDescriptor(int block, int facing) {
         final float P = 1.0f / 16.0f;
         switch (block) {
-            case 291: return new GearDescriptor(1, 2*P, 16, 8*P);
-            case 292: return new GearDescriptor(0, 2*P, 16, 8*P);
-            case 293: return new GearDescriptor(2, 2*P, 16, 8*P);
-            case 294: return new GearDescriptor(1, 8*P, 16, 3*P); // cogwheel fills the block
-            case 295: return new GearDescriptor(1, 24*P, 16, 3*P);
-            case 296: return new GearDescriptor(2, 24*P, 16, 4*P); // water wheel is now a 3x3 multiblock
+            case 291: return new GearDescriptor(1, 1, 0, 0, 0, 2*P, 16, 8*P);
+            case 292: return new GearDescriptor(0, 0, 0, 0, 0, 2*P, 16, 8*P);
+            case 293: return new GearDescriptor(2, 2, 0, 0, 0, 2*P, 16, 8*P);
+            case 294: return new GearDescriptor(axisFromFacing(facing), 1, 0, 0, 0, 8*P, 16, 3*P); // cogwheel fills the block
+            case 295: return new GearDescriptor(axisFromFacing(facing), 1, 0, 0, 0, 24*P, 16, 3*P);
+            case 296: return new GearDescriptor(gearAxis(296, facing), 1, 0, 0, 0, 24*P, 16, 4*P); // water wheel is a 3x3 multiblock
             default: break;
         }
         if (block >= BLOCK_LARGE_COG_PART_MIN && block <= BLOCK_LARGE_COG_PART_MAX) {
-            return new GearDescriptor(1, 24*P, 16, 3*P);
+            int a = axisFromFacing(facing);
+            int[] off = localToWorld(largeCogPartOffset(block)[0], largeCogPartOffset(block)[1], a);
+            return new GearDescriptor(a, 1, -off[0], -off[1], -off[2], 24*P, 16, 3*P);
         }
         if (block >= BLOCK_WATER_WHEEL_PART_MIN && block <= BLOCK_WATER_WHEEL_PART_MAX) {
-            return new GearDescriptor(2, 24*P, 16, 4*P);
+            int a = gearAxis(block, facing);
+            int[] off = localToWorld(waterWheelPartOffset(block)[0], waterWheelPartOffset(block)[1], a);
+            return new GearDescriptor(a, 1, -off[0], -off[1], -off[2], 24*P, 16, 4*P);
         }
         return null;
     }
@@ -238,11 +307,17 @@ public class KineticManager {
     /** Immutable gear shape descriptor (mirror of the shader's getGear()). */
     public static final class GearDescriptor {
         public final int axis;
+        public final int modelAxis;   // axis the block's model JSON is laid out for
+        public final int cx, cy, cz;  // center offset (voxel offset from owning cell to gear center)
         public final float radius;
         public final int sides;
         public final float halfThickness;
-        public GearDescriptor(int axis, float radius, int sides, float halfThickness) {
+        public GearDescriptor(int axis, int modelAxis, int cx, int cy, int cz, float radius, int sides, float halfThickness) {
             this.axis = axis;
+            this.modelAxis = modelAxis;
+            this.cx = cx;
+            this.cy = cy;
+            this.cz = cz;
             this.radius = radius;
             this.sides = sides;
             this.halfThickness = halfThickness;
