@@ -124,7 +124,8 @@ def draw_axis():
     The raytracer wraps the rim texture once around the 4-sided square rod
     (uv.x = angle), so X here is the four faces around the shaft and Y runs
     along its length. Each 4-px face gets a slightly different shade so the
-    square cross-section reads on screen.
+    square cross-section reads on screen, and one face carries a dark keyway
+    groove that travels around the rod as it spins, making the rotation visible.
     """
     img, d = _canvas()
     big = SS * SIZE
@@ -132,6 +133,10 @@ def draw_axis():
     shades = [ALLOY_LIGHT, ALLOY, ALLOY_DARK, ALLOY]
     for i in range(4):
         d.rectangle([i * face, 0, (i + 1) * face - 1, big], fill=shades[i])
+    # Keyway groove on face 1 (the mid-tone face): a dark slot running the full
+    # length, offset from the face center so it sweeps around as the rod turns.
+    gx = face + face // 2
+    d.rectangle([gx - SS, 0, gx + SS - 1, big], fill=ALLOY_SHADE)
     d.line([(0, 0), (big, 0)], fill=ALLOY_LIGHT, width=SS)
     d.line([(0, big - 1), (big, big - 1)], fill=ALLOY_SHADE, width=SS)
     return _finish(img)
@@ -260,9 +265,15 @@ def save(name, frames):
 
 
 if __name__ == "__main__":
-    save("cogwheel", [draw_cog(7, 7.9, 5.6, 2.4, 1.1, 45 * k) for k in range(FRAMES)])
-    save("large_cogwheel", [draw_large_cog(45 * k) for k in range(FRAMES)])
-    save("wheel", [draw_water_wheel(45 * k) for k in range(FRAMES)])
+    # Gear faces are now SINGLE frames: the raytracer rotates the face/rim UVs
+    # smoothly (fract(speed * time)) instead of stepping through a strip, so the
+    # teeth/spokes/paddles turn continuously rather than jumping in 45deg frames.
+    draw_cog(7, 7.9, 5.6, 2.4, 1.1, 0).save(f"{BASE}/cogwheel.png")
+    print(f"wrote cogwheel.png {SIZE}x{SIZE}")
+    draw_large_cog(0).save(f"{BASE}/large_cogwheel.png")
+    print(f"wrote large_cogwheel.png {SIZE}x{SIZE}")
+    draw_water_wheel(0).save(f"{BASE}/wheel.png")
+    print(f"wrote wheel.png {SIZE}x{SIZE}")
     draw_axis().save(f"{BASE}/axis.png")
     print(f"wrote axis.png {SIZE}x{SIZE}")
     draw_axis_top().save(f"{BASE}/axis_top.png")

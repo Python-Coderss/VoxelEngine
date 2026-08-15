@@ -777,7 +777,7 @@ bool getShaftThrough(int id) {
 // Ray vs a convex N-sided prism (gear) extruded along a world axis.
 // axis: 0=X, 1=Y, 2=Z. The cross-section is a regular `sides`-gon of the given
 // radius. Returns the entry distance and surface normal.
-bool intersectGear(vec3 ro, vec3 rd, vec3 center, int axis, float radius, int sides, float halfThick, out float hitT, out vec3 hitNormal) {
+bool intersectGear(vec3 ro, vec3 rd, vec3 center, int axis, float radius, int sides, float halfThick, float spinAng, out float hitT, out vec3 hitNormal) {
     float ca, oa, da;
     vec2 o, d, c;
     if (axis == 0)      { ca = center.x; oa = ro.x; da = rd.x; c = center.yz; o = ro.yz; d = rd.yz; }
@@ -797,8 +797,11 @@ bool intersectGear(vec3 ro, vec3 rd, vec3 center, int axis, float radius, int si
     float tEnter = -1e30, tExit = 1e30;
     vec2 enterN = vec2(1.0, 0.0);
     // π/4 offset turns a 4-gon into an axis-aligned square (shafts), so the four
-    // flat faces align with the world axes instead of reading as a diamond.
-    float rot = (sides == 4) ? 0.78539816 : 0.0;
+    // flat faces align with the world axes instead of reading as a diamond. The
+    // whole cross-section also rotates by `spinAng` so a spinning square shaft's
+    // corners sweep in step with its (keyway) texture, and 16-gons track the
+    // gear's phase too (they're near-invariant, so it's a no-op visually there).
+    float rot = (sides == 4) ? (0.78539816 + spinAng) : spinAng;
     for (int i = 0; i < sides; i++) {
         float a0 = rot + float(i) * 6.2831853 / float(sides);
         float a1 = rot + float(i + 1) * 6.2831853 / float(sides);
@@ -960,15 +963,28 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                             const float P = 1.0 / 16.0;
                             vec3 gCenter = vec3(mp + gCenterOff) + 0.5;
                             float cellExit = st + min(sd.x, min(sd.y, sd.z));
+                            // Spin phase of the gear cross-section. The UV (keyway/
+                            // teeth) already rotates in the main loop; the hitbox must
+                            // rotate too so a square shaft's corners sweep in step with
+                            // its texture instead of sitting still. d3.w bit 6 =
+                            // isRotating, bits 8-23 = speed (rev/s * 256).
+                            ivec4 gd3 = texelFetch(u_BlockData, int(voxelType) * 4 + 3);
+                            float gearSpin = 0.0;
+                            if (((gd3.w >> 6) & 1) == 1 && kinActive != 0u) {
+                                float rps = float((gd3.w >> 8) & 0xFFFF) / 256.0;
+                                gearSpin = fract(rps * u_Time);
+                                if (kinReverse != 0u) gearSpin = 1.0 - gearSpin;
+                            }
+                            float spinAng = gearSpin * 6.2831853;
                             // Disc prism hit.
                             float gT; vec3 gN;
-                            bool discHit = intersectGear(ro, rd, gCenter, gAxis, gOuter, gSides, gHalf, gT, gN)
+                            bool discHit = intersectGear(ro, rd, gCenter, gAxis, gOuter, gSides, gHalf, spinAng, gT, gN)
                                         && gT > 0.0 && gT < cellExit;
                             // Coaxial 4x4x16 square shaft through the hub (cog/large
                             // cog/water wheel centers only) — pokes out both faces.
                             float sT = 0.0; vec3 sN = vec3(0.0);
                             bool shaftHit = getShaftThrough(int(voxelType))
-                                        && intersectGear(ro, rd, gCenter, gAxis, 2.0*P, 4, 8.0*P, sT, sN)
+                                        && intersectGear(ro, rd, gCenter, gAxis, 2.0*P, 4, 8.0*P, spinAng, sT, sN)
                                         && sT > 0.0 && sT < cellExit;
                             if (discHit || shaftHit) {
                                 if (shaftHit && (!discHit || sT <= gT)) { gT = sT; gN = sN; resGearShaft = 1; }
@@ -1591,6 +1607,18 @@ void main() {
                 // to the spin axis; the rim wraps around it. gearOrigin is the owning
                 // block, so multi-block large cogs sample against their true center.
                 vec3 gCenter = vec3(gearOrigin) + 0.5;
+                // Smooth continuous spin (0..1 turns within a revolution) instead of
+                // discrete frame steps. d3.w bit 6 = isRotating, bits 8-23 = speed
+                // (rev/sec * 256). Gears/shafts only turn while their network is
+                // active (kineticActive); a powered gearshift reverses the cycle.
+                float spin = 0.0;
+                if (((d3.w >> 6) & 1) == 1 && kineticActive != 0u) {
+                    float rps = float((d3.w >> 8) & 0xFFFF) / 256.0;
+                    spin = fract(rps * u_Time);
+                    if (kineticReverse != 0u) spin = 1.0 - spin;
+                }
+                float spinAng = spin * 6.2831853;
+                float ca = cos(spinAng), sa = sin(spinAng);
                 ivec4 tD0 = d0; ivec4 tD1 = d1;
                 if (gearShaft == 1) {
                     // Coaxial 4x4x16 andesite shaft through the hub. Reuse the
@@ -1609,14 +1637,18 @@ void main() {
                             : (n.z > 0.0 ? 3 : 2);
                     vec2 p2 = (gAxis == 0) ? hp.yz : (gAxis == 1 ? hp.xz : hp.xy);
                     vec2 c2 = (gAxis == 0) ? gCenter.yz : (gAxis == 1 ? gCenter.xz : gCenter.xy);
-                    uv = (p2 - c2) / (2.0 * gOuter) + 0.5;
+                    // Rotate the face texture in step with the rim so a tooth on the
+                    // disc face stays glued to its tooth band on the rim.
+                    vec2 off = p2 - c2;
+                    off = vec2(off.x * ca + off.y * sa, -off.x * sa + off.y * ca);
+                    uv = off / (2.0 * gOuter) + 0.5;
                 } else {
                     texFace = (gAxis == 1) ? 2 : 1;
                     vec2 p2 = (gAxis == 0) ? hp.yz : (gAxis == 1 ? hp.xz : hp.xy);
                     vec2 c2 = (gAxis == 0) ? gCenter.yz : (gAxis == 1 ? gCenter.xz : gCenter.xy);
                     float ang = atan(p2.y - c2.y, p2.x - c2.x) * (0.5 / 3.14159265);
                     float ax = (gAxis == 0) ? (hp.x - gCenter.x) : (gAxis == 1 ? (hp.y - gCenter.y) : (hp.z - gCenter.z));
-                    uv = vec2(fract(ang + 0.5), clamp(ax / (2.0 * gHalf) + 0.5, 0.0, 1.0));
+                    uv = vec2(fract(ang + 0.5 - spin), clamp(ax / (2.0 * gHalf) + 0.5, 0.0, 1.0));
                 }
                 texFace = remapGearFace(texFace, gAxis, gModelAxis);
                 tex = faceTex(texFace, tD0, tD1);
@@ -1679,7 +1711,9 @@ void main() {
             int frameCount = (animPacked >> 1) & 0x3F;
             // The coaxial shaft through a gear's hub samples the static andesite
             // axis/axis_top textures, so it must not inherit the gear's frame strip.
-            if (gearShaft == 0 && isAnimated && frameCount > 1 && ((d3.w >> texFace) & 1) == 1) {
+            // Rotating kinetic parts (isRotating, d3.w bit 6) spin via smooth UV
+            // rotation instead of discrete frame stepping, so skip their frame strip.
+            if (gearShaft == 0 && ((d3.w >> 6) & 1) == 0 && isAnimated && frameCount > 1 && ((d3.w >> texFace) & 1) == 1) {
                 // Cycle through frames based on time (at ~20 fps)
                 int frame = int(floor(u_Time * 20.0)) % frameCount;
                 // Kinetic blocks (shafts/cogs/wheel) spin only when their network is

@@ -117,6 +117,14 @@ public class BlockDataManager {
         // a kinetic network spins the block.
         public int faceAnimMask = 0;
 
+        // Kinetic rotation (Create-style gears/shafts): whether the block spins
+        // around its axle and how fast. rotationSpeed is revolutions per second;
+        // the shader derives a smooth 0..1 progress within the revolution as
+        // fract(speed * u_Time), gated by the per-voxel spinning flag (so an
+        // inactive network has an effective speed of 0 and the part sits still).
+        public boolean isRotating;
+        public float rotationSpeed; // revolutions per second, 0 = static
+
         // Color of emitted block light. Packed as 0x00RRGGBB (each 0-255). Default white.
         // Applied at the light intensity level determined by emissive.
         public int lightColor = 0x00FFFFFF;
@@ -575,14 +583,18 @@ public class BlockDataManager {
                         | ((data.facingDirection & 0x7) << 24);
                 buffer.put(packedAnim); // bit0: anim, bit1-6: frames, bit8-15: diffuse, bit16-23: distortion, bit24-26: facingDir
 
-                // ivec4 3: (tintR, tintG, tintB, faceAnimMask) — fixed per-block tint
-                // color replacing the old location-based biome colormap lookup, plus
-                // the per-face animation mask (bit i = face i animated) so spinning
-                // kinetic blocks never shift static faces onto garbage atlas layers.
+                // ivec4 3: (tintR, tintG, tintB, faceAnimMask | isRotating | speed<<8).
+                //   bits 0-5:  faceAnimMask (bit i = face i animated)
+                //   bit 6:     isRotating (kinetic part that spins around its axle)
+                //   bits 8-23: rotationSpeed as fixed-point (rev/sec * 256)
+                // The shader uses the speed to scroll/rotate the gear UVs smoothly
+                // instead of stepping through discrete animation frames.
                 buffer.put((data.tintColor >> 16) & 0xFF);
                 buffer.put((data.tintColor >> 8) & 0xFF);
                 buffer.put(data.tintColor & 0xFF);
-                buffer.put(data.faceAnimMask);
+                int fixedSpeed = Math.max(0, Math.min(0xFFFF, Math.round(data.rotationSpeed * 256.0f)));
+                int packed3w = (data.faceAnimMask & 0x3F) | ((data.isRotating ? 1 : 0) << 6) | (fixedSpeed << 8);
+                buffer.put(packed3w);
             } else {
                 // Fill with -1 for unused IDs.
                 for (int j = 0; j < 16; j++)
@@ -782,6 +794,20 @@ public class BlockDataManager {
     public void setReflectivity(int blockId, int reflectivity) {
         BlockData data = blockRegistry.get(blockId);
         if (data != null) data.reflectivity = reflectivity;
+    }
+
+    /**
+     * Marks a kinetic block as spinning around its axle at the given speed
+     * (revolutions per second). The raytracer derives a smooth rotation phase
+     * from the speed; when the network is inactive the shader's spinning flag
+     * makes the effective speed 0 so the part sits still.
+     */
+    public void setRotating(int blockId, float revolutionsPerSecond) {
+        BlockData data = blockRegistry.get(blockId);
+        if (data != null) {
+            data.isRotating = true;
+            data.rotationSpeed = revolutionsPerSecond;
+        }
     }
 
     /** @return true if this block emits light (emissive > 0). */
