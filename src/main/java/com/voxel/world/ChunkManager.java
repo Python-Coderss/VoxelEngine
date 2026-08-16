@@ -545,6 +545,14 @@ public class ChunkManager {
         int oldBlockId = world.getVoxel(x, y, z);
         world.setVoxel(x, y, z, type);
 
+        // No-op write (same block type): nothing optical changed, so skip the
+        // occlusion bake, neighbor light seed, fluid notify, and async relight.
+        // The pool write + dirty mark still happen so extra/flag changes reach the GPU.
+        if (oldBlockId == type) {
+            dirtySlots.add(slot);
+            return true;
+        }
+
         int cx = x >> 4;
         int cy = y >> 4;
         int cz = z >> 4;
@@ -622,6 +630,13 @@ public class ChunkManager {
 
         int oldBlockId = world.getVoxel(x, y, z);
         world.setVoxelWithData(x, y, z, type, extra);
+
+        // No-op type write: light/occlusion unchanged — just sync the pool change
+        // (extra data) to the GPU and skip the async relight + fluid notify.
+        if (oldBlockId == type) {
+            dirtySlots.add(slot);
+            return true;
+        }
 
         // Always mark dirty synchronously so GPU sees voxel data change immediately.
         dirtySlots.add(slot);
@@ -1149,6 +1164,7 @@ public class ChunkManager {
             lightingActiveCount.incrementAndGet();
             long t0 = System.currentTimeMillis();
 
+            mcLightEngine.clearHeldPhotons();
             Set<Integer> dirty = mcLightEngine.rebuildAllLighting(loadedChunks);
             dirtySlots.addAll(dirty);
             tableDirty.set(true);
@@ -1343,6 +1359,7 @@ public class ChunkManager {
                     if (snap == null) return; // column unloaded/mid-mutation
                     dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, snap));
                     dirtySlots.addAll(mcLightEngine.propagateBlockLightColumn(cx, cz, snap));
+                    dirtySlots.addAll(mcLightEngine.resumeHeldPhotons());
                     lightsNeedUpload = true;
                     tableDirty.set(true);
                     runPendingLightingIn5x5(cx, cz);
@@ -1372,6 +1389,7 @@ public class ChunkManager {
                             if (snap == null) return; // column unloaded/mid-mutation
                             dirtySlots.addAll(mcLightEngine.generateSkyLight(finalNx, finalNz, snap));
                             dirtySlots.addAll(mcLightEngine.propagateBlockLightColumn(finalNx, finalNz, snap));
+                            dirtySlots.addAll(mcLightEngine.resumeHeldPhotons());
                             lightsNeedUpload = true;
                             tableDirty.set(true);
                         });
@@ -1850,6 +1868,7 @@ public class ChunkManager {
                 try {
                     dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, snapshot));
                     dirtySlots.addAll(mcLightEngine.propagateBlockLightColumn(cx, cz, snapshot));
+                    dirtySlots.addAll(mcLightEngine.resumeHeldPhotons());
                     lightsNeedUpload = true;
                     tableDirty.set(true);
                     runPendingLightingIn5x5(cx, cz);
@@ -1877,6 +1896,7 @@ public class ChunkManager {
             try {
                 dirtySlots.addAll(mcLightEngine.generateSkyLight(cx, cz, snapshot));
                 dirtySlots.addAll(mcLightEngine.propagateBlockLightColumn(cx, cz, snapshot));
+                dirtySlots.addAll(mcLightEngine.resumeHeldPhotons());
                 lightsNeedUpload = true;
                 tableDirty.set(true);
             } finally {

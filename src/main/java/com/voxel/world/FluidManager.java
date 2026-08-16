@@ -351,7 +351,10 @@ public class FluidManager {
     private boolean canFlowInto(int blockId, int fluidId) {
         if (blockId == 0) return true;
         if (isSameFluidRaw(blockId, fluidId)) return false;
-        if (isLavaBlock(blockId)) return false;
+        // A cell occupied by ANY fluid is impassable: water must not displace lava,
+        // and a non-water fluid (e.g. a wrongly-tagged lily) must not displace water.
+        // Lava-into-water is handled by checkForMixing / the STONE write in updateFluidBlock.
+        if (isFluid(blockId)) return false;
         return !isBlocked(blockId);
     }
 
