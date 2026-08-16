@@ -485,7 +485,8 @@ float getChunkDirSDF(uint slot, uint dirIdx) {
 
 uint getVoxelOcclusion(ivec3 p) {
     ivec3 relChunk = p >> 4;
-    if (any(lessThan(relChunk, ivec3(0))) || any(greaterThanEqual(relChunk, ivec3(128)))) return 0x3FFFu;
+    // Single fused bounds test: min(x, 127-x) < 0 iff x < 0 || x >= 128
+    if (any(lessThan(min(relChunk, ivec3(127) - relChunk), ivec3(0)))) return 0x3FFFu;
     uint slot = chunkSlots[relChunk.x | (relChunk.y << 7) | (relChunk.z << 14)];
     if (slot == EMPTY) return 0x3FFFu;
     int voxelIdx = (p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8);
@@ -498,7 +499,7 @@ uint getVoxelOcclusion(ivec3 p) {
 // block-data LIQUID effect tag, so it covers every water id (15, flowing 150-164).
 bool isWaterVoxel(vec3 p) {
     ivec3 rel = ivec3(floor(p));
-    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(WORLD_SIZE)))) return false;
+    if (any(lessThan(min(rel, ivec3(WORLD_SIZE) - 1 - rel), ivec3(0)))) return false;
     uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
     if (slot == EMPTY) return false;
     int bi = (rel.x & 15) | ((rel.y & 15) << 4) | ((rel.z & 15) << 8);
@@ -513,7 +514,7 @@ bool isWaterVoxel(vec3 p) {
 // Checks if a world-space voxel contains any solid geometry (contributes to occlusion).
 bool isBlockSolidAO(ivec3 p) {
     ivec3 rel = p;
-    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(WORLD_SIZE)))) return false;
+    if (any(lessThan(min(rel, ivec3(WORLD_SIZE) - 1 - rel), ivec3(0)))) return false;
     uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
     if (slot == EMPTY) return false;
     return isBitSolid(slot, rel);
@@ -583,7 +584,7 @@ float computeAmbientOcclusion(vec3 hp, vec3 n) {
 // Returns vec4(-1) if outside buffer.
 vec4 sampleLightmap(ivec3 p) {
     ivec3 rel = p;
-    if (any(lessThan(rel, ivec3(0))) || any(greaterThanEqual(rel, ivec3(2048)))) return vec4(-1);
+    if (any(lessThan(min(rel, ivec3(2047) - rel), ivec3(0)))) return vec4(-1);
     uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
     if (slot == EMPTY) return vec4(-1);
     int voxelIdx = (rel.x & 15) | ((rel.y & 15) << 4) | ((rel.z & 15) << 8);
@@ -653,7 +654,7 @@ bool isKineticBlock(int id) {
 
 // Raw packed voxel at a world position (0 when out of bounds or unloaded).
 uint worldRawVoxel(ivec3 p) {
-    if (any(lessThan(p, ivec3(0))) || any(greaterThanEqual(p, ivec3(WORLD_SIZE)))) return 0u;
+    if (any(lessThan(min(p, ivec3(WORLD_SIZE) - 1 - p), ivec3(0)))) return 0u;
     uint slot = chunkSlots[(p.x >> 4) | ((p.y >> 4) << 7) | ((p.z >> 4) << 14)];
     if (slot == EMPTY) return 0u;
     int bi = (p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8);
@@ -1103,19 +1104,22 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumT
     vec3 roToEnt;
     float entDistSq;
     for(int i=0; i<u_EntityCount; i++) {
-        EntityData ent = entities[i];
-        roToEnt = ent.position - ro;
+        // Read only the position first: culled entities (most of them at >32
+        // blocks) never pay for the rest of the struct's SSBO traffic.
+        vec3 entPos = entities[i].position;
+        roToEnt = entPos - ro;
         entDistSq = dot(roToEnt, roToEnt);
         // Skip entities > 32 blocks away (tight cull; CPU pre-filters <= 64 blocks)
         if (entDistSq > 1024.0) continue;
         // Skip entities behind the camera and more than 16 blocks away
         if (dot(roToEnt, rd) < 0.0 && entDistSq > 256.0) continue;
-        
+
+        EntityData ent = entities[i];
         mat3 entRotation = rotationMatrix(ent.rotation);
-        
+
         // Health Bar Check (Billboarded)
         if (ent.maxHealth > 0.001 && ent.health > 0.0) {
-            vec3 barPos = ent.position + vec3(0, 2.3, 0); // Above entity
+            vec3 barPos = entPos + vec3(0, 2.3, 0); // Above entity
             vec3 toCam = normalize(camPos - barPos);
             vec3 right = normalize(cross(vec3(0,1,0), toCam));
             vec3 up = cross(toCam, right);
@@ -1141,7 +1145,7 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumT
             mat3 localRot = rotationMatrix(part.rotation);
             vec3 localCenter = pivot + localRot * (geomCenter - pivot);
             
-            vec3 center = ent.position + entRotation * localCenter;
+            vec3 center = entPos + entRotation * localCenter;
             mat3 partRotation = entRotation * localRot;
             float tn;
             vec3 partNormal, localHit, localNormal;
@@ -1412,6 +1416,10 @@ vec3 pointLightContrib(vec3 p, vec3 n) {
         vec3 ldir = toL / d;
         float ndl = max(0.0, dot(n, ldir));
         float att = 1.0 - d / L.radius; att *= att;
+        // Skip the shadow-ray DDA entirely for faces that would receive nothing
+        // (backfacing or fully attenuated) — the old code traced fastShadow
+        // unconditionally for every light in range.
+        if (ndl <= 0.0 || att <= 0.0) continue;
         if (fastShadow(p + n * 0.02, ldir, d) > 0.5) {
             // Cartoon 2-tone point light: lit face = full color, grazing/shadowed
             // faces = nothing (soft shadows from fastShadow are preserved; both
@@ -1458,6 +1466,9 @@ void main() {
     }
     vec3 final = vec3(0.0), throu = vec3(1.0), ro = camPos; bool skip = false;
     vec3 godRd = rd; float godT = 96.0; // primary ray for god-ray marching
+    // Fog/haze color is constant per pixel (rd and `at` never change across
+    // bounces) — hoisted so the full GetSky() evaluation runs once, not per bounce.
+    vec3 haze = hazeColor(rd, at);
     uint lastMediumTag = 0xFFFFFFFFu; // Track last translucent medium tag to skip same-medium faces
 
     // ── Semi-transparent placement preview (ghost) ──
@@ -1584,7 +1595,7 @@ void main() {
                 if (sunVisC > 0.0) beam += at.sunColor * celRamp(sunVisC);
                 beam += pointLightContrib(hp, n);
                 vec3 bc = alb * beam * (1.0 - trans);
-                float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, hazeColor(rd, at), fog);
+                float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, haze, fog);
                 final += throu * bc;
             }
             if (trans <= 0.0) break;
@@ -1961,6 +1972,15 @@ void main() {
             }
         }
 
+        // ── Toon rim light ──
+        // Grazing-angle edge highlight (classic cel-shading accent) tinted by the
+        // ambient+sun mix, so silhouette edges pop against the banded sky. Opaque
+        // surfaces only — water/glass reflections and translucency are untouched.
+        if (trans < 0.01) {
+            float rv = 1.0 - max(0.0, dot(n, -rd));
+            beam += mix(at.ambient, at.sunColor, 0.5) * (rv * rv * rv) * 0.35;
+        }
+
         // Camera clipped inside water: the primary hit is the water voxel we're
         // inside at t≈0 — drop its shading entirely (no stretched near-surface
         // texture). The medium tag below still switches to water, so the next
@@ -1968,7 +1988,7 @@ void main() {
         if (skipNearWater) { trans = 1.0; alb = vec3(1.0); refl = 0.0; }
 
         vec3 bc = alb * beam * max(0.0, 1.0 - trans - refl);
-        float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, hazeColor(rd, at), fog);
+        float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, haze, fog);
         // Compute medium tag for face culling between same-medium translucent blocks.
         // Groups all water variants (15, 150-156) as tag 1, lava (21) as tag 2,
         // and uses block ID as tag for all other translucent blocks (e.g., glass).
