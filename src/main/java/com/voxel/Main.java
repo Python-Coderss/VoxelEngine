@@ -4066,6 +4066,12 @@ public class Main {
         blockRegistry.register("waterlily", 41);
         shaderBlockRegistry.register(41, 41);
         blockDataManager.registerBlock(41, "waterlily", textureManager, mcModels);
+        // "waterlily" trips the name-based liquid heuristic ("water" substring) — reset it
+        // to an opaque matte block so the fluid sim and raytracer treat lily pads as inert
+        // foliage, not a second liquid that overwrites lake water (same fix as water_wheel).
+        blockDataManager.setEffect(41, BlockDataManager.MaterialEffect.NONE);
+        blockDataManager.setTransparency(41, 0);
+        blockDataManager.setReflectivity(41, 0);
         blockDataManager.setBlockTintColor(41, 0x2E7D32);
         blockRegistry.register("pumpkin", 42);
         shaderBlockRegistry.register(42, 42);

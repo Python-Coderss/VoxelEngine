@@ -1918,7 +1918,13 @@ void main() {
             if (sunVis > 0.0 && skyContrib > 0.03) {
                 beam += at.sunColor * celRamp(sunVis);
             }
-            beam *= totalLightContrib * mix(vec3(1.0), blockTint, blockContrib * 0.8);
+            // Clamp the mix factor: blockContrib reaches ~20 near a bright source
+            // (byte*HEADROOM*5/255), so an unclamped mix extrapolates linearly — the
+            // green/blue channels of an amber tint go negative, and ACESFilm's
+            // rational curve maps large negatives back to ~1.0, producing the old
+            // magenta/white halos. Saturating the tint at the source color gives
+            // the intended soft amber glow.
+            beam *= totalLightContrib * mix(vec3(1.0), blockTint, min(blockContrib * 0.8, 1.0));
             beam += at.ambient * 0.3;
             beam += pointLightContrib(hp, n);
 

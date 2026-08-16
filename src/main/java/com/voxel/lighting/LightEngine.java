@@ -46,6 +46,27 @@ public class LightEngine {
     private final BlockDataManager blockDataManager;
     private final byte[] tempField;  // reference to World.tempLightPool, reused for per-type BFS
 
+    // ── Held photons ──
+    // When a flood-fill hits an unloaded chunk (EMPTY slot), the photon that
+    // would have entered it is parked here instead of dropped. When the target
+    // chunk loads, resumeHeldPhotons() re-seeds the flood from the parked state
+    // (same intensity, direction tally, tint), so light from a loaded chunk
+    // "waits at the boundary" and continues the moment the chunk appears — no
+    // chunk-boundary light seams. Sky-light photons from the horizontal fan BFS
+    // are parked separately (max-based field, no tint).
+    private static final int MAX_HELD_PHOTONS = 65536;
+    // Sky fan parks at EVERY boundary cell of a column (up to ~65k: 2 columns ×
+    // 2048 height × 16 width per pass) — but nearly all are open-field no-ops
+    // (the target column's own vertical sweep gives full sky anyway; the resume
+    // drops them without writing). The useful ones — light bending around
+    // overhangs/corners at gameplay heights — park first because the fan seeds
+    // sections in ascending-Y order, so a small cap keeps the band near ground
+    // level while keeping the per-pass park + per-load resume scan cheap.
+    private static final int MAX_HELD_SKY_PHOTONS = 8192;
+    private final Object heldLock = new Object();
+    private final java.util.List<HeldPhoton> heldPhotons = new java.util.ArrayList<>();
+    private final java.util.List<HeldSkyPhoton> heldSkyPhotons = new java.util.ArrayList<>();
+
     /** Maximum light value (both sky and block). */
     public static final int MAX_LIGHT = 15;
 
@@ -181,7 +202,6 @@ public class LightEngine {
     private int propagateSkyLightHorizontal(int cx, int cz, java.util.NavigableMap<Integer, Integer> slots,
                                              Set<Integer> dirtySlots) {
         int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
-        int maxRel = bufSize - 1;
 
         LongQueue queue = new LongQueue(1024);
         int worldBaseX = cx << 4;
@@ -208,6 +228,25 @@ public class LightEngine {
                 }
             }
         }
+
+        // Sky-light fan spreads into the 5×5 neighbourhood; photons that land on
+        // unloaded chunks are parked (heldSkyPhotons) and resumed when those
+        // chunks load.
+        return skyFanBFS(queue, ox, oy, oz, dirtySlots);
+    }
+
+    /**
+     * Horizontal sky light fan: BFS from sky-lit voxels across a full 5×5 grid
+     * (all 24 cells within ±2 in X/Z) so sunlight bends around overhangs and
+     * thin corners. Brightness loses ~13% per hop (×28/30 ≈ 0.933): ring-1
+     * cells get one hop, ring-2 cells two. Blocking rule: the target cell must
+     * not be opaque, and ring-2 cardinal cells also need their straight
+     * intermediate cell passable — light never punches straight through a
+     * 1-block wall. Photons targeting unloaded chunks are parked and resumed by
+     * {@link #resumeHeldPhotons()} once the chunk loads.
+     */
+    private int skyFanBFS(LongQueue queue, int ox, int oy, int oz, Set<Integer> dirtySlots) {
+        int maxRel = bufSize - 1;
 
         // 5×5 fan: all 24 offsets in the ±2 square around a lit voxel.
         int[][] fan5x5 = new int[24][2];
@@ -252,7 +291,15 @@ public class LightEngine {
                 }
 
                 int nSlot = world.getIndirectionTable()[(nx >> 4) + (ry >> 4) * World.REGION_SIZE + (nz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
-                if (nSlot == World.EMPTY) continue;
+                if (nSlot == World.EMPTY) {
+                    // Unloaded chunk: park the sky photon; it resumes when the
+                    // target chunk loads (resumeHeldPhotons re-runs the fan).
+                    if (next > 1) {
+                        parkSkyPhoton(nx + ox, ry + oy, nz + oz, rx + ox, ry + oy, rz + oz,
+                                next, cheb, dx, dz);
+                    }
+                    continue;
+                }
 
                 int absX = nx + ox, absY = ry + oy, absZ = nz + oz;
                 int opacity = getBlockOpacity(world.getVoxel(absX, absY, absZ));
@@ -397,8 +444,13 @@ public class LightEngine {
      * @param queue Pre-seeded with source nodes via packNodeScalar (relative coords)
      * @param ox,oy,oz Buffer origin (pre-computed for perf)
      * @param dirtySlots Set to fill with affected slot indices
+     * @param lightBlockId Source block ID — tint applied on resume if a photon
+     *                     is parked at an unloaded chunk boundary
+     * @param subtract true when the flood represents a removed source; parked
+     *                 photons then subtract on resume (net-zero with the add)
      */
-    private void floodFillScalar(LongQueue queue, int ox, int oy, int oz, Set<Integer> dirtySlots) {
+    private void floodFillScalar(LongQueue queue, int ox, int oy, int oz, Set<Integer> dirtySlots,
+                                 int lightBlockId, boolean subtract) {
         int maxRel = bufSize - 1;
         // Cache the world tables and the flat opacity array up front: the hot loop
         // runs millions of times with thousands of light sources, so we avoid a
@@ -435,24 +487,35 @@ public class LightEngine {
                 // Direct bounds check on relative coords
                 if (rnx < 0 || rny < 0 || rnz < 0 || rnx > maxRel || rny > maxRel || rnz > maxRel) continue;
 
-                int nSlot = indirectionTable[(rnx >> 4) + (rny >> 4) * World.REGION_SIZE + (rnz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
-                if (nSlot == World.EMPTY) continue;
-
-                // Read the block ID directly from the chunk pool (no second bounds
-                // check or indirection-table hop), then look up its opacity in the
-                // flat array.
-                int blockId = chunkPool[(nSlot << 12) | ((rnx & 15) | ((rny & 15) << 4) | ((rnz & 15) << 8))] & 0xFFFF;
-                int opacity = (blockId > 0 && blockId < opacityArr.length) ? opacityArr[blockId] : 0;
-
                 int axis = DIR_AXIS[d];
                 int sign = DIR_SIGN[d];
                 int ti = DIR_TALLY[d];
                 int t = nodeTally(node, ti);
                 int nt = t + 1;
-
                 // Distance grows only when this step pushes past the furthest
                 // extent reached on any axis (Chebyshev, not Manhattan).
                 int distIncrease = (t == oldMax) ? 1 : 0;
+                long newTallyBits = (tallyBits & ~(0xFL << (40 + ti * 4))) | ((long) nt << (40 + ti * 4));
+
+                int nSlot = indirectionTable[(rnx >> 4) + (rny >> 4) * World.REGION_SIZE + (rnz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
+                if (nSlot == World.EMPTY) {
+                    // Unloaded chunk: park the photon instead of dropping it. The
+                    // target cell's opacity is unknown, so keep the arrival
+                    // intensity; resumeHeldPhotons() applies decay and writes once
+                    // the section is loaded.
+                    if (cur > 1) {
+                        parkHeldPhoton(rnx + ox, rny + oy, rnz + oz, cur, t, oldMax,
+                                axis, sign, newTallyBits, lastAxis, lastSign, lightBlockId, subtract);
+                    }
+                    continue;
+                }
+
+                // Read the block ID directly from the chunk pool (no second bounds
+                // check or indirection-table hop), then look up its opacity in the
+                // flat array.
+                int tgtBlockId = chunkPool[(nSlot << 12) | ((rnx & 15) | ((rny & 15) << 4) | ((rnz & 15) << 8))] & 0xFFFF;
+                int opacity = (tgtBlockId > 0 && tgtBlockId < opacityArr.length) ? opacityArr[tgtBlockId] : 0;
+
                 int next = cur - distIncrease - opacity;
                 // Reversing along the last-used axis halves the brightness.
                 if (lastAxis != AXIS_NONE && lastAxis == axis && lastSign != sign) {
@@ -469,7 +532,6 @@ public class LightEngine {
                     tempField[nidx] = (byte) next255;
                     dirtySlots.add(nSlot);
                     if (next > 1) {
-                        long newTallyBits = (tallyBits & ~(0xFL << (40 + ti * 4))) | ((long) nt << (40 + ti * 4));
                         queue.add(packNodeTracked(rnx, rny, rnz, next, axis, sign, newTallyBits));
                     }
                 }
@@ -562,17 +624,252 @@ public class LightEngine {
     }
 
     // ══════════════════════════════════════════════════════════════════
+    //  HELD PHOTONS — light that waits at unloaded chunk boundaries
+    // ══════════════════════════════════════════════════════════════════
+
+    /** A block-light photon parked at an unloaded chunk boundary (see floodFillScalar). */
+    private static final class HeldPhoton {
+        final int tx, ty, tz;        // target cell (world coords) the photon wanted to enter
+        final int cur;               // arrival intensity before the target cell's opacity
+        final int t;                 // tally of the step direction on the parent node
+        final int oldMax;            // parent's Chebyshev extent (for distIncrease)
+        final int axis, sign;        // step direction taken toward the target
+        final long newTallyBits;     // parent tally with the step counted (resumes Chebyshev tracking)
+        final int lastAxis, lastSign;// parent node's direction (for reversal halving)
+        final int blockId;           // light source type (tint on resume)
+        final boolean subtract;      // true = source was removed; resume must SUBTRACT
+
+        HeldPhoton(int tx, int ty, int tz, int cur, int t, int oldMax,
+                   int axis, int sign, long newTallyBits,
+                   int lastAxis, int lastSign, int blockId, boolean subtract) {
+            this.tx = tx; this.ty = ty; this.tz = tz;
+            this.cur = cur;
+            this.t = t; this.oldMax = oldMax;
+            this.axis = axis; this.sign = sign;
+            this.newTallyBits = newTallyBits;
+            this.lastAxis = lastAxis; this.lastSign = lastSign;
+            this.blockId = blockId; this.subtract = subtract;
+        }
+    }
+
+    /** A sky-light photon parked at an unloaded chunk boundary (see skyFanBFS). */
+    private static final class HeldSkyPhoton {
+        final int tx, ty, tz;        // target cell (world coords)
+        final int px, py, pz;        // parent cell (world coords) — for the ring-2 mid-cell check
+        final int next;              // decayed arrival intensity (before the target's opacity)
+        final int cheb, dx, dz;      // fan hop metadata
+
+        HeldSkyPhoton(int tx, int ty, int tz, int px, int py, int pz, int next, int cheb, int dx, int dz) {
+            this.tx = tx; this.ty = ty; this.tz = tz;
+            this.px = px; this.py = py; this.pz = pz;
+            this.next = next;
+            this.cheb = cheb; this.dx = dx; this.dz = dz;
+        }
+    }
+
+    private void parkHeldPhoton(int tx, int ty, int tz, int cur, int t, int oldMax,
+                                int axis, int sign, long newTallyBits,
+                                int lastAxis, int lastSign, int blockId, boolean subtract) {
+        synchronized (heldLock) {
+            if (heldPhotons.size() >= MAX_HELD_PHOTONS) return; // safety cap
+            heldPhotons.add(new HeldPhoton(tx, ty, tz, cur, t, oldMax, axis, sign,
+                    newTallyBits, lastAxis, lastSign, blockId, subtract));
+        }
+    }
+
+    private void parkSkyPhoton(int tx, int ty, int tz, int px, int py, int pz,
+                               int next, int cheb, int dx, int dz) {
+        synchronized (heldLock) {
+            if (heldSkyPhotons.size() >= MAX_HELD_SKY_PHOTONS) return; // cap: see above
+            heldSkyPhotons.add(new HeldSkyPhoton(tx, ty, tz, px, py, pz, next, cheb, dx, dz));
+        }
+    }
+
+    /** Drops all held photons (used before a full rebuild — its fresh floods re-park). */
+    public void clearHeldPhotons() {
+        synchronized (heldLock) {
+            heldPhotons.clear();
+            heldSkyPhotons.clear();
+        }
+    }
+
+    /** Number of block-light photons currently parked at unloaded chunk boundaries. */
+    public int heldPhotonCount() {
+        synchronized (heldLock) { return heldPhotons.size(); }
+    }
+
+    /** Number of sky-light photons currently parked at unloaded chunk boundaries. */
+    public int heldSkyPhotonCount() {
+        synchronized (heldLock) { return heldSkyPhotons.size(); }
+    }
+
+    /**
+     * Resumes light propagation that was parked at unloaded chunk boundaries.
+     * Called after a chunk (re)loads: every held photon whose target cell is now
+     * loaded re-enters the flood with its exact saved state (intensity, direction
+     * tally, tint type) and continues from there. Photons whose target is still
+     * unloaded stay parked; photons the buffer has moved away from are dropped.
+     *
+     * Block-light photons run the same scalar BFS + tint pipeline as a fresh
+     * flood, so held light behaves identically to light propagated normally
+     * (a removed source parks subtract-photons that cancel the add — net zero).
+     * Sky-light photons re-enter the horizontal fan BFS; the column's own
+     * vertical sweep already ran, and the max-based field means the fan only
+     * ever brightens (it never fights the vertical result).
+     *
+     * @return Set of dirty slot indices
+     */
+    public Set<Integer> resumeHeldPhotons() {
+        Set<Integer> dirty = new HashSet<>();
+        java.util.List<HeldPhoton> blockPending;
+        java.util.List<HeldSkyPhoton> skyPending;
+        synchronized (heldLock) {
+            if (heldPhotons.isEmpty() && heldSkyPhotons.isEmpty()) return dirty;
+            blockPending = new java.util.ArrayList<>(heldPhotons);
+            skyPending = new java.util.ArrayList<>(heldSkyPhotons);
+            heldPhotons.clear();
+            heldSkyPhotons.clear();
+        }
+
+        int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
+        int maxRel = bufSize - 1;
+        int[] indirectionTable = world.getIndirectionTable();
+        int[] chunkPool = world.getChunkPool();
+        int[] opacityArr = blockDataManager.getOpacityArray();
+        java.util.List<HeldPhoton> blockStillWaiting = new java.util.ArrayList<>();
+        java.util.List<HeldSkyPhoton> skyStillWaiting = new java.util.ArrayList<>();
+
+        // ── Block light: group by (blockId, subtract) so one flood+tint pass ──
+        // ── serves all photons of a type (same batching as the live floods).  ──
+        java.util.Map<Long, java.util.List<HeldPhoton>> byType = new java.util.LinkedHashMap<>();
+        for (HeldPhoton p : blockPending) {
+            long key = ((long) p.blockId << 1) | (p.subtract ? 1 : 0);
+            byType.computeIfAbsent(key, k -> new java.util.ArrayList<>()).add(p);
+        }
+
+        for (java.util.Map.Entry<Long, java.util.List<HeldPhoton>> e : byType.entrySet()) {
+            int blockId = (int) (e.getKey() >> 1);
+            boolean subtract = (e.getKey() & 1) == 1;
+            java.util.List<HeldPhoton> group = e.getValue();
+
+            LongQueue queue = new LongQueue(256);
+            Set<Integer> typeDirty = new HashSet<>();
+            // Seeds: {packed resumed node, target slot}. The node already carries
+            // the target coords + intensity + direction state for the continuing
+            // flood — exactly what the live BFS would have enqueued.
+            java.util.List<long[]> seeds = new java.util.ArrayList<>();
+            java.util.Set<Integer> touchedSlots = new java.util.HashSet<>();
+
+            for (HeldPhoton p : group) {
+                int rx = p.tx - ox, ry = p.ty - oy, rz = p.tz - oz;
+                if (rx < 0 || ry < 0 || rz < 0 || rx > maxRel || ry > maxRel || rz > maxRel) {
+                    continue; // buffer moved away from the target — photon lost
+                }
+                int nSlot = indirectionTable[(rx >> 4) + (ry >> 4) * World.REGION_SIZE + (rz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
+                if (nSlot == World.EMPTY) {
+                    blockStillWaiting.add(p); // chunk still not loaded — keep holding
+                    continue;
+                }
+
+                // The target cell is now loaded: apply the decay the live flood
+                // would have applied when entering it (opacity + Chebyshev
+                // growth + reversal halving), then write and continue.
+                int tgtBlockId = chunkPool[(nSlot << 12) | ((rx & 15) | ((ry & 15) << 4) | ((rz & 15) << 8))] & 0xFFFF;
+                int opacity = (tgtBlockId > 0 && tgtBlockId < opacityArr.length) ? opacityArr[tgtBlockId] : 0;
+                int distIncrease = (p.t == p.oldMax) ? 1 : 0;
+                int next = p.cur - distIncrease - opacity;
+                if (p.lastAxis != AXIS_NONE && p.lastAxis == p.axis && p.lastSign != p.sign) {
+                    next >>= 1;
+                }
+                next = Math.max(0, next);
+                if (next <= 0) continue; // decayed to nothing — drop
+
+                seeds.add(new long[]{packNodeTracked(rx, ry, rz, next, p.axis, p.sign, p.newTallyBits), nSlot});
+                touchedSlots.add(nSlot);
+            }
+
+            if (!seeds.isEmpty()) {
+                // Temp field for freshly-loaded slots may hold stale bytes from a
+                // recycled slot index — clean before seeding so writes land.
+                for (int s : touchedSlots) clearTempFieldSlot(s);
+                for (long[] seed : seeds) {
+                    int slot = (int) seed[1];
+                    long node = seed[0];
+                    int nidx = (slot << 12) | ((nodeX(node) & 15) | ((nodeY(node) & 15) << 4) | ((nodeZ(node) & 15) << 8));
+                    int next255 = nodeIntensityScalar(node) * 17;
+                    if (next255 > (tempField[nidx] & 0xFF)) {
+                        tempField[nidx] = (byte) next255;
+                        typeDirty.add(slot);
+                    }
+                    if (nodeIntensityScalar(node) > 1) queue.add(node);
+                }
+                floodFillScalar(queue, ox, oy, oz, typeDirty, blockId, subtract);
+                applyTintToMain(blockId, !subtract, typeDirty);
+                dirty.addAll(typeDirty);
+            }
+        }
+
+        // ── Sky light: re-enter the horizontal fan BFS ──
+        LongQueue skyQueue = new LongQueue(256);
+        Set<Integer> skyDirty = new HashSet<>();
+        for (HeldSkyPhoton p : skyPending) {
+            int rx = p.tx - ox, ry = p.ty - oy, rz = p.tz - oz;
+            if (rx < 0 || ry < 0 || rz < 0 || rx > maxRel || ry > maxRel || rz > maxRel) continue;
+            int nSlot = indirectionTable[(rx >> 4) + (ry >> 4) * World.REGION_SIZE + (rz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
+            if (nSlot == World.EMPTY) {
+                skyStillWaiting.add(p); // still unloaded — keep holding
+                continue;
+            }
+
+            // Same blocking rule as the live fan: ring-2 cardinal hops need the
+            // intermediate cell passable.
+            if (p.cheb == 2 && (p.dx == 0 || p.dz == 0)) {
+                int midX = p.px + p.dx / 2, midZ = p.pz + p.dz / 2;
+                if (getBlockOpacity(world.getVoxel(midX, p.py, midZ)) >= MAX_LIGHT) continue;
+            }
+            int tgtBlockId = chunkPool[(nSlot << 12) | ((rx & 15) | ((ry & 15) << 4) | ((rz & 15) << 8))] & 0xFFFF;
+            int opacity = (tgtBlockId > 0 && tgtBlockId < opacityArr.length) ? opacityArr[tgtBlockId] : 0;
+            int actNext = Math.max(0, p.next - opacity);
+            if (actNext <= 0) continue;
+
+            int lx = rx & 15, ly = ry & 15, lz = rz & 15;
+            int existing = world.getSkyLight(nSlot, lx, ly, lz) / 17;
+            if (actNext > existing) {
+                world.setSkyLight(nSlot, lx, ly, lz, actNext * 17);
+                skyDirty.add(nSlot);
+                if (actNext > 1) skyQueue.add(packNodeScalar(rx, ry, rz, actNext));
+            }
+        }
+        if (!skyDirty.isEmpty()) {
+            skyFanBFS(skyQueue, ox, oy, oz, skyDirty);
+            dirty.addAll(skyDirty);
+        }
+
+        // Re-park photons whose target is STILL unloaded (the chunk that just
+        // loaded may not be the one they were waiting for).
+        synchronized (heldLock) {
+            heldPhotons.addAll(blockStillWaiting);
+            heldSkyPhotons.addAll(skyStillWaiting);
+        }
+        return dirty;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
     //  SINGLE-SOURCE BFS — for runtime block place/break
     // ══════════════════════════════════════════════════════════════════
 
     /**
      * Computes the scalar intensity field for a single light source at (x,y,z)
      * into the temp field. Used for runtime block changes where only one source
-     * is added or removed.
+     * is added or removed. Photons that reach an unloaded chunk boundary are
+     * parked for {@link #resumeHeldPhotons()}.
      *
+     * @param blockId  Source block ID (tint type for parked photons)
+     * @param subtract true when the source was removed (parked photons subtract on resume)
      * @return Set of slot indices that received temp field writes
      */
-    public Set<Integer> computeSingleSourceContribution(int x, int y, int z, int intensity) {
+    public Set<Integer> computeSingleSourceContribution(int x, int y, int z, int intensity,
+                                                        int blockId, boolean subtract) {
         Set<Integer> dirtySlots = new HashSet<>();
         int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
 
@@ -589,7 +886,7 @@ public class LightEngine {
         int rx = x - ox, ry = y - oy, rz = z - oz;
         queue.add(packNodeScalar(rx, ry, rz, intensity));
 
-        floodFillScalar(queue, ox, oy, oz, dirtySlots);
+        floodFillScalar(queue, ox, oy, oz, dirtySlots, blockId, subtract);
 
         WorldGenLogger.logPos("LIGHT_SINGLE_SRC", x, y, z,
             "intensity=" + intensity + " dirty=" + dirtySlots.size());
@@ -683,8 +980,9 @@ public class LightEngine {
                 queue.add(packNodeScalar(rsx, rsy, rsz, intensity));
             }
 
-            // Flood-fill
-            floodFillScalar(queue, ox, oy, oz, typeDirty);
+            // Flood-fill (photons hitting unloaded chunks are parked and resumed
+            // when those chunks load)
+            floodFillScalar(queue, ox, oy, oz, typeDirty, blockId, false);
 
             // Tint and add to main pool
             applyTintToMain(blockId, true, typeDirty);
@@ -778,7 +1076,7 @@ public class LightEngine {
                 queue.add(packNodeScalar(rsx, rsy, rsz, intensity));
             }
 
-            floodFillScalar(queue, ox, oy, oz, typeDirty);
+            floodFillScalar(queue, ox, oy, oz, typeDirty, blockId, false);
             applyTintToMain(blockId, true, typeDirty);
             dirtySlots.addAll(typeDirty);
         }
@@ -821,14 +1119,14 @@ public class LightEngine {
             // ── Light source changed: single-source add/subtract ──
             if (oldEmissive > 0) {
                 int intensity = Math.min(oldEmissive, 15);
-                Set<Integer> contrib = computeSingleSourceContribution(x, y, z, intensity);
+                Set<Integer> contrib = computeSingleSourceContribution(x, y, z, intensity, oldBlockId, true);
                 lightPending.addAll(contrib);
                 applyTintToMain(oldBlockId, false, contrib);
                 dirtySlots.addAll(contrib);
             }
             if (newEmissive > 0) {
                 int intensity = Math.min(newEmissive, 15);
-                Set<Integer> contrib = computeSingleSourceContribution(x, y, z, intensity);
+                Set<Integer> contrib = computeSingleSourceContribution(x, y, z, intensity, newBlockId, false);
                 lightPending.addAll(contrib);
                 applyTintToMain(newBlockId, true, contrib);
                 dirtySlots.addAll(contrib);
@@ -923,6 +1221,10 @@ public class LightEngine {
      */
     public Set<Integer> rebuildAllLighting(java.util.Map<Long, java.util.NavigableMap<Integer, Integer>> loadedChunks) {
         Set<Integer> allDirty = new HashSet<>();
+
+        // Held photons describe light from sources that may no longer exist —
+        // drop them; the rebuild's fresh floods re-park from current state.
+        clearHeldPhotons();
 
         // Phase 1: Clear all light in loaded chunks
         for (java.util.NavigableMap<Integer, Integer> slots : loadedChunks.values()) {
