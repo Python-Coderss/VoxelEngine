@@ -1,0 +1,11 @@
+{
+    "textures": {
+        "west": "aether:block/natural/skyroot_log_top",
+        "east": "aether:block/natural/skyroot_log_top",
+        "north": "aether:block/natural/skyroot_log",
+        "south": "aether:block/natural/skyroot_log",
+        "up": "aether:block/natural/skyroot_log",
+        "down": "aether:block/natural/skyroot_log",
+        "particle": "aether:block/natural/skyroot_log"
+    }
+}

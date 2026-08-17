@@ -111,9 +111,10 @@ where is the canonical registry mentioned.
 
 ## Railways & Minecarts
 
-- **Rails:** block IDs 391 (`rail_ns`, runs along Z) and 392 (`rail_ew`, runs along X); 1/16-tall slab models (`rail_ns.json`/`rail_ew.json`, `rail_normal.png` texture). Placement requires a full block below and picks the axis from rail neighbours (cross/free-standing falls back to the player's look direction). Item `rail` (6 iron ingots → 16). Drops map both IDs to the rail item.
-- **Minecart:** item `minecart` (5 iron ingots) spawns a `MinecartEntity` on the target rail (queued via `GameContext.minecartSpawnQueue` from the GL thread, drained on the logic thread). Entity model `models/entity/minecart.json` (5 cuboid-atlas parts) + generated 64×32 `textures/entity/minecart.png` (regenerate with `tools/gen_minecart_texture.py`).
-- **Physics (`MinecartEntity.updateCart`):** follows the rail under its center along the rail's axis (accelerates from rider W/S input, coasts with friction, parks at track ends, clamps fall steps to 0.5 blocks so thin floors can't be tunnelled). Off rails it falls with gravity until something is below.
+- **Rails:** straight IDs 391 (`rail_ns`, along Z) and 392 (`rail_ew`, along X, horizontal `rail_normal_ew.png` texture) + curved corners 450-453 (`rail_curve_se/sw/nw/ne`, `rail_normal_turned.png` L-texture with flip UVs); all are 1/16-tall slab models. Placement requires a full block below; `BlockInteraction.chooseRailShape` picks straights from the look direction or rail neighbours, and exactly one N-S + one E-W neighbour auto-creates a curve; `refreshRailShapes` converts neighbours after place/break (Beta RailLogic behaviour). Item `rail` (6 iron ingots → 16). All six IDs drop the rail item.
+- **Minecart:** item `minecart` (5 iron ingots) spawns a `MinecartEntity` on the target rail (queued via `GameContext.minecartSpawnQueue` from the GL thread, drained on the logic thread). Entity model `models/entity/minecart.json` (6 cuboid-atlas parts, ported from the 1.12.2 `ModelMinecart` **including the render Y-flip** Minecraft applies via `scale(-1,-1,1)` — deck 20×16×2 (base `from [-10,-7,-1]`, rot X90°Y180°) + 4 walls 16×8×2 + a fillable dirt slab). Because our `cuboid_atlas` shader maps +Z/−Z box faces swapped vs `ModelBox`, the wall rotations are chosen so each wall's OUTER face lands on local −Z: north Y0°, south Y180°, west Y90°, east Y270°. Net result matches vanilla exactly: every wall's OUTER face samples the light-grey region (uv x 20-36) and the inner faces the dark body (x 2-18), the deck sits at the BOTTOM (y 0–0.125) with walls rising to y 0.625, and the deck top samples the dark-grey floor panel (x 2-22, y 12-28). Uses the **vanilla** 64×32 `textures/entity/minecart.png` (uploaded at native size into the top half of the 64×64 entity array — `TextureManager` special-cases it, no 2× vertical stretch — so model UVs are vanilla pixel coords).
+- **Fill level:** `MinecartEntity.fillLevel` (0 empty → 1 full) moves the `dirt` part's Y offset (`offset.y = 1 + fill*8` in 1/16 units) so the dirt slab — whose top face samples the legacy dirt region (uv 33,12 → x 45-61, y 12-24) — rises from just below the interior floor (hidden when empty) to the wall tops when full. Right-click the cart with dirt in hand fills it one notch (8 dirt = full); shift-right-click empties it.
+- **Physics (`MinecartEntity.updateCart`):** follows the rail under its center along the rail's axis, arcing through curve corners on a quarter-circle centred on the cell corner (entry edge tangent to the straight, radius 0.5); accelerates from rider W/S input, coasts with friction, parks at track ends, clamps fall steps to 0.5 blocks so thin floors can't be tunnelled. Off rails it falls with gravity until something is below. Position is snapshotted each tick (`snapshotPrev()`) so the render interpolation is smooth.
 - **Riding:** right-click a cart to mount (W/S move, E or right-click dismounts). `Player.ridingCart` early-returns in `update()` to lock the player onto the cart; `GameContext.ridingMinecart` (volatile) + `ctx.dismountMinecart` runnable handle the GL→logic thread handoff. Auto-dismount on death or dimension change.
 
 ## Slash Commands
@@ -178,6 +179,11 @@ Reads `renderTexture` back via `glGetTextureImage`, Y-flips, saves timestamped P
 | 1 | grass_block | 2 | stone |
 | 3 | glass | 4 | oak_leaves |
 | 5 | oak_log | 13 | dirt |
+
+Orientable logs: every log type (oak 5, birch 46, spruce 47, jungle 49, acacia 51,
+dark_oak 52, aether skyroot 103) has X/Z variants (260/261, 438-449) chosen from
+the clicked face at placement (piston-style per-face texture models); all variants
+drop their base log item.
 | 14 | sand | 15 | water |
 | 16 | obsidian | 17 | glowstone |
 | 18 | end_stone | 19 | nether_portal |

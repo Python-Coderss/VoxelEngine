@@ -1,0 +1,11 @@
+{
+    "textures": {
+        "north": "log_jungle_top",
+        "south": "log_jungle_top",
+        "west": "log_jungle",
+        "east": "log_jungle",
+        "up": "log_jungle",
+        "down": "log_jungle",
+        "particle": "log_jungle"
+    }
+}

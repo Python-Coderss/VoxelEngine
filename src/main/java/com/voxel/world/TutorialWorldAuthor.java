@@ -364,14 +364,24 @@ public final class TutorialWorldAuthor {
         private void buildMinecartCoaster(Zone z) {
             int x = z.cx, zz = z.cz;
             int r = 16;
-            for (int dx = -r; dx <= r; dx++) {
+            // Outer ring. The TOP-LEFT corner is a real curved rail
+            // (rail_curve_se at the corner cell (x-r, zz-r)) so carts round the
+            // corner; the other three corners keep the classic straight
+            // crossings.
+            for (int dx = -r + 1; dx <= r; dx++) {
                 place(x + dx, G, zz - r, GRAVEL); place(x + dx, G + 1, zz - r, RAIL_EW);
                 place(x + dx, G, zz + r, GRAVEL); place(x + dx, G + 1, zz + r, RAIL_EW);
             }
             for (int dz = -r; dz <= r; dz++) {
-                place(x - r, G, dz + zz, GRAVEL); place(x - r, G + 1, dz + zz, RAIL_NS);
                 place(x + r, G, dz + zz, GRAVEL); place(x + r, G + 1, dz + zz, RAIL_NS);
             }
+            // Left rail starts one cell south of the corner so the corner cell
+            // only connects east (top rail) and south (left rail).
+            for (int dz = -r + 1; dz <= r; dz++) {
+                place(x - r, G, dz + zz, GRAVEL); place(x - r, G + 1, dz + zz, RAIL_NS);
+            }
+            place(x - r, G, zz - r, GRAVEL);
+            place(x - r, G + 1, zz - r, com.voxel.entity.MinecartEntity.RAIL_CURVE_SE);
             for (int dz = -8; dz <= 8; dz++) {
                 place(x - 8, G, zz + dz, GRAVEL); place(x - 8, G + 1, zz + dz, RAIL_NS);
                 place(x + 8, G, zz + dz, GRAVEL); place(x + 8, G + 1, zz + dz, RAIL_NS);

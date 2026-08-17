@@ -1,0 +1,11 @@
+{
+    "textures": {
+        "west": "log_spruce_top",
+        "east": "log_spruce_top",
+        "north": "log_spruce",
+        "south": "log_spruce",
+        "up": "log_spruce",
+        "down": "log_spruce",
+        "particle": "log_spruce"
+    }
+}

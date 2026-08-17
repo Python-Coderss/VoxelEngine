@@ -1,0 +1,11 @@
+{
+    "textures": {
+        "north": "log_birch_top",
+        "south": "log_birch_top",
+        "west": "log_birch",
+        "east": "log_birch",
+        "up": "log_birch",
+        "down": "log_birch",
+        "particle": "log_birch"
+    }
+}

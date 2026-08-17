@@ -361,9 +361,26 @@ public class ItemDefinitions {
         registerAlias("iron_bucket", "bucket");
         registerAlias("silver_dye", "light_gray_dye");
         // --- Drop mappings for orientation variants (no separate items) ---
-        // Horizontal oak logs (260/261) drop the regular oak_log item.
+        // Horizontal log variants (260/261, 438-449) drop their regular log item.
         blockItemByBlockId.put(260, "oak_log");
         blockItemByBlockId.put(261, "oak_log");
+        blockItemByBlockId.put(438, "birch_log");
+        blockItemByBlockId.put(439, "birch_log");
+        blockItemByBlockId.put(440, "spruce_log");
+        blockItemByBlockId.put(441, "spruce_log");
+        blockItemByBlockId.put(442, "jungle_log");
+        blockItemByBlockId.put(443, "jungle_log");
+        blockItemByBlockId.put(444, "acacia_log");
+        blockItemByBlockId.put(445, "acacia_log");
+        blockItemByBlockId.put(446, "dark_oak_log");
+        blockItemByBlockId.put(447, "dark_oak_log");
+        blockItemByBlockId.put(448, "skyroot_log");
+        blockItemByBlockId.put(449, "skyroot_log");
+        // Curved rails (450-453) drop the regular rail item.
+        blockItemByBlockId.put(450, "rail");
+        blockItemByBlockId.put(451, "rail");
+        blockItemByBlockId.put(452, "rail");
+        blockItemByBlockId.put(453, "rail");
         // Directional piston variants drop the regular piston items
         blockItemByBlockId.put(264, "piston");
         blockItemByBlockId.put(265, "piston");

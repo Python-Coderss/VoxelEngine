@@ -8,6 +8,7 @@ import org.joml.Vector3f;
 import org.junit.Test;
 
 import com.voxel.entity.MinecartEntity;
+import com.voxel.entity.ModelPart;
 import com.voxel.game.BlockInteraction;
 
 public class RailAndMinecartTest {
@@ -33,14 +34,14 @@ public class RailAndMinecartTest {
         world.setVoxel(5, 60, 5, MinecartEntity.RAIL_NS);
         world.setVoxel(6, 60, 5, MinecartEntity.RAIL_EW);
         assertEquals(MinecartEntity.RAIL_EW,
-                BlockInteraction.chooseRailAxis(world, 5, 60, 5, 0, 1));
+                BlockInteraction.chooseRailShape(world, 5, 60, 5, 0, 1));
 
         // South neighbour rail (no east neighbour) → the new rail runs N-S.
         World world2 = makeWorld();
         world2.setVoxel(5, 60, 5, MinecartEntity.RAIL_NS);
         world2.setVoxel(5, 60, 6, MinecartEntity.RAIL_NS);
         assertEquals(MinecartEntity.RAIL_NS,
-                BlockInteraction.chooseRailAxis(world2, 5, 60, 5, 1, 0));
+                BlockInteraction.chooseRailShape(world2, 5, 60, 5, 1, 0));
     }
 
     @Test
@@ -48,10 +49,62 @@ public class RailAndMinecartTest {
         World world = makeWorld();
         // Free-standing: looking mostly along Z → N-S rail
         assertEquals(MinecartEntity.RAIL_NS,
-                BlockInteraction.chooseRailAxis(world, 5, 60, 5, 0, 1));
+                BlockInteraction.chooseRailShape(world, 5, 60, 5, 0, 1));
         // Looking mostly along X → E-W rail
         assertEquals(MinecartEntity.RAIL_EW,
-                BlockInteraction.chooseRailAxis(world, 5, 60, 5, 1, 0));
+                BlockInteraction.chooseRailShape(world, 5, 60, 5, 1, 0));
+    }
+
+    @Test
+    public void railCornersBecomeCurves() {
+        // One N-S neighbour (north) + one E-W neighbour (east) → an NE curve.
+        World world = makeWorld();
+        world.setVoxel(5, 60, 4, MinecartEntity.RAIL_NS);   // north neighbour
+        world.setVoxel(6, 60, 5, MinecartEntity.RAIL_EW);   // east neighbour
+        assertEquals(MinecartEntity.RAIL_CURVE_NE,
+                BlockInteraction.chooseRailShape(world, 5, 60, 5, 1, 0));
+
+        // South + west neighbours → SW curve.
+        World world2 = makeWorld();
+        world2.setVoxel(5, 60, 6, MinecartEntity.RAIL_NS);  // south neighbour
+        world2.setVoxel(4, 60, 5, MinecartEntity.RAIL_EW);  // west neighbour
+        assertEquals(MinecartEntity.RAIL_CURVE_SW,
+                BlockInteraction.chooseRailShape(world2, 5, 60, 5, 0, 1));
+    }
+
+    @Test
+    public void cartDrivesThroughCurveCorner() {
+        World world = makeWorld();
+        // Track: NS rail x=0 (z 0..2), NE curve at (0,3), EW rail z=3 (x 1..3).
+        for (int z = 0; z <= 2; z++) world.setVoxel(0, 60, z, MinecartEntity.RAIL_NS);
+        world.setVoxel(0, 60, 3, MinecartEntity.RAIL_CURVE_NE);
+        for (int x = 1; x <= 3; x++) world.setVoxel(x, 60, 3, MinecartEntity.RAIL_EW);
+        MinecartEntity cart = new MinecartEntity(1,
+                new Vector3f(0.5f, 60f + MinecartEntity.RAIL_TOP, 0.5f));
+
+        // Drive south past the corner: the cart must arc east and keep riding.
+        for (int i = 0; i < 400; i++) cart.updateCart(world, 0.05f, 1.0f);
+        assertTrue("cart should have rounded the corner eastward", cart.getPosX() > 2.0f);
+        assertEquals("cart rides the EW rail after the corner", 60f + MinecartEntity.RAIL_TOP, cart.getPosY(), 0.001f);
+        assertTrue("cart still on rails after the corner", cart.isOnRails());
+        assertTrue("cart must not teleport through the corner", cart.getPosX() < 4.0f);
+    }
+
+    @Test
+    public void cartStopsBeforeTrackEndAfterCurve() {
+        World world = makeWorld();
+        // Short corner: NS rail, NE curve, single EW cell — the track ends there.
+        world.setVoxel(0, 60, 0, MinecartEntity.RAIL_NS);
+        world.setVoxel(0, 60, 1, MinecartEntity.RAIL_NS);
+        world.setVoxel(0, 60, 2, MinecartEntity.RAIL_NS);
+        world.setVoxel(0, 60, 3, MinecartEntity.RAIL_CURVE_NE);
+        world.setVoxel(1, 60, 3, MinecartEntity.RAIL_EW);
+        MinecartEntity cart = new MinecartEntity(1,
+                new Vector3f(0.5f, 60f + MinecartEntity.RAIL_TOP, 0.5f));
+
+        for (int i = 0; i < 600; i++) cart.updateCart(world, 0.05f, 1.0f);
+        assertTrue("cart parks at the end of the stub rail", cart.getPosX() >= 1.9f && cart.getPosX() < 2.1f);
+        assertTrue("cart stays on rails at the end", cart.isOnRails());
     }
 
     @Test
@@ -86,6 +139,34 @@ public class RailAndMinecartTest {
         for (int i = 0; i < 200; i++) cart.updateCart(world, 0.05f, 0);
         assertFalse("cart should leave the rails", cart.isOnRails());
         assertEquals("cart should rest on the ground below", 60.0, cart.getPosY(), 0.01);
+    }
+
+    @Test
+    public void fillLevelMovesDirtPartUp() {
+        MinecartEntity cart = new MinecartEntity(1, new Vector3f(0.5f, 0.5f, 0.5f));
+        // The physics-only constructor loads no model, so attach a dirt part manually.
+        cart.addPart(new ModelPart("dirt", new Vector3f(-8, -1, -6), new Vector3f(16, 1, 12), 0));
+
+        // Empty: the dirt slab sits just below the cart floor (hidden).
+        cart.setFillLevel(0f);
+        assertEquals(1f, cart.findPart("dirt").offset.y, 0.001f);
+        assertEquals(0f, cart.getFillLevel(), 0.001f);
+
+        // Half full: slab bottom halfway up the 8-unit-tall interior.
+        cart.setFillLevel(0.5f);
+        assertEquals(5f, cart.findPart("dirt").offset.y, 0.001f);
+
+        // Full: slab top flush with the wall tops (y = 0.625 blocks).
+        cart.setFillLevel(1f);
+        assertEquals(9f, cart.findPart("dirt").offset.y, 0.001f);
+
+        // Out-of-range values clamp to [0, 1].
+        cart.setFillLevel(2f);
+        assertEquals(1f, cart.getFillLevel(), 0.001f);
+        assertEquals(9f, cart.findPart("dirt").offset.y, 0.001f);
+        cart.setFillLevel(-3f);
+        assertEquals(0f, cart.getFillLevel(), 0.001f);
+        assertEquals(1f, cart.findPart("dirt").offset.y, 0.001f);
     }
 
     @Test

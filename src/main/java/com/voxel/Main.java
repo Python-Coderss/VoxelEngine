@@ -4283,12 +4283,51 @@ public class Main {
         blockDataManager.registerBlock(145, "zinc_block", textureManager, mcModels);
 
         // --- Orientable log variants (axis chosen from clicked face at placement) ---
+        // Every log type gets an X-axis and a Z-axis variant (same piston-style
+        // per-face-texture approach as oak_log_x/z); placement picks the variant
+        // from the clicked face normal, breaking always drops the base item.
         blockRegistry.register("oak_log_x", 260);
         shaderBlockRegistry.register(260, 260);
         blockDataManager.registerBlock(260, "oak_log_x", textureManager, mcModels);
         blockRegistry.register("oak_log_z", 261);
         shaderBlockRegistry.register(261, 261);
         blockDataManager.registerBlock(261, "oak_log_z", textureManager, mcModels);
+        blockRegistry.register("birch_log_x", 438);
+        shaderBlockRegistry.register(438, 438);
+        blockDataManager.registerBlock(438, "birch_log_x", textureManager, mcModels);
+        blockRegistry.register("birch_log_z", 439);
+        shaderBlockRegistry.register(439, 439);
+        blockDataManager.registerBlock(439, "birch_log_z", textureManager, mcModels);
+        blockRegistry.register("spruce_log_x", 440);
+        shaderBlockRegistry.register(440, 440);
+        blockDataManager.registerBlock(440, "spruce_log_x", textureManager, mcModels);
+        blockRegistry.register("spruce_log_z", 441);
+        shaderBlockRegistry.register(441, 441);
+        blockDataManager.registerBlock(441, "spruce_log_z", textureManager, mcModels);
+        blockRegistry.register("jungle_log_x", 442);
+        shaderBlockRegistry.register(442, 442);
+        blockDataManager.registerBlock(442, "jungle_log_x", textureManager, mcModels);
+        blockRegistry.register("jungle_log_z", 443);
+        shaderBlockRegistry.register(443, 443);
+        blockDataManager.registerBlock(443, "jungle_log_z", textureManager, mcModels);
+        blockRegistry.register("acacia_log_x", 444);
+        shaderBlockRegistry.register(444, 444);
+        blockDataManager.registerBlock(444, "acacia_log_x", textureManager, mcModels);
+        blockRegistry.register("acacia_log_z", 445);
+        shaderBlockRegistry.register(445, 445);
+        blockDataManager.registerBlock(445, "acacia_log_z", textureManager, mcModels);
+        blockRegistry.register("dark_oak_log_x", 446);
+        shaderBlockRegistry.register(446, 446);
+        blockDataManager.registerBlock(446, "dark_oak_log_x", textureManager, mcModels);
+        blockRegistry.register("dark_oak_log_z", 447);
+        shaderBlockRegistry.register(447, 447);
+        blockDataManager.registerBlock(447, "dark_oak_log_z", textureManager, mcModels);
+        blockRegistry.register("skyroot_log_x", 448);
+        shaderBlockRegistry.register(448, 448);
+        blockDataManager.registerBlock(448, "skyroot_log_x", textureManager, aetherModels);
+        blockRegistry.register("skyroot_log_z", 449);
+        shaderBlockRegistry.register(449, 449);
+        blockDataManager.registerBlock(449, "skyroot_log_z", textureManager, aetherModels);
 
         // --- Create-inspired blocks ---
         blockRegistry.register("andesite_casing", 262);
@@ -4692,6 +4731,22 @@ public class Main {
         blockRegistry.register("rail_ew", 392);
         shaderBlockRegistry.register(392, 392);
         blockDataManager.registerBlock(392, "rail_ew", textureManager, mcModels);
+        // Curved corner rails (Beta 1.7.3 metadata 6-9): each connects exactly one
+        // N-S and one E-W neighbour. Placement auto-creates them at corners and
+        // converts neighbours (see BlockInteraction.refreshRailShapes).
+        // IDs 450-453 (393-397 are taken by item_minecart/blaze burners/steam engine).
+        blockRegistry.register("rail_curve_se", 450);
+        shaderBlockRegistry.register(450, 450);
+        blockDataManager.registerBlock(450, "rail_curve_se", textureManager, mcModels);
+        blockRegistry.register("rail_curve_sw", 451);
+        shaderBlockRegistry.register(451, 451);
+        blockDataManager.registerBlock(451, "rail_curve_sw", textureManager, mcModels);
+        blockRegistry.register("rail_curve_nw", 452);
+        shaderBlockRegistry.register(452, 452);
+        blockDataManager.registerBlock(452, "rail_curve_nw", textureManager, mcModels);
+        blockRegistry.register("rail_curve_ne", 453);
+        shaderBlockRegistry.register(453, 453);
+        blockDataManager.registerBlock(453, "rail_curve_ne", textureManager, mcModels);
         blockRegistry.register("item_minecart", 393);
         shaderBlockRegistry.register(393, 393);
         blockDataManager.registerBlock(393, "item_minecart", textureManager, mcModels);
