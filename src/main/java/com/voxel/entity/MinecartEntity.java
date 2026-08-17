@@ -56,6 +56,10 @@ public class MinecartEntity extends Entity {
      */
     public void updateCart(World world, float dt, float control) {
         if (world == null) return;
+        // Snapshot the pre-move position so the render thread's interpolation
+        // (lerp(prev, pos, partialTicks)) slides smoothly instead of swinging
+        // between the spawn point and the current position every frame.
+        snapshotPrev();
 
         int bx = (int) Math.floor(getPosX());
         int by = (int) Math.floor(getPosY() - 0.05);
