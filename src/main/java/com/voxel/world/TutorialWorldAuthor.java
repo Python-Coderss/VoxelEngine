@@ -46,6 +46,7 @@ public final class TutorialWorldAuthor {
             COPPER_ORE = 142, ZINC_ORE = 144, SPAWNER = 258, FAN = 263, TV = 274,
             SHAFT = 291, SHAFT_X = 292, COG = 294, LARGE_COG = 295, WHEEL = 296,
             RAIL_NS = 391, RAIL_EW = 392,
+            RAIL_CURVE_SE = 450, RAIL_CURVE_SW = 451, RAIL_CURVE_NW = 452, RAIL_CURVE_NE = 453,
             BURNER = 394, BURNER_LIT = 395, ENGINE_COLD = 396, ENGINE = 397, TANK = 398,
             CRANK = 404, BEARING = 405, SAIL = 406, PRESS = 407, MILL = 408, CRUSHER = 409,
             DRILL = 410, SAW = 411, BELT = 413, VAULT = 414, CLUTCH = 353, GEARSHIFT = 355;
@@ -364,32 +365,34 @@ public final class TutorialWorldAuthor {
         private void buildMinecartCoaster(Zone z) {
             int x = z.cx, zz = z.cz;
             int r = 16;
-            // Outer ring. The TOP-LEFT corner is a real curved rail
-            // (rail_curve_se at the corner cell (x-r, zz-r)) so carts round the
-            // corner; the other three corners keep the classic straight
-            // crossings.
-            for (int dx = -r + 1; dx <= r; dx++) {
+            // Outer ring: a rounded rectangle. Four curved corner rails connect
+            // the straight E-W and N-S rails so carts ride a smooth loop around
+            // the whole coaster (each curve cell links its two rail neighbours).
+            for (int dx = -r + 1; dx <= r - 1; dx++) {
                 place(x + dx, G, zz - r, GRAVEL); place(x + dx, G + 1, zz - r, RAIL_EW);
                 place(x + dx, G, zz + r, GRAVEL); place(x + dx, G + 1, zz + r, RAIL_EW);
             }
-            for (int dz = -r; dz <= r; dz++) {
+            for (int dz = -r + 1; dz <= r - 1; dz++) {
                 place(x + r, G, dz + zz, GRAVEL); place(x + r, G + 1, dz + zz, RAIL_NS);
-            }
-            // Left rail starts one cell south of the corner so the corner cell
-            // only connects east (top rail) and south (left rail).
-            for (int dz = -r + 1; dz <= r; dz++) {
                 place(x - r, G, dz + zz, GRAVEL); place(x - r, G + 1, dz + zz, RAIL_NS);
             }
-            place(x - r, G, zz - r, GRAVEL);
-            place(x - r, G + 1, zz - r, com.voxel.entity.MinecartEntity.RAIL_CURVE_SE);
-            for (int dz = -8; dz <= 8; dz++) {
+            place(x - r, G, zz - r, GRAVEL); place(x - r, G + 1, zz - r, RAIL_CURVE_SE); // top-left: east+south
+            place(x + r, G, zz - r, GRAVEL); place(x + r, G + 1, zz - r, RAIL_CURVE_SW); // top-right: west+south
+            place(x + r, G, zz + r, GRAVEL); place(x + r, G + 1, zz + r, RAIL_CURVE_NW); // bottom-right: north+west
+            place(x - r, G, zz + r, GRAVEL); place(x - r, G + 1, zz + r, RAIL_CURVE_NE); // bottom-left: north+east
+            // Inner ring: the same rounded-loop layout, one step in (16x16).
+            for (int dz = -7; dz <= 7; dz++) {
                 place(x - 8, G, zz + dz, GRAVEL); place(x - 8, G + 1, zz + dz, RAIL_NS);
                 place(x + 8, G, zz + dz, GRAVEL); place(x + 8, G + 1, zz + dz, RAIL_NS);
             }
-            for (int dx = -8; dx <= 8; dx++) {
+            for (int dx = -7; dx <= 7; dx++) {
                 place(x + dx, G, zz - 8, GRAVEL); place(x + dx, G + 1, zz - 8, RAIL_EW);
                 place(x + dx, G, zz + 8, GRAVEL); place(x + dx, G + 1, zz + 8, RAIL_EW);
             }
+            place(x - 8, G, zz - 8, GRAVEL); place(x - 8, G + 1, zz - 8, RAIL_CURVE_SE);
+            place(x + 8, G, zz - 8, GRAVEL); place(x + 8, G + 1, zz - 8, RAIL_CURVE_SW);
+            place(x + 8, G, zz + 8, GRAVEL); place(x + 8, G + 1, zz + 8, RAIL_CURVE_NW);
+            place(x - 8, G, zz + 8, GRAVEL); place(x - 8, G + 1, zz + 8, RAIL_CURVE_NE);
             // Rideable carts are spawned as live entities when the player enters
             // this zone (see minecartSpawns()); the rails here are their track.
             floor(x - 3, zz - r - 4, x + 3, zz - r - 2, G, STONE_BRICK);
