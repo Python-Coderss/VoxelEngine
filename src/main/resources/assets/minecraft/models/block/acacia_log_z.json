@@ -1,0 +1,11 @@
+{
+    "textures": {
+        "north": "log_acacia_top",
+        "south": "log_acacia_top",
+        "west": "log_acacia",
+        "east": "log_acacia",
+        "up": "log_acacia",
+        "down": "log_acacia",
+        "particle": "log_acacia"
+    }
+}

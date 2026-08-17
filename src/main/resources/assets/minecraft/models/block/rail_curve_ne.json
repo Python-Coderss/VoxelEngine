@@ -1,7 +1,7 @@
 {
     "ambientocclusion": false,
     "textures": {
-        "all": "rail_normal_ew"
+        "all": "rail_normal_turned"
     },
     "elements": [
         {   "from": [ 0, 0, 0 ],

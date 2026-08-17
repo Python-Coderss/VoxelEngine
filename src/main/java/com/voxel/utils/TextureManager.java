@@ -177,6 +177,19 @@ public class TextureManager {
                     BufferedImage frame = img.getSubimage(0, f * textureSize, textureSize, textureSize);
                     uploadFrameToLayer(frame, layer + f, textureSize);
                 }
+            } else if (textureSize == ENTITY_TEXTURE_SIZE && originalWidth == 64 && originalHeight == 32
+                       && path.replace('\\', '/').endsWith("textures/entity/minecart.png")) {
+                // The vanilla minecart texture is 64x32 (the classic entity
+                // format). Stretching it 2x vertically would misalign every
+                // face region, so upload it at native size into the top half of
+                // the 64x64 layer; the model's UVs use vanilla pixel coords
+                // directly (rows 0..32), and the layer rows below stay empty.
+                BufferedImage canvas = new BufferedImage(textureSize, textureSize, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g = canvas.createGraphics();
+                g.drawImage(img, 0, 0, null);
+                g.dispose();
+                img = canvas;
+                uploadFrameToLayer(img, layer, textureSize);
             } else {
                 // Non-animated: scale to target size if needed
                 if (img.getWidth() != textureSize || img.getHeight() != textureSize) {

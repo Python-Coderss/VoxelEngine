@@ -229,6 +229,11 @@ public class BlockInteraction {
         // Piston base: derive facing direction from directional block ID before clearing
         int pistonDir = getPistonDirection(blockId);
         if (!ctx.chunkManager.setVoxel(x, y, z, 0)) return;
+        // Removing a rail may leave a curve orphaned — recompute neighbouring
+        // rail shapes so leftover curves snap back to straights.
+        if (com.voxel.entity.MinecartEntity.isRail(blockId)) {
+            refreshRailShapes(ctx.world, x, y, z);
+        }
         // Remove an extended piston head left behind by the broken base
         if (pistonDir >= 0) {
             int[][] off = {{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}};
@@ -536,21 +541,95 @@ public class BlockInteraction {
     }
 
     /**
-     * Picks the rail orientation (RAIL_NS vs RAIL_EW) for a rail being placed at
-     * (px, py, pz). Existing rail neighbours take precedence; a free-standing
-     * rail runs perpendicular to the player's dominant look axis.
+     * Picks the rail shape (straight NS/EW or a curved corner) for a rail being
+     * placed at (px, py, pz), mirroring Beta 1.7.3's RailLogic: existing rail
+     * neighbours take precedence — one NS + one EW neighbour makes a curve; a
+     * free-standing rail runs perpendicular to the player's dominant look axis.
      * Public static so it can be regression-tested without GL.
      */
-    public static int chooseRailAxis(com.voxel.World world, int px, int py, int pz, float lookDx, float lookDz) {
-        boolean ns = isRailAt(world, px, py, pz - 1) || isRailAt(world, px, py, pz + 1);
-        boolean ew = isRailAt(world, px - 1, py, pz) || isRailAt(world, px + 1, py, pz);
-        if (ns != ew) {
-            return ns ? com.voxel.entity.MinecartEntity.RAIL_NS : com.voxel.entity.MinecartEntity.RAIL_EW;
+    public static int chooseRailShape(com.voxel.World world, int px, int py, int pz, float lookDx, float lookDz) {
+        boolean nsN = isRailAt(world, px, py, pz - 1), nsS = isRailAt(world, px, py, pz + 1);
+        boolean ewW = isRailAt(world, px - 1, py, pz), ewE = isRailAt(world, px + 1, py, pz);
+        int nsCount = (nsN ? 1 : 0) + (nsS ? 1 : 0);
+        int ewCount = (ewW ? 1 : 0) + (ewE ? 1 : 0);
+        // Exactly one rail on each axis: this cell is the corner of a turn.
+        if (nsCount == 1 && ewCount == 1) {
+            return curveId(nsN, nsS, ewW, ewE);
         }
-        // No rail neighbours (or a cross): align with the player's look.
+        if (nsCount == 1 && ewCount == 0) return com.voxel.entity.MinecartEntity.RAIL_NS;
+        if (ewCount == 1 && nsCount == 0) return com.voxel.entity.MinecartEntity.RAIL_EW;
+        // No rail neighbours (or a cross / a straight with both ends): align
+        // with the player's look.
         return Math.abs(lookDz) >= Math.abs(lookDx)
                 ? com.voxel.entity.MinecartEntity.RAIL_NS
                 : com.voxel.entity.MinecartEntity.RAIL_EW;
+    }
+
+    /** @deprecated renamed to {@link #chooseRailShape} (now also returns curves). */
+    public static int chooseRailAxis(com.voxel.World world, int px, int py, int pz,
+                                     float lookDx, float lookDz) {
+        return chooseRailShape(world, px, py, pz, lookDx, lookDz);
+    }
+
+    /** Curve id connecting the given cardinal neighbours (exactly one NS + one EW). */
+    private static int curveId(boolean nsN, boolean nsS, boolean ewW, boolean ewE) {
+        if (nsN) return ewW ? com.voxel.entity.MinecartEntity.RAIL_CURVE_NW
+                            : com.voxel.entity.MinecartEntity.RAIL_CURVE_NE;
+        return ewW ? com.voxel.entity.MinecartEntity.RAIL_CURVE_SW
+                   : com.voxel.entity.MinecartEntity.RAIL_CURVE_SE;
+    }
+
+    /**
+     * Refreshes the shape of every rail in the 5 cells around (cx, cy, cz) after
+     * a place/break: a rail with exactly one NS + one EW neighbour becomes a
+     * curve, otherwise it snaps back to a straight along its remaining axis.
+     * Keeps curves consistent when a corner is built or torn down.
+     */
+    public void refreshRailShapes(com.voxel.World world, int cx, int cy, int cz) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                int x = cx + dx, z = cz + dz;
+                int b = world.getVoxel(x, cy, z);
+                if (!com.voxel.entity.MinecartEntity.isRail(b)) continue;
+                boolean nsN = isRailAt(world, x, cy, z - 1), nsS = isRailAt(world, x, cy, z + 1);
+                boolean ewW = isRailAt(world, x - 1, cy, z), ewE = isRailAt(world, x + 1, cy, z);
+                int nsCount = (nsN ? 1 : 0) + (nsS ? 1 : 0);
+                int ewCount = (ewW ? 1 : 0) + (ewE ? 1 : 0);
+                int shape;
+                if (nsCount == 1 && ewCount == 1) shape = curveId(nsN, nsS, ewW, ewE);
+                else if (nsCount >= 1 && ewCount == 0) shape = com.voxel.entity.MinecartEntity.RAIL_NS;
+                else if (ewCount >= 1 && nsCount == 0) shape = com.voxel.entity.MinecartEntity.RAIL_EW;
+                else shape = b; // cross or isolated: keep current shape
+                if (shape != b) {
+                    ctx.chunkManager.setVoxel(x, cy, z, shape);
+                }
+            }
+        }
+    }
+
+    /** Vertical log block IDs that orient to the clicked face (piston-style variants). */
+    private static boolean isOrientableLog(int blockId) {
+        return blockId == 5 || blockId == 46 || blockId == 47 || blockId == 49
+                || blockId == 51 || blockId == 52 || blockId == 103;
+    }
+
+    /** X/Z-oriented variant id for a vertical log; base id when the clicked face
+     *  is vertical (no horizontal offset). */
+    private static int orientLog(int baseId, int ldx, int ldz) {
+        int x = 0, z = 0;
+        switch (baseId) {
+            case 5:   x = 260; z = 261; break;
+            case 46:  x = 438; z = 439; break;
+            case 47:  x = 440; z = 441; break;
+            case 49:  x = 442; z = 443; break;
+            case 51:  x = 444; z = 445; break;
+            case 52:  x = 446; z = 447; break;
+            case 103: x = 448; z = 449; break;
+            default: return baseId;
+        }
+        if (ldx != 0) return x;
+        if (ldz != 0) return z;
+        return baseId;
     }
 
     private static boolean isRailAt(com.voxel.World world, int x, int y, int z) {
@@ -607,6 +686,26 @@ public class BlockInteraction {
                     : "Hmm...";
             ctx.setStatus("Villager (" + name + ") — \"" + dialogue + "\"");
         } else if (e instanceof com.voxel.entity.MinecartEntity) {
+            com.voxel.entity.MinecartEntity cart = (com.voxel.entity.MinecartEntity) e;
+            // Shift-right-click: empty the cart of dirt.
+            if (ctx.player.isSneaking()) {
+                if (cart.getFillLevel() > 0f) {
+                    cart.setFillLevel(0f);
+                    ctx.setStatus("Emptied minecart");
+                } else {
+                    ctx.setStatus("Minecart is empty");
+                }
+                return;
+            }
+            // Right-click with dirt in hand: fill the cart one notch (8 dirt = full).
+            ItemDefinitions.ItemStack held = ctx.playerInventory.getSelected();
+            if (held != null && held.itemId.equals("dirt") && cart.getFillLevel() < 1f) {
+                cart.setFillLevel(cart.getFillLevel() + 0.125f);
+                held.count--;
+                if (held.count <= 0) ctx.playerInventory.clearSlot(ctx.playerInventory.getSelectedSlot());
+                ctx.setStatus("Filled minecart with dirt");
+                return;
+            }
             // Right-click a cart: ride it, or get off if already riding.
             if (ctx.ridingMinecart == e) {
                 if (ctx.dismountMinecart != null) ctx.dismountMinecart.run();
@@ -1140,10 +1239,8 @@ public class BlockInteraction {
             return;
         }
         // Orientable logs: choose the axis variant from the clicked face normal
-        if (placeBlockId == 5) { // oak_log -> 5 (Y axis), 260 (X axis), 261 (Z axis)
-            int ldx = hit[0] - px, ldz = hit[2] - pz;
-            if (ldx != 0) placeBlockId = 260;
-            else if (ldz != 0) placeBlockId = 261;
+        if (isOrientableLog(placeBlockId)) {
+            placeBlockId = orientLog(placeBlockId, hit[0] - px, hit[2] - pz);
         }
         // Orientable shafts: same rule -> 291 (Y axis), 292 (X axis), 293 (Z axis)
         if (placeBlockId == 291) {
@@ -1151,8 +1248,8 @@ public class BlockInteraction {
             if (ldx != 0) placeBlockId = 292;
             else if (ldz != 0) placeBlockId = 293;
         }
-        // Rails: need a full solid block underneath; choose N-S or E-W axis from
-        // neighbouring rails (or the player's look direction when free-standing).
+        // Rails: need a full solid block underneath; choose a straight N-S/E-W or
+        // a curved corner from neighbouring rails (Beta RailLogic-style).
         if (placeBlockId == com.voxel.entity.MinecartEntity.RAIL_NS) {
             int below = ctx.world.getVoxel(px, py - 1, pz);
             if (below == 0 || ctx.blockDataManager.isLiquid(below) || !ctx.blockDataManager.isFullBlock(below)) {
@@ -1160,7 +1257,7 @@ public class BlockInteraction {
                 return;
             }
             Vector3f look = getLookDirection();
-            placeBlockId = chooseRailAxis(ctx.world, px, py, pz, look.x, look.z);
+            placeBlockId = chooseRailShape(ctx.world, px, py, pz, look.x, look.z);
         }
         if (placeBlockId == 31 || placeBlockId == 32) {
             // Directional piston: place the correct directional variant block ID
@@ -1191,6 +1288,13 @@ public class BlockInteraction {
             if (!ctx.chunkManager.setVoxelWithData(px, py, pz, 337 + dir - 2, 0)) return;
         } else {
             if (!ctx.chunkManager.setVoxel(px, py, pz, placeBlockId)) return;
+        }
+
+        // Rail corners: recompute the surrounding rails' shapes (straight <-> curve)
+        // so a newly placed corner converts its neighbours into curves and vice
+        // versa (Beta RailLogic behaviour).
+        if (com.voxel.entity.MinecartEntity.isRail(placeBlockId)) {
+            refreshRailShapes(ctx.world, px, py, pz);
         }
 
         ctx.redstoneManager.onBlockChanged(px, py, pz);
@@ -1238,10 +1342,8 @@ public class BlockInteraction {
         int placeBlockId = def.blockId;
         // Orientable logs + shafts resolve their axis variant from the clicked face
         // (same rule as attemptPlaceBlock; rails/pistons just preview their base id).
-        if (placeBlockId == 5) {
-            int ldx = hit[0] - px, ldz = hit[2] - pz;
-            if (ldx != 0) placeBlockId = 260;
-            else if (ldz != 0) placeBlockId = 261;
+        if (isOrientableLog(placeBlockId)) {
+            placeBlockId = orientLog(placeBlockId, hit[0] - px, hit[2] - pz);
         } else if (placeBlockId == 291) {
             int ldx = hit[0] - px, ldz = hit[2] - pz;
             if (ldx != 0) placeBlockId = 292;
