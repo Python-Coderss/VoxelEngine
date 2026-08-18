@@ -30,11 +30,10 @@ public class MinecartEntity extends Entity {
     private static final float MAX_SPEED = 4.0f;
     private static final float ACCEL = 3.0f;
     private static final float FRICTION = 1.8f;
-    private static final float STOP_EPS = 0.02f;
     private static final float GRAVITY = 18.0f;
     private static final float MAX_FALL_SPEED = 24.0f;
 
-    /** Along-track speed in blocks/second (positive = +Z on N-S rails, +X on E-W rails). */
+    /** Along-track speed in blocks/second (magnitude, always >= 0). */
     public float speed = 0;
     /** Unit direction of travel (one component 0, the other ±1). Follows the
      *  rail axis on straights; the arc entry direction on curves. */
@@ -119,15 +118,29 @@ public class MinecartEntity extends Entity {
         int rail = world.getVoxel(bx, by, bz);
 
         if (isRail(rail)) {
-            // Accelerate from rider input; otherwise coast with friction.
-            speed += control * ACCEL * dt;
-            if (control == 0) {
-                if (speed > STOP_EPS) speed = Math.max(0, speed - FRICTION * dt);
-                else if (speed < -STOP_EPS) speed = Math.min(0, speed + FRICTION * dt);
+            boolean curve = isCurve(rail);
+            // speed is a magnitude (>= 0) and headX/headZ is the actual direction
+            // of travel. W accelerates along the heading; S decelerates and, once
+            // stopped, flips the heading to reverse.
+            if (control > 0) {
+                speed = Math.min(MAX_SPEED, speed + ACCEL * dt);
+            } else if (control < 0) {
+                if (curve) {
+                    // Backing up through a curve isn't modelled — just brake.
+                    speed = Math.max(0, speed - ACCEL * dt);
+                } else {
+                    speed -= ACCEL * dt;
+                    if (speed < 0) {
+                        speed = -speed;
+                        headX = -headX;
+                        headZ = -headZ;
+                    }
+                }
+            } else {
+                speed = Math.max(0, speed - FRICTION * dt);
             }
-            speed = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, speed));
 
-            if (isCurve(rail)) {
+            if (curve) {
                 moveAlongCurve(world, bx, by, bz, rail, dt);
             } else {
                 moveAlongStraight(world, bx, by, bz, rail, dt);
@@ -157,22 +170,21 @@ public class MinecartEntity extends Entity {
         }
     }
 
-    /** Straight rail: move along the rail's axis, keeping centered on the track. */
+    /** Straight rail: move along the heading, keeping centered on the track. */
     private void moveAlongStraight(World world, int bx, int by, int bz, int rail, float dt) {
         boolean ew = rail == RAIL_EW;
-        // Heading follows the rail axis and the direction of travel.
-        int hx = ew ? (speed >= 0 ? 1 : -1) : 0;
-        int hz = ew ? 0 : (speed >= 0 ? 1 : -1);
-        if (speed != 0 || (headX == 0 && headZ == 0)) {
-            headX = hx;
-            headZ = hz;
+        // Establish a direction of travel the first time the cart touches a rail.
+        if (headX == 0 && headZ == 0) {
+            headX = ew ? 1 : 0;
+            headZ = ew ? 0 : 1;
         }
         // Model's long (20-unit) axis runs along X: on an E-W rail keep it
         // aligned, on a N-S rail rotate 90° so the cart lies along the track.
         rotation.y = ew ? 0 : 90;
 
-        float nx = ew ? getPosX() + speed * dt : bx + 0.5f;
-        float nz = ew ? bz + 0.5f : getPosZ() + speed * dt;
+        float nx = getPosX() + headX * speed * dt;
+        float nz = getPosZ() + headZ * speed * dt;
+        if (ew) nz = bz + 0.5f; else nx = bx + 0.5f;
         int nbx = (int) Math.floor(nx);
         int nbz = (int) Math.floor(nz);
         if (isRail(world.getVoxel(nbx, by, nbz))) {
@@ -181,8 +193,8 @@ public class MinecartEntity extends Entity {
             // Track ends: park at the far edge of the current rail cell so
             // the cart rests against the end of the track.
             speed = 0;
-            float ex = ew ? (getPosX() >= bx + 0.5f ? bx + 0.99f : bx + 0.01f) : bx + 0.5f;
-            float ez = ew ? bz + 0.5f : (getPosZ() >= bz + 0.5f ? bz + 0.99f : bz + 0.01f);
+            float ex = ew ? (headX > 0 ? bx + 0.99f : bx + 0.01f) : bx + 0.5f;
+            float ez = ew ? bz + 0.5f : (headZ > 0 ? bz + 0.99f : bz + 0.01f);
             setPositionD(ex, by + RAIL_TOP, ez);
         }
     }
@@ -229,6 +241,7 @@ public class MinecartEntity extends Entity {
         double theta = Math.atan2(px * ex + pz * ez, -(px * xx + pz * xz));
         theta = Math.max(0, Math.min(Math.PI * 0.5, theta));
         double nextTheta = theta + speed * dt / CURVE_RADIUS;
+        boolean exited = false;
         if (nextTheta >= Math.PI * 0.5) {
             int nbx = bx + xx, nbz = bz + xz;
             if (!isRail(world.getVoxel(nbx, by, nbz))) {
@@ -240,10 +253,20 @@ public class MinecartEntity extends Entity {
                 nextTheta = Math.PI * 0.5;
                 headX = xx;
                 headZ = xz;
+                exited = true;
             }
         }
         double nx = ccx + 0.5 * (-xx * Math.cos(nextTheta) + ex * Math.sin(nextTheta));
         double nz = ccz + 0.5 * (-xz * Math.cos(nextTheta) + ez * Math.sin(nextTheta));
+        if (exited) {
+            // The arc exit sits exactly on the shared cell boundary; nudge into
+            // the exit cell so the next frame reads the straight rail (floor()
+            // would otherwise round a west/north exit back into the curve cell).
+            // Must exceed one fixed-point step (1/256 ≈ 0.0039) or it rounds away.
+            double eps = 0.01;
+            nx += xx * eps;
+            nz += xz * eps;
+        }
         setPositionD(nx, by + RAIL_TOP, nz);
         rotation.y = Math.abs(headX) == 1 ? 0 : 90;
     }

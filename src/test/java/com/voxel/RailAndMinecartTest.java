@@ -91,6 +91,41 @@ public class RailAndMinecartTest {
     }
 
     @Test
+    public void cartRoundsCurveExitingWest() {
+        World world = makeWorld();
+        // N-S rail at x=16 (z 0..3) feeds an NW curve at (16,4) that exits west
+        // onto the E-W rail at z=4 (x 0..15). This is the negative-direction
+        // exit that used to leave the cart parked on the curve cell boundary.
+        for (int z = 0; z <= 3; z++) world.setVoxel(16, 60, z, MinecartEntity.RAIL_NS);
+        world.setVoxel(16, 60, 4, MinecartEntity.RAIL_CURVE_NW);
+        for (int x = 0; x <= 15; x++) world.setVoxel(x, 60, 4, MinecartEntity.RAIL_EW);
+        MinecartEntity cart = new MinecartEntity(1,
+                new Vector3f(16.5f, 60f + MinecartEntity.RAIL_TOP, 0.5f));
+
+        for (int i = 0; i < 500; i++) cart.updateCart(world, 0.05f, 1.0f);
+        assertTrue("cart must round the west-exit corner", cart.getPosX() < 14.0f);
+        assertEquals("cart rides the E-W rail after the corner", 4.5f, cart.getPosZ(), 0.2f);
+        assertTrue("cart still on rails after the corner", cart.isOnRails());
+    }
+
+    @Test
+    public void cartRoundsCurveExitingNorth() {
+        World world = makeWorld();
+        // E-W rail at z=16 (x 0..3) feeds an NW curve at (4,16) that exits north
+        // onto the N-S rail at x=4 (z 0..15).
+        for (int x = 0; x <= 3; x++) world.setVoxel(x, 60, 16, MinecartEntity.RAIL_EW);
+        world.setVoxel(4, 60, 16, MinecartEntity.RAIL_CURVE_NW);
+        for (int z = 0; z <= 15; z++) world.setVoxel(4, 60, z, MinecartEntity.RAIL_NS);
+        MinecartEntity cart = new MinecartEntity(1,
+                new Vector3f(0.5f, 60f + MinecartEntity.RAIL_TOP, 16.5f));
+
+        for (int i = 0; i < 500; i++) cart.updateCart(world, 0.05f, 1.0f);
+        assertTrue("cart must round the north-exit corner", cart.getPosZ() < 14.0f);
+        assertEquals("cart rides the N-S rail after the corner", 4.5f, cart.getPosX(), 0.2f);
+        assertTrue("cart still on rails after the corner", cart.isOnRails());
+    }
+
+    @Test
     public void cartStopsBeforeTrackEndAfterCurve() {
         World world = makeWorld();
         // Short corner: NS rail, NE curve, single EW cell — the track ends there.
