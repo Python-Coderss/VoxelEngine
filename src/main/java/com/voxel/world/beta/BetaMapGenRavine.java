@@ -2,22 +2,18 @@ package com.voxel.world.beta;
 
 import java.util.Random;
 
-/** Faithful port of Beta 1.8.1's MapGenCaves. */
-public class BetaMapGenCaves extends BetaMapGenBase {
-    protected void generateLargeCaveNode(long seed, int chunkX, int chunkZ, byte[] blocks,
-                                         double x, double y, double z) {
-        this.generateCaveNode(seed, chunkX, chunkZ, blocks, x, y, z,
-                1.0F + this.rand.nextFloat() * 6.0F, 0.0F, 0.0F, -1, -1, 0.5D);
-    }
+/** Faithful port of Beta 1.8.1's MapGenRavine. */
+public class BetaMapGenRavine extends BetaMapGenBase {
+    private float[] field_35627_a = new float[1024];
 
-    protected void generateCaveNode(long seed, int chunkX, int chunkZ, byte[] blocks,
-                                    double x, double y, double z, float size, float yaw, float pitch,
-                                    int from, int to, double yScale) {
+    protected void func_35626_a(long seed, int chunkX, int chunkZ, byte[] blocks,
+                                double x, double y, double z, float size, float yaw, float pitch,
+                                int from, int to, double yScale) {
+        Random rand = new Random(seed);
         double centerX = (double) (chunkX * 16 + 8);
         double centerZ = (double) (chunkZ * 16 + 8);
         float dYaw = 0.0F;
         float dPitch = 0.0F;
-        Random rand = new Random(seed);
         if (to <= 0) {
             int range = this.field_1306_a * 16 - 16;
             to = range - rand.nextInt(range / 4);
@@ -27,35 +23,34 @@ public class BetaMapGenCaves extends BetaMapGenBase {
             from = to / 2;
             initial = true;
         }
-        int branchAt = rand.nextInt(to / 2) + to / 4;
+        float width = 1.0F;
+        int i = 0;
+        while (true) {
+            if (i >= 128) break;
+            if (i == 0 || rand.nextInt(3) == 0) {
+                width = 1.0F + rand.nextFloat() * rand.nextFloat() * 1.0F;
+            }
+            this.field_35627_a[i] = width * width;
+            ++i;
+        }
 
-        for (boolean wide = rand.nextInt(6) == 0; from < to; ++from) {
+        for (; from < to; ++from) {
             double radius = 1.5D + (double) (BetaMathHelper.sin((float) from * (float) Math.PI / (float) to) * size * 1.0F);
             double radiusY = radius * yScale;
+            radius *= (double) rand.nextFloat() * 0.25D + 0.75D;
+            radiusY *= (double) rand.nextFloat() * 0.25D + 0.75D;
             float cosPitch = BetaMathHelper.cos(pitch);
             float sinPitch = BetaMathHelper.sin(pitch);
             x += (double) (BetaMathHelper.cos(yaw) * cosPitch);
             y += (double) sinPitch;
             z += (double) (BetaMathHelper.sin(yaw) * cosPitch);
-            if (wide) {
-                pitch *= 0.92F;
-            } else {
-                pitch *= 0.7F;
-            }
-            pitch += dPitch * 0.1F;
-            yaw += dYaw * 0.1F;
-            dPitch *= 0.9F;
-            dYaw *= 12.0F / 16.0F;
+            pitch *= 0.7F;
+            pitch += dPitch * 0.05F;
+            yaw += dYaw * 0.05F;
+            dPitch *= 0.8F;
+            dYaw *= 0.5F;
             dPitch += (rand.nextFloat() - rand.nextFloat()) * rand.nextFloat() * 2.0F;
             dYaw += (rand.nextFloat() - rand.nextFloat()) * rand.nextFloat() * 4.0F;
-
-            if (!initial && from == branchAt && size > 1.0F && to > 0) {
-                this.generateCaveNode(rand.nextLong(), chunkX, chunkZ, blocks, x, y, z,
-                        rand.nextFloat() * 0.5F + 0.5F, yaw - (float) Math.PI * 0.5F, pitch / 3.0F, from, to, 1.0D);
-                this.generateCaveNode(rand.nextLong(), chunkX, chunkZ, blocks, x, y, z,
-                        rand.nextFloat() * 0.5F + 0.5F, yaw + (float) Math.PI * 0.5F, pitch / 3.0F, from, to, 1.0D);
-                return;
-            }
 
             if (initial || rand.nextInt(4) != 0) {
                 double dx = x - centerX;
@@ -108,7 +103,7 @@ public class BetaMapGenCaves extends BetaMapGenBase {
                                 if (nx * nx + nz * nz < 1.0D) {
                                     for (int yy = maxY - 1; yy >= minY; --yy) {
                                         double ny = ((double) yy + 0.5D - y) / radiusY;
-                                        if (ny > -0.7D && nx * nx + ny * ny + nz * nz < 1.0D) {
+                                        if ((nx * nx + nz * nz) * (double) this.field_35627_a[yy] + ny * ny / 6.0D < 1.0D) {
                                             byte block = blocks[idx];
                                             if (block == B_GRASS) grassAbove = true;
                                             if (block == B_STONE || block == B_DIRT || block == B_GRASS) {
@@ -136,28 +131,16 @@ public class BetaMapGenCaves extends BetaMapGenBase {
 
     @Override
     protected void recursiveGenerate(int cx, int cz, int chunkX, int chunkZ, byte[] blocks) {
-        int count = this.rand.nextInt(this.rand.nextInt(this.rand.nextInt(40) + 1) + 1);
-        if (this.rand.nextInt(15) != 0) {
-            count = 0;
-        }
-        for (int i = 0; i < count; ++i) {
+        if (this.rand.nextInt(50) == 0) {
             double x = (double) (cx * 16 + this.rand.nextInt(16));
-            double y = (double) this.rand.nextInt(this.rand.nextInt(128 - 8) + 8);
+            double y = (double) (this.rand.nextInt(this.rand.nextInt(40) + 8) + 20);
             double z = (double) (cz * 16 + this.rand.nextInt(16));
-            int nodes = 1;
-            if (this.rand.nextInt(4) == 0) {
-                this.generateLargeCaveNode(this.rand.nextLong(), chunkX, chunkZ, blocks, x, y, z);
-                nodes += this.rand.nextInt(4);
-            }
-            for (int n = 0; n < nodes; ++n) {
+            for (int i = 0; i < 1; ++i) {
                 float yaw = this.rand.nextFloat() * (float) Math.PI * 2.0F;
                 float pitch = (this.rand.nextFloat() - 0.5F) * 2.0F / 8.0F;
-                float size = this.rand.nextFloat() * 2.0F + this.rand.nextFloat();
-                if (this.rand.nextInt(10) == 0) {
-                    size *= this.rand.nextFloat() * this.rand.nextFloat() * 3.0F + 1.0F;
-                }
-                this.generateCaveNode(this.rand.nextLong(), chunkX, chunkZ, blocks, x, y, z,
-                        size, yaw, pitch, 0, 0, 1.0D);
+                float size = (this.rand.nextFloat() * 2.0F + this.rand.nextFloat()) * 2.0F;
+                this.func_35626_a(this.rand.nextLong(), chunkX, chunkZ, blocks, x, y, z,
+                        size, yaw, pitch, 0, 0, 3.0D);
             }
         }
     }

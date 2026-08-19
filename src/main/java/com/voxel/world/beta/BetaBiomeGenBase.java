@@ -1,142 +1,109 @@
 package com.voxel.world.beta;
 
-import java.util.Random;
-
 /**
- * Simplified port of Beta 1.7.3's BiomeGenBase.
- * Contains just the biome types and the temperature/humidity → biome lookup table.
- * Preserves the exact bug-for-bug biome distribution of Beta 1.7.3.
+ * Faithful port of Beta 1.8.1's BiomeGenBase, extended with the six legacy
+ * 1.7.3 biomes (rainforest, seasonal forest, savanna, shrubland, ice desert,
+ * tundra). Biomes 0–9 match vanilla 1.8.1 exactly; 10–15 are the legacy set.
+ * field names match the decompiled source for line-by-line verification.
  */
 public class BetaBiomeGenBase {
-    public static final int RAINFOREST = 0;
-    public static final int SWAMPLAND = 1;
-    public static final int SEASONAL_FOREST = 2;
-    public static final int FOREST = 3;
-    public static final int SAVANNA = 4;
-    public static final int SHRUBLAND = 5;
-    public static final int TAIGA = 6;
-    public static final int DESERT = 7;
-    public static final int PLAINS = 8;
-    public static final int ICE_DESERT = 9;
-    public static final int TUNDRA = 10;
-    public static final int HELL = 11;
-    public static final int SKY = 12;
+    /** biomeId → BiomeGenBase lookup (field_35486_a). */
+    public static final BetaBiomeGenBase[] field_35486_a = new BetaBiomeGenBase[256];
 
-    public static final String[] NAMES = {
-        "Rainforest", "Swampland", "Seasonal Forest", "Forest",
-        "Savanna", "Shrubland", "Taiga", "Desert",
-        "Plains", "Ice Desert", "Tundra", "Hell", "Sky"
-    };
+    // Beta block IDs used for surface blocks (declared first: the biome
+    // initializers below reference them).
+    public static final int B_GRASS = 2;
+    public static final int B_DIRT = 3;
+    public static final int B_SAND = 12;
 
-    /** Top block for each biome (Beta 1.7.3 block IDs) */
-    public static final int[] TOP_BLOCKS = {
-        2, // Rainforest: grass
-        2, // Swampland: grass
-        2, // Seasonal Forest: grass
-        2, // Forest: grass
-        2, // Savanna: grass (actually desert subclass but uses grass)
-        2, // Shrubland: grass
-        2, // Taiga: grass
-        12, // Desert: sand
-        2, // Plains: grass
-        12, // Ice Desert: sand
-        2, // Tundra: grass
-        87, // Hell: netherrack
-        1, // Sky: stone (end stone equivalent)
-    };
+    public static final BetaBiomeGenBase field_35484_b = new BetaBiomeGenBase(0).setColor(112).setBiomeName("Ocean").variationHeight(-1.0F, 0.5F);
+    public static final BetaBiomeGenBase field_35485_c = new BetaBiomeGenBase(1).setColor(9286496).setBiomeName("Plains").tempDownfall(0.8F, 0.4F).decoTrees(-999).decoFlowers(4).decoTallGrass(10);
+    public static final BetaBiomeGenBase desert = new BetaBiomeGenBase(2).setColor(16421912).setBiomeName("Desert").setDisableRain().tempDownfall(2.0F, 0.0F).variationHeight(0.1F, 0.2F).surfaceBlocks(B_SAND, B_SAND).decoTrees(-999).decoDeadBush(2).decoReeds(50).decoCactus(10);
+    public static final BetaBiomeGenBase field_35483_e = new BetaBiomeGenBase(3).setColor(6316128).setBiomeName("Extreme Hills").variationHeight(0.2F, 1.8F).tempDownfall(0.2F, 0.3F);
+    public static final BetaBiomeGenBase forest = new BetaBiomeGenBase(4).setColor(353825).setBiomeName("Forest").treeType(1).tempDownfall(0.7F, 0.8F).decoTrees(10).decoTallGrass(2);
+    public static final BetaBiomeGenBase taiga = new BetaBiomeGenBase(5).setColor(747097).setBiomeName("Taiga").treeType(2).tempDownfall(0.3F, 0.8F).variationHeight(0.1F, 0.4F).decoTrees(10).decoTallGrass(1);
+    public static final BetaBiomeGenBase swampland = new BetaBiomeGenBase(6).setColor(522674).setBiomeName("Swampland").treeType(3).variationHeight(-0.2F, 0.1F).tempDownfall(0.8F, 0.9F).decoTrees(2).decoFlowers(-999).decoDeadBush(1).decoMushrooms(8).decoReeds(10);
+    public static final BetaBiomeGenBase field_35487_i = new BetaBiomeGenBase(7).setColor(255).setBiomeName("River").variationHeight(-0.5F, 0.0F);
+    public static final BetaBiomeGenBase hell = new BetaBiomeGenBase(8).setColor(16711680).setBiomeName("Hell").setDisableRain();
+    public static final BetaBiomeGenBase sky = new BetaBiomeGenBase(9).setColor(8421631).setBiomeName("Sky").setDisableRain();
 
-    /** Filler block for each biome (Beta 1.7.3 block IDs) */
-    public static final int[] FILLER_BLOCKS = {
-        3,  // Rainforest: dirt
-        3,  // Swampland: dirt
-        3,  // Seasonal Forest: dirt
-        3,  // Forest: dirt
-        3,  // Savanna: dirt
-        3,  // Shrubland: dirt
-        3,  // Taiga: dirt
-        12, // Desert: sand
-        3,  // Plains: dirt
-        12, // Ice Desert: sand
-        3,  // Tundra: dirt
-        87, // Hell: netherrack
-        1,  // Sky: stone
-    };
+    // ── Legacy 1.7.3 biomes ──
+    public static final BetaBiomeGenBase rainforest = new BetaBiomeGenBase(10).setColor(5470985).setBiomeName("Rainforest").treeType(1).tempDownfall(0.95F, 0.9F).variationHeight(0.1F, 0.4F).decoTrees(10).decoTallGrass(10);
+    public static final BetaBiomeGenBase seasonalForest = new BetaBiomeGenBase(11).setColor(12566463).setBiomeName("Seasonal Forest").treeType(1).tempDownfall(0.7F, 0.8F).variationHeight(0.3F, 0.6F).decoTrees(8).decoFlowers(4).decoTallGrass(2);
+    public static final BetaBiomeGenBase savanna = new BetaBiomeGenBase(12).setColor(12431967).setBiomeName("Savanna").tempDownfall(1.2F, 0.0F).variationHeight(0.125F, 0.05F).decoTrees(1).decoTallGrass(1);
+    public static final BetaBiomeGenBase shrubland = new BetaBiomeGenBase(13).setColor(10595616).setBiomeName("Shrubland").tempDownfall(0.8F, 0.2F).variationHeight(0.2F, 0.3F).decoTrees(1).decoTallGrass(2);
+    public static final BetaBiomeGenBase iceDesert = new BetaBiomeGenBase(14).setColor(14211288).setBiomeName("Ice Desert").setDisableRain().tempDownfall(0.0F, 0.0F).variationHeight(0.05F, 0.1F).surfaceBlocks(B_SAND, B_SAND).decoTrees(-999);
+    public static final BetaBiomeGenBase tundra = new BetaBiomeGenBase(15).setColor(12638463).setBiomeName("Tundra").tempDownfall(0.0F, 0.5F).variationHeight(0.05F, 0.1F).decoTrees(-999).decoTallGrass(1);
 
-    public static final boolean[] ENABLE_SNOW = {
-        false, false, false, false, false, false,
-        true,  // Taiga
-        false, false,
-        true,  // Ice Desert
-        true,  // Tundra
-        false, false
-    };
+    public String biomeName;
+    public int color;
+    public int topBlock = B_GRASS;
+    public int fillerBlock = B_DIRT;
+    /** variation (field_35492_q) */
+    public float field_35492_q = 0.1F;
+    /** height (field_35491_r) */
+    public float field_35491_r = 0.3F;
+    /** temperature (field_35490_s) */
+    public float field_35490_s = 0.5F;
+    /** downfall (field_35489_t) */
+    public float field_35489_t = 0.5F;
+    /** biome id (field_35494_y) */
+    public final int field_35494_y;
+    private boolean enableRain = true;
 
-    public static final boolean[] ENABLE_RAIN = {
-        true, true, true, true, true, true,
-        true,
-        false, // Desert
-        true,
-        false, // Ice Desert
-        true,
-        false, // Hell
-        false, // Sky
-    };
+    // Decorator configuration (mirrors the BiomeDecorator field_359xx_xx tweaks
+    // made by each vanilla biome subclass constructor).
+    public int decoTrees = 0;
+    public int decoFlowers = 2;
+    public int decoTallGrass = 1;
+    public int decoDeadBush = 0;
+    public int decoMushrooms = 0;
+    public int decoReeds = 0;
+    public int decoCactus = 0;
+    /** Tree selector: 0 = default (oak/big), 1 = forest, 2 = taiga, 3 = swamp. */
+    public int treeType = 0;
 
-    // 64x64 biome lookup table (Beta 1.7.3 exact)
-    private static int[] biomeLookupTable = new int[4096];
-
-    static {
-        generateBiomeLookup();
+    protected BetaBiomeGenBase(int id) {
+        this.field_35494_y = id;
+        field_35486_a[id] = this;
     }
 
-    /**
-     * Generates the exact Beta 1.7.3 biome lookup table.
-     * Uses the same bug-for-bug biome decision tree.
-     */
-    private static void generateBiomeLookup() {
-        for (int var0 = 0; var0 < 64; ++var0) {
-            for (int var1 = 0; var1 < 64; ++var1) {
-                biomeLookupTable[var0 + var1 * 64] = getBiome((float) var0 / 63.0F, (float) var1 / 63.0F);
-            }
-        }
+    /** temperature = temp, downfall = down (func_35478_a). */
+    private BetaBiomeGenBase tempDownfall(float temp, float down) {
+        this.field_35490_s = temp;
+        this.field_35489_t = down;
+        return this;
     }
 
-    /**
-     * Exact port of Beta 1.7.3's getBiomeFromLookup.
-     */
-    public static int getBiomeFromLookup(double var0, double var2) {
-        int var4 = (int) (var0 * 63.0D);
-        int var5 = (int) (var2 * 63.0D);
-        return biomeLookupTable[var4 + var5 * 64];
+    /** variation = var, height = h (func_35479_b). */
+    private BetaBiomeGenBase variationHeight(float var, float h) {
+        this.field_35492_q = var;
+        this.field_35491_r = h;
+        return this;
     }
 
-    /**
-     * Exact port of Beta 1.7.3's getBiome.
-     * Uses the temperature/humidity decision tree with ALL original thresholds.
-     */
-    public static int getBiome(float temp, float humidity) {
-        humidity *= temp;
-        return temp < 0.1F ? TUNDRA :
-               (humidity < 0.2F ?
-                   (temp < 0.5F ? TUNDRA :
-                    (temp < 0.95F ? SAVANNA : DESERT)) :
-               (humidity > 0.5F && temp < 0.7F ? SWAMPLAND :
-                   (temp < 0.5F ? TAIGA :
-                    (temp < 0.97F ?
-                        (humidity < 0.35F ? SHRUBLAND : FOREST) :
-                        (humidity < 0.45F ? PLAINS :
-                         (humidity < 0.9F ? SEASONAL_FOREST : RAINFOREST))))));
+    private BetaBiomeGenBase setDisableRain() { this.enableRain = false; return this; }
+    private BetaBiomeGenBase surfaceBlocks(int top, int filler) { this.topBlock = top; this.fillerBlock = filler; return this; }
+    private BetaBiomeGenBase setBiomeName(String n) { this.biomeName = n; return this; }
+    private BetaBiomeGenBase setColor(int c) { this.color = c; return this; }
+    private BetaBiomeGenBase treeType(int t) { this.treeType = t; return this; }
+    private BetaBiomeGenBase decoTrees(int v) { this.decoTrees = v; return this; }
+    private BetaBiomeGenBase decoFlowers(int v) { this.decoFlowers = v; return this; }
+    private BetaBiomeGenBase decoTallGrass(int v) { this.decoTallGrass = v; return this; }
+    private BetaBiomeGenBase decoDeadBush(int v) { this.decoDeadBush = v; return this; }
+    private BetaBiomeGenBase decoMushrooms(int v) { this.decoMushrooms = v; return this; }
+    private BetaBiomeGenBase decoReeds(int v) { this.decoReeds = v; return this; }
+    private BetaBiomeGenBase decoCactus(int v) { this.decoCactus = v; return this; }
+
+    /** func_35476_e — downfall as a 16-bit fixed-point value. */
+    public final int func_35476_e() {
+        return (int) (this.field_35489_t * 65536.0F);
     }
 
-    /**
-     * Get a tree generator based on biome. Port of getRandomWorldGenForTrees.
-     * In Beta 1.7.3, forest/taiga/rainforest use WorldGenBigTree occasionally.
-     * Returns: 0=small tree, 1=big tree (for now - simplified)
-     */
-    public static int getRandomTreeType(int biome, Random rand) {
-        if (biome == RAINFOREST || biome == SWAMPLAND) {
-            return rand.nextInt(3) == 0 ? 1 : 0;
-        }
-        return rand.nextInt(10) == 0 ? 1 : 0;
+    /** func_35474_f — temperature as a 16-bit fixed-point value. */
+    public final int func_35474_f() {
+        return (int) (this.field_35490_s * 65536.0F);
     }
+
+    public boolean getEnableRain() { return this.enableRain; }
 }
