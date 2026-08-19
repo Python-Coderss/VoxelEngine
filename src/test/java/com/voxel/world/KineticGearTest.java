@@ -126,6 +126,58 @@ public class KineticGearTest {
     }
 
     @Test
+    public void smallCogTeethReachFullRadius() {
+        // Body disc is radius 0.375 (entry 1.625 from x=-2), but the 8 teeth poke
+        // out to the full 0.5-block radius, so a ray aimed straight at a tooth
+        // (spinAng=0 puts one exactly at -x) hits at t = 2 - 0.5 = 1.5.
+        float detailed = KineticManager.intersectGearDetailedEntry(-2f, 0f, 1f, 0f, 294, 0f);
+        float body = KineticManager.intersectGearEntry(-2f, 0f, 1f, 0f, 0f, 0f, 0.375f, 16);
+        assertEquals(1.5f, detailed, 1e-3f);
+        assertTrue("teeth must reach past the body (" + detailed + " vs " + body + ")", detailed < body);
+    }
+
+    @Test
+    public void smallCogGapShowsBodyOnly() {
+        // At z=0.15 the ray passes between the ±x teeth and the diagonal teeth, so
+        // only the body disc is hit — entry equals the plain body slab.
+        float detailed = KineticManager.intersectGearDetailedEntry(-2f, 0.15f, 1f, 0f, 294, 0f);
+        float body = KineticManager.intersectGearEntry(-2f, 0.15f, 1f, 0f, 0f, 0f, 0.375f, 16);
+        assertEquals(body, detailed, 1e-4f);
+    }
+
+    @Test
+    public void largeCogTeethReachFullRadius() {
+        // Large cog body 1.125 (entry 1.875 from x=-3), teeth to 1.5 (entry 1.5).
+        float detailed = KineticManager.intersectGearDetailedEntry(-3f, 0f, 1f, 0f, 295, 0f);
+        float body = KineticManager.intersectGearEntry(-3f, 0f, 1f, 0f, 0f, 0f, 1.125f, 16);
+        assertEquals(1.5f, detailed, 1e-3f);
+        assertTrue(detailed < body);
+    }
+
+    @Test
+    public void waterWheelPaddlesRotateWithSpin() {
+        // Paddles sit 22.5° off the spokes, so at spinAng=0 no paddle is exactly at
+        // -x (entry = body 0.75 from x=-2). Rotating -22.5° lines one up at -x →
+        // paddle tip reaches the full 1.5 radius → entry 0.5.
+        assertEquals(0.75f, KineticManager.intersectGearDetailedEntry(-2f, 0f, 1f, 0f, 296, 0f), 1e-3f);
+        assertEquals(0.5f, KineticManager.intersectGearDetailedEntry(-2f, 0f, 1f, 0f, 296, (float) (-Math.PI / 8.0)), 1e-3f);
+    }
+
+    @Test
+    public void detailedEntryMatchesAcrossMultiblockParts() {
+        // A large-cog part shares the center's teeth geometry.
+        assertEquals(
+                KineticManager.intersectGearDetailedEntry(-3f, 0f, 1f, 0f, 295, 0f),
+                KineticManager.intersectGearDetailedEntry(-3f, 0f, 1f, 0f, 422, 0f),
+                1e-4f);
+        // A water-wheel part shares the center's paddle geometry.
+        assertEquals(
+                KineticManager.intersectGearDetailedEntry(-2f, 0f, 1f, 0f, 296, (float) (-Math.PI / 8.0)),
+                KineticManager.intersectGearDetailedEntry(-2f, 0f, 1f, 0f, 430, (float) (-Math.PI / 8.0)),
+                1e-4f);
+    }
+
+    @Test
     public void multiblockPartsShareTheirCenterDescriptor() {
         // Large cogwheel parts (422-429) mirror the center's axis Y, 1.5-block radius.
         for (int id = 422; id <= 429; id++) {
