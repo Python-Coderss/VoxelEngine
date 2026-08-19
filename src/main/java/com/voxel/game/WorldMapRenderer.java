@@ -1,272 +1,332 @@
 package com.voxel.game;
 
-import com.voxel.World;
-import com.voxel.world.ChunkManager;
-import com.voxel.utils.BlockDataManager;
+import com.voxel.biome.Biome;
+import com.voxel.biome.BiomeProvider;
 
 import java.nio.ByteBuffer;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import static org.lwjgl.opengl.GL11.*;
+import static org.lwjgl.opengl.GL13.GL_TEXTURE20;
+import static org.lwjgl.opengl.GL13.glActiveTexture;
 
 /**
- * Renders a top-down world map texture from loaded chunk surface data.
- * Includes player marker, smooth zoom, and improved color palette.
- * Press M to toggle. WASD/arrows to pan, scroll to zoom.
- * Also supports a minimap overlay (rendered separately by the HUD).
+ * Generates the map preview texture: a simplified biome-colored top-down view
+ * of UNLOADED chunks. The raytracer renders loaded terrain in full 3D (the map
+ * is a top-down camera), but rays that fall through an EMPTY chunk column
+ * sample this texture (see u_MapPreview in raytracer.comp) — so the map shows
+ * flat biome colors instead of void wherever chunks are missing, and goes void
+ * past the world border so the map stops exactly at the world size.
+ *
+ * The texture is filled ring-by-ring from the center with a bounded chunk
+ * budget per call, so opening/panning the map never stalls a tick. Colors are
+ * cached per chunk; pans and zooms reuse the cache. When the map center pans
+ * at the same zoom, the existing texture SLIDES to the new center — the painted
+ * overlap is preserved in place and only the newly-exposed edge strips are
+ * filled, so panning never clears and regenerates the whole view. Fill happens
+ * on the logic thread (updatePreview), upload on the render thread
+ * (uploadIfDirty) — both guarded by a lock, mirroring BiomeManager's
+ * biomeLock pattern.
  */
 public class WorldMapRenderer {
 
-    private static final int TEX_SIZE = 512;
-    private final ByteBuffer mapPixels = ByteBuffer.allocateDirect(TEX_SIZE * TEX_SIZE * 4);
-    private int mapTextureId = 0;
-    private boolean dirty = true;
-    private int frameCounter = 0;
+    /** Must match the shader's MAP_PREVIEW_TEXELS constant. */
+    public static final int TEX_SIZE = 256;
+    private static final int FILL_CHUNKS_PER_CALL = 256;
 
-    // Smooth zoom interpolation
-    private float currentZoom = 1.0f;
-    private float targetZoom = 1.0f;
-    private static final float ZOOM_LERP_SPEED = 8.0f;
+    private final ByteBuffer previewPixels = ByteBuffer.allocateDirect(TEX_SIZE * TEX_SIZE * 4);
+    private final ByteBuffer slideScratch = ByteBuffer.allocateDirect(TEX_SIZE * TEX_SIZE * 4);
+    private final Object lock = new Object();
+    private int textureId = 0;
+    private boolean needsUpload = true;
 
-    // Player marker animation
-    private float markerPulse = 0f;
-    private boolean markerDirection = true;
-
-    // Minimap configuration
-    private static final int MINIMAP_SIZE = 256;
-    private final ByteBuffer minimapPixels = ByteBuffer.allocateDirect(MINIMAP_SIZE * MINIMAP_SIZE * 4);
-    private int minimapTextureId = 0;
-
-    /** Builds/updates the map texture. Call once per tick when map is open. */
-    public void update(World world, ChunkManager chunkManager, BlockDataManager bdm,
-                       float playerX, float playerZ, float mapZoom, float dt) {
-        frameCounter++;
-
-        // Smooth zoom interpolation
-        targetZoom = mapZoom;
-        float zoomDiff = targetZoom - currentZoom;
-        if (Math.abs(zoomDiff) > 0.001f) {
-            currentZoom += zoomDiff * Math.min(1.0f, dt * ZOOM_LERP_SPEED);
-            dirty = true;
+    // Per-chunk RGBA color cache (world chunk coords → packed int). Access-order
+    // LRU: pans reuse visited chunks, and the cache never grows unboundedly.
+    private final Map<Long, Integer> chunkColors = new LinkedHashMap<Long, Integer>(1024, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Long, Integer> eldest) {
+            return size() > 32768;
         }
+    };
 
-        // Marker pulse animation
-        markerPulse += dt * 3.0f;
-        if (markerPulse > 1.0f) {
-            markerPulse = 0f;
-            dirty = true;
-        }
+    // ── Fill state: the world-space region currently being baked ──
+    private float regionCenterX, regionCenterZ;   // world coords of the texture center
+    private int regionBlocksPerTexel = -1;         // -1 = uninitialized
+    private float regionBorder = -1f;              // world border radius at bake time
+    private int fillRing = 0;                      // next chunk ring to fill (0 = center)
+    private int fillCell = 0;                      // next perimeter cell on that ring
+    private int maxRing = 0;
+    private boolean fillDone = true;
 
-        // Only rebuild every 4th tick (~5 Hz) to keep it cheap
-        if (!dirty && frameCounter % 4 != 0) return;
-        dirty = false;
+    /** World X/Z of texel (0,0) for the current region (shader origin uniform). */
+    public float getOriginX() { return regionCenterX - (TEX_SIZE / 2f) * regionBlocksPerTexel; }
+    public float getOriginZ() { return regionCenterZ - (TEX_SIZE / 2f) * regionBlocksPerTexel; }
+    public int getBlocksPerTexel() { return Math.max(1, regionBlocksPerTexel); }
 
-        int half = TEX_SIZE / 2;
-        // Each pixel covers mapZoom blocks at the current zoom level
-        float blocksPerPixel = 2.0f * currentZoom;
+    /**
+     * Advance the preview bake for the map region centered at (centerX, centerZ).
+     * Called from the logic thread while the map is open.
+     *
+     * Zoom or border changes re-bake from scratch (clear + ring fill). A pan of
+     * more than half a texel at the same zoom SLIDES the existing texture to the
+     * new center — the painted overlap is kept, only the newly-exposed edge
+     * chunks are filled — so panning never clears and regenerates the view.
+     */
+    public void updatePreview(BiomeProvider biomes, float centerX, float centerZ, float zoom, float border) {
+        synchronized (lock) {
+            // Viewport height at this zoom ≈ 2 * camY; add margin for the frustum + pan.
+            float camY = 120f * zoom + 20f;
+            int bpt = Math.max(1, (int) Math.ceil(2f * camY * 1.35f / TEX_SIZE));
 
-        // Centre on player's current position
-        int cx = (int) Math.floor(playerX);
-        int cz = (int) Math.floor(playerZ);
+            boolean zoomChanged = regionBlocksPerTexel != bpt || regionBorder != border;
+            float dxTex = (centerX - regionCenterX) / bpt;   // in texels
+            float dzTex = (centerZ - regionCenterZ) / bpt;
+            // Pan only when the center moved more than half a texel (the slide
+            // granularity); smaller drifts keep the current region.
+            boolean panned = !zoomChanged && (Math.abs(dxTex) > 0.5f || Math.abs(dzTex) > 0.5f);
 
-        for (int py = 0; py < TEX_SIZE; py++) {
-            for (int px = 0; px < TEX_SIZE; px++) {
-                int wx = cx + (int) ((px - half) * blocksPerPixel);
-                int wz = cz + (int) ((py - half) * blocksPerPixel);
-
-                // Find surface height
-                int wy = findSurface(world, wx, wz, 0, 255);
-                int blockId = wy >= 0 ? world.getVoxel(wx, wy, wz) : 0;
-                String name = bdm.getName(blockId);
-
-                int r, g, b;
-                if (blockId == 0 || wy < 0) {
-                    r = 24; g = 28; b = 48; // unexplored / void
-                } else if (name.contains("water") || blockId == 15) {
-                    r = 32; g = 96; b = 192;
-                } else if (name.contains("grass") || name.contains("leaves")) {
-                    r = 64; g = 160; b = 48;
-                } else if (name.contains("sand")) {
-                    r = 224; g = 208; b = 128;
-                } else if (name.contains("snow") || name.contains("ice")) {
-                    r = 240; g = 240; b = 248;
-                } else if (name.contains("stone") || name.contains("ore") || name.contains("cobble")) {
-                    r = 128; g = 128; b = 128;
-                } else if (name.contains("dirt")) {
-                    r = 128; g = 96; b = 48;
-                } else if (name.contains("log") || name.contains("wood")) {
-                    r = 96; g = 64; b = 32;
-                } else if (name.contains("lava")) {
-                    r = 224; g = 96; b = 16;
-                } else {
-                    // Unknown — light grey
-                    r = 160; g = 160; b = 160;
-                }
-
-                int idx = (py * TEX_SIZE + px) * 4;
-                mapPixels.put(idx, (byte) r);
-                mapPixels.put(idx + 1, (byte) g);
-                mapPixels.put(idx + 2, (byte) b);
-                mapPixels.put(idx + 3, (byte) 255);
+            if (zoomChanged) {
+                regionCenterX = centerX;
+                regionCenterZ = centerZ;
+                regionBlocksPerTexel = bpt;
+                regionBorder = border;
+                clearTexture();
+                restartFill(bpt);
+            } else if (panned) {
+                // Slide the painted content to the new center; the exposed strips
+                // (cleared by the slide) are filled by the ring scan below.
+                slideTexture(Math.round(dxTex), Math.round(dzTex));
+                regionCenterX = centerX;
+                regionCenterZ = centerZ;
+                restartFill(bpt);
             }
+            if (fillDone) return;
+
+            // Ring-by-ring scan (perimeter of the [-r..r]² square around the
+            // center chunk), bounded budget. Chunks already painted (the slid
+            // overlap) are skipped via chunkNeedsFill, so a pan only fills the
+            // newly-exposed area.
+            int centerCX = (int) Math.floor(regionCenterX / 16f);
+            int centerCZ = (int) Math.floor(regionCenterZ / 16f);
+            int budget = FILL_CHUNKS_PER_CALL;
+            while (budget > 0 && fillRing <= maxRing) {
+                int r = fillRing;
+                int perim = r == 0 ? 1 : 8 * r;
+                while (budget > 0 && fillCell < perim) {
+                    int cx, cz;
+                    if (r == 0) { cx = 0; cz = 0; }
+                    else {
+                        int side = fillCell / (2 * r);       // 0 top, 1 right, 2 bottom, 3 left
+                        int pos = fillCell % (2 * r);
+                        if (side == 0)      { cx = -r + pos;      cz = -r; }
+                        else if (side == 1) { cx = r;             cz = -r + pos; }
+                        else if (side == 2) { cx = r - pos;       cz = r; }
+                        else                { cx = -r;            cz = r - pos; }
+                    }
+                    int wcx = centerCX + cx;
+                    int wcz = centerCZ + cz;
+                    if (chunkNeedsFill(wcx, wcz)) {
+                        fillChunkTexels(biomes, wcx, wcz);
+                        budget--;
+                    }
+                    fillCell++;
+                }
+                if (fillCell >= perim) { fillRing++; fillCell = 0; }
+            }
+            if (fillRing > maxRing) fillDone = true;
+            needsUpload = true;
         }
+    }
 
-        // Draw player marker at center
-        drawPlayerMarker(half, half, cx, cz);
+    private void restartFill(int bpt) {
+        maxRing = (int) Math.ceil((TEX_SIZE * bpt / 2) / 16f);
+        fillRing = 0;
+        fillCell = 0;
+        fillDone = false;
+    }
 
-        // Update minimap
-        updateMinimap(world, bdm, playerX, playerZ, 4.0f);
+    private void clearTexture() {
+        for (int i = 0; i < TEX_SIZE * TEX_SIZE; i++) {
+            int idx = i * 4;
+            previewPixels.put(idx, (byte) 0);
+            previewPixels.put(idx + 1, (byte) 0);
+            previewPixels.put(idx + 2, (byte) 0);
+            previewPixels.put(idx + 3, (byte) 0);
+        }
     }
 
     /**
-     * Draw an animated player marker at the given pixel position
+     * Shifts the painted content by (idx, idz) texels so the texture is centered
+     * on the new region center. New texel (tx,tz) shows the old texel (tx+idx,
+     * tz+idz) — the world-block-to-texel mapping is preserved, so the overlap
+     * keeps its correct colors. The exposed strips (no source texel) are cleared
+     * to void and filled by the ring scan.
      */
-    private void drawPlayerMarker(int px, int py, int worldX, int worldZ) {
-        // Draw outer ring (pulsing)
-        float pulseAlpha = 0.5f + 0.3f * (float) Math.sin(markerPulse * Math.PI * 2);
-        int ringSize = 6;
-        for (int dy = -ringSize; dy <= ringSize; dy++) {
-            for (int dx = -ringSize; dx <= ringSize; dx++) {
-                float dist = (float) Math.sqrt(dx * dx + dy * dy);
-                if (dist >= ringSize - 1 && dist <= ringSize) {
-                    int drawX = px + dx;
-                    int drawY = py + dy;
-                    if (drawX >= 0 && drawX < TEX_SIZE && drawY >= 0 && drawY < TEX_SIZE) {
-                        int idx = (drawY * TEX_SIZE + drawX) * 4;
-                        mapPixels.put(idx, (byte) 255);
-                        mapPixels.put(idx + 1, (byte) 255);
-                        mapPixels.put(idx + 2, (byte) 255);
-                        mapPixels.put(idx + 3, (byte) (int) (255 * pulseAlpha));
-                    }
-                }
-            }
-        }
-
-        // Draw inner marker (diamond shape)
-        int innerSize = 3;
-        for (int dy = -innerSize; dy <= innerSize; dy++) {
-            for (int dx = -innerSize; dx <= innerSize; dx++) {
-                if (Math.abs(dx) + Math.abs(dy) <= innerSize) {
-                    int drawX = px + dx;
-                    int drawY = py + dy;
-                    if (drawX >= 0 && drawX < TEX_SIZE && drawY >= 0 && drawY < TEX_SIZE) {
-                        int idx = (drawY * TEX_SIZE + drawX) * 4;
-                        // Red marker
-                        mapPixels.put(idx, (byte) 255);
-                        mapPixels.put(idx + 1, (byte) 50);
-                        mapPixels.put(idx + 2, (byte) 50);
-                        mapPixels.put(idx + 3, (byte) 255);
-                    }
-                }
-            }
-        }
-
-        // Draw direction indicator (small triangle pointing up)
-        int dirSize = 2;
-        for (int dy = -innerSize - 2; dy < -innerSize; dy++) {
-            int halfWidth = (innerSize + 2 + dy + innerSize);
-            for (int dx = -halfWidth; dx <= halfWidth; dx++) {
-                int drawX = px + dx;
-                int drawY = py + dy;
-                if (drawX >= 0 && drawX < TEX_SIZE && drawY >= 0 && drawY < TEX_SIZE) {
-                    int idx = (drawY * TEX_SIZE + drawX) * 4;
-                    mapPixels.put(idx, (byte) 255);
-                    mapPixels.put(idx + 1, (byte) 50);
-                    mapPixels.put(idx + 2, (byte) 50);
-                    mapPixels.put(idx + 3, (byte) 255);
-                }
+    private void slideTexture(int idx, int idz) {
+        for (int i = 0; i < TEX_SIZE * TEX_SIZE * 4; i++) slideScratch.put(i, previewPixels.get(i));
+        clearTexture();
+        int tx0 = Math.max(0, -idx), tx1 = Math.min(TEX_SIZE - 1, TEX_SIZE - 1 - idx);
+        int tz0 = Math.max(0, -idz), tz1 = Math.min(TEX_SIZE - 1, TEX_SIZE - 1 - idz);
+        for (int tz = tz0; tz <= tz1; tz++) {
+            for (int tx = tx0; tx <= tx1; tx++) {
+                int dst = (tz * TEX_SIZE + tx) * 4;
+                int src = ((tz + idz) * TEX_SIZE + (tx + idx)) * 4;
+                previewPixels.put(dst, slideScratch.get(src));
+                previewPixels.put(dst + 1, slideScratch.get(src + 1));
+                previewPixels.put(dst + 2, slideScratch.get(src + 2));
+                previewPixels.put(dst + 3, slideScratch.get(src + 3));
             }
         }
     }
 
     /**
-     * Update the minimap texture (smaller, lower resolution version for HUD overlay)
+     * True when the chunk still has void texels inside the current region (and
+     * is inside the world border). Beyond-border chunks are intentionally void
+     * and are never re-filled. This is what makes pans cheap: after a slide, the
+     * overlap chunks are painted (returns false) and only the exposed chunks get
+     * filled.
      */
-    private void updateMinimap(World world, BlockDataManager bdm,
-                               float playerX, float playerZ, float blocksPerPixel) {
-        int half = MINIMAP_SIZE / 2;
-        int cx = (int) Math.floor(playerX);
-        int cz = (int) Math.floor(playerZ);
-
-        for (int py = 0; py < MINIMAP_SIZE; py++) {
-            for (int px = 0; px < MINIMAP_SIZE; px++) {
-                int wx = cx + (int) ((px - half) * blocksPerPixel);
-                int wz = cz + (int) ((py - half) * blocksPerPixel);
-
-                int wy = findSurface(world, wx, wz, 0, 255);
-                int blockId = wy >= 0 ? world.getVoxel(wx, wy, wz) : 0;
-                String name = bdm.getName(blockId);
-
-                int r, g, b;
-                if (blockId == 0 || wy < 0) {
-                    r = 24; g = 28; b = 48;
-                } else if (name.contains("water") || blockId == 15) {
-                    r = 32; g = 96; b = 192;
-                } else if (name.contains("grass") || name.contains("leaves")) {
-                    r = 64; g = 160; b = 48;
-                } else if (name.contains("sand")) {
-                    r = 224; g = 208; b = 128;
-                } else if (name.contains("snow") || name.contains("ice")) {
-                    r = 240; g = 240; b = 248;
-                } else if (name.contains("stone") || name.contains("ore") || name.contains("cobble")) {
-                    r = 128; g = 128; b = 128;
-                } else if (name.contains("dirt")) {
-                    r = 128; g = 96; b = 48;
-                } else if (name.contains("log") || name.contains("wood")) {
-                    r = 96; g = 64; b = 32;
-                } else if (name.contains("lava")) {
-                    r = 224; g = 96; b = 16;
-                } else {
-                    r = 160; g = 160; b = 160;
-                }
-
-                int idx = (py * MINIMAP_SIZE + px) * 4;
-                minimapPixels.put(idx, (byte) r);
-                minimapPixels.put(idx + 1, (byte) g);
-                minimapPixels.put(idx + 2, (byte) b);
-                minimapPixels.put(idx + 3, (byte) 255);
+    private boolean chunkNeedsFill(int chunkX, int chunkZ) {
+        int wx = chunkX * 16 + 8, wz = chunkZ * 16 + 8;
+        if (Math.abs(wx) > regionBorder || Math.abs(wz) > regionBorder) return false;
+        int bpt = regionBlocksPerTexel;
+        float originX = getOriginX(), originZ = getOriginZ();
+        int tx0 = (int) Math.ceil((chunkX * 16 - originX) / (double) bpt - 0.5);
+        int tz0 = (int) Math.ceil((chunkZ * 16 - originZ) / (double) bpt - 0.5);
+        int tx1 = (int) Math.ceil((chunkX * 16 + 16 - originX) / (double) bpt - 0.5) - 1;
+        int tz1 = (int) Math.ceil((chunkZ * 16 + 16 - originZ) / (double) bpt - 0.5) - 1;
+        tx0 = Math.max(0, tx0); tz0 = Math.max(0, tz0);
+        tx1 = Math.min(TEX_SIZE - 1, tx1); tz1 = Math.min(TEX_SIZE - 1, tz1);
+        if (tx0 > tx1 || tz0 > tz1) return false;
+        for (int tz = tz0; tz <= tz1; tz++) {
+            for (int tx = tx0; tx <= tx1; tx++) {
+                if ((previewPixels.get((tz * TEX_SIZE + tx) * 4 + 3) & 0xFF) == 0) return true;
             }
         }
+        return false;
+    }
 
-        // Draw player dot on minimap
-        int dotSize = 4;
-        for (int dy = -dotSize; dy <= dotSize; dy++) {
-            for (int dx = -dotSize; dx <= dotSize; dx++) {
-                if (dx * dx + dy * dy <= dotSize * dotSize) {
-                    int drawX = half + dx;
-                    int drawY = half + dy;
-                    if (drawX >= 0 && drawX < MINIMAP_SIZE && drawY >= 0 && drawY < MINIMAP_SIZE) {
-                        int idx = (drawY * MINIMAP_SIZE + drawX) * 4;
-                        minimapPixels.put(idx, (byte) 255);
-                        minimapPixels.put(idx + 1, (byte) 50);
-                        minimapPixels.put(idx + 2, (byte) 50);
-                        minimapPixels.put(idx + 3, (byte) 255);
-                    }
-                }
+    /**
+     * Writes the texels whose CENTER block falls inside the given world chunk
+     * (16×16 blocks). Assigning each texel to exactly one chunk (its center's
+     * chunk) makes the fill gap-free AND overlap-free: a texel straddling a
+     * chunk border belongs to one chunk only, so a later ring can never
+     * overwrite an earlier chunk's boundary texel with a different color.
+     */
+    private void fillChunkTexels(BiomeProvider biomes, int chunkX, int chunkZ) {
+        int color = chunkColor(biomes, chunkX, chunkZ);
+        int bpt = regionBlocksPerTexel;
+        float originX = getOriginX(), originZ = getOriginZ();
+        // Texel tx covers block center originX + (tx + 0.5) * bpt; it belongs to
+        // this chunk when that center is in [chunk*16, chunk*16 + 16).
+        int tx0 = (int) Math.ceil((chunkX * 16 - originX) / (double) bpt - 0.5);
+        int tz0 = (int) Math.ceil((chunkZ * 16 - originZ) / (double) bpt - 0.5);
+        int tx1 = (int) Math.ceil((chunkX * 16 + 16 - originX) / (double) bpt - 0.5) - 1;
+        int tz1 = (int) Math.ceil((chunkZ * 16 + 16 - originZ) / (double) bpt - 0.5) - 1;
+        tx0 = Math.max(0, tx0); tz0 = Math.max(0, tz0);
+        tx1 = Math.min(TEX_SIZE - 1, tx1); tz1 = Math.min(TEX_SIZE - 1, tz1);
+        if (tx0 > tx1 || tz0 > tz1) return;
+        for (int tz = tz0; tz <= tz1; tz++) {
+            for (int tx = tx0; tx <= tx1; tx++) {
+                int idx = (tz * TEX_SIZE + tx) * 4;
+                previewPixels.put(idx, (byte) (color >> 16));
+                previewPixels.put(idx + 1, (byte) (color >> 8));
+                previewPixels.put(idx + 2, (byte) color);
+                previewPixels.put(idx + 3, (byte) (color >>> 24));
             }
         }
     }
 
-    private static int findSurface(World world, int x, int z, int minY, int maxY) {
-        for (int y = maxY; y >= minY; y--) {
-            if (world.getVoxel(x, y, z) > 0) return y;
+    /** Biome color for a chunk (cached); 0 (void, alpha 0) beyond the world border. */
+    private int chunkColor(BiomeProvider biomes, int cx, int cz) {
+        long key = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
+        Integer cached = chunkColors.get(key);
+        if (cached != null) return cached;
+        int color;
+        float wx = cx * 16 + 8, wz = cz * 16 + 8;
+        if (Math.abs(wx) > regionBorder || Math.abs(wz) > regionBorder) {
+            color = 0; // past the world size — the map stops here (alpha 0 = void)
+        } else if (biomes == null) {
+            color = 0xFF6E7378; // no biome provider: neutral unexplored grey
+        } else {
+            color = biomeColor(biomes.getBiome((int) wx, (int) wz)) | 0xFF000000;
         }
-        return -1;
+        chunkColors.put(key, color);
+        return color;
     }
 
-    public int getTextureId() { return mapTextureId; }
-    public void setTextureId(int id) { this.mapTextureId = id; }
+    /** Simplified muted color per biome name (the "paper map" palette). */
+    private static int biomeColor(Biome b) {
+        String n = b == null ? "" : b.name;
+        float r, g, bl;
+        if (n.contains("Ocean"))          { r = 0.08f; g = 0.30f; bl = 0.62f; }
+        else if (n.contains("River"))     { r = 0.15f; g = 0.42f; bl = 0.72f; }
+        else if (n.contains("Swamp"))     { r = 0.30f; g = 0.40f; bl = 0.22f; }
+        else if (n.contains("Ice") || n.contains("Frozen") || n.contains("Taiga")
+                || n.contains("Tundra"))  { r = 0.66f; g = 0.70f; bl = 0.74f; }
+        else if (n.contains("Jungle"))    { r = 0.13f; g = 0.42f; bl = 0.10f; }
+        else if (n.contains("Rainforest")){ r = 0.10f; g = 0.36f; bl = 0.08f; }
+        else if (n.contains("Forest"))    { r = 0.20f; g = 0.50f; bl = 0.15f; }
+        else if (n.contains("Hills") || n.contains("Extreme")
+                || n.contains("Stone"))   { r = 0.40f; g = 0.40f; bl = 0.40f; }
+        else if (n.contains("Desert") || n.contains("Mesa")
+                || n.contains("Beach"))   { r = 0.72f; g = 0.66f; bl = 0.40f; }
+        else if (n.contains("Mushroom"))  { r = 0.62f; g = 0.50f; bl = 0.52f; }
+        else if (n.contains("Hell"))      { r = 0.45f; g = 0.20f; bl = 0.12f; }
+        else if (n.contains("Sky") || n.contains("End")) { r = 0.47f; g = 0.41f; bl = 0.56f; }
+        else if (n.contains("Savanna"))   { r = 0.47f; g = 0.56f; bl = 0.22f; }
+        else if (n.contains("Shrubland")) { r = 0.50f; g = 0.44f; bl = 0.28f; }
+        else                              { r = 0.43f; g = 0.45f; bl = 0.47f; } // plains/default
+        return ((int) (r * 255) << 16) | ((int) (g * 255) << 8) | (int) (bl * 255);
+    }
 
-    /** Returns the RGBA pixel buffer for GL upload. */
-    public ByteBuffer getPixels() { mapPixels.position(0); return mapPixels; }
+    /**
+     * Uploads the preview texture if the logic thread has finished a fill batch.
+     * Called from the render thread (bindTextures). The GL call happens inside
+     * the lock so it never races the in-progress fill. Binds on texture unit 20
+     * (the same dedicated unit the shader samples) so the upload never clobbers
+     * another unit's binding (e.g. unit 14's foliage colormap).
+     */
+    public void uploadIfDirty() {
+        synchronized (lock) {
+            if (!needsUpload || textureId == 0) return;
+            ByteBuffer px = previewPixels.duplicate();
+            px.position(0);
+            px.limit(TEX_SIZE * TEX_SIZE * 4);
+            glActiveTexture(GL_TEXTURE20);
+            glBindTexture(GL_TEXTURE_2D, textureId);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TEX_SIZE, TEX_SIZE, GL_RGBA, GL_UNSIGNED_BYTE, px);
+            needsUpload = false;
+        }
+    }
+
+    public int getTextureId() { return textureId; }
+    public void setTextureId(int id) { this.textureId = id; }
     public int getTexSize() { return TEX_SIZE; }
 
-    /** Force a full rebuild next update. */
-    public void markDirty() { dirty = true; }
+    /** Force a full re-bake next update (e.g. after a dimension switch). */
+    public void markDirty() {
+        synchronized (lock) {
+            regionBlocksPerTexel = -1;
+            regionBorder = -1f;
+        }
+    }
 
-    /** Get current interpolated zoom level */
-    public float getCurrentZoom() { return currentZoom; }
+    /** Package-private readback for tests: RGBA bytes of one texel. */
+    byte[] getTexelBytes(int tx, int tz) {
+        synchronized (lock) {
+            if (tx < 0 || tz < 0 || tx >= TEX_SIZE || tz >= TEX_SIZE) return new byte[]{0, 0, 0, 0};
+            int idx = (tz * TEX_SIZE + tx) * 4;
+            return new byte[]{previewPixels.get(idx), previewPixels.get(idx + 1),
+                    previewPixels.get(idx + 2), previewPixels.get(idx + 3)};
+        }
+    }
 
-    // Minimap support
-    public int getMinimapTextureId() { return minimapTextureId; }
-    public void setMinimapTextureId(int id) { this.minimapTextureId = id; }
-    public ByteBuffer getMinimapPixels() { minimapPixels.position(0); return minimapPixels; }
-    public int getMinimapSize() { return MINIMAP_SIZE; }
+    /** Package-private test helper: are all texels filled (non-zero alpha) within the region? */
+    boolean isFullyFilled() {
+        synchronized (lock) {
+            return fillDone;
+        }
+    }
 }

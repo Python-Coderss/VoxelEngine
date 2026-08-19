@@ -6,6 +6,7 @@ import com.voxel.biome.BiomeRegistry;
 import com.voxel.world.beta.BetaBiomeGenBase;
 import com.voxel.world.beta.BetaBlocks;
 import com.voxel.world.beta.BetaChunkProvider;
+import com.voxel.world.beta.BetaWorldChunkManager;
 import com.voxel.world.structure.MapGenStructure;
 import java.util.HashSet;
 import java.util.Set;
@@ -24,7 +25,14 @@ import java.util.Set;
  */
 public class BetaWorldGenerator extends WorldGenerator {
 
+    private final long seed;
     private final BetaChunkProvider betaProvider;
+
+    // Dedicated biome chain for the map preview. Chunk generation runs on the
+    // gen thread while the map renders on the logic thread; the beta GenLayer
+    // chain + IntCache are single-threaded (vanilla semantics), so the map gets
+    // its own identically-seeded chain to stay race-free.
+    private final BetaWorldChunkManager mapChunkManager;
 
     // Track which columns have been decorated (seed-once-per-column)
     private final Set<Long> decoratedColumns = new HashSet<>();
@@ -57,6 +65,7 @@ public class BetaWorldGenerator extends WorldGenerator {
 
     public BetaWorldGenerator(long seed, com.voxel.utils.BlockDataManager blockDataManager) {
         super(seed, blockDataManager);
+        this.seed = seed;
 
         // Look up VoxelEngine block IDs from BlockDataManager (all null-safe)
         int veStone = findOr(blockDataManager, "stone", 2);
@@ -108,15 +117,38 @@ public class BetaWorldGenerator extends WorldGenerator {
 
         this.betaProvider = new BetaChunkProvider(seed, blocks);
 
-        // Expose Beta 1.8.1 biomes as a VoxelEngine BiomeProvider
+        // Expose Beta 1.8.1 biomes as a VoxelEngine BiomeProvider (used by the
+        // gen thread for the biome tint map and by UI reads).
         this.biomeProvider = new BiomeProvider(seed) {
             @Override
             public com.voxel.biome.Biome getBiome(int x, int z) {
-                int betaId = betaProvider.getBetaBiomeId(x, z);
-                if (betaId < 0 || betaId >= BETA_TO_VE_BIOME.length) {
-                    return BiomeRegistry.getBiome(BiomeRegistry.PLAINS);
-                }
-                return BiomeRegistry.getBiome(BETA_TO_VE_BIOME[betaId]);
+                return mapBetaBiome(betaProvider.getBetaBiomeId(x, z));
+            }
+        };
+
+        // Map-preview chain: isolated from betaProvider's (see field comment).
+        this.mapChunkManager = new BetaWorldChunkManager(seed);
+    }
+
+    /** Map a Beta 1.8.1 biome id to its VoxelEngine Biome (unknown → plains). */
+    private static com.voxel.biome.Biome mapBetaBiome(int betaId) {
+        if (betaId < 0 || betaId >= BETA_TO_VE_BIOME.length) {
+            return BiomeRegistry.getBiome(BiomeRegistry.PLAINS);
+        }
+        return BiomeRegistry.getBiome(BETA_TO_VE_BIOME[betaId]);
+    }
+
+    /**
+     * Biome provider for the map preview — logic-thread only, backed by a
+     * dedicated {@link BetaWorldChunkManager} so it never shares GenLayer or
+     * IntCache state with the gen thread's chunk generation.
+     */
+    public BiomeProvider getMapBiomeProvider() {
+        return new BiomeProvider(seed) {
+            @Override
+            public com.voxel.biome.Biome getBiome(int x, int z) {
+                BetaBiomeGenBase b = mapChunkManager.getBiomeGenAt(x, z);
+                return mapBetaBiome(b == null ? 1 : b.field_35494_y);
             }
         };
     }

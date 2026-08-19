@@ -1211,6 +1211,7 @@ public class ChunkManager {
 
     /** @return the BlockDataManager for light debug queries */
     public BlockDataManager getBlockDataManager() { return blockDataManager; }
+    public WorldGenerator getGenerator() { return generator; }
 
     // ══════════════════════════════════════════════════════════════════
     //  TERRAIN BOUNDS — SDF sky early-out support (gen thread only)

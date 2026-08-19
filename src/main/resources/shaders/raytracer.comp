@@ -95,6 +95,27 @@ layout(location = 39) uniform ivec3 u_PreviewPos;
 layout(location = 40) uniform int u_PreviewBlock;
 layout(location = 41) uniform int u_PreviewFacing;
 
+// ── Map preview (simplified biome view for unloaded chunks) ──
+// When the map is open (top-down camera), a ray that enters an EMPTY
+// (unloaded) chunk column samples a CPU-generated preview texture instead of
+// falling through to the void: flat biome colors at ~1-6 blocks/texel. Past
+// the world border the preview is void (alpha 0), so the map "stops working"
+// exactly at the world size. All coordinates are buffer-relative, matching the
+// DDA voxel space (u_MapWorldOrigin is the buffer's world XZ origin).
+layout(location = 42) uniform int u_MapMode;
+layout(location = 43) uniform vec2 u_MapPreviewOrigin; // buffer-relative XZ of texel (0,0)
+layout(location = 44) uniform float u_MapPreviewScale; // blocks per texel
+layout(location = 45) uniform vec2 u_MapWorldOrigin;   // world XZ of buffer (0,0)
+layout(location = 46) uniform float u_MapBorder;       // world border radius (half width)
+layout(location = 47) uniform sampler2D u_MapPreview;
+layout(location = 48) uniform float u_MapGroundY;      // buffer-relative Y of the map's ground plane (world sea level)
+const float MAP_PREVIEW_TEXELS = 256.0; // must match WorldMapRenderer.TEX_SIZE
+
+// Set by traceWorld() when a downward map ray crosses an EMPTY chunk inside the
+// preview region; consumed by the miss path in main() (preview instead of sky).
+vec3 gMapPreviewCol = vec3(0.0);
+bool gMapPreviewValid = false;
+
 // Entities
 struct EntityData { vec3 position; float health; vec3 rotation; float maxHealth; int partCount; int partOffset; float hitFlash; float tintR; float tintG; float tintB; float tintAmount; float padding; };
 struct PartData { vec3 offset; float uvU; vec3 absoluteOffset; float uvV; vec3 size; float textureIndex; vec3 rotation; float textureMapping; };
@@ -870,6 +891,38 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
         uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
         if (slot == EMPTY) {
             // Empty chunk: skip whole 16³ section in one DDA step (peer over chunks)
+            // ── Map preview: a downward map ray over an unloaded column samples the
+            //    CPU biome preview here (the FIRST EMPTY chunk the ray enters is the
+            //    column this pixel points at). Beyond the world border the preview is
+            //    void, so the map stops exactly at the world size. The flag only
+            //    matters if the ray ultimately misses — a loaded chunk below the
+            //    empty section still renders as real terrain.
+            if (u_MapMode == 1 && rd.y < 0.0) {
+                // Sample the preview at the XZ where this ray lands on the map's
+                // ground plane (world sea level), not at the EMPTY cell's own XZ.
+                // Sampling the cell XZ is only correct for an orthographic camera:
+                // under perspective, an off-center ray's XZ at the entry height is
+                // offset from where it actually meets the ground, which skews the
+                // preview. Projecting the ray to the ground plane makes the preview
+                // behave like the terrain really is there.
+                float tPlane = (u_MapGroundY - ro.y) / rd.y;
+                // tPlane <= 0 means the ground plane is at/behind the camera
+                // (e.g. minimum zoom puts the camera below sea level) — skip
+                // the preview sample but let the DDA continue.
+                if (tPlane > 0.0) {
+                    vec2 planeXZ = ro.xz + rd.xz * tPlane;
+                    vec2 worldXZ = planeXZ + u_MapWorldOrigin;
+                    if (abs(worldXZ.x) <= u_MapBorder && abs(worldXZ.y) <= u_MapBorder) {
+                        vec2 texCoord = (planeXZ - u_MapPreviewOrigin) * (1.0 / u_MapPreviewScale) + 0.5;
+                        texCoord *= 1.0 / MAP_PREVIEW_TEXELS;
+                        if (texCoord.x >= 0.0 && texCoord.x <= 1.0 && texCoord.y >= 0.0 && texCoord.y <= 1.0) {
+                            vec4 prev = texture(u_MapPreview, texCoord);
+                            if (prev.a > 0.5) { gMapPreviewCol = prev.rgb; gMapPreviewValid = true; }
+                        }
+                    }
+                }
+            }
+            // Empty chunk: skip whole 16³ section in one DDA step (peer over chunks)
             // ── Tall-skip optimization (ray points up only): collapse many consecutive
             //    EMPTY chunks in a single traceWorld iteration. Without this, a sky-look
             //    ray at ground level iterates ~125 times (one per chunk), each calling
@@ -1512,6 +1565,7 @@ void main() {
 
 
     for (int b = 0; b < 2; b++) {  // reduced from 4 → 2 bounces for perf
+        gMapPreviewValid = false; // fresh per trace: only the current ray's EMPTY crossing counts
         float t; vec3 n; uint voxel, eTex, wirePower, wireConn, kineticActive, kineticReverse, facing; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx; ivec4 blockData1; ivec3 gearOrigin; int gearShaft = 0;
         // Camera eye clipped inside a solid voxel: treat that voxel (buffer-relative
         // _camBlock, the cell the eye is in) as air until the first real hit — the
@@ -1522,7 +1576,13 @@ void main() {
         // normal solidity on every later trace. Water has its own skipNearWater pass.
         bool skipFirstBounce = skip;
         ivec3 airVoxel = (b == 0 && camClipped) ? _camBlock : ivec3(0x7FFFFFFF);
-        if (!traceAll(ro, rd, skipFirstBounce, airVoxel, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx, blockData1, kineticActive, kineticReverse, facing, gearOrigin, gearShaft)) { final += throu * GetSky(rd, at); break; }
+        if (!traceAll(ro, rd, skipFirstBounce, airVoxel, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx, blockData1, kineticActive, kineticReverse, facing, gearOrigin, gearShaft)) {
+            // Map preview: a downward ray that fell through unloaded chunks shows the
+            // simplified biome view instead of sky; beyond the world border the
+            // preview texel is void so the map stops working there.
+            final += throu * (gMapPreviewValid ? gMapPreviewCol : GetSky(rd, at));
+            break;
+        }
         int waterEff = (blockData1.w >> 10) & 0xF;
         bool waterHit = !isEnt && craftingIdx < 0 && waterEff == 2 && voxel != 21u;
         bool skipNearWater = underWater && b == 0 && waterHit;
