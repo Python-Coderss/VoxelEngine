@@ -872,6 +872,118 @@ bool intersectGear(vec3 ro, vec3 rd, vec3 center, int axis, float radius, int si
     return true;
 }
 
+// ── Detailed gear geometry: teeth, rim paddles and a raised hub ──
+// The cogs/wheel are no longer a plain disc — they are a union of the body
+// disc (rendered by intersectGear), radial "box" pieces (teeth for the cogs,
+// paddle boards for the water wheel) and, for the wheel, a raised hub. Each
+// box is raycast exactly (no raymarch) in the disc plane and extruded along
+// the spin axis. `ang` is the box's polar angle in the gear's local frame
+// (0 = +u); the caller bakes the spin phase into it.
+
+// Disc-plane extraction + normal mapping (matches intersectGear's convention).
+void gearPlane(vec3 ro, vec3 rd, vec3 c, int axis, out vec2 o, out vec2 d,
+               out float oa, out float da, out float ca) {
+    if (axis == 0)      { o = ro.yz; d = rd.yz; oa = ro.x; da = rd.x; ca = c.x; }
+    else if (axis == 1) { o = ro.xz; d = rd.xz; oa = ro.y; da = rd.y; ca = c.y; }
+    else                { o = ro.xy; d = rd.xy; oa = ro.z; da = rd.z; ca = c.z; }
+}
+vec3 discToWorld(vec2 n, int axis) {
+    if (axis == 0) return vec3(0.0, n.x, n.y);
+    if (axis == 1) return vec3(n.x, 0.0, n.y);
+    return vec3(n.x, n.y, 0.0);
+}
+vec3 axisUnit(int axis) {
+    if (axis == 0) return vec3(1.0, 0.0, 0.0);
+    if (axis == 1) return vec3(0.0, 1.0, 0.0);
+    return vec3(0.0, 0.0, 1.0);
+}
+
+// Radial box (tooth/paddle) at polar angle `ang`: radial extent [r0, r1],
+// tangential half-width `halfW`, extruded along the axis by `halfThick`.
+// Returns the entry t and the disc-plane entry normal; axisFace is true when
+// the entry face is one of the two flat faces perpendicular to the axis.
+bool gearBox(vec2 o, vec2 d, float ang, float r0, float r1, float halfW,
+             float oa, float da, float ca, float halfThick,
+             out float tOut, out vec2 nOut, out bool axisFace) {
+    float cs = cos(ang), sn = sin(ang);
+    vec2 ob = vec2(o.x * cs + o.y * sn, -o.x * sn + o.y * cs);
+    vec2 db = vec2(d.x * cs + d.y * sn, -d.x * sn + d.y * cs);
+    float tUin = -1e30, tUout = 1e30;
+    if (abs(db.x) > 1e-7) {
+        float t0 = (r0 - ob.x) / db.x, t1 = (r1 - ob.x) / db.x;
+        tUin = min(t0, t1); tUout = max(t0, t1);
+    } else if (ob.x < r0 || ob.x > r1) return false;
+    float tVin = -1e30, tVout = 1e30;
+    if (abs(db.y) > 1e-7) {
+        float t0 = (-halfW - ob.y) / db.y, t1 = (halfW - ob.y) / db.y;
+        tVin = min(t0, t1); tVout = max(t0, t1);
+    } else if (ob.y < -halfW || ob.y > halfW) return false;
+    float tAin = -1e30, tAout = 1e30;
+    if (abs(da) > 1e-7) {
+        float t0 = (ca - halfThick - oa) / da, t1 = (ca + halfThick - oa) / da;
+        tAin = min(t0, t1); tAout = max(t0, t1);
+    } else if (oa < ca - halfThick || oa > ca + halfThick) return false;
+    float tIn = max(max(tUin, tVin), tAin);
+    float tExit = min(min(tUout, tVout), tAout);
+    if (tIn > tExit) return false;
+    axisFace = (tAin >= tUin && tAin >= tVin);
+    vec2 nb = vec2(0.0);
+    if (!axisFace) {
+        if (tUin >= tVin) nb = vec2(db.x > 0.0 ? -1.0 : 1.0, 0.0);
+        else              nb = vec2(0.0, db.y > 0.0 ? -1.0 : 1.0);
+    }
+    nOut = vec2(nb.x * cs - nb.y * sn, nb.x * sn + nb.y * cs);
+    tOut = tIn;
+    return true;
+}
+
+// Union of the body disc, radial teeth/paddles and (wheel only) a raised hub.
+// kind: 0 = cogwheel (294), 1 = large cogwheel (295 + parts 422-429),
+//       2 = water wheel (296 + parts 430-437).
+bool intersectGearDetailed(int id, vec3 ro, vec3 rd, vec3 center, int axis, float spinAng,
+                           out float tOut, out vec3 nOut) {
+    const float P = 1.0 / 16.0;
+    int kind = -1;
+    if (id == 294) kind = 0;
+    else if (id == 295 || (id >= 422 && id <= 429)) kind = 1;
+    else if (id == 296 || (id >= 430 && id <= 437)) kind = 2;
+
+    float bodyR, halfThick, r0, r1, toothW; int pieces;
+    if (kind == 0)      { bodyR = 0.375;  halfThick = 3.0*P; r0 = 0.375;  r1 = 0.5;  toothW = 0.0625; pieces = 8; }
+    else if (kind == 1) { bodyR = 1.125;  halfThick = 3.0*P; r0 = 1.125;  r1 = 1.5;  toothW = 0.125;  pieces = 8; }
+    else                { bodyR = 1.25;   halfThick = 4.0*P; r0 = 1.25;   r1 = 1.5;  toothW = 0.125;  pieces = 8; }
+
+    vec2 o, d; float oa, da, ca;
+    gearPlane(ro, rd, center, axis, o, d, oa, da, ca);
+    float bestT = 1e30; vec3 bestN = vec3(0.0, 1.0, 0.0); bool any = false;
+
+    // Body disc.
+    float dT; vec3 dN;
+    if (intersectGear(ro, rd, center, axis, bodyR, 16, halfThick, spinAng, dT, dN) && dT > 0.0) {
+        bestT = dT; bestN = dN; any = true;
+    }
+    // Teeth / paddle boards.
+    for (int k = 0; k < pieces; k++) {
+        float ang = spinAng + float(k) * 6.2831853 / float(pieces);
+        if (kind == 2) ang += 0.39269908; // 22.5° offset: paddles sit between the spokes
+        float bT; vec2 bN; bool bAxis;
+        if (gearBox(o, d, ang, r0, r1, toothW, oa, da, ca, halfThick, bT, bN, bAxis) && bT > 0.0 && bT < bestT) {
+            bestT = bT;
+            bestN = bAxis ? axisUnit(axis) * (da > 0.0 ? -1.0 : 1.0) : discToWorld(bN, axis);
+            any = true;
+        }
+    }
+    // Water wheel: raised hub boss around the shaft.
+    if (kind == 2) {
+        float hT; vec3 hN;
+        if (intersectGear(ro, rd, center, axis, 0.25, 16, halfThick + 2.0*P, spinAng, hT, hN) && hT > 0.0 && hT < bestT) {
+            bestT = hT; bestN = hN; any = true;
+        }
+    }
+    tOut = bestT; nOut = bestN;
+    return any;
+}
+
 bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out int resSide, out uint resVoxel, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out ivec4 resBlockData1, out uint resKineticActive, out uint resKineticReverse, out uint resFacing, out vec3 resNormal, out ivec3 resGearOrigin, out int resGearShaft) {
     ivec3 bufMin = ivec3(0);
     ivec3 bufMax = ivec3(WORLD_SIZE);
@@ -1036,10 +1148,18 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                                 if (kinReverse != 0u) gearSpin = 1.0 - gearSpin;
                             }
                             float spinAng = gearSpin * 6.2831853;
-                            // Disc prism hit.
+                            // Disc prism hit. Shafts (4-sided) keep the plain
+                            // square prism; the cogs/wheel (16-sided) use the
+                            // detailed teeth/paddles/hub geometry.
                             float gT; vec3 gN;
-                            bool discHit = intersectGear(ro, rd, gCenter, gAxis, gOuter, gSides, gHalf, spinAng, gT, gN)
+                            bool discHit = false;
+                            if (gSides == 4) {
+                                discHit = intersectGear(ro, rd, gCenter, gAxis, gOuter, gSides, gHalf, spinAng, gT, gN)
                                         && gT > 0.0 && gT < cellExit;
+                            } else {
+                                discHit = intersectGearDetailed(int(voxelType), ro, rd, gCenter, gAxis, spinAng, gT, gN)
+                                        && gT > 0.0 && gT < cellExit;
+                            }
                             // Coaxial 4x4x16 square shaft through the hub (cog/large
                             // cog/water wheel centers only) — pokes out both faces.
                             float sT = 0.0; vec3 sN = vec3(0.0);

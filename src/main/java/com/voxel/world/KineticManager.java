@@ -380,6 +380,69 @@ public class KineticManager {
         return tEnter;
     }
 
+    /**
+     * Java mirror of the raytracer's detailed gear cross-section (teeth,
+     * paddle boards and a raised hub) for unit-testing without a GLSL
+     * validator. The ray is in the disc plane (XZ) with the gear centred at the
+     * origin and axis Y; {@code spinAng} rotates the whole cross-section. Returns
+     * the entry distance or -1 on a miss. Keep in sync with raytracer.comp's
+     * intersectGearDetailed().
+     */
+    public static float intersectGearDetailedEntry(float ox, float oz, float dx, float dz, int id, float spinAng) {
+        final float P = 1.0f / 16.0f;
+        int kind;
+        if (id == 294) kind = 0;
+        else if (id == 295 || (id >= 422 && id <= 429)) kind = 1;
+        else if (id == 296 || (id >= 430 && id <= 437)) kind = 2;
+        else return -1f;
+
+        float bodyR, r0, r1, toothW; int pieces;
+        if (kind == 0)      { bodyR = 0.375f;  r0 = 0.375f; r1 = 0.5f;  toothW = 0.0625f; pieces = 8; }
+        else if (kind == 1) { bodyR = 1.125f;  r0 = 1.125f; r1 = 1.5f;  toothW = 0.125f;  pieces = 8; }
+        else                { bodyR = 1.25f;   r0 = 1.25f;  r1 = 1.5f;  toothW = 0.125f;  pieces = 8; }
+
+        float best = -1f;
+        float d = intersectGearEntry(ox, oz, dx, dz, 0, 0, bodyR, 16, spinAng);
+        if (d >= 0f) best = d;
+        for (int k = 0; k < pieces; k++) {
+            double ang = spinAng + k * 2.0 * Math.PI / pieces;
+            if (kind == 2) ang += Math.PI / 8.0;
+            float b = boxEntry(ox, oz, dx, dz, (float) ang, r0, r1, toothW);
+            if (b >= 0f && (best < 0f || b < best)) best = b;
+        }
+        if (kind == 2) {
+            float h = intersectGearEntry(ox, oz, dx, dz, 0, 0, 0.25f, 16, spinAng);
+            if (h >= 0f && (best < 0f || h < best)) best = h;
+        }
+        return best;
+    }
+
+    /** 2D radial box test used by {@link #intersectGearDetailedEntry} (mirror of gearBox). */
+    private static float boxEntry(float ox, float oz, float dx, float dz, float ang, float r0, float r1, float halfW) {
+        double cs = Math.cos(ang), sn = Math.sin(ang);
+        double obx = ox * cs + oz * sn, obz = -ox * sn + oz * cs;
+        double dbx = dx * cs + dz * sn, dbz = -dx * sn + dz * cs;
+        double tUin, tUout;
+        if (Math.abs(dbx) > 1e-7) {
+            double t0 = (r0 - obx) / dbx, t1 = (r1 - obx) / dbx;
+            tUin = Math.min(t0, t1); tUout = Math.max(t0, t1);
+        } else {
+            if (obx < r0 || obx > r1) return -1f;
+            tUin = -1e30; tUout = 1e30;
+        }
+        double tVin, tVout;
+        if (Math.abs(dbz) > 1e-7) {
+            double t0 = (-halfW - obz) / dbz, t1 = (halfW - obz) / dbz;
+            tVin = Math.min(t0, t1); tVout = Math.max(t0, t1);
+        } else {
+            if (obz < -halfW || obz > halfW) return -1f;
+            tVin = -1e30; tVout = 1e30;
+        }
+        double tIn = Math.max(tUin, tVin), tOut = Math.min(tUout, tVout);
+        if (tIn > tOut) return -1f;
+        return (float) tIn;
+    }
+
     /** Immutable gear shape descriptor (mirror of the shader's getGear()). */
     public static final class GearDescriptor {
         public final int axis;
