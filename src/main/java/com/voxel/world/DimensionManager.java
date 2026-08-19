@@ -79,22 +79,14 @@ public class DimensionManager {
                 // grass/dirt/stone profile at the boundary).
                 generator = new TutorialWorldGenerator(typeSeed, blockDataManager);
             } else {
-            // The normal Overworld uses the coordinate-tuned far-lands policy
-            // (OverworldBetaPrecision): classic integer far lands (~3,060
-            // blocks) with near-full float precision in bands 0–1, then
-            // tuned float values 23→20→12→6→4→2→1. X/Z doubles stay at
-            // 52 bits through 4,000, then use the historical 26-bit mask;
-            // Y follows the same full-through-4,000 degradation bands.
-            generator = new BetaWorldGenerator(typeSeed, blockDataManager,
-                    com.voxel.world.beta.BetaNumericProfile.OVERWORLD);
+            // The normal Overworld uses the faithful Beta 1.8.1 continental
+            // generator (Adventure Update terrain) with vanilla precision.
+            generator = new BetaWorldGenerator(typeSeed, blockDataManager);
             }
         } else if (type == DimensionType.ERROR502) {
-            // ERROR502 remains the isolated experimental world using the
-            // aggressive coordinate-aware degradation switches
-            // (Error502BetaPrecision): float 23→16→11→6→4→2→1, doubles
-            // 52→40→30→18→11→6→1.
-            generator = new BetaWorldGenerator(typeSeed, blockDataManager,
-                    com.voxel.world.beta.BetaNumericProfile.DEFAULT);
+            // ERROR502 now uses the same faithful Beta 1.8.1 generator as the
+            // Overworld (the old coordinate-aware precision presets are gone).
+            generator = new BetaWorldGenerator(typeSeed, blockDataManager);
         } else if (type == DimensionType.PORTAL_HALL) {
             generator = new PortalHallGenerator(blockDataManager);
         } else {

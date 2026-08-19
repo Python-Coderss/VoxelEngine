@@ -4,9 +4,9 @@ import com.voxel.Player;
 import com.voxel.utils.FixedPoint;
 
 /**
- * Hard world border that clamps the player at the Far Lands boundary.
- * The border radius is derived from the X/Z int bit width configured
- * on the active dimension's BetaPrecisionTuning.
+ * Hard world border that clamps the player at the world edge.
+ * The border radius is derived from the X/Z int bit width passed in
+ * (callers use the fixed default; the old precision layer is gone).
  */
 public class WorldBorderManager {
     private long borderRadius;

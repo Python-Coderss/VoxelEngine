@@ -18,27 +18,32 @@ public class TutorialTerrainDumpTest {
     // Real VoxelEngine block ids (mirrors Main.registerBlock / BetaWorldGenerator.findOr).
     private static final int STONE = 2, GRASS = 1, DIRT = 13, BEDROCK = 2;
     private static final int WATER = 15, LAVA = 21, SAND = 14, GRAVEL = 54;
-    private static final int SANDSTONE = 59, ICE = 68, SNOW = 67, OBSIDIAN = 16;
+    private static final int SANDSTONE = 59, ICE = 68, SNOW = 67;
     private static final int LEAVES = 4, WOOD = 5;
     private static final int DANDELION = 121, ROSE = 122, TALLGRASS = 35, DEADBUSH = 36;
     private static final int CACTUS = 39, PUMPKIN = 42;
-    private static final int COAL = 61, IRON = 81, GOLD = 82, DIAMOND = 83, REDSTONE_ORE = 26, LAPIS = 85, GLOWSTONE = 17;
+    private static final int COAL = 61, IRON = 81, GOLD = 82, DIAMOND = 83, REDSTONE_ORE = 26, LAPIS = 85;
     private static final int REEDS = 40, CLAY = 55, COBBLE = 71, MOSSY = 132;
     private static final int CHEST = 118, SPAWNER = 258;
 
     private static BetaChunkProvider makeProvider(long seed) {
-        int[] snowLevels = {0, SNOW, SNOW, SNOW, SNOW, SNOW, SNOW, SNOW, SNOW};
-        return new BetaChunkProvider(seed, BetaNumericProfile.OVERWORLD,
+        return new BetaChunkProvider(seed, new BetaBlocks(
                 STONE, GRASS, DIRT, BEDROCK,
                 WATER, LAVA, SAND, GRAVEL,
-                SANDSTONE, ICE, SNOW, OBSIDIAN,
+                SANDSTONE, ICE, SNOW,
                 LEAVES, WOOD,
                 DANDELION, ROSE, TALLGRASS, DEADBUSH,
                 CACTUS, PUMPKIN,
+                0, 0, // mushrooms (never on the surface of the spawn region)
+                REEDS, CLAY,
                 COAL, IRON, GOLD,
-                DIAMOND, REDSTONE_ORE, LAPIS, GLOWSTONE,
-                REEDS, CLAY, COBBLE, MOSSY,
-                CHEST, SPAWNER, snowLevels);
+                DIAMOND, REDSTONE_ORE, LAPIS,
+                COBBLE, MOSSY, CHEST, SPAWNER));
+    }
+
+    private static String biomeName(int id) {
+        BetaBiomeGenBase b = BetaBiomeGenBase.field_35486_a[id];
+        return b == null ? "?" : b.biomeName;
     }
 
     private static String surfaceName(int id) {
@@ -90,7 +95,7 @@ public class TutorialTerrainDumpTest {
 
         System.out.println("=== Tutorial World terrain dump (seed 1234567L, typeSeed=" + typeSeed + ") ===");
         System.out.println("Surface height range: " + minH + ".." + maxH + ", mean=" + (cnt == 0 ? 0 : (sum / cnt)));
-        System.out.println("Biome at spawn (0,0): " + BetaBiomeGenBase.NAMES[provider.getBetaBiomeId(0, 0)]);
+        System.out.println("Biome at spawn (0,0): " + biomeName(provider.getBetaBiomeId(0, 0)));
         System.out.println("Surface height at spawn (0,0): " + height[half][half] + " (" + surfaceName(surf[half][half]) + ")");
         System.out.println("Surface height at build origin (0,8): " + height[half][half + 8] + " (" + surfaceName(surf[half][half + 8]) + ")");
 
