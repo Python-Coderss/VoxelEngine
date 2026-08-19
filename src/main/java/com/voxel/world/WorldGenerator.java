@@ -20,6 +20,17 @@ public class WorldGenerator {
         return biomeProvider;
     }
 
+    /**
+     * Biome provider for the map preview, which runs on the logic thread while
+     * chunk generation runs on the gen thread. Defaults to the shared provider
+     * (safe for generators whose biome state is read-only); generators with
+     * single-threaded biome state (e.g. the beta GenLayer chain) override this
+     * with an isolated instance.
+     */
+    public BiomeProvider getMapBiomeProvider() {
+        return getBiomeProvider();
+    }
+
     public int getHeight(int x, int y, int z) {
         return 64;
     }

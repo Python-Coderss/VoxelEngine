@@ -36,6 +36,7 @@ import com.voxel.game.PlayerInventory;
 import com.voxel.game.PortalSystem;
 import com.voxel.world.RedstoneLogger;
 import com.voxel.world.RedstoneManager;
+import com.voxel.world.WorldGenerator;
 import com.voxel.world.WorldGenLogger;
 import com.voxel.GameLogger;
 import com.voxel.utils.FixedPoint;
@@ -117,6 +118,7 @@ public class Main {
     public int locHeartUVs;
     public int locCraftingItemCount;
     public int locDestroyStages; // cached u_DestroyStages (was a per-frame glGetUniformLocation)
+    public int locMapMode, locMapPreview, locMapPreviewOrigin, locMapPreviewScale, locMapWorldOrigin, locMapBorder, locMapGroundY;
     public int craftingItemSSBO;
     public java.util.Iterator<Integer> dirtyUploadIterator;
     public static final int MAX_DIRTY_UPLOADS_PER_FRAME = 48;
@@ -1081,6 +1083,13 @@ public class Main {
         locHeartUVs = glGetUniformLocation(computeProgram, "u_HeartUVs");
         locCraftingItemCount = glGetUniformLocation(computeProgram, "u_CraftingItemCount");
         locDestroyStages = glGetUniformLocation(computeProgram, "u_DestroyStages");
+        locMapMode = glGetUniformLocation(computeProgram, "u_MapMode");
+        locMapPreview = glGetUniformLocation(computeProgram, "u_MapPreview");
+        locMapPreviewOrigin = glGetUniformLocation(computeProgram, "u_MapPreviewOrigin");
+        locMapPreviewScale = glGetUniformLocation(computeProgram, "u_MapPreviewScale");
+        locMapGroundY = glGetUniformLocation(computeProgram, "u_MapGroundY");
+        locMapWorldOrigin = glGetUniformLocation(computeProgram, "u_MapWorldOrigin");
+        locMapBorder = glGetUniformLocation(computeProgram, "u_MapBorder");
     }
 
     public void spawnInitialEnemies(Player p) {
@@ -2260,6 +2269,14 @@ public class Main {
                 FixedPoint.fromFloat(ctx.mapPanX),
                 FixedPoint.fromFloat(mapCamY),
                 FixedPoint.fromFloat(ctx.mapPanY), 0f);
+
+            // Simplified biome view for unloaded chunks (sampled by the shader
+            // where rays fall through EMPTY columns). Void past the world border
+            // so the map stops exactly at the world size.
+            WorldGenerator mapGen = chunkManager.getGenerator();
+            mapRenderer.updatePreview(mapGen == null ? null : mapGen.getMapBiomeProvider(),
+                    ctx.mapPanX, ctx.mapPanY, ctx.mapZoom,
+                    (float) ctx.borderManager.getBorderRadius());
         }
 
         // Periodic auto-save: write level.dat (player state + metadata) every
@@ -3751,6 +3768,29 @@ public class Main {
         glActiveTexture(GL_TEXTURE14);
         glBindTexture(GL_TEXTURE_2D, biomeManager.getFoliageColormapId());
         glUniform1i(locFoliageColormap, 14);
+
+        // ── Map preview: simplified biome view for unloaded chunks ──
+        // Upload any freshly-baked region, then bind + drive the uniforms. The
+        // origin/scale are in buffer-relative space (the shader's DDA voxel
+        // space), so they shift with the buffer origin like the camera does.
+        // Unit 20 (NOT 15): the render loop rebinds unit 15 to the raw ui.png
+        // atlas (u_UISource) after this call, which would make the preview
+        // sample ui.png instead of biome colors.
+        mapRenderer.uploadIfDirty();
+        glActiveTexture(GL_TEXTURE20);
+        glBindTexture(GL_TEXTURE_2D, mapRenderer.getTextureId());
+        glUniform1i(locMapPreview, 20);
+        glUniform1i(locMapMode, ctx.mapOpen ? 1 : 0);
+        int mwox = world == null ? 0 : world.getOffsetX();
+        int mwoz = world == null ? 0 : world.getOffsetZ();
+        glUniform2f(locMapPreviewOrigin, mapRenderer.getOriginX() - mwox, mapRenderer.getOriginZ() - mwoz);
+        glUniform1f(locMapPreviewScale, mapRenderer.getBlocksPerTexel());
+        glUniform2f(locMapWorldOrigin, mwox, mwoz);
+        glUniform1f(locMapBorder, (float) ctx.borderManager.getBorderRadius());
+        int mwoy = world == null ? 0 : world.getOffsetY();
+        // The map preview projects onto the ground plane at world sea level (63),
+        // so off-center perspective rays sample the correct landing XZ.
+        glUniform1f(locMapGroundY, 63f - mwoy);
     }
 
     public void setupResources() {
