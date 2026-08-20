@@ -2409,6 +2409,40 @@ public class Main {
                 }
             }
 
+            // ── Beacon buffs: scan all known beacons, find the best one near the
+            // player, and apply its tier buffs (jump, speed, regen at tier 4).
+            // Each tick we recompute so removing a pyramid block immediately
+            // drops the buff.
+            {
+                com.voxel.world.BeaconLogic.scan(world, blockDataManager);
+                float playerX = com.voxel.utils.FixedPoint.toFloat(player.getFixedX());
+                float playerY = com.voxel.utils.FixedPoint.toFloat(player.getFixedY());
+                float playerZ = com.voxel.utils.FixedPoint.toFloat(player.getFixedZ());
+                int bestLevel = 0;
+                for (Long key : com.voxel.world.BeaconLogic.getActiveBeacons()) {
+                    int[] xyz = com.voxel.world.BeaconLogic.decodeKey(key);
+                    float dx = playerX - xyz[0];
+                    float dy = playerY - xyz[1];
+                    float dz = playerZ - xyz[2];
+                    float distSq = dx * dx + dy * dy + dz * dz;
+                    float radius = com.voxel.world.BeaconLogic.buffRadius(
+                            com.voxel.world.BeaconLogic.pyramidLevel(
+                                    world, blockDataManager, xyz[0], xyz[1], xyz[2]));
+                    if (distSq <= radius * radius) {
+                        int level = com.voxel.world.BeaconLogic.pyramidLevel(
+                                world, blockDataManager, xyz[0], xyz[1], xyz[2]);
+                        if (level > bestLevel) bestLevel = level;
+                    }
+                }
+                // Apply the buff fields. Mojang-style curves: tier 1 → +30% speed,
+                // tier 4 → +90% speed + jump + regen. We approximate with a flat
+                // 0.3 * level multiplier.
+                float jumpBuff = bestLevel >= 1 ? 0.2f * bestLevel : 0.0f;
+                float speedBuff = bestLevel >= 1 ? 0.3f * bestLevel : 0.0f;
+                boolean regenBuff = bestLevel >= 4;
+                player.setBeaconBuffs(jumpBuff, speedBuff, regenBuff);
+            }
+
             // ── Wither death → drop nether star ──
             // Wither entities are tracked by type: scan the entity list each
             // tick for a dead Wither, drop a Nether Star, and forget about it.
@@ -5555,6 +5589,15 @@ public class Main {
         shaderBlockRegistry.registerOnOff(28, true, 30);
         shaderBlockRegistry.registerOnOff(116, true, 117);
         shaderBlockRegistry.register(29, 29);
+
+        // Seed the BeaconLogic with the IDs of the four pyramid metals.
+        // Each entry is the BLOCK id, not the item id, because the pyramid
+        // scan reads from the world voxel pool. Netherite would qualify too
+        // but isn't bundled with this resource pack.
+        com.voxel.world.BeaconLogic.VALID_PYRAMID_BLOCKS.add(blockDataManager.findBlockId("iron_block"));
+        com.voxel.world.BeaconLogic.VALID_PYRAMID_BLOCKS.add(blockDataManager.findBlockId("gold_block"));
+        com.voxel.world.BeaconLogic.VALID_PYRAMID_BLOCKS.add(blockDataManager.findBlockId("diamond_block"));
+        com.voxel.world.BeaconLogic.VALID_PYRAMID_BLOCKS.add(blockDataManager.findBlockId("emerald_block"));
 
         blockDataManager.uploadToGPU();
     }

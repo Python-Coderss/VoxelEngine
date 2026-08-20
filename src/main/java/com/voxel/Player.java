@@ -40,6 +40,29 @@ public class Player {
     private float moveVertical = 0.0f;
     private boolean jumpRequested = false;
 
+    // Beacon-driven buffs. Set by BeaconLogic.scan() each tick; cleared
+    // when the player leaves the beacon's radius. Buffs multiply the
+    // effective JUMP_VELOCITY and horizontal speed (so 0 = no buff, 1 =
+    // double, etc.).
+    private float beaconJumpBuff = 0.0f;
+    private float beaconSpeedBuff = 0.0f;
+    /** Set when the active beacon is at pyramid level 4; unlocks the
+     *  secondary regen buff. */
+    private boolean beaconRegenBuff = false;
+
+    public float getBeaconJumpBuff() { return beaconJumpBuff; }
+    public float getBeaconSpeedBuff() { return beaconSpeedBuff; }
+    public boolean hasBeaconRegenBuff() { return beaconRegenBuff; }
+
+    /** Beacon Logic writes its buff fields directly here. We expose
+     *  package-private setters so Main.tick (same package) can drive the
+     *  state from the beacon scan. */
+    void setBeaconBuffs(float jumpBuff, float speedBuff, boolean regenBuff) {
+        this.beaconJumpBuff = jumpBuff;
+        this.beaconSpeedBuff = speedBuff;
+        this.beaconRegenBuff = regenBuff;
+    }
+
     // Exact Minecraft 1.12.2 constants
     private static final double GRAVITY = 0.08D;
     private static final float JUMP_VELOCITY = 0.42F;
@@ -166,7 +189,7 @@ public class Player {
         if (jumpRequested) {
             jumpRequested = false;
             if (onGround) {
-                velocity.y = JUMP_VELOCITY;
+                velocity.y = JUMP_VELOCITY * (1.0f + beaconJumpBuff);
                 onGround = false;
                 if (isSprinting) {
                     float yawRad = (float) Math.toRadians(yaw);
@@ -193,12 +216,12 @@ public class Player {
         } else if (onGround && onQuicksoil) {
             friction = 0.4F * BASE_FRICTION;
             float f7 = SLIP_CONSTANT / (friction * friction * friction);
-            acceleration = MOVE_SPEED * f7;
+            acceleration = MOVE_SPEED * f7 * (1.0f + beaconSpeedBuff);
         } else if (onGround) {
             float slipperiness = getBlockSlipperiness(world, blockDataManager);
             friction = slipperiness * BASE_FRICTION;
             float f7 = SLIP_CONSTANT / (friction * friction * friction);
-            acceleration = MOVE_SPEED * f7;
+            acceleration = MOVE_SPEED * f7 * (1.0f + beaconSpeedBuff);
         } else {
             friction = BASE_FRICTION;
             acceleration = AIR_MOVE_FACTOR;
