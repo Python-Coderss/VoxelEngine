@@ -2363,6 +2363,26 @@ public class Main {
                                 textureManager,
                                 entityManager);
                 dragon.setWorld(world);
+                entityManager.addEntity(dragon);
+                ctx.enderDragonEntityId = dragon.id;
+                setStatus("The Ender Dragon rises...");
+
+                // ── End crystals: spawn one above each end_crystal_base ──
+                // Without these the dragon has no regen pool, which makes the
+                // fight trivially short and removes the Mojang-flavoured
+                // "destroy crystals, then fight" loop.
+                float[][] crystalOffsets = {
+                        {-4.0f, 0.0f}, {4.0f, 0.0f}, {0.0f, 4.0f}};
+                for (float[] off : crystalOffsets) {
+                    com.voxel.entity.EndCrystalEntity crystal =
+                            new com.voxel.entity.EndCrystalEntity(
+                                    81_000 + entityManager.getEntityCount(),
+                                    new Vector3f(102.5f, 49.0f, 2.5f + off[1]),
+                                    textureManager);
+                    crystal.setDragon(dragon);
+                    crystal.world = world;
+                    entityManager.addEntity(crystal);
+                }
                 dragon.dimension = com.voxel.world.DimensionType.END;
                 entityManager.addEntity(dragon);
                 ctx.enderDragonEntityId = dragon.id;

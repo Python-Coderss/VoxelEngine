@@ -60,6 +60,19 @@ public class EnderDragonEntity extends Entity {
     /** Health gate: 0..1, drained by onPunch. Below 0 the dragon dies. */
     public float getHealth() { return Math.max(0f, 1f - cumulativeHits * 0.05f); }
 
+    /** Returns the cumulativeHits counter, used by EndCrystalEntity. */
+    public int getCumulativeHits() { return cumulativeHits; }
+
+    /** End Crystal regen: each tick a live crystal adds to the dragon's health
+     *  by reducing the cumulativeHits counter (clamped at zero). */
+    public void heal(float amount) {
+        if (amount <= 0f) return;
+        // Healing lowers the cumulative hits. A 0.02/tick regen would offset
+        // a single 0.05/punch, so the dragon is meaningfully tougher while
+        // crystals are alive.
+        cumulativeHits = Math.max(0, cumulativeHits - (int) Math.ceil(amount * 100.0f));
+    }
+
     private void takeDamage(float amount) {
         // Cumulative hits double as the death counter. With amount = 0.05,
         // 20 punches are enough to kill the dragon and drop the egg.

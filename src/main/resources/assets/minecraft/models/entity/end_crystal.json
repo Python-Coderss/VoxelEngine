@@ -1,0 +1,6 @@
+{
+  "parts": [
+    {"name":"crystal","from":[-3,0,-3],"size":[6,6,6],"absolute_offset":[0,3,0],"texture":"blocks/end_crystal_base","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"ring","from":[-4,1,-4],"size":[8,1,8],"absolute_offset":[0,1,0],"texture":"blocks/end_crystal_base","uv":[0,8],"texture_mapping":"cuboid_atlas"}
+  ]
+}
