@@ -27,8 +27,8 @@ public class EntityManager {
     // Entity data size: position(3) + health(1) + rotation(3) + maxHealth(1) + partCount(1) + partOffset(1) + hitFlash(1) + tintColorRGB(3) + tintAmount(1) = 16 floats (64 bytes)
     private static final int ENTITY_STRIDE = 16;
     // Part data size: offset(3) + uvU(1) + absOffset(3) + uvV(1) + size(3) + texIdx(1)
-    // + rotation(3) + uvSize(3) + mapping(1) = 20 floats (80 bytes)
-    private static final int PART_STRIDE = 20;
+    // + rotation(3) + uvSize(3) + mapping(1) + emissive(1) + padding(3) = 24 floats (96 bytes)
+    private static final int PART_STRIDE = 24;
 
     private static final int CULL_BLOCKS = 64;  // entities beyond this distance from camera are skipped
     private static final long CULL_FP = (long) CULL_BLOCKS * FixedPoint.SCALE;  // per-axis threshold in fixed-point
@@ -274,6 +274,8 @@ public class EntityManager {
                 partBuffer.putFloat(0.0f); // std430 padding before the next vec3
                 partBuffer.putFloat(part.uvSize.x).putFloat(part.uvSize.y).putFloat(part.uvSize.z);
                 partBuffer.putFloat((float) part.textureMapping);
+                partBuffer.putFloat(part.emissive ? 1.0f : 0.0f);
+                partBuffer.putFloat(0.0f).putFloat(0.0f).putFloat(0.0f);
             }
             partBuffer.flip();
             glNamedBufferSubData(partSSBO, 0, partBuffer);

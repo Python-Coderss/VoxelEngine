@@ -1119,6 +1119,19 @@ public class Main {
                 mob = new com.voxel.entity.SpiderEntity(nextSpawnCommandId++, pos, textureManager, player);
                 ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
                 break;
+            case "enderman":
+            case "enderman_entity":
+                mob = new com.voxel.entity.EndermanEntity(nextSpawnCommandId++, pos, textureManager, player);
+                ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
+                break;
+            case "endermite":
+                mob = new com.voxel.entity.EndermiteEntity(nextSpawnCommandId++, pos, textureManager, player);
+                ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
+                break;
+            case "silverfish":
+                mob = new com.voxel.entity.SilverfishEntity(nextSpawnCommandId++, pos, textureManager, player);
+                ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
+                break;
             case "creeper": {
                 com.voxel.entity.CreeperEntity creeper = new com.voxel.entity.CreeperEntity(
                     nextSpawnCommandId++, pos, textureManager, player);
@@ -1192,7 +1205,7 @@ public class Main {
                 ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
                 break;
             default:
-                setStatus("Unknown mob: " + type + ". Try: zombie, skeleton, spider, creeper, villager, iron_golem, snow_golem, snow_golem_sheared, blaze, pigman, pig, cow, chicken, sheep, sheep_sheared.");
+                setStatus("Unknown mob: " + type + ". Try: zombie, skeleton, spider, enderman, endermite, silverfish, creeper, villager, iron_golem, snow_golem, snow_golem_sheared, blaze, pigman, pig, cow, chicken, sheep, sheep_sheared.");
                 return;
         }
 

@@ -219,6 +219,10 @@ public class Entity {
                         part.uvSize.set((float)uvSize.getDouble(0), (float)uvSize.getDouble(1), (float)uvSize.getDouble(2));
                     }
 
+                    if (p.has("emissive")) {
+                        part.emissive = p.getBoolean("emissive");
+                    }
+
                     if (p.has("texture_mapping")) {
                         String mapping = p.getString("texture_mapping");
                         if ("cuboid_atlas".equals(mapping)) {

@@ -118,7 +118,13 @@ bool gMapPreviewValid = false;
 
 // Entities
 struct EntityData { vec3 position; float health; vec3 rotation; float maxHealth; int partCount; int partOffset; float hitFlash; float tintR; float tintG; float tintB; float tintAmount; float padding; };
-struct PartData { vec3 offset; float uvU; vec3 absoluteOffset; float uvV; vec3 size; float textureIndex; vec3 rotation; vec3 uvSize; float textureMapping; };
+struct PartData {
+    vec3 offset; float uvU;
+    vec3 absoluteOffset; float uvV;
+    vec3 size; float textureIndex;
+    vec3 rotation; vec3 uvSize; float textureMapping;
+    float emissive; float padding0; float padding1; float padding2;
+};
 layout(std430, binding = 6) buffer readonly restrict EntityBuffer { EntityData entities[]; };
 layout(std430, binding = 7) buffer readonly restrict PartBuffer { PartData parts[]; };
 layout(location = 5) uniform int u_EntityCount;
@@ -1266,8 +1272,8 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
     return false;
 }
 
-bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out int resEntIdx, out int resCraftingIdx, out ivec4 resBlockData1, out uint resKineticActive, out uint resKineticReverse, out uint resFacing, out ivec3 resGearOrigin, out int resGearShaft) {
-    resT = 1e30; resEntUv = vec2(0.5); isEnt = false; isHpBar = false; hpRatio = 1.0; resWirePower = 0u; resWireConn = 0u; resAabbIdx = -1; resEntIdx = -1; resCraftingIdx = -1; resBlockData1 = ivec4(0); resKineticActive = 0u; resKineticReverse = 0u; resFacing = 1u; resGearOrigin = ivec3(0); resGearShaft = 0;
+bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumTag, out float resT, out vec3 resN, out uint resVoxel, out uint resTex, out vec2 resEntUv, out bool isEnt, out bool isHpBar, out float hpRatio, out uint resWirePower, out uint resWireConn, out int resAabbIdx, out int resEntIdx, out float resEntEmissive, out int resCraftingIdx, out ivec4 resBlockData1, out uint resKineticActive, out uint resKineticReverse, out uint resFacing, out ivec3 resGearOrigin, out int resGearShaft) {
+    resT = 1e30; resEntUv = vec2(0.5); isEnt = false; isHpBar = false; hpRatio = 1.0; resWirePower = 0u; resWireConn = 0u; resAabbIdx = -1; resEntIdx = -1; resEntEmissive = 0.0; resCraftingIdx = -1; resBlockData1 = ivec4(0); resKineticActive = 0u; resKineticReverse = 0u; resFacing = 1u; resGearOrigin = ivec3(0); resGearShaft = 0;
     float tV; int sideV; uint voxelV, wirePowerV, wireConnV, kinActiveV, kinReverseV, facingV; int aabbIdxV; vec3 normalV; ivec3 gearOriginV; int gearShaftV;
     if (traceWorld(ro, rd, skipFirst, airVoxel, lastMediumTag, tV, sideV, voxelV, wirePowerV, wireConnV, aabbIdxV, resBlockData1, kinActiveV, kinReverseV, facingV, normalV, gearOriginV, gearShaftV)) {
         resT = tV; resVoxel = voxelV;
@@ -1347,6 +1353,7 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumT
                     }
                     resN = partNormal;
                     resEntIdx = i;
+                    resEntEmissive = part.emissive;
                 }
             }
         }
@@ -1705,7 +1712,7 @@ void main() {
 
     for (int b = 0; b < 2; b++) {  // reduced from 4 → 2 bounces for perf
         gMapPreviewValid = false; // fresh per trace: only the current ray's EMPTY crossing counts
-        float t; vec3 n; uint voxel, eTex, wirePower, wireConn, kineticActive, kineticReverse, facing; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; int craftingIdx; ivec4 blockData1; ivec3 gearOrigin; int gearShaft = 0;
+        float t; vec3 n; uint voxel, eTex, wirePower, wireConn, kineticActive, kineticReverse, facing; vec2 eUv; bool isEnt, isHpBar; float hpRatio; int aabbIdx; int entIdx; float entEmissive; int craftingIdx; ivec4 blockData1; ivec3 gearOrigin; int gearShaft = 0;
         // Camera eye clipped inside a solid voxel: treat that voxel (buffer-relative
         // _camBlock, the cell the eye is in) as air until the first real hit — the
         // ray passes through it and hits the next surface at its true distance, so
@@ -1715,7 +1722,7 @@ void main() {
         // normal solidity on every later trace. Water has its own skipNearWater pass.
         bool skipFirstBounce = skip;
         ivec3 airVoxel = (b == 0 && camClipped) ? _camBlock : ivec3(0x7FFFFFFF);
-        if (!traceAll(ro, rd, skipFirstBounce, airVoxel, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, craftingIdx, blockData1, kineticActive, kineticReverse, facing, gearOrigin, gearShaft)) {
+        if (!traceAll(ro, rd, skipFirstBounce, airVoxel, lastMediumTag, t, n, voxel, eTex, eUv, isEnt, isHpBar, hpRatio, wirePower, wireConn, aabbIdx, entIdx, entEmissive, craftingIdx, blockData1, kineticActive, kineticReverse, facing, gearOrigin, gearShaft)) {
             // Map preview: a downward ray that fell through unloaded chunks shows the
             // simplified biome view instead of sky; beyond the world border the
             // preview texel is void so the map stops working there.
@@ -1842,7 +1849,10 @@ void main() {
                 vec4 entTex = texture(u_EntityTextures, vec3(entityUv, float(entityLayer)));
                 // Apply alpha-based transparency (0 = transparent, 255 = opaque)
                 if (entTex.a < 0.1) {
-                    trans = 1.0; alb = vec3(1.0); 
+                    // Transparent texels in an emissive overlay must remain holes;
+                    // only the actual purple eye pixels should emit light.
+                    entEmissive = 0.0;
+                    trans = 1.0; alb = vec3(1.0);
                 } else {
                     alb = entTex.rgb;
                     trans = 1.0 - entTex.a;
@@ -2137,6 +2147,12 @@ void main() {
             beam *= totalLightContrib * mix(vec3(1.0), blockTint, min(blockContrib * 0.8, 1.0));
             beam += at.ambient * 0.3;
             beam += pointLightContrib(hp, n);
+
+            // Emissive entity parts, such as Enderman eyes, retain a vivid purple
+            // glow even in darkness instead of being reduced by world lighting.
+            if (isEnt && entEmissive > 0.5) {
+                beam += vec3(0.82, 0.08, 1.0) * 3.5;
+            }
 
             // Ambient occlusion: darken face edges/corners based on neighboring blocks
             float ao = computeAmbientOcclusion(hp, n);

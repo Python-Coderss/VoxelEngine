@@ -161,6 +161,8 @@ public class PlayerController {
 
         main.player.setYaw(main.playerYaw);
         main.player.setPitch(main.pitch);
+        // Keep camera look separate from body orientation for third-person gaze checks.
+        main.player.setLookDirection(main.yaw, main.pitch);
         if (main.playerEntity != null) {
             main.playerEntity.syncFromPlayer(main.player, main.playerYaw, main.pitch,
                 main.cameraMode != CameraMode.FIRST_PERSON, dt);

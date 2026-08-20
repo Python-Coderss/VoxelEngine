@@ -1,0 +1,104 @@
+{
+  "parts": [
+    {
+      "name": "body_0",
+      "from": [-1.5, 0.0, 2.5],
+      "size": [3.0, 2.0, 2.0],
+      "absolute_offset": [0.0, 2.0, 3.5],
+      "texture": "silverfish",
+      "uv": [0, 0],
+      "uv_size": [3.0, 2.0, 2.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body_1",
+      "from": [-2.0, 0.0, 0.5],
+      "size": [4.0, 3.0, 2.0],
+      "absolute_offset": [0.0, 3.0, 1.5],
+      "texture": "silverfish",
+      "uv": [0, 4],
+      "uv_size": [4.0, 3.0, 2.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body_2",
+      "from": [-3.0, 0.0, -2.5],
+      "size": [6.0, 4.0, 3.0],
+      "absolute_offset": [0.0, 4.0, -1.0],
+      "texture": "silverfish",
+      "uv": [0, 9],
+      "uv_size": [6.0, 4.0, 3.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body_3",
+      "from": [-1.5, 0.0, -5.5],
+      "size": [3.0, 3.0, 3.0],
+      "absolute_offset": [0.0, 3.0, -4.0],
+      "texture": "silverfish",
+      "uv": [0, 16],
+      "uv_size": [3.0, 3.0, 3.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body_4",
+      "from": [-1.0, 0.0, -8.5],
+      "size": [2.0, 2.0, 3.0],
+      "absolute_offset": [0.0, 2.0, -7.0],
+      "texture": "silverfish",
+      "uv": [0, 22],
+      "uv_size": [2.0, 2.0, 3.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body_5",
+      "from": [-1.0, 0.0, -10.5],
+      "size": [2.0, 1.0, 2.0],
+      "absolute_offset": [0.0, 1.0, -9.5],
+      "texture": "silverfish",
+      "uv": [11, 0],
+      "uv_size": [2.0, 1.0, 2.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body_6",
+      "from": [-0.5, 0.0, -12.5],
+      "size": [1.0, 1.0, 2.0],
+      "absolute_offset": [0.0, 1.0, -11.5],
+      "texture": "silverfish",
+      "uv": [13, 4],
+      "uv_size": [1.0, 1.0, 2.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "wing_0",
+      "from": [-5.0, 0.0, -2.5],
+      "size": [10.0, 8.0, 3.0],
+      "absolute_offset": [0.0, 8.0, -1.0],
+      "texture": "silverfish",
+      "uv": [20, 0],
+      "uv_size": [10.0, 8.0, 3.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "wing_1",
+      "from": [-3.0, 0.0, -8.5],
+      "size": [6.0, 4.0, 3.0],
+      "absolute_offset": [0.0, 4.0, -7.0],
+      "texture": "silverfish",
+      "uv": [20, 11],
+      "uv_size": [6.0, 4.0, 3.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "wing_2",
+      "from": [-3.0, 0.0, 0.5],
+      "size": [6.0, 5.0, 2.0],
+      "absolute_offset": [0.0, 5.0, 1.5],
+      "texture": "silverfish",
+      "uv": [20, 18],
+      "uv_size": [6.0, 5.0, 2.0],
+      "texture_mapping": "cuboid_atlas"
+    }
+  ]
+}
