@@ -632,15 +632,16 @@ public class ChunkManager {
         if (slot == World.EMPTY) return false;
 
         int oldBlockId = world.getVoxel(x, y, z);
-        world.setVoxel(x, y, z, type);
-
-        // Beacon tracking: when a beacon block is placed, register its
-        // position with BeaconLogic so the per-tick scan can evaluate its
-        // pyramid. We use the block name lookup to avoid hard-coding id 457.
+        world.setVoxel(x, y, z, type);// Beacon tracking: when a beacon block is placed, register its
+            // position with BeaconLogic so the per-tick scan can evaluate its
+            // pyramid. We use the block name lookup to avoid hard-coding id 457.
         if (type != oldBlockId) {
             String name = blockDataManager != null ? blockDataManager.getName(type) : null;
             if (name != null && name.equals("beacon")) {
                 BeaconLogic.track(x, y, z);
+            }
+            if (name != null && name.contains("spawner")) {
+                MobSpawnerLogic.track(x, y, z);
             }
         }
 

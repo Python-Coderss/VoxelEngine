@@ -2424,6 +2424,10 @@ public class Main {
                 }
             }
 
+            // ── Mob spawner: emit blazes from any active spawner. ──
+            com.voxel.world.MobSpawnerLogic.tick(world, blockDataManager,
+                    entityManager, player);
+
             // ── Beacon buffs: scan all known beacons, find the best one near the
             // player, and apply its tier buffs (jump, speed, regen at tier 4).
             // Each tick we recompute so removing a pyramid block immediately

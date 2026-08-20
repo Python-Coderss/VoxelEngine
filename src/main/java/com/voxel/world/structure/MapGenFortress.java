@@ -22,6 +22,8 @@ public class MapGenFortress {
     private static final int SLAB = 210;
     private static final int LAVA = 21;
     private static final int GLOWSTONE = 17;
+    /** Block id of the mob spawner block. Main registers this as id 258. */
+    private static final int SPAWNER = 258;
 
     /** Returns true if this chunk is part of a fortress grid cell. */
     public static boolean isFortressChunk(int cx, int cz) {
@@ -48,6 +50,14 @@ public class MapGenFortress {
 
         if (tower) {
             generateTower(world, slot, rand, baseLy);
+            // 1-in-8 towers host a blaze spawner platform on top of the
+            // parapet, replacing the lava pool with a 1x1 spawner block.
+            // The spawner block has metadata-driven spawn logic so the
+            // spawn-loop run by Main.tick picks up the spawn type from
+            // this chunk's meta channel.
+            if (rand.nextInt(8) == 0) {
+                set(world, slot, 7, baseLy + 2, 7, SPAWNER);
+            }
         } else if (nsCorridor) {
             generateCorridor(world, slot, rand, baseLy, true);
         } else {
