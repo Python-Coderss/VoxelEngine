@@ -2789,6 +2789,20 @@ public class Main {
                     arrow.expire();
                     ctx.setStatus("Hit by a skeleton's arrow!");
                 }
+            } else if (e instanceof com.voxel.entity.WitherSkullEntity) {
+                com.voxel.entity.WitherSkullEntity skull =
+                        (com.voxel.entity.WitherSkullEntity) e;
+                if (skull.isExpired()) {
+                    continue;
+                }
+                Vector3f pPos2 = player.getPosition();
+                if (skull.getPosition().distanceSquared(pPos2) < 2.0f) {
+                    // Mojang's black wither skull = 8 damage on impact; blue
+                    // skull = 5. We treat all as 5.
+                    player.takeDamage(5.0f);
+                    skull.expire();
+                    ctx.setStatus("Hit by a wither skull!");
+                }
             }
         }
         // Remove dead enemies and expired fireballs from the list

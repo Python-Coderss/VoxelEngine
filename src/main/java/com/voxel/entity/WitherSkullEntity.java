@@ -26,6 +26,7 @@ public class WitherSkullEntity extends Entity {
     }
 
     public boolean isExpired() { return expired; }
+    public void expire() { expired = true; }
 
     @Override
     public void update(float dt) {
