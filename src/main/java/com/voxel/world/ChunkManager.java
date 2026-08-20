@@ -634,6 +634,16 @@ public class ChunkManager {
         int oldBlockId = world.getVoxel(x, y, z);
         world.setVoxel(x, y, z, type);
 
+        // Beacon tracking: when a beacon block is placed, register its
+        // position with BeaconLogic so the per-tick scan can evaluate its
+        // pyramid. We use the block name lookup to avoid hard-coding id 457.
+        if (type != oldBlockId) {
+            String name = blockDataManager != null ? blockDataManager.getName(type) : null;
+            if (name != null && name.equals("beacon")) {
+                BeaconLogic.track(x, y, z);
+            }
+        }
+
         // No-op write (same block type): nothing optical changed, so skip the
         // occlusion bake, neighbor light seed, fluid notify, and async relight.
         // The pool write + dirty mark still happen so extra/flag changes reach the GPU.
