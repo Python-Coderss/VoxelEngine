@@ -1,0 +1,77 @@
+{
+  "parts": [
+    {
+      "name": "head",
+      "from": [-2.0, 9.0, 3.0],
+      "size": [4.0, 6.0, 3.0],
+      "absolute_offset": [0.0, 9.0, 4.0],
+      "texture": "chicken",
+      "uv": [0, 0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "bill",
+      "from": [-2.0, 11.0, 6.0],
+      "size": [4.0, 2.0, 2.0],
+      "absolute_offset": [0.0, 9.0, 4.0],
+      "texture": "chicken",
+      "uv": [14, 0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "chin",
+      "from": [-1.0, 9.0, 5.0],
+      "size": [2.0, 2.0, 2.0],
+      "absolute_offset": [0.0, 9.0, 4.0],
+      "texture": "chicken",
+      "uv": [14, 4],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body",
+      "from": [-3.0, 4.0, -3.0],
+      "size": [6.0, 8.0, 6.0],
+      "absolute_offset": [0.0, 8.0, 0.0],
+      "rotation": [90.0, 0.0, 0.0],
+      "texture": "chicken",
+      "uv": [0, 9],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "right_leg",
+      "from": [-3.0, 0.0, -1.0],
+      "size": [3.0, 5.0, 3.0],
+      "absolute_offset": [2.0, 5.0, -1.0],
+      "texture": "chicken",
+      "uv": [26, 0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "left_leg",
+      "from": [0.0, 0.0, -1.0],
+      "size": [3.0, 5.0, 3.0],
+      "absolute_offset": [-1.0, 5.0, -1.0],
+      "texture": "chicken",
+      "uv": [26, 0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "right_wing",
+      "from": [3.0, 7.0, -3.0],
+      "size": [1.0, 4.0, 6.0],
+      "absolute_offset": [4.0, 11.0, 0.0],
+      "texture": "chicken",
+      "uv": [24, 13],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "left_wing",
+      "from": [-4.0, 7.0, -3.0],
+      "size": [1.0, 4.0, 6.0],
+      "absolute_offset": [-4.0, 11.0, 0.0],
+      "texture": "chicken",
+      "uv": [24, 13],
+      "texture_mapping": "cuboid_atlas"
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "parts": [
+    {
+      "name": "head",
+      "from": [-4.0, 8.0, 6.0],
+      "size": [8.0, 8.0, 8.0],
+      "absolute_offset": [0.0, 12.0, 6.0],
+      "texture": "pig/pig",
+      "uv": [0, 0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "snout",
+      "from": [-2.0, 9.0, 14.0],
+      "size": [4.0, 3.0, 1.0],
+      "absolute_offset": [0.0, 12.0, 6.0],
+      "texture": "pig/pig",
+      "uv": [16, 16],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body",
+      "from": [-5.0, 7.0, -3.0],
+      "size": [10.0, 16.0, 8.0],
+      "absolute_offset": [0.0, 13.0, -2.0],
+      "rotation": [90.0, 0.0, 0.0],
+      "texture": "pig/pig",
+      "uv": [28, 8],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "leg_1",
+      "from": [3.0, 0.0, -9.0],
+      "size": [4.0, 6.0, 4.0],
+      "absolute_offset": [3.0, 6.0, -7.0],
+      "texture": "pig/pig",
+      "uv": [0, 16],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "leg_2",
+      "from": [-5.0, 0.0, -9.0],
+      "size": [4.0, 6.0, 4.0],
+      "absolute_offset": [-3.0, 6.0, -7.0],
+      "texture": "pig/pig",
+      "uv": [0, 16],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "leg_3",
+      "from": [3.0, 0.0, 3.0],
+      "size": [4.0, 6.0, 4.0],
+      "absolute_offset": [3.0, 6.0, 5.0],
+      "texture": "pig/pig",
+      "uv": [0, 16],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "leg_4",
+      "from": [-5.0, 0.0, 3.0],
+      "size": [4.0, 6.0, 4.0],
+      "absolute_offset": [-3.0, 6.0, 5.0],
+      "texture": "pig/pig",
+      "uv": [0, 16],
+      "texture_mapping": "cuboid_atlas"
+    }
+  ]
+}
