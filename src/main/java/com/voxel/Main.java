@@ -416,6 +416,15 @@ public class Main {
         // Start near the origin; spawn resolution replaces the fallback Y with
         // the generated surface height before gameplay begins.
         player = new Player(0, 63, 0);
+        // Level-up listener: status bar flashes "Level up! N" when the
+        // player crosses a level boundary. Wired once and never replaced,
+        // so it's safe to keep a single strong reference for the run.
+        player.setLevelUpListener(new com.voxel.Player.LevelUpListener() {
+            @Override
+            public void onLevelUp(int newLevel) {
+                setStatus("Level up! You are now level " + newLevel);
+            }
+        });
 
         setupTexture();
         // Generate procedural textures BEFORE loading so they're available in the texture array
