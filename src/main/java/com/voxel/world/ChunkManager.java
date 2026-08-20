@@ -2227,7 +2227,7 @@ public class ChunkManager {
                         if (blockId == FluidManager.WATER
                             || (blockId >= FluidManager.WATER_FLOWING_BASE && blockId <= FluidManager.WATER_FLOWING_MAX)
                             || blockId == FluidManager.LAVA) {
-                            fluidManager.notifyBlockChanged(worldX + lx, worldY + ly, worldZ + lz);
+                            fluidManager.scheduleFluidOnChunkLoad(worldX + lx, worldY + ly, worldZ + lz, blockId);
                         }
                     }
                 }

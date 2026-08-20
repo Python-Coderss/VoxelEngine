@@ -37,10 +37,7 @@ public class CommandProcessor {
             case "gamemode": handleGamemode(parts); break;
             case "give": handleGive(parts); break;
             case "slotclear": handleSlotClear(parts); break;
-            case "spawn":
-                ctx.player.respawn();
-                ctx.setStatus("Teleported to spawn.");
-                break;
+            case "spawn": handleSpawn(parts); break;
             case "tp": handleTp(parts); break;
             case "unstuck": handleUnstuck(); break;
             case "setuv": handleSetUv(parts); break;
@@ -61,6 +58,15 @@ public class CommandProcessor {
             case "seed": handleSeed(parts); break;
             default: ctx.setStatus("Unknown command: /" + command + ". Type /help for commands."); break;
         }
+    }
+
+    private void handleSpawn(String[] parts) {
+        if (parts.length >= 2 && ctx.spawnMobCommand != null) {
+            ctx.spawnMobCommand.accept(parts[1].toLowerCase(Locale.ROOT));
+            return;
+        }
+        ctx.player.respawn();
+        ctx.setStatus("Teleported to spawn.");
     }
 
     private void handleDimension(String[] parts) {
@@ -316,6 +322,7 @@ public class CommandProcessor {
         sb.append("\n  /give <item> [amount] - Give yourself an item");
         sb.append("\n  /slotclear [slot] - Clear inventory slot");
         sb.append("\n  /spawn - Teleport to spawn");
+        sb.append("\n  /spawn <mob> - Spawn a mob where you're looking (zombie, skeleton, spider, creeper, villager, blaze, pigman)");
         sb.append("\n  /tp <x> <y> <z> - Teleport to coordinates");
         sb.append("\n  /unstuck - Move upward until the player is clear");
         sb.append("\n  /dimension <overworld|nether|end|aether|error502|portal_hall> - Switch dimension");

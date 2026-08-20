@@ -36,19 +36,17 @@ public class TextureManager {
     private final Map<String, Integer> textureToIndex = new HashMap<>();
     private final Map<String, Integer> textureToFrameCount = new HashMap<>();
     private final List<String> texturePaths = new ArrayList<>();
-    /**
-     * WARNING: This is the max number of layers allocated in the 3D texture array. 
-     * If the total number of textures (including animation frames) exceeds this,
-     * glTexSubImage3D will fail with an out-of-bounds error when trying to upload.
-     * Bump this up (e.g., +256 at a time) if you add more blocks/items.
-     */
-    private static final int MAX_LAYERS = 2048;
+    /** Extra layers allocated above the measured texture count so the array never overflows. */
+    private static final int LAYER_HEADROOM = 64;
 
     // ---- Entity texture array (64x64) ----
     private int entityTextureArrayId;
     private final Map<String, Integer> entityTextureToIndex = new HashMap<>();
     private final List<String> entityTexturePaths = new ArrayList<>();
-    private static final int MAX_ENTITY_LAYERS = 512;
+    /** Extra layers allocated above the measured entity-texture count (room for loadItemAsEntityTexture). */
+    private static final int ENTITY_LAYER_HEADROOM = 128;
+    /** Layers actually allocated in the entity texture array (set when it is created). */
+    private int entityLayerCount = 0;
 
     public void loadTextures(String... directoryPaths) {
         // Collect unique texture names -> full paths
@@ -101,15 +99,13 @@ public class TextureManager {
             totalLayers += fc;
         }
 
-        if (totalLayers + 100 > MAX_LAYERS) {
-            System.err.println("WARNING: " + totalLayers + " layers (incl. animation frames) may exceed MAX_LAYERS (" + MAX_LAYERS + ")! Increase MAX_LAYERS in TextureManager.java");
-        }
-
         if (textureArrayId == 0) {
+            int layerCount = totalLayers + LAYER_HEADROOM;
+            checkLayerCount(layerCount, "block/item");
             textureArrayId = glGenTextures();
             glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
             glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8,
-                    TEXTURE_SIZE, TEXTURE_SIZE, MAX_LAYERS);
+                    TEXTURE_SIZE, TEXTURE_SIZE, layerCount);
         }
 
         glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
@@ -177,13 +173,12 @@ public class TextureManager {
                     BufferedImage frame = img.getSubimage(0, f * textureSize, textureSize, textureSize);
                     uploadFrameToLayer(frame, layer + f, textureSize);
                 }
-            } else if (textureSize == ENTITY_TEXTURE_SIZE && originalWidth == 64 && originalHeight == 32
-                       && path.replace('\\', '/').endsWith("textures/entity/minecart.png")) {
-                // The vanilla minecart texture is 64x32 (the classic entity
-                // format). Stretching it 2x vertically would misalign every
-                // face region, so upload it at native size into the top half of
-                // the 64x64 layer; the model's UVs use vanilla pixel coords
-                // directly (rows 0..32), and the layer rows below stay empty.
+            } else if (textureSize == ENTITY_TEXTURE_SIZE && originalWidth == 64 && originalHeight == 32) {
+                // Classic 64x32 entity textures (minecart, skeleton, spider, blaze, ...).
+                // Stretching them 2x vertically would misalign every face region, so
+                // upload at native size into the top half of the 64x64 layer; the
+                // model's UVs use vanilla pixel coords directly (rows 0..32), and
+                // the layer rows below stay empty.
                 BufferedImage canvas = new BufferedImage(textureSize, textureSize, BufferedImage.TYPE_INT_ARGB);
                 Graphics2D g = canvas.createGraphics();
                 g.drawImage(img, 0, 0, null);
@@ -275,10 +270,12 @@ public class TextureManager {
         if (entityTexturePaths.isEmpty()) return;
 
         if (entityTextureArrayId == 0) {
+            entityLayerCount = entityTexturePaths.size() + ENTITY_LAYER_HEADROOM;
+            checkLayerCount(entityLayerCount, "entity");
             entityTextureArrayId = glGenTextures();
             glBindTexture(GL_TEXTURE_2D_ARRAY, entityTextureArrayId);
             glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8,
-                    ENTITY_TEXTURE_SIZE, ENTITY_TEXTURE_SIZE, MAX_ENTITY_LAYERS);
+                    ENTITY_TEXTURE_SIZE, ENTITY_TEXTURE_SIZE, entityLayerCount);
         }
 
         glBindTexture(GL_TEXTURE_2D_ARRAY, entityTextureArrayId);
@@ -335,6 +332,21 @@ public class TextureManager {
         return entityTextureToIndex.getOrDefault(name, -1);
     }
 
+    /** Hardware cap on a texture array's depth (GL_MAX_ARRAY_TEXTURE_LAYERS). */
+    private static int queryMaxArrayLayers() {
+        return glGetInteger(GL_MAX_ARRAY_TEXTURE_LAYERS);
+    }
+
+    /** Fails fast with a clear message if a texture array would exceed the GPU's limit. */
+    private static void checkLayerCount(int layers, String what) {
+        int max = queryMaxArrayLayers();
+        if (layers > max) {
+            throw new RuntimeException(
+                what + " texture array needs " + layers + " layers but the GPU supports at most " + max
+                + " (GL_MAX_ARRAY_TEXTURE_LAYERS). Reduce the texture count or split into multiple arrays.");
+        }
+    }
+
     /**
      * Loads specific files into the entity texture array (scaling to 64x64).
      * Called for item textures that should appear on 3D crafting entities.
@@ -355,16 +367,23 @@ public class TextureManager {
         entityTextureToIndex.put(name, idx);
         entityTexturePaths.add(filePath);
 
-        // Allocate texture array on first use
+        // Allocate texture array on first use, sized for the entity textures plus
+        // headroom for item textures added at runtime.
         if (entityTextureArrayId == 0) {
+            entityLayerCount = entityTexturePaths.size() + ENTITY_LAYER_HEADROOM;
+            checkLayerCount(entityLayerCount, "entity");
             entityTextureArrayId = glGenTextures();
             glBindTexture(GL_TEXTURE_2D_ARRAY, entityTextureArrayId);
             glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8,
-                    ENTITY_TEXTURE_SIZE, ENTITY_TEXTURE_SIZE, MAX_ENTITY_LAYERS);
+                    ENTITY_TEXTURE_SIZE, ENTITY_TEXTURE_SIZE, entityLayerCount);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        } else if (idx >= entityLayerCount) {
+            throw new RuntimeException(
+                "Entity texture array full: cannot add '" + name + "' (layer " + idx
+                + " >= " + entityLayerCount + "). Increase ENTITY_LAYER_HEADROOM in TextureManager.java");
         }
 
         glBindTexture(GL_TEXTURE_2D_ARRAY, entityTextureArrayId);

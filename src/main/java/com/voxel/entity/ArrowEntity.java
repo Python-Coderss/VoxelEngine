@@ -4,23 +4,26 @@ import com.voxel.World;
 import org.joml.Vector3f;
 
 /**
- * Blaze fireball projectile. Flies in a straight line (slight downward arc),
- * expires on block impact or after its lifetime. Main.tick() checks player
- * proximity and applies damage; expired fireballs are pruned by EntityManager.
+ * Arrow projectile fired by skeletons. Flies in a straight line, rotates to
+ * face its direction of travel, and expires on block impact or after its
+ * lifetime. Main.tick() checks player proximity and applies damage; expired
+ * arrows are pruned by EntityManager.
  */
-public class FireballEntity extends Entity {
+public class ArrowEntity extends Entity {
+
+    /** Damage dealt to the player on a direct hit. */
+    public static final float DAMAGE = 3.0f;
 
     private final Vector3f velocity;
-    /** Maximum lifetime before an unimpacted fireball despawns. */
-    private float life = 30.0f;
+    private float life = 5.0f;
     private boolean expired = false;
 
     public World world;
 
-    public FireballEntity(int id, Vector3f position, Vector3f velocity, com.voxel.utils.TextureManager textureManager) {
+    public ArrowEntity(int id, Vector3f position, Vector3f velocity, com.voxel.utils.TextureManager textureManager) {
         super(id, position);
         this.velocity = new Vector3f(velocity);
-        loadModel("src/main/resources/assets/minecraft/models/entity/fireball.json", textureManager);
+        loadModel("src/main/resources/assets/minecraft/models/entity/arrow.json", textureManager);
     }
 
     public boolean isExpired() { return expired; }
@@ -36,11 +39,14 @@ public class FireballEntity extends Entity {
         life -= dt;
         if (life <= 0.0f) { expired = true; return; }
 
+        // Point the arrow down its line of travel so the thin shaft leads.
+        rotation.y = (float) Math.toDegrees(Math.atan2(velocity.x, velocity.z));
+
         float nx = getPosX() + velocity.x * dt;
         float ny = getPosY() + velocity.y * dt;
         float nz = getPosZ() + velocity.z * dt;
 
-        // Block collision: a fireball dies against any solid (non-liquid) block.
+        // Block collision: an arrow sticks into (and dies against) any solid block.
         if (world != null) {
             int bx = (int) Math.floor(nx);
             int by = (int) Math.floor(ny);

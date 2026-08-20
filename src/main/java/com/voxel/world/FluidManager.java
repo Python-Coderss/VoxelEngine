@@ -110,7 +110,7 @@ public class FluidManager {
 
         int blockId = world.getVoxel(x, y, z);
         if (isFluid(blockId)) {
-            scheduleTick(x, y, z, blockId);
+            scheduleTickIfFlowable(x, y, z, blockId);
         }
         int[][] dirs = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
         for (int[] d : dirs) {
@@ -118,8 +118,54 @@ public class FluidManager {
             checkForMixing(nx, ny, nz);
             int nb = world.getVoxel(nx, ny, nz);
             if (isFluid(nb)) {
-                scheduleTick(nx, ny, nz, nb);
+                scheduleTickIfFlowable(nx, ny, nz, nb);
             }
+        }
+    }
+
+    /**
+     * Bulk-scan entry used when a chunk column is loaded or generated. Unlike
+     * {@link #notifyBlockChanged}, it does not fan out to all six neighbors:
+     * every block in the column is visited anyway, so re-checking each one as a
+     * neighbor of another is wasted work. Only flowable fluid blocks are
+     * scheduled; lava still gets its water-mixing check.
+     */
+    public void scheduleFluidOnChunkLoad(int x, int y, int z, int blockId) {
+        if (isLavaBlock(blockId)) {
+            checkForMixing(x, y, z);
+        }
+        if (isFluid(blockId) && needsFlow(x, y, z, blockId)) {
+            scheduleTick(x, y, z, blockId);
+        }
+    }
+
+    /**
+     * Whether this fluid block can actually do flow work right now. Fully
+     * submerged ocean/lake water sources (fluid below, no open neighbor) are
+     * stable and return false — scheduling them is what floods the tick queue
+     * when ocean chunks load and kills the TPS. Only source blocks with a flow
+     * target, and all flowing blocks, need ticking.
+     */
+    private boolean needsFlow(int x, int y, int z, int blockId) {
+        int level = getLevel(x, y, z);
+        if (level > 0) return true; // already flowing: keep updating until it settles
+
+        // Source block (level 0): only flows down, or sideways when on solid ground.
+        int below = world.getVoxel(x, y - 1, z);
+        if (canFlowInto(below, blockId)) return true;
+        if (!isBlocked(below)) return false;
+
+        int[][] horizontals = {{1,0,0},{-1,0,0},{0,0,1},{0,0,-1}};
+        for (int[] d : horizontals) {
+            if (canFlowInto(world.getVoxel(x + d[0], y, z + d[2]), blockId)) return true;
+        }
+        return false;
+    }
+
+    /** Schedules a fluid block for ticking only if it can actually flow. */
+    private void scheduleTickIfFlowable(int x, int y, int z, int blockId) {
+        if (needsFlow(x, y, z, blockId)) {
+            scheduleTick(x, y, z, blockId);
         }
     }
 
