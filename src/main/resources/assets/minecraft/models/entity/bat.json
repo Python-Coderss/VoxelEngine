@@ -1,0 +1,12 @@
+{
+  "parts": [
+    {"name":"head","from":[-3,25,-3],"size":[6,6,6],"absolute_offset":[0,28,0],"texture":"bat","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"ear_left","from":[-4,22,-2],"size":[3,4,1],"absolute_offset":[-2,28,0],"texture":"bat","uv":[24,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"ear_right","from":[1,22,-2],"size":[3,4,1],"absolute_offset":[2,28,0],"texture":"bat","uv":[24,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"body","from":[-3,9,-3],"size":[6,12,6],"absolute_offset":[0,21,0],"rotation":[45,0,0],"texture":"bat","uv":[0,16],"texture_mapping":"cuboid_atlas"},
+    {"name":"wing_left","from":[-14,5,1],"size":[10,16,1],"absolute_offset":[-3,18,2],"texture":"bat","uv":[42,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"wing_right","from":[4,5,1],"size":[10,16,1],"absolute_offset":[3,18,2],"texture":"bat","uv":[42,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"outer_wing_left","from":[-20,8,1],"size":[8,12,1],"absolute_offset":[-13,18,2],"texture":"bat","uv":[24,16],"texture_mapping":"cuboid_atlas"},
+    {"name":"outer_wing_right","from":[12,8,1],"size":[8,12,1],"absolute_offset":[13,18,2],"texture":"bat","uv":[24,16],"texture_mapping":"cuboid_atlas"}
+  ]
+}

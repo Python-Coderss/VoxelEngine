@@ -1,0 +1,14 @@
+{
+  "parent":"cow.json",
+  "parts":[
+    {"name":"head","texture":"cow/mooshroom"},
+    {"name":"left_horn","texture":"cow/mooshroom"},
+    {"name":"right_horn","texture":"cow/mooshroom"},
+    {"name":"body","texture":"cow/mooshroom"},
+    {"name":"udder","texture":"cow/mooshroom"},
+    {"name":"leg_1","texture":"cow/mooshroom"},
+    {"name":"leg_2","texture":"cow/mooshroom"},
+    {"name":"leg_3","texture":"cow/mooshroom"},
+    {"name":"leg_4","texture":"cow/mooshroom"}
+  ]
+}

@@ -1111,13 +1111,27 @@ public class Main {
                 mob = new com.voxel.entity.ZombieEntity(nextSpawnCommandId++, pos, textureManager, player);
                 ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
                 break;
+            case "husk":
+                mob = genericMob(pos, "husk.json");
+                break;
             case "skeleton":
                 mob = new com.voxel.entity.SkeletonEntity(nextSpawnCommandId++, pos, textureManager, player);
                 ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
                 break;
+            case "stray":
+                mob = genericMob(pos, "stray.json");
+                break;
+            case "wither_skeleton":
+            case "witherskeleton":
+                mob = genericMob(pos, "wither_skeleton.json");
+                break;
             case "spider":
                 mob = new com.voxel.entity.SpiderEntity(nextSpawnCommandId++, pos, textureManager, player);
                 ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
+                break;
+            case "cave_spider":
+            case "cavespider":
+                mob = genericMob(pos, "cave_spider.json");
                 break;
             case "enderman":
             case "enderman_entity":
@@ -1131,6 +1145,78 @@ public class Main {
             case "silverfish":
                 mob = new com.voxel.entity.SilverfishEntity(nextSpawnCommandId++, pos, textureManager, player);
                 ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
+                break;
+            case "bat":
+                mob = genericMob(pos, "bat.json");
+                break;
+            case "dragon":
+            case "ender_dragon":
+                mob = genericMob(pos, "dragon.json");
+                break;
+            case "ghast":
+                mob = genericMob(pos, "ghast.json");
+                break;
+            case "guardian":
+            case "elder_guardian":
+                mob = genericMob(pos, "guardian.json");
+                break;
+            case "horse":
+            case "donkey":
+            case "mule":
+                mob = genericMob(pos, "horse.json");
+                break;
+            case "llama":
+                mob = genericMob(pos, "llama.json");
+                break;
+            case "ocelot":
+            case "cat":
+                mob = genericMob(pos, "ocelot.json");
+                break;
+            case "parrot":
+                mob = genericMob(pos, "parrot.json");
+                break;
+            case "polar_bear":
+            case "polarbear":
+                mob = genericMob(pos, "polar_bear.json");
+                break;
+            case "rabbit":
+                mob = genericMob(pos, "rabbit.json");
+                break;
+            case "shulker":
+                mob = genericMob(pos, "shulker.json");
+                break;
+            case "slime":
+            case "small_slime":
+                mob = genericMob(pos, "slime.json");
+                break;
+            case "magma_cube":
+            case "magmacube":
+                mob = genericMob(pos, "magma_cube.json");
+                break;
+            case "squid":
+                mob = genericMob(pos, "squid.json");
+                break;
+            case "vex":
+                mob = genericMob(pos, "vex.json");
+                break;
+            case "witch":
+                mob = genericMob(pos, "witch.json");
+                break;
+            case "evoker":
+            case "vindicator":
+            case "illusioner":
+            case "illager":
+                mob = genericMob(pos, "illager.json");
+                break;
+            case "wither":
+                mob = genericMob(pos, "wither.json");
+                break;
+            case "wolf":
+                mob = genericMob(pos, "wolf.json");
+                break;
+            case "zombie_villager":
+            case "zombievillager":
+                mob = genericMob(pos, "zombie_villager.json");
                 break;
             case "creeper": {
                 com.voxel.entity.CreeperEntity creeper = new com.voxel.entity.CreeperEntity(
@@ -1189,6 +1275,9 @@ public class Main {
                 mob = new com.voxel.entity.CowEntity(nextSpawnCommandId++, pos, textureManager, player);
                 ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
                 break;
+            case "mooshroom":
+                mob = genericMob(pos, "mooshroom.json");
+                break;
             case "chicken":
                 mob = new com.voxel.entity.ChickenEntity(nextSpawnCommandId++, pos, textureManager, player);
                 ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
@@ -1205,13 +1294,22 @@ public class Main {
                 ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
                 break;
             default:
-                setStatus("Unknown mob: " + type + ". Try: zombie, skeleton, spider, enderman, endermite, silverfish, creeper, villager, iron_golem, snow_golem, snow_golem_sheared, blaze, pigman, pig, cow, chicken, sheep, sheep_sheared.");
+                setStatus("Unknown mob: " + type + ". Try: zombie, husk, skeleton, stray, wither_skeleton, spider, cave_spider, enderman, endermite, silverfish, bat, dragon, ghast, guardian, horse, llama, cat, parrot, polar_bear, rabbit, shulker, slime, magma_cube, squid, vex, witch, evoker, vindicator, wither, wolf, creeper, villager, iron_golem, snow_golem, snow_golem_sheared, blaze, pigman, pig, cow, mooshroom, chicken, sheep, sheep_sheared.");
                 return;
         }
 
         mob.dimension = activeDimension;
         entityManager.addEntity(mob);
         setStatus("Spawned " + type);
+    }
+
+    /** Creates one of the source-model-only mobs with the shared hostile behavior. */
+    private com.voxel.entity.Entity genericMob(Vector3f pos, String modelFile) {
+        com.voxel.entity.GenericMobEntity mob = new com.voxel.entity.GenericMobEntity(
+                nextSpawnCommandId++, pos, textureManager, player,
+                "src/main/resources/assets/minecraft/models/entity/" + modelFile);
+        mob.setWorld(world);
+        return mob;
     }
 
     /** Raycasts from the player's view and returns a grounded spawn position. */
@@ -5069,6 +5167,90 @@ public class Main {
         blockRegistry.register("item_drop_brass_ingot", 421);
         shaderBlockRegistry.register(421, 421);
         blockDataManager.registerBlock(421, "item_drop_brass_ingot", textureManager, mcModels);
+
+        // --- Additional Minecraft utility and End blocks (454-471) ---
+        // These use the native Minecraft block models already present in the resource pack.
+        blockRegistry.register("bedrock", 454);
+        shaderBlockRegistry.register(454, 454);
+        blockDataManager.registerBlock(454, "bedrock", textureManager, mcModels);
+
+        blockRegistry.register("coal_block", 455);
+        shaderBlockRegistry.register(455, 455);
+        blockDataManager.registerBlock(455, "coal_block", textureManager, mcModels);
+
+        blockRegistry.register("anvil", 456);
+        shaderBlockRegistry.register(456, 456);
+        blockDataManager.registerBlock(456, "anvil_undamaged", textureManager, mcModels);
+        blockDataManager.setFullBlock(456, false);
+
+        blockRegistry.register("beacon", 457);
+        shaderBlockRegistry.register(457, 457);
+        blockDataManager.registerBlock(457, "beacon", textureManager, mcModels, 80, 20, 255, 80);
+        blockDataManager.setLightColor(457, 120, 220, 255);
+
+        blockRegistry.register("enchanting_table", 458);
+        shaderBlockRegistry.register(458, 458);
+        blockDataManager.registerBlock(458, "enchanting_table_base", textureManager, mcModels);
+
+        blockRegistry.register("dispenser", 459);
+        shaderBlockRegistry.register(459, 459);
+        blockDataManager.registerBlock(459, "dispenser", textureManager, mcModels);
+
+        blockRegistry.register("dropper", 460);
+        shaderBlockRegistry.register(460, 460);
+        blockDataManager.registerBlock(460, "dropper", textureManager, mcModels);
+
+        blockRegistry.register("hopper", 461);
+        shaderBlockRegistry.register(461, 461);
+        blockDataManager.registerBlock(461, "hopper_down", textureManager, mcModels);
+        blockDataManager.setFullBlock(461, false);
+
+        blockRegistry.register("cauldron", 462);
+        shaderBlockRegistry.register(462, 462);
+        blockDataManager.registerBlock(462, "cauldron_empty", textureManager, mcModels);
+        blockDataManager.setFullBlock(462, false);
+
+        blockRegistry.register("brewing_stand", 463);
+        shaderBlockRegistry.register(463, 463);
+        blockDataManager.registerBlock(463, "brewing_stand", textureManager, mcModels);
+        blockDataManager.setFullBlock(463, false);
+
+        blockRegistry.register("end_bricks", 464);
+        shaderBlockRegistry.register(464, 464);
+        blockDataManager.registerBlock(464, "end_bricks", textureManager, mcModels);
+
+        blockRegistry.register("end_rod", 465);
+        shaderBlockRegistry.register(465, 465);
+        blockDataManager.registerBlock(465, "end_rod", textureManager, mcModels, 0, 0, 255, 180);
+        blockDataManager.setLightColor(465, 220, 180, 255);
+        blockDataManager.setFullBlock(465, false);
+
+        blockRegistry.register("dragon_egg", 466);
+        shaderBlockRegistry.register(466, 466);
+        blockDataManager.registerBlock(466, "dragon_egg", textureManager, mcModels);
+        blockDataManager.setFullBlock(466, false);
+
+        blockRegistry.register("prismarine", 467);
+        shaderBlockRegistry.register(467, 467);
+        blockDataManager.registerBlock(467, "prismarine_rough", textureManager, mcModels);
+
+        blockRegistry.register("prismarine_bricks", 468);
+        shaderBlockRegistry.register(468, 468);
+        blockDataManager.registerBlock(468, "prismarine_bricks", textureManager, mcModels);
+
+        blockRegistry.register("dark_prismarine", 469);
+        shaderBlockRegistry.register(469, 469);
+        blockDataManager.registerBlock(469, "prismarine_dark", textureManager, mcModels);
+
+        blockRegistry.register("sea_lantern", 470);
+        shaderBlockRegistry.register(470, 470);
+        blockDataManager.registerBlock(470, "sea_lantern", textureManager, mcModels, 0, 0, 255, 220);
+        blockDataManager.setLightColor(470, 150, 240, 255);
+
+        blockRegistry.register("iron_bars", 471);
+        shaderBlockRegistry.register(471, 471);
+        blockDataManager.registerBlock(471, "iron_bars_post", textureManager, mcModels, 120, 0, 255);
+        blockDataManager.setFullBlock(471, false);
 
         // Register shader state variants for directional and on/off blocks
         shaderBlockRegistry.registerOnOff(28, true, 30);

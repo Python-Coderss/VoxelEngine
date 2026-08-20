@@ -1,0 +1,16 @@
+{
+  "parent":"spider.json",
+  "parts":[
+    {"name":"head","texture":"spider/cave_spider"},
+    {"name":"neck","texture":"spider/cave_spider"},
+    {"name":"body","texture":"spider/cave_spider"},
+    {"name":"left_leg_1","texture":"spider/cave_spider"},
+    {"name":"right_leg_1","texture":"spider/cave_spider"},
+    {"name":"left_leg_2","texture":"spider/cave_spider"},
+    {"name":"right_leg_2","texture":"spider/cave_spider"},
+    {"name":"left_leg_3","texture":"spider/cave_spider"},
+    {"name":"right_leg_3","texture":"spider/cave_spider"},
+    {"name":"left_leg_4","texture":"spider/cave_spider"},
+    {"name":"right_leg_4","texture":"spider/cave_spider"}
+  ]
+}

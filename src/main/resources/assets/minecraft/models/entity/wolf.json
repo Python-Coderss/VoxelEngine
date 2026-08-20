@@ -1,0 +1,15 @@
+{
+  "parts": [
+    {"name":"head","from":[-3,11,5],"size":[6,6,4],"absolute_offset":[-1,14,7],"texture":"wolf/wolf","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"ears_left","from":[-3,9,5],"size":[2,2,1],"absolute_offset":[-1,14,7],"texture":"wolf/wolf","uv":[16,14],"texture_mapping":"cuboid_atlas"},
+    {"name":"ears_right","from":[1,9,5],"size":[2,2,1],"absolute_offset":[-1,14,7],"texture":"wolf/wolf","uv":[16,14],"texture_mapping":"cuboid_atlas"},
+    {"name":"muzzle","from":[-2,10,1],"size":[3,3,4],"absolute_offset":[-1,14,7],"texture":"wolf/wolf","uv":[0,10],"texture_mapping":"cuboid_atlas"},
+    {"name":"body","from":[-3,7,-1],"size":[6,9,6],"absolute_offset":[0,14,2],"rotation":[90,0,0],"texture":"wolf/wolf","uv":[18,14],"texture_mapping":"cuboid_atlas"},
+    {"name":"mane","from":[-4,9,-1],"size":[8,6,7],"absolute_offset":[-1,14,2],"texture":"wolf/wolf","uv":[21,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_back_left","from":[-3,0,5],"size":[2,8,2],"absolute_offset":[-2,8,7],"texture":"wolf/wolf","uv":[0,18],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_back_right","from":[0,0,5],"size":[2,8,2],"absolute_offset":[1,8,7],"texture":"wolf/wolf","uv":[0,18],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_front_left","from":[-3,0,-5],"size":[2,8,2],"absolute_offset":[-2,8,-4],"texture":"wolf/wolf","uv":[0,18],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_front_right","from":[0,0,-5],"size":[2,8,2],"absolute_offset":[1,8,-4],"texture":"wolf/wolf","uv":[0,18],"texture_mapping":"cuboid_atlas"},
+    {"name":"tail","from":[-1,9,7],"size":[2,8,2],"absolute_offset":[-1,12,8],"rotation":[-45,0,0],"texture":"wolf/wolf","uv":[9,18],"texture_mapping":"cuboid_atlas"}
+  ]
+}

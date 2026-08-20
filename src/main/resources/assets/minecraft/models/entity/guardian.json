@@ -1,0 +1,16 @@
+{
+  "parts": [
+    {"name":"body","from":[-6,8,-8],"size":[12,16,16],"absolute_offset":[0,16,0],"texture":"guardian","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"side_left","from":[-8,8,-6],"size":[2,16,12],"absolute_offset":[-7,16,0],"texture":"guardian","uv":[0,28],"texture_mapping":"cuboid_atlas"},
+    {"name":"side_right","from":[6,8,-6],"size":[2,16,12],"absolute_offset":[7,16,0],"texture":"guardian","uv":[0,28],"texture_mapping":"cuboid_atlas"},
+    {"name":"top","from":[-6,6,-6],"size":[12,2,12],"absolute_offset":[0,8,0],"texture":"guardian","uv":[16,40],"texture_mapping":"cuboid_atlas"},
+    {"name":"bottom","from":[-6,22,-6],"size":[12,2,12],"absolute_offset":[0,24,0],"texture":"guardian","uv":[16,40],"texture_mapping":"cuboid_atlas"},
+    {"name":"eye","from":[-1,15,7.9],"size":[2,2,1],"absolute_offset":[0,16,8],"texture":"guardian","uv":[8,0],"emissive":true,"texture_mapping":"cuboid_atlas"},
+    {"name":"spine_north","from":[-1,8,-13],"size":[2,9,2],"absolute_offset":[0,16,-8],"rotation":[180,0,0],"texture":"guardian","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"spine_south","from":[-1,8,11],"size":[2,9,2],"absolute_offset":[0,16,8],"texture":"guardian","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"spine_west","from":[-13,8,-1],"size":[2,9,2],"absolute_offset":[-8,16,0],"rotation":[0,0,-90],"texture":"guardian","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"spine_east","from":[11,8,-1],"size":[2,9,2],"absolute_offset":[8,16,0],"rotation":[0,0,90],"texture":"guardian","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tail","from":[-2,8,8],"size":[4,4,8],"absolute_offset":[0,16,8],"texture":"guardian","uv":[40,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tail_tip","from":[-1,10,16],"size":[2,2,6],"absolute_offset":[0,16,16],"texture":"guardian","uv":[41,32],"texture_mapping":"cuboid_atlas"}
+  ]
+}

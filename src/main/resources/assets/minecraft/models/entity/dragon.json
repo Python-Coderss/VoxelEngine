@@ -1,0 +1,18 @@
+{
+  "parts": [
+    {"name":"head","from":[-8,42,-26],"size":[16,16,16],"absolute_offset":[0,50,-8],"texture":"enderdragon/dragon","uv":[56,15],"texture_mapping":"cuboid_atlas"},
+    {"name":"upper_lip","from":[-6,45,-42],"size":[12,5,16],"absolute_offset":[0,50,-8],"texture":"enderdragon/dragon","uv":[88,22],"texture_mapping":"cuboid_atlas"},
+    {"name":"jaw","from":[-6,38,-24],"size":[12,4,16],"absolute_offset":[0,46,-16],"rotation":[20,0,0],"texture":"enderdragon/dragon","uv":[88,33],"texture_mapping":"cuboid_atlas"},
+    {"name":"spine","from":[-5,35,-5],"size":[10,10,10],"absolute_offset":[0,40,0],"texture":"enderdragon/dragon","uv":[96,52],"texture_mapping":"cuboid_atlas"},
+    {"name":"body","from":[-12,16,-8],"size":[24,24,64],"absolute_offset":[0,28,8],"texture":"enderdragon/dragon","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"wing_left","from":[-68,24,-2],"size":[56,8,8],"absolute_offset":[-12,28,2],"rotation":[7,14,7],"texture":"enderdragon/dragon","uv":[56,44],"texture_mapping":"cuboid_atlas"},
+    {"name":"wing_right","from":[12,24,-2],"size":[56,8,8],"absolute_offset":[12,28,2],"rotation":[7,-14,-7],"texture":"enderdragon/dragon","uv":[56,44],"texture_mapping":"cuboid_atlas"},
+    {"name":"front_leg_left","from":[-16,0,-4],"size":[8,24,8],"absolute_offset":[-12,20,2],"texture":"enderdragon/dragon","uv":[56,52],"texture_mapping":"cuboid_atlas"},
+    {"name":"front_leg_right","from":[8,0,-4],"size":[8,24,8],"absolute_offset":[12,20,2],"texture":"enderdragon/dragon","uv":[56,52],"texture_mapping":"cuboid_atlas"},
+    {"name":"rear_leg_left","from":[-24,0,34],"size":[16,32,16],"absolute_offset":[-16,16,42],"texture":"enderdragon/dragon","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"rear_leg_right","from":[8,0,34],"size":[16,32,16],"absolute_offset":[16,16,42],"texture":"enderdragon/dragon","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tail_1","from":[-5,10,60],"size":[10,10,20],"absolute_offset":[0,20,68],"texture":"enderdragon/dragon","uv":[96,52],"texture_mapping":"cuboid_atlas"},
+    {"name":"tail_2","from":[-5,8,78],"size":[10,10,20],"absolute_offset":[0,18,86],"texture":"enderdragon/dragon","uv":[96,52],"texture_mapping":"cuboid_atlas"},
+    {"name":"tail_3","from":[-5,6,96],"size":[10,10,20],"absolute_offset":[0,16,104],"texture":"enderdragon/dragon","uv":[96,52],"texture_mapping":"cuboid_atlas"}
+  ]
+}
