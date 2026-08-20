@@ -861,7 +861,15 @@ public class BlockInteraction {
                     if (e != null) { interactWithEntity(e); return; }
                 }
             } else if (hit == null) {
-                // Looking at nothing in range — nothing to interact with
+                // Looking at nothing in range. Eye of Ender thrown in air is the
+                // one exception — it doesn't need a target block.
+                ItemDefinitions.ItemStack held = ctx.playerInventory.getSelected();
+                if (held != null && "ender_eye".equals(held.itemId)) {
+                    throwEyeOfEnder();
+                    held.count--;
+                    if (held.count <= 0) ctx.playerInventory.clearSlot(ctx.playerInventory.getSelectedSlot());
+                    return;
+                }
                 return;
             }
         }
@@ -870,6 +878,40 @@ public class BlockInteraction {
 
         // Right-click on a crafting table block — start cutscene walk to table
         int hitBlock = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
+
+        // ── End Portal: insert eye of ender into portal frame ──
+        if (com.voxel.world.EndPortalLogic.isFrameBlock(ctx.blockDataManager, hitBlock)
+                && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
+            ItemDefinitions.ItemStack heldStack = ctx.playerInventory.getSelected();
+            if (heldStack != null && "ender_eye".equals(heldStack.itemId)) {
+                if (com.voxel.world.EndPortalLogic.tryInsertEye(
+                        ctx.chunkManager, ctx.world, ctx.blockDataManager,
+                        hit[0], hit[1], hit[2])) {
+                    heldStack.count--;
+                    if (heldStack.count <= 0) ctx.playerInventory.clearSlot(ctx.playerInventory.getSelectedSlot());
+                    ctx.setStatus("Eye of Ender inserted");
+                } else {
+                    ctx.setStatus("This frame already has an eye");
+                }
+                return;
+            }
+        }
+
+        // ── Eye of Ender thrown on hit block that isn't a special-use target ──
+        // Catch the case where the player aims at a generic block (e.g. dirt)
+        // while holding an eye of ender. We swallow the standard placement
+        // path so the eye fires as a projectile instead.
+        if (!ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive
+                && !ctx.furnaceCutsceneActive && !ctx.furnaceOpen && !ctx.chestOpen
+                && !ctx.craftingTableOpen) {
+            ItemDefinitions.ItemStack heldStack = ctx.playerInventory.getSelected();
+            if (heldStack != null && "ender_eye".equals(heldStack.itemId)) {
+                throwEyeOfEnder();
+                heldStack.count--;
+                if (heldStack.count <= 0) ctx.playerInventory.clearSlot(ctx.playerInventory.getSelectedSlot());
+                return;
+            }
+        }
 
         // Right-click on a command block opens the ancient-builder program editor.
         if (CommandBlockManager.isCommandBlock(hitBlock) && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
@@ -1498,6 +1540,31 @@ public class BlockInteraction {
     }
 
     /** Start the TV watching cutscene. */
+    /**
+     * Throws an Eye of Ender from the player's eye position. The projectile
+     * arcs toward the cached StrongholdLocator XZ and despawns on contact.
+     */
+    private void throwEyeOfEnder() {
+        if (ctx.entityManager == null || ctx.textureManager == null) return;
+        Vector3f playerPos = ctx.player.getPosition();
+        Vector3f eye = new Vector3f(playerPos.x, playerPos.y + 1.6f, playerPos.z);
+        // Use ctx.yaw / ctx.pitch directly. ctx.camera isn't exposed on GameContext,
+        // but the player look-vector is captured by these two angles.
+        float yawRad = (float) Math.toRadians(ctx.yaw);
+        float pitchRad = (float) Math.toRadians(ctx.pitch);
+        float lx = (float) Math.cos(pitchRad) * (float) Math.cos(yawRad);
+        float ly = -(float) Math.sin(pitchRad);
+        float lz = (float) Math.cos(pitchRad) * (float) Math.sin(yawRad);
+        Vector3f velocity = new Vector3f(lx * 1.4f, ly * 1.4f + 0.45f, lz * 1.4f);
+        com.voxel.entity.EntityEnderEye enderEye = new com.voxel.entity.EntityEnderEye(
+                60_000 + ctx.entityManager.getEntityCount(),
+                eye, velocity, ctx.textureManager);
+        enderEye.setWorld(ctx.world);
+        enderEye.dimension = ctx.activeDimension;
+        ctx.entityManager.addEntity(enderEye);
+        ctx.setStatus("Eye of Ender thrown");
+    }
+
     private void startTVCutscene(int[] hit) {
         ctx.tvBlockX = hit[0];
         ctx.tvBlockY = hit[1];

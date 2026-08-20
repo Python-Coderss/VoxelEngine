@@ -577,6 +577,36 @@ public class DimensionWorldGenerator extends WorldGenerator {
                         world.setVoxelInPool(slot, lx, localY, lz, obsidianId);
                     }
                 }
+                // Place the End gateway one block above the platform at (102, 48, 2).
+                // Stepping onto the gateway teleports the player back to the Overworld.
+                int gatewayId = blockDataManager != null ? blockDataManager.findBlockId("end_gateway") : 0;
+                if (gatewayId > 0) {
+                    int gxLocal = 102 - (cx << 4);
+                    int gzLocal = 2 - (cz << 4);
+                    int gyLocal = (platformY + 1) - (cy << 4);
+                    world.setVoxelInPool(slot, gxLocal, gyLocal, gzLocal, gatewayId);
+                }
+                // Place 3 ender-crystal bases around the pillar so the dragon has
+                // its anchor points even before the player kills them.
+                int crystalBaseId = blockDataManager != null
+                        ? blockDataManager.findBlockId("end_crystal_base") : 0;
+                if (crystalBaseId > 0) {
+                    int[][] crystalOffsets = {
+                            {  -4, 0,   0},
+                            {   4, 0,   0},
+                            {   0, 0,   4}};
+                    for (int[] off : crystalOffsets) {
+                        int absX = 100 + 2 + off[0];
+                        int absZ = 0 + 2 + off[2];
+                        int localX = absX - (cx << 4);
+                        int localZ = absZ - (cz << 4);
+                        int localY2 = (platformY + 1) - (cy << 4);
+                        if (localX >= 0 && localX < 16 && localZ >= 0 && localZ < 16
+                                && localY2 >= 0 && localY2 < 16) {
+                            world.setVoxelInPool(slot, localX, localY2, localZ, crystalBaseId);
+                        }
+                    }
+                }
             }
         }
 
@@ -589,6 +619,31 @@ public class DimensionWorldGenerator extends WorldGenerator {
 
         int worldX = cx << 4;
         int worldZ = cz << 4;
+
+        // ── Stronghold (single fixed location) ──
+        // MapGenStronghold bakes the End Portal's frame blocks + library +
+        // stairwell at the chunk column recorded by StrongholdLocator. The
+        // surface layer is the only layer where the structure is actively
+        // placed — the stairwell/lava-pool extension below surface y=0
+        // belongs to the slot spanning Y regions [2..3], so we trigger the
+        // call from any layer where the structure's footprint intersects.
+        if (blockDataManager != null
+                && com.voxel.world.StrongholdLocator.hasStrongholdChunk()
+                && com.voxel.world.structure.MapGenStronghold.isStrongholdChunk(
+                        cx, cz,
+                        com.voxel.world.StrongholdLocator.getStrongholdChunkX(),
+                        com.voxel.world.StrongholdLocator.getStrongholdChunkZ())) {
+            com.voxel.world.structure.MapGenStronghold.generate(
+                    world, slot, cx, cz, cy,
+                    com.voxel.world.StrongholdLocator.getStrongholdChunkX(),
+                    com.voxel.world.StrongholdLocator.getStrongholdChunkZ(),
+                    com.voxel.world.StrongholdLocator.getStrongholdBaseY(),
+                    blockDataManager);
+            // The Stronghold is the only Overworld decoration in its bounding
+            // box; skip the rest of decorate so terrain trees don't fill the
+            // portal room. (Below-surface decorations are still needed.)
+            if (cy < 4) return;
+        }
 
         // --- Structures ---
         if (cy == 4) { // Only generate structures in the surface layer
