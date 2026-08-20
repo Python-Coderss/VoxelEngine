@@ -69,6 +69,9 @@ public class Player {
         new java.util.EnumMap<>(com.voxel.world.DimensionType.class);
 
     private float yaw = -90, pitch = 0;
+    // Camera look direction is separate from body yaw so third-person gaze checks
+    // use the direction the player is actually looking, not movement orientation.
+    private volatile float lookYaw = -90, lookPitch = 0;
     private com.voxel.world.DimensionType dimension = com.voxel.world.DimensionType.OVERWORLD;
 
     // ── Minecart riding ──
@@ -640,6 +643,12 @@ public class Player {
     public void setYaw(float yaw) { this.yaw = yaw; }
     public float getPitch() { return pitch; }
     public void setPitch(float pitch) { this.pitch = pitch; }
+    public float getLookYaw() { return lookYaw; }
+    public float getLookPitch() { return lookPitch; }
+    public void setLookDirection(float yaw, float pitch) {
+        this.lookYaw = yaw;
+        this.lookPitch = pitch;
+    }
     public boolean isFlying() { return flying; }
     public void setFlying(boolean flying) { this.flying = flying; }
     public boolean isOnGround() { return onGround; }

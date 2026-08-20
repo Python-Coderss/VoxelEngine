@@ -21,6 +21,8 @@ public class ModelPart {
     public Vector3f rotation; // Euler angles
     public int textureIndex;
     public int textureMapping;
+    /** When true, the part bypasses normal darkness and contributes light. */
+    public boolean emissive;
     public Vector2f uvOrigin; // Top-left of the part's texture in the source (e.g. 64x64 skin)
 
     public ModelPart(String name, Vector3f offset, Vector3f size, int textureIndex) {
@@ -32,6 +34,7 @@ public class ModelPart {
         this.rotation = new Vector3f(0, 0, 0);
         this.textureIndex = textureIndex;
         this.textureMapping = TEXTURE_MAPPING_PLANAR;
+        this.emissive = false;
         this.uvOrigin = new Vector2f(0, 0);
     }
 }

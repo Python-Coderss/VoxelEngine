@@ -1,0 +1,85 @@
+{
+  "parts": [
+    {
+      "name": "head",
+      "from": [-4.0, 38.0, -4.0],
+      "size": [8.0, 8.0, 8.0],
+      "absolute_offset": [0.0, 38.0, 0.0],
+      "texture": "enderman/enderman",
+      "uv": [0, 0],
+      "uv_size": [8.0, 8.0, 8.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "head_eyes",
+      "from": [-3.5, 38.5, -3.5],
+      "size": [7.0, 7.0, 7.0],
+      "absolute_offset": [0.0, 38.0, 0.0],
+      "texture": "enderman/enderman_eyes",
+      "emissive": true,
+      "uv": [0, 16],
+      "uv_size": [8.0, 8.0, 8.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "jaw",
+      "from": [-2.0, 37.0, 3.9],
+      "size": [4.0, 1.5, 0.15],
+      "absolute_offset": [0.0, 39.0, 4.0],
+      "texture": "enderman/enderman",
+      "uv": [4.0, 8.0],
+      "uv_size": [4.0, 2.0, 1.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body",
+      "from": [-4.0, 27.0, -2.0],
+      "size": [8.0, 12.0, 4.0],
+      "absolute_offset": [0.0, 39.0, 0.0],
+      "texture": "enderman/enderman",
+      "uv": [32, 16],
+      "uv_size": [8.0, 12.0, 4.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "right_arm",
+      "from": [2.0, 9.0, -1.0],
+      "size": [2.0, 30.0, 2.0],
+      "absolute_offset": [3.0, 37.0, 0.0],
+      "texture": "enderman/enderman",
+      "uv": [56, 0],
+      "uv_size": [2.0, 30.0, 2.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "left_arm",
+      "from": [-6.0, 9.0, -1.0],
+      "size": [2.0, 30.0, 2.0],
+      "absolute_offset": [-5.0, 37.0, 0.0],
+      "texture": "enderman/enderman",
+      "uv": [56, 0],
+      "uv_size": [2.0, 30.0, 2.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "right_leg",
+      "from": [1.0, 0.0, -1.0],
+      "size": [2.0, 30.0, 2.0],
+      "absolute_offset": [2.0, 30.0, 0.0],
+      "texture": "enderman/enderman",
+      "uv": [56, 0],
+      "uv_size": [2.0, 30.0, 2.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "left_leg",
+      "from": [-3.0, 0.0, -1.0],
+      "size": [2.0, 30.0, 2.0],
+      "absolute_offset": [-2.0, 30.0, 0.0],
+      "texture": "enderman/enderman",
+      "uv": [56, 0],
+      "uv_size": [2.0, 30.0, 2.0],
+      "texture_mapping": "cuboid_atlas"
+    }
+  ]
+}
