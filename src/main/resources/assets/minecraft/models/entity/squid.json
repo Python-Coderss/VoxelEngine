@@ -1,0 +1,13 @@
+{
+  "parts": [
+    {"name":"body","from":[-6,16,-6],"size":[12,16,12],"absolute_offset":[0,24,0],"texture":"squid","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tentacle_1","from":[4,0,-1],"size":[2,18,2],"absolute_offset":[5,16,0],"rotation":[0,90,0],"texture":"squid","uv":[48,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tentacle_2","from":[3,0,2],"size":[2,18,2],"absolute_offset":[4,16,3],"rotation":[0,45,0],"texture":"squid","uv":[48,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tentacle_3","from":[-1,0,4],"size":[2,18,2],"absolute_offset":[0,16,5],"rotation":[0,0,0],"texture":"squid","uv":[48,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tentacle_4","from":[-4,0,2],"size":[2,18,2],"absolute_offset":[-4,16,3],"rotation":[0,-45,0],"texture":"squid","uv":[48,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tentacle_5","from":[-6,0,-1],"size":[2,18,2],"absolute_offset":[-5,16,0],"rotation":[0,-90,0],"texture":"squid","uv":[48,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tentacle_6","from":[-4,0,-4],"size":[2,18,2],"absolute_offset":[-4,16,-3],"rotation":[0,-135,0],"texture":"squid","uv":[48,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tentacle_7","from":[-1,0,-6],"size":[2,18,2],"absolute_offset":[0,16,-5],"rotation":[0,180,0],"texture":"squid","uv":[48,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tentacle_8","from":[3,0,-4],"size":[2,18,2],"absolute_offset":[4,16,-3],"rotation":[0,135,0],"texture":"squid","uv":[48,0],"texture_mapping":"cuboid_atlas"}
+  ]
+}

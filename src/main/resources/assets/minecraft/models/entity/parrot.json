@@ -1,0 +1,14 @@
+{
+  "parts": [
+    {"name":"body","from":[-1.5,5,-4.5],"size":[3,6,3],"absolute_offset":[0,11,-3],"texture":"parrot/parrot_blue","uv":[2,8],"texture_mapping":"cuboid_atlas"},
+    {"name":"tail","from":[-1.5,0,0],"size":[3,4,1],"absolute_offset":[0,4,1],"texture":"parrot/parrot_blue","uv":[22,1],"texture_mapping":"cuboid_atlas"},
+    {"name":"wing_left","from":[1,5,-4],"size":[1,5,3],"absolute_offset":[2,11,-3],"texture":"parrot/parrot_blue","uv":[19,8],"texture_mapping":"cuboid_atlas"},
+    {"name":"wing_right","from":[-2,5,-4],"size":[1,5,3],"absolute_offset":[-2,11,-3],"texture":"parrot/parrot_blue","uv":[19,8],"texture_mapping":"cuboid_atlas"},
+    {"name":"head","from":[-1,10,-4],"size":[2,3,2],"absolute_offset":[0,16,-3],"texture":"parrot/parrot_blue","uv":[2,2],"texture_mapping":"cuboid_atlas"},
+    {"name":"head_feathers","from":[-1,12,-5],"size":[2,1,4],"absolute_offset":[0,14,-4],"texture":"parrot/parrot_blue","uv":[10,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"beak_upper","from":[-0.5,11,-6],"size":[1,2,1],"absolute_offset":[0,16,-4],"texture":"parrot/parrot_blue","uv":[11,7],"texture_mapping":"cuboid_atlas"},
+    {"name":"beak_lower","from":[-0.5,10,-6],"size":[1,1,1],"absolute_offset":[0,16,-4],"texture":"parrot/parrot_blue","uv":[16,7],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_left","from":[0.5,0,-2],"size":[1,2,1],"absolute_offset":[1,2,-1],"texture":"parrot/parrot_blue","uv":[14,18],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_right","from":[-1.5,0,-2],"size":[1,2,1],"absolute_offset":[-1,2,-1],"texture":"parrot/parrot_blue","uv":[14,18],"texture_mapping":"cuboid_atlas"}
+  ]
+}

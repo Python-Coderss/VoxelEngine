@@ -1,0 +1,15 @@
+{
+  "parts": [
+    {"name":"head","from":[-2.5,13,-12],"size":[5,4,5],"absolute_offset":[0,15,-9],"texture":"cat/ocelot","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"nose","from":[-1.5,13,-14],"size":[3,2,2],"absolute_offset":[0,15,-9],"texture":"cat/ocelot","uv":[0,24],"texture_mapping":"cuboid_atlas"},
+    {"name":"ear_left","from":[-2,12,-9],"size":[1,1,2],"absolute_offset":[0,15,-9],"texture":"cat/ocelot","uv":[0,10],"texture_mapping":"cuboid_atlas"},
+    {"name":"ear_right","from":[1,12,-9],"size":[1,1,2],"absolute_offset":[0,15,-9],"texture":"cat/ocelot","uv":[6,10],"texture_mapping":"cuboid_atlas"},
+    {"name":"body","from":[-2,8,-18],"size":[4,16,6],"absolute_offset":[0,12,-10],"rotation":[90,0,0],"texture":"cat/ocelot","uv":[20,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tail","from":[-1,5,7],"size":[1,8,1],"absolute_offset":[0,15,8],"rotation":[50,0,0],"texture":"cat/ocelot","uv":[0,15],"texture_mapping":"cuboid_atlas"},
+    {"name":"tail_tip","from":[-1,1,13],"size":[1,8,1],"absolute_offset":[0,20,14],"rotation":[100,0,0],"texture":"cat/ocelot","uv":[4,15],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_back_left","from":[0,0,6],"size":[2,6,2],"absolute_offset":[1,18,5],"texture":"cat/ocelot","uv":[8,13],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_back_right","from":[-2,0,6],"size":[2,6,2],"absolute_offset":[-1,18,5],"texture":"cat/ocelot","uv":[8,13],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_front_left","from":[0,0,-5],"size":[2,10,2],"absolute_offset":[1,14,-5],"texture":"cat/ocelot","uv":[40,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_front_right","from":[-2,0,-5],"size":[2,10,2],"absolute_offset":[-1,14,-5],"texture":"cat/ocelot","uv":[40,0],"texture_mapping":"cuboid_atlas"}
+  ]
+}

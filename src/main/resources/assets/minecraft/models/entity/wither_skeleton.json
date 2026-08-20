@@ -1,0 +1,11 @@
+{
+  "parent":"skeleton.json",
+  "parts":[
+    {"name":"head","texture":"skeleton/wither_skeleton"},
+    {"name":"body","texture":"skeleton/wither_skeleton"},
+    {"name":"left_arm","texture":"skeleton/wither_skeleton"},
+    {"name":"right_arm","texture":"skeleton/wither_skeleton"},
+    {"name":"left_leg","texture":"skeleton/wither_skeleton"},
+    {"name":"right_leg","texture":"skeleton/wither_skeleton"}
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "parts": [
+    {"name":"body","from":[-5,8,-10],"size":[10,10,24],"absolute_offset":[0,11,9],"texture":"horse/horse_brown","uv":[0,17],"texture_mapping":"cuboid_atlas"},
+    {"name":"neck","from":[-2,8,-12],"size":[4,14,8],"absolute_offset":[0,18,-10],"rotation":[30,0,0],"texture":"horse/horse_brown","uv":[0,6],"texture_mapping":"cuboid_atlas"},
+    {"name":"head","from":[-3,19,-19],"size":[6,7,9],"absolute_offset":[0,19,-10],"rotation":[30,0,0],"texture":"horse/horse_brown","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"ear_left","from":[1,27,-12],"size":[2,3,1],"absolute_offset":[0,19,-10],"rotation":[30,0,0],"texture":"horse/horse_brown","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"ear_right","from":[-3,27,-12],"size":[2,3,1],"absolute_offset":[0,19,-10],"rotation":[30,0,0],"texture":"horse/horse_brown","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"mane","from":[-1,8,-7],"size":[2,16,4],"absolute_offset":[0,18,-10],"rotation":[30,0,0],"texture":"horse/horse_brown","uv":[29,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tail_base","from":[-1,10,21],"size":[2,2,3],"absolute_offset":[0,14,23],"rotation":[-65,0,0],"texture":"horse/horse_brown","uv":[22,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"tail","from":[-2,8,23],"size":[3,4,14],"absolute_offset":[0,14,23],"rotation":[-65,0,0],"texture":"horse/horse_brown","uv":[19,3],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_back_left","from":[2,0,8],"size":[4,9,5],"absolute_offset":[4,9,11],"texture":"horse/horse_brown","uv":[39,14],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_back_left_shin","from":[2,0,8],"size":[3,5,3],"absolute_offset":[4,16,11],"texture":"horse/horse_brown","uv":[39,21],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_back_right","from":[-6,0,8],"size":[4,9,5],"absolute_offset":[-4,9,11],"texture":"horse/horse_brown","uv":[48,14],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_front_left","from":[2,0,-10],"size":[3,8,4],"absolute_offset":[4,9,-8],"texture":"horse/horse_brown","uv":[22,14],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_front_right","from":[-5,0,-10],"size":[3,8,4],"absolute_offset":[-4,9,-8],"texture":"horse/horse_brown","uv":[30,14],"texture_mapping":"cuboid_atlas"}
+  ]
+}

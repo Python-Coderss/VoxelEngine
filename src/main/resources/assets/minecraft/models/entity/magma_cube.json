@@ -1,0 +1,13 @@
+{
+  "parts": [
+    {"name":"core","from":[-2,8,-2],"size":[4,4,4],"absolute_offset":[0,10,0],"texture":"slime/magmacube","uv":[0,16],"texture_mapping":"cuboid_atlas"},
+    {"name":"segment_1","from":[-4,0,-4],"size":[8,1,8],"absolute_offset":[0,1,0],"texture":"slime/magmacube","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"segment_2","from":[-4,1,-4],"size":[8,1,8],"absolute_offset":[0,2,0],"texture":"slime/magmacube","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"segment_3","from":[-4,2,-4],"size":[8,1,8],"absolute_offset":[0,3,0],"texture":"slime/magmacube","uv":[24,10],"texture_mapping":"cuboid_atlas"},
+    {"name":"segment_4","from":[-4,3,-4],"size":[8,1,8],"absolute_offset":[0,4,0],"texture":"slime/magmacube","uv":[24,19],"texture_mapping":"cuboid_atlas"},
+    {"name":"segment_5","from":[-4,4,-4],"size":[8,1,8],"absolute_offset":[0,5,0],"texture":"slime/magmacube","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"segment_6","from":[-4,5,-4],"size":[8,1,8],"absolute_offset":[0,6,0],"texture":"slime/magmacube","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"segment_7","from":[-4,6,-4],"size":[8,1,8],"absolute_offset":[0,7,0],"texture":"slime/magmacube","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"segment_8","from":[-4,7,-4],"size":[8,1,8],"absolute_offset":[0,8,0],"texture":"slime/magmacube","uv":[0,0],"texture_mapping":"cuboid_atlas"}
+  ]
+}

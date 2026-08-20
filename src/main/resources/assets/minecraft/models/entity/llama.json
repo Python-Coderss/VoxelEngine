@@ -1,0 +1,13 @@
+{
+  "parts": [
+    {"name":"head","from":[-2,11,-16],"size":[4,4,9],"absolute_offset":[0,23,-6],"texture":"llama/llama","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"muzzle","from":[-4,5,-12],"size":[8,18,6],"absolute_offset":[0,23,-6],"texture":"llama/llama","uv":[0,14],"texture_mapping":"cuboid_atlas"},
+    {"name":"ear_left","from":[-3,8,-10],"size":[3,3,2],"absolute_offset":[0,23,-6],"texture":"llama/llama","uv":[17,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"ear_right","from":[2,8,-10],"size":[3,3,2],"absolute_offset":[0,23,-6],"texture":"llama/llama","uv":[17,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"body","from":[-6,7,-5],"size":[12,18,10],"absolute_offset":[0,23,2],"texture":"llama/llama","uv":[29,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_back_left","from":[-4,0,3],"size":[4,14,4],"absolute_offset":[-3,14,4],"texture":"llama/llama","uv":[29,29],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_back_right","from":[0,0,3],"size":[4,14,4],"absolute_offset":[3,14,4],"texture":"llama/llama","uv":[29,29],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_front_left","from":[-4,0,-7],"size":[4,14,4],"absolute_offset":[-3,14,-6],"texture":"llama/llama","uv":[29,29],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_front_right","from":[0,0,-7],"size":[4,14,4],"absolute_offset":[3,14,-6],"texture":"llama/llama","uv":[29,29],"texture_mapping":"cuboid_atlas"}
+  ]
+}

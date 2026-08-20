@@ -1,0 +1,8 @@
+{
+  "parts": [
+    {"name":"body","from":[-4,0,-4],"size":[8,8,8],"absolute_offset":[0,8,0],"texture":"slime/slime","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"right_eye","from":[-3,4,3.5],"size":[2,2,2],"absolute_offset":[-2,8,3],"texture":"slime/slime","uv":[32,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"left_eye","from":[1,4,3.5],"size":[2,2,2],"absolute_offset":[2,8,3],"texture":"slime/slime","uv":[32,4],"texture_mapping":"cuboid_atlas"},
+    {"name":"mouth","from":[0,1,3.5],"size":[1,1,1],"absolute_offset":[0,8,3],"texture":"slime/slime","uv":[32,8],"texture_mapping":"cuboid_atlas"}
+  ]
+}

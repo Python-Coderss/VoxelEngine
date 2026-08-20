@@ -1,0 +1,11 @@
+{
+  "parent":"zombie.json",
+  "parts":[
+    {"name":"head","texture":"zombie/husk"},
+    {"name":"body","texture":"zombie/husk"},
+    {"name":"left_arm","texture":"zombie/husk"},
+    {"name":"right_arm","texture":"zombie/husk"},
+    {"name":"left_leg","texture":"zombie/husk"},
+    {"name":"right_leg","texture":"zombie/husk"}
+  ]
+}

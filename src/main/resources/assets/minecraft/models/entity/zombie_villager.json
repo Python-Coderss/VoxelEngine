@@ -1,0 +1,12 @@
+{
+  "parts": [
+    {"name":"head","from":[-4,22,-4],"size":[8,10,8],"absolute_offset":[0,24,0],"texture":"zombie/zombie_villager","uv":[0,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"nose","from":[-1,20,4],"size":[2,4,2],"absolute_offset":[0,22,0],"texture":"zombie/zombie_villager","uv":[24,0],"texture_mapping":"cuboid_atlas"},
+    {"name":"body","from":[-4,12,-3],"size":[8,12,6],"absolute_offset":[0,12,0],"texture":"zombie/zombie_villager","uv":[16,20],"texture_mapping":"cuboid_atlas"},
+    {"name":"robe","from":[-4,6,-3],"size":[8,18,6],"absolute_offset":[0,12,0],"texture":"zombie/zombie_villager","uv":[0,38],"texture_mapping":"cuboid_atlas"},
+    {"name":"arm_right","from":[-8,12,-2],"size":[4,12,4],"absolute_offset":[-6,22,0],"texture":"zombie/zombie_villager","uv":[44,38],"texture_mapping":"cuboid_atlas"},
+    {"name":"arm_left","from":[4,12,-2],"size":[4,12,4],"absolute_offset":[6,22,0],"texture":"zombie/zombie_villager","uv":[44,38],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_right","from":[-4,0,-2],"size":[4,12,4],"absolute_offset":[-2,12,0],"texture":"zombie/zombie_villager","uv":[0,22],"texture_mapping":"cuboid_atlas"},
+    {"name":"leg_left","from":[0,0,-2],"size":[4,12,4],"absolute_offset":[2,12,0],"texture":"zombie/zombie_villager","uv":[0,22],"texture_mapping":"cuboid_atlas"}
+  ]
+}
