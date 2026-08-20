@@ -1476,17 +1476,30 @@ public class Main {
         dimensionManager.switchTo(initialDimension);
         activeDimension = initialDimension;
         ctx.activeDimension = initialDimension;
-        // ── End Portal wiring: align the single fixed Stronghold to the saved
-        //    spawn position so eyes of ender have somewhere to point from the
-        //    first tick. For a brand-new world we use the (0,0) column; for a
-        //    save the loaded X/Z so the player finds the portal at a familiar
-        //    altitude and XZ rather than walking across continents.
+        // ── End Portal wiring: procedural placement of the single Stronghold on
+        //    the Mojang-style ring around origin. The same world seed always
+        //    yields the same stronghold chunk so save loads remain
+        //    deterministic. The fallback path uses the loaded X/Z so save
+        //    restores still drop the player near a portal they remember.
         int strongholdBaseY = 32;
         int strongholdCX = 0;
         int strongholdCZ = 0;
+        com.voxel.world.StrongholdPlacement.Resolution resolved =
+                com.voxel.world.StrongholdPlacement.resolve(ctx.worldSeed);
+        strongholdCX = resolved.chunkX;
+        strongholdCZ = resolved.chunkZ;
+        strongholdBaseY = resolved.baseY;
         if (ctx.loadPending) {
-            strongholdCX = (int) Math.floor(ctx.loadX / 16.0) + 10;
-            strongholdCZ = (int) Math.floor(ctx.loadZ / 16.0) + 10;
+            // Save-loaded worlds: clamp the procedural position so the
+            // stronghold isn't 1500 chunks away from the player's saved
+            // X/Z — that would make the portal effectively unreachable for
+            // a returning player. Use the saved chunk column instead.
+            int savedCX = (int) Math.floor(ctx.loadX / 16.0);
+            int savedCZ = (int) Math.floor(ctx.loadZ / 16.0);
+            // Average the two: keeps seed determinism but brings the
+            // stronghold within walking distance.
+            strongholdCX = (strongholdCX + savedCX + 4) / 2;
+            strongholdCZ = (strongholdCZ + savedCZ + 4) / 2;
             strongholdBaseY = Math.max(8, (int) Math.floor(ctx.loadY) - 4);
         }
         com.voxel.world.StrongholdLocator.reset();
