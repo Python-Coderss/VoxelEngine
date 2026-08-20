@@ -223,6 +223,8 @@ public class Entity {
                         String mapping = p.getString("texture_mapping");
                         if ("cuboid_atlas".equals(mapping)) {
                             part.textureMapping = ModelPart.TEXTURE_MAPPING_CUBOID_ATLAS;
+                        } else if ("cuboid_atlas_virtual_128".equals(mapping)) {
+                            part.textureMapping = ModelPart.TEXTURE_MAPPING_VIRTUAL_CUBOID_ATLAS;
                         } else {
                             part.textureMapping = ModelPart.TEXTURE_MAPPING_PLANAR;
                         }

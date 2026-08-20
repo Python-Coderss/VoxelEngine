@@ -1147,6 +1147,27 @@ public class Main {
                 mob = new VillagerEntity(nextSpawnCommandId++, pos, textureManager);
                 ((VillagerEntity) mob).setWorld(world);
                 break;
+            case "iron_golem":
+            case "irongolem":
+            case "golem":
+                mob = new com.voxel.entity.IronGolemEntity(nextSpawnCommandId++, pos, textureManager);
+                ((com.voxel.entity.UtilityMobEntity) mob).setWorld(world);
+                break;
+            case "snow_golem":
+            case "snowgolem":
+            case "snowman":
+            case "snow_golem_unsheared":
+            case "snowman_unsheared":
+                mob = new com.voxel.entity.SnowGolemEntity(nextSpawnCommandId++, pos, textureManager, true);
+                ((com.voxel.entity.UtilityMobEntity) mob).setWorld(world);
+                break;
+            case "snow_golem_sheared":
+            case "snowman_sheared":
+            case "snow_golem_no_pumpkin":
+            case "snowman_no_pumpkin":
+                mob = new com.voxel.entity.SnowGolemEntity(nextSpawnCommandId++, pos, textureManager, false);
+                ((com.voxel.entity.UtilityMobEntity) mob).setWorld(world);
+                break;
             case "pig":
                 mob = new com.voxel.entity.PigEntity(nextSpawnCommandId++, pos, textureManager, player);
                 ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
@@ -1171,7 +1192,7 @@ public class Main {
                 ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
                 break;
             default:
-                setStatus("Unknown mob: " + type + ". Try: zombie, skeleton, spider, creeper, villager, blaze, pigman, pig, cow, chicken, sheep, sheep_sheared.");
+                setStatus("Unknown mob: " + type + ". Try: zombie, skeleton, spider, creeper, villager, iron_golem, snow_golem, snow_golem_sheared, blaze, pigman, pig, cow, chicken, sheep, sheep_sheared.");
                 return;
         }
 
@@ -3958,6 +3979,16 @@ public class Main {
             "src/main/resources/assets/aether/textures/block/miscellaneous"
         );
         textureManager.loadEntityTextures("src/main/resources/assets/minecraft/textures/entity");
+        // Snow Golem pumpkin layer uses the existing block textures on the entity array.
+        textureManager.loadItemAsEntityTexture(
+            "src/main/resources/assets/minecraft/textures/blocks/pumpkin_face_off.png",
+            "pumpkin_face_off_entity");
+        textureManager.loadItemAsEntityTexture(
+            "src/main/resources/assets/minecraft/textures/blocks/pumpkin_side.png",
+            "pumpkin_side_entity");
+        textureManager.loadItemAsEntityTexture(
+            "src/main/resources/assets/minecraft/textures/blocks/pumpkin_top.png",
+            "pumpkin_top_entity");
         textureManager.loadDestroyStages("src/main/resources/assets/minecraft/textures/blocks");
         
         biomeManager = new com.voxel.utils.BiomeManager();
