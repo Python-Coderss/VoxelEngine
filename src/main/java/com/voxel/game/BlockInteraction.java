@@ -161,6 +161,41 @@ public class BlockInteraction {
             resetMining();
             return;
         }
+        // ── Melee attack: if the player is looking at an entity within reach,
+        // apply a per-tick damage tick instead of mining a block. This is the
+        // missing piece that lets bosses like the Ender Dragon / Wither /
+        // Magma Cube actually take damage from a player swing.
+        if (ctx.leftMousePressedThisFrame && ctx.entityManager != null) {
+            int[] entityHit = raycastEntity(5.5f);
+            if (entityHit != null) {
+                com.voxel.entity.Entity target = ctx.entityManager.getEntity(entityHit[0]);
+                if (target != null) {
+                    boolean damaged = false;
+                    // Generic EnemyEntity path: drain health + apply knockback.
+                    if (target instanceof com.voxel.entity.EnemyEntity) {
+                        com.voxel.entity.EnemyEntity enemy =
+                                (com.voxel.entity.EnemyEntity) target;
+                        enemy.takeDamage(1.0f, new Vector3f(0.05f, 0.10f, 0.05f));
+                        damaged = true;
+                    }
+                    // Boss-specific onPunch hooks.
+                    if (target instanceof com.voxel.entity.EnderDragonEntity) {
+                        ((com.voxel.entity.EnderDragonEntity) target).onPunch();
+                        damaged = true;
+                    } else if (target instanceof com.voxel.entity.WitherEntity) {
+                        ((com.voxel.entity.WitherEntity) target).onPunch();
+                        damaged = true;
+                    } else if (target instanceof com.voxel.entity.MagmaCubeEntity) {
+                        ((com.voxel.entity.MagmaCubeEntity) target).onPunch();
+                        damaged = true;
+                    }
+                    if (damaged) {
+                        ctx.leftMousePressedThisFrame = false;
+                        return;
+                    }
+                }
+            }
+        }
         int[] hit = raycastBlock(6.0f);
         if (hit == null) { resetMining(); return; }
 
