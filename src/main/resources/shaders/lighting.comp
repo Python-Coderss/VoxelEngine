@@ -21,11 +21,12 @@ uniform sampler2D u_GBufferMaterial;   // r=blockLight, g=emissive, b=transmitta
 uniform vec3 u_SunDir;
 uniform vec3 u_SunColor;
 uniform vec3 u_MoonDir;
-uniform vec3 u_MoonColor;
-uniform vec3 u_SkyZenith;
-uniform vec3 u_SkyHorizon;
-uniform vec3 u_Ambient;
-uniform int u_DimensionID;
+uniform vec3 u_MoonColor;uniform vec3 u_SkyZenith;
+    uniform vec3 u_SkyHorizon;
+    uniform vec3 u_Ambient;
+    uniform int u_DimensionID;
+    uniform vec3 u_FogColor;
+    uniform vec3 u_SkyTint;
 
 // Shadow/reflection ray tracing data
 layout(std430, binding = 1) buffer readonly restrict IndirectionTable { uint chunkSlots[]; };
@@ -242,8 +243,15 @@ void main() {
     // Fog: exponential distance fog with neutral color
     float dist = length(worldPos - u_CameraPos);
     float fog = 1.0 - exp(-dist * 0.002);
-    vec3 fogColor = vec3(0.6, 0.7, 0.9); // light blue-grey, not sky-dependent
+    // Per-dimension atmosphere. The CPU passes u_FogColor / u_SkyTint based on
+    // activeDimension: Overworld reads its biome, Nether gets a deep-red haze,
+    // End gets a near-black void with a faint magenta horizon. Hardcoded
+    // fallbacks here only kick in for the very first frame before the CPU
+    // has uploaded a per-dim value.
+    vec3 fogColor = u_FogColor;
     litColor = mix(litColor, fogColor, fog);
+    // Sky-tint darkens distant surfaces; the End is intentionally depressing.
+    litColor *= mix(vec3(1.0), u_SkyTint, fog);
     
     vec3 result = ACESFilm(litColor);
     imageStore(imgOutput, px, vec4(linearToSrgb(result), 1.0));
