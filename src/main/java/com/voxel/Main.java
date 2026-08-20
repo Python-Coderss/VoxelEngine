@@ -2362,6 +2362,7 @@ public class Main {
                                 new Vector3f(100.0f, 120.0f, 0.0f),
                                 textureManager,
                                 entityManager);
+                dragon.setWorld(world);
                 dragon.dimension = com.voxel.world.DimensionType.END;
                 entityManager.addEntity(dragon);
                 ctx.enderDragonEntityId = dragon.id;
