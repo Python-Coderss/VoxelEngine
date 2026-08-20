@@ -194,6 +194,24 @@ public class World {
     }
 
     /**
+     * Returns the 7-bit flag field stored in bits 24..30 of the chunk pool
+     * entry, or 0 for unloaded chunks. Used by per-block metadata features
+     * such as the End Portal Frame's eye-insertion mask.
+     */
+    public int getVoxelFlags(int x, int y, int z) {
+        return (getRawVoxel(x, y, z) >> 24) & 0x7F;
+    }
+
+    /**
+     * Returns the 8-bit extra byte stored in bits 16..23 of the chunk pool
+     * entry, or 0 for unloaded chunks. Used by redstone, rail-shape, and
+     * any other feature that needs a sub-id channel.
+     */
+    public int getVoxelExtra(int x, int y, int z) {
+        return (getRawVoxel(x, y, z) >> 16) & 0xFF;
+    }
+
+    /**
      * Checks if the chunk at the given absolute position is currently loaded/allocated.
      */
     public boolean isLoaded(Vector3i pos) {

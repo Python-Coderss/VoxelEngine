@@ -92,6 +92,20 @@ public class GameContext {
     public volatile float loadYaw, loadPitch, loadHealth;
     public volatile float loadWorldTime = 720f;
     public volatile com.voxel.world.DimensionType loadDimension = com.voxel.world.DimensionType.OVERWORLD;
+
+    // ── End Portal ─────────────────────────────────────────────────────────
+    /** Frames portal-teleport retries so a player doesn't bounce back and forth
+     *  when both feet and waist voxels report an active end_portal block. */
+    public volatile int endPortalCooldownTicks = 0;
+    /** Once the Ender Dragon has spawned in the End, this stays true so a
+     *  player teleporting back-and-forth doesn't re-summon the boss. */
+    public volatile boolean enderDragonSpawned = false;
+    /** Tracks the active Ender Dragon entity id, when one has been spawned,
+     *  so subsequent ticks can poll for "is it dead" → drop egg. */
+    public volatile int enderDragonEntityId = -1;
+    /** Saved Overworld position the player came from; used as the return
+     *  target when the player steps into the End gateway. */
+    public volatile double endReturnX, endReturnZ, endReturnY;
     /** Restored inventory: slot -> item stack (may be null entries). */
     public volatile ItemDefinitions.ItemStack[] loadInventory;
 

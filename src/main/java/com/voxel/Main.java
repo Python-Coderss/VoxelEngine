@@ -1468,6 +1468,25 @@ public class Main {
         dimensionManager.switchTo(initialDimension);
         activeDimension = initialDimension;
         ctx.activeDimension = initialDimension;
+        // ── End Portal wiring: align the single fixed Stronghold to the saved
+        //    spawn position so eyes of ender have somewhere to point from the
+        //    first tick. For a brand-new world we use the (0,0) column; for a
+        //    save the loaded X/Z so the player finds the portal at a familiar
+        //    altitude and XZ rather than walking across continents.
+        int strongholdBaseY = 32;
+        int strongholdCX = 0;
+        int strongholdCZ = 0;
+        if (ctx.loadPending) {
+            strongholdCX = (int) Math.floor(ctx.loadX / 16.0) + 10;
+            strongholdCZ = (int) Math.floor(ctx.loadZ / 16.0) + 10;
+            strongholdBaseY = Math.max(8, (int) Math.floor(ctx.loadY) - 4);
+        }
+        com.voxel.world.StrongholdLocator.reset();
+        com.voxel.world.StrongholdLocator.setStrongholdChunk(strongholdCX, strongholdCZ, strongholdBaseY);
+        com.voxel.world.StrongholdLocator.seedFallback(
+                strongholdCX * 16 + 16,
+                strongholdCZ * 16 + 16);
+
         // Push the configured X/Z int bits into the Beta terrain precision tuning
         com.voxel.world.WorldGenerator activeGen = dimensionManager.getActiveGenerator();
         if (activeGen instanceof com.voxel.world.BetaWorldGenerator) {
@@ -2284,6 +2303,84 @@ public class Main {
             player.update(dt, world, blockDataManager);
             // Hard world border clamp (keeps player within Far Lands boundary)
             ctx.borderManager.clamp(player);
+
+            // ── End Portal & End Gateway teleport detection ──
+            // Player must walk into a real end_portal block (Overworld) or an
+            // end_gateway block (End) to trigger the dimension switch.
+            // Gate the check behind non-spawn/non-teleport loading so the
+            // load-on-entry path doesn't fire a phantom transition.
+            if (ctx.dimensionManager != null && !ctx.spawnLoading && !ctx.teleportLoading) {
+                if (ctx.endPortalCooldownTicks > 0) ctx.endPortalCooldownTicks--;
+                int feetY = com.voxel.utils.FixedPoint.blockX(player.getFixedY());
+                int feetX = com.voxel.utils.FixedPoint.blockX(player.getFixedX());
+                int feetZ = com.voxel.utils.FixedPoint.blockX(player.getFixedZ());
+                int feetBlock = world.getVoxel(feetX, feetY, feetZ);
+                if (feetBlock != 0) {
+                    String feetName = blockDataManager.getName(feetBlock);
+                    if (feetName != null) {
+                        if (feetName.contains("end_gateway")
+                                && ctx.activeDimension == com.voxel.world.DimensionType.END) {
+                            com.voxel.world.EndPortalLogic.teleportBackToOverworld(
+                                    player, ctx, ctx.dimensionManager);
+                            setStatus("Returned to the Overworld");
+                            needsWorldUpload = true;
+                        } else if (feetName.contains("end_portal")
+                                && !feetName.contains("frame")
+                                && ctx.activeDimension != com.voxel.world.DimensionType.END) {
+                            boolean teleported =
+                                com.voxel.world.EndPortalLogic.tickPortalEntryCheck(
+                                    player, world, blockDataManager, ctx, ctx.dimensionManager);
+                            if (teleported) {
+                                // Refresh world + chunkManager refs after the
+                                // dimension switch so render/UI see the End.
+                                activeDimension = ctx.activeDimension;
+                                world = dimensionManager.getActiveWorld();
+                                chunkManager = dimensionManager.getActiveChunkManager();
+                                ctx.world = world;
+                                ctx.chunkManager = chunkManager;
+                                player.setDimension(activeDimension);
+                                if (playerEntity != null) playerEntity.dimension = activeDimension;
+                                setStatus("Welcome to The End");
+                                needsWorldUpload = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Ender Dragon spawn-on-End-enter ──
+            // The first time the player lands in the End, raise the boss above
+            // the obsidian pillar. After that, poll the entity each tick to
+            // drop the dragon_egg when it expires.
+            if (activeDimension == com.voxel.world.DimensionType.END
+                    && !ctx.enderDragonSpawned
+                    && entityManager != null && textureManager != null) {
+                ctx.enderDragonSpawned = true;
+                com.voxel.entity.EnderDragonEntity dragon =
+                        new com.voxel.entity.EnderDragonEntity(
+                                80_000 + entityManager.getEntityCount(),
+                                new Vector3f(100.0f, 120.0f, 0.0f),
+                                textureManager,
+                                entityManager);
+                dragon.dimension = com.voxel.world.DimensionType.END;
+                entityManager.addEntity(dragon);
+                ctx.enderDragonEntityId = dragon.id;
+                setStatus("The Ender Dragon rises...");
+            }
+            if (ctx.enderDragonEntityId >= 0 && entityManager != null) {
+                com.voxel.entity.Entity dragonEnt =
+                        entityManager.getEntity(ctx.enderDragonEntityId);
+                if (dragonEnt instanceof com.voxel.entity.EnderDragonEntity) {
+                    com.voxel.entity.EnderDragonEntity dragon =
+                            (com.voxel.entity.EnderDragonEntity) dragonEnt;
+                    if (dragon.isDead() && !dragon.markedDropped()) {
+                        dragon.dropLoot(world, blockDataManager);
+                        dragon.markDropped();
+                        setStatus("The Ender Dragon has been slain");
+                        needsWorldUpload = true;
+                    }
+                }
+            }
 
             // Parachute landing: consume durability when player touches ground
             if (player.isOnGround() && player.getParachuteItemId() != null) {
