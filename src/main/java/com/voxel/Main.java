@@ -1147,8 +1147,24 @@ public class Main {
                 mob = new VillagerEntity(nextSpawnCommandId++, pos, textureManager);
                 ((VillagerEntity) mob).setWorld(world);
                 break;
+            case "pig":
+                mob = new com.voxel.entity.PigEntity(nextSpawnCommandId++, pos, textureManager, player);
+                ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
+                break;
+            case "cow":
+                mob = new com.voxel.entity.CowEntity(nextSpawnCommandId++, pos, textureManager, player);
+                ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
+                break;
+            case "chicken":
+                mob = new com.voxel.entity.ChickenEntity(nextSpawnCommandId++, pos, textureManager, player);
+                ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
+                break;
+            case "sheep":
+                mob = new com.voxel.entity.SheepEntity(nextSpawnCommandId++, pos, textureManager, player);
+                ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
+                break;
             default:
-                setStatus("Unknown mob: " + type + ". Try: zombie, skeleton, spider, creeper, villager, blaze, pigman.");
+                setStatus("Unknown mob: " + type + ". Try: zombie, skeleton, spider, creeper, villager, blaze, pigman, pig, cow, chicken, sheep.");
                 return;
         }
 
@@ -1212,14 +1228,19 @@ public class Main {
     /**
      * Places a themed mob roster in a showcase zone the first time the player
      * enters it. The tutorial world is handcrafted and block-explosions would
-     * wreck it, so only zombies, skeletons and spiders are used — no creepers.
+     * wreck it, so the roster uses peaceful farm animals plus zombies,
+     * skeletons and spiders — no creepers.
      */
     private void spawnTutorialZoneMobs(int zoneIdx) {
         if (zoneIdx < 0 || !tutorialMobZonesSpawned.add(zoneIdx)) return;
         int cx = com.voxel.world.TutorialWorldAuthor.zones()[zoneIdx].cx;
         int cz = com.voxel.world.TutorialWorldAuthor.zones()[zoneIdx].cz;
         switch (zoneIdx) {
-            case 4: // Biome Garden — spiders prowl the treeline
+            case 4: // Biome Garden — farm animals graze while spiders prowl the treeline
+                spawnTutorialPig(cx - 8, cz + 2);
+                spawnTutorialCow(cx + 8, cz - 2);
+                spawnTutorialChicken(cx - 2, cz + 8);
+                spawnTutorialSheep(cx + 4, cz + 6);
                 spawnTutorialSpider(cx - 12, cz + 4);
                 spawnTutorialSpider(cx + 10, cz - 3);
                 spawnTutorialSpider(cx - 4, cz + 6);
@@ -1282,6 +1303,38 @@ public class Main {
         zombie.dimension = activeDimension;
         zombie.setWorld(world);
         entityManager.addEntity(zombie);
+    }
+
+    private void spawnTutorialPig(float x, float z) {
+        com.voxel.entity.PigEntity pig = new com.voxel.entity.PigEntity(
+            nextTutorialMobId++, new Vector3f(x + 0.5f, surfaceYAt(x, z), z + 0.5f), textureManager, player);
+        pig.dimension = activeDimension;
+        pig.setWorld(world);
+        entityManager.addEntity(pig);
+    }
+
+    private void spawnTutorialCow(float x, float z) {
+        com.voxel.entity.CowEntity cow = new com.voxel.entity.CowEntity(
+            nextTutorialMobId++, new Vector3f(x + 0.5f, surfaceYAt(x, z), z + 0.5f), textureManager, player);
+        cow.dimension = activeDimension;
+        cow.setWorld(world);
+        entityManager.addEntity(cow);
+    }
+
+    private void spawnTutorialChicken(float x, float z) {
+        com.voxel.entity.ChickenEntity chicken = new com.voxel.entity.ChickenEntity(
+            nextTutorialMobId++, new Vector3f(x + 0.5f, surfaceYAt(x, z), z + 0.5f), textureManager, player);
+        chicken.dimension = activeDimension;
+        chicken.setWorld(world);
+        entityManager.addEntity(chicken);
+    }
+
+    private void spawnTutorialSheep(float x, float z) {
+        com.voxel.entity.SheepEntity sheep = new com.voxel.entity.SheepEntity(
+            nextTutorialMobId++, new Vector3f(x + 0.5f, surfaceYAt(x, z), z + 0.5f), textureManager, player);
+        sheep.dimension = activeDimension;
+        sheep.setWorld(world);
+        entityManager.addEntity(sheep);
     }
 
     /**
