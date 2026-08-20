@@ -214,6 +214,11 @@ public class Entity {
                         part.rotation.set((float)rot.getDouble(0), (float)rot.getDouble(1), (float)rot.getDouble(2));
                     }
 
+                    if (p.has("uv_size")) {
+                        JSONArray uvSize = p.getJSONArray("uv_size");
+                        part.uvSize.set((float)uvSize.getDouble(0), (float)uvSize.getDouble(1), (float)uvSize.getDouble(2));
+                    }
+
                     if (p.has("texture_mapping")) {
                         String mapping = p.getString("texture_mapping");
                         if ("cuboid_atlas".equals(mapping)) {

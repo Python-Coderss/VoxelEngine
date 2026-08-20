@@ -26,8 +26,9 @@ public class EntityManager {
     
     // Entity data size: position(3) + health(1) + rotation(3) + maxHealth(1) + partCount(1) + partOffset(1) + hitFlash(1) + tintColorRGB(3) + tintAmount(1) = 16 floats (64 bytes)
     private static final int ENTITY_STRIDE = 16;
-    // Part data size: offset(3) + uvU(1) + absOffset(3) + uvV(1) + size(3) + texIdx(1) + rotation(3) + mapping(1) = 16 floats (64 bytes)
-    private static final int PART_STRIDE = 16;
+    // Part data size: offset(3) + uvU(1) + absOffset(3) + uvV(1) + size(3) + texIdx(1)
+    // + rotation(3) + uvSize(3) + mapping(1) = 20 floats (80 bytes)
+    private static final int PART_STRIDE = 20;
 
     private static final int CULL_BLOCKS = 64;  // entities beyond this distance from camera are skipped
     private static final long CULL_FP = (long) CULL_BLOCKS * FixedPoint.SCALE;  // per-axis threshold in fixed-point
@@ -270,6 +271,8 @@ public class EntityManager {
                 partBuffer.putFloat((float)Math.toRadians(part.rotation.x));
                 partBuffer.putFloat((float)Math.toRadians(part.rotation.y));
                 partBuffer.putFloat((float)Math.toRadians(part.rotation.z));
+                partBuffer.putFloat(0.0f); // std430 padding before the next vec3
+                partBuffer.putFloat(part.uvSize.x).putFloat(part.uvSize.y).putFloat(part.uvSize.z);
                 partBuffer.putFloat((float) part.textureMapping);
             }
             partBuffer.flip();

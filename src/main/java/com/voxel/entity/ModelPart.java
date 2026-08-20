@@ -13,7 +13,9 @@ public class ModelPart {
     public String name;
     public Vector3f offset; // Relative to 0,0,0 in 32x32x32 space
     public Vector3f absoluteOffset; // Relative to the entity xyz
-    public Vector3f size;   // Dimensions in 32x32x32 space
+    public Vector3f size;   // Rendered dimensions in 32x32x32 space
+    /** Original cuboid dimensions used by Minecraft's atlas UV layout. */
+    public Vector3f uvSize;
     public Vector3f rotation; // Euler angles
     public int textureIndex;
     public int textureMapping;
@@ -24,6 +26,7 @@ public class ModelPart {
         this.offset = new Vector3f(offset);
         this.absoluteOffset = new Vector3f(0, 0, 0);
         this.size = new Vector3f(size);
+        this.uvSize = new Vector3f(size);
         this.rotation = new Vector3f(0, 0, 0);
         this.textureIndex = textureIndex;
         this.textureMapping = TEXTURE_MAPPING_PLANAR;
