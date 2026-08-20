@@ -59,4 +59,29 @@ public class ExperienceOrbEntityTest {
         assertEquals("level after 7 XP", 1, player.getExperienceLevel());
         assertEquals("carry-over", 0, player.getExperiencePoints());
     }
+
+    @Test
+    public void levelUpListenerFiresOnBoundary() {
+        Player player = new Player(0, 64, 0);
+        final int[] levelUps = { 0 };
+        final int[] levels = { 0 };
+        player.setLevelUpListener(new Player.LevelUpListener() {
+            @Override
+            public void onLevelUp(int newLevel) {
+                levelUps[0]++;
+                levels[0] = newLevel;
+            }
+        });
+        // 7 XP hits the level-1 boundary.
+        player.addExperience(7);
+        assertEquals("one level-up emitted", 1, levelUps[0]);
+        assertEquals("level 1 reached", 1, levels[0]);
+        // A second 7 XP — at level 1 the threshold is 9, so 7 isn't enough.
+        player.addExperience(7);
+        assertEquals("still one level-up after partial", 1, levelUps[0]);
+        // 9 XP pushes us over the level-2 threshold.
+        player.addExperience(9);
+        assertEquals("two level-ups emitted", 2, levelUps[0]);
+        assertEquals("level 2 reached", 2, levels[0]);
+    }
 }

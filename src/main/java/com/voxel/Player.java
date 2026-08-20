@@ -110,7 +110,20 @@ public class Player {
         while (experiencePoints >= xpForNextLevel()) {
             experiencePoints -= xpForNextLevel();
             experienceLevel++;
+            if (levelUpListener != null) levelUpListener.onLevelUp(experienceLevel);
         }
+    }
+
+    /** Listener hook so the engine can fire "Level up!" UI when the
+     *  player crosses a level boundary. Wired by Main.tick. */
+    public interface LevelUpListener {
+        void onLevelUp(int newLevel);
+    }
+
+    private LevelUpListener levelUpListener;
+
+    public void setLevelUpListener(LevelUpListener listener) {
+        this.levelUpListener = listener;
     }
     private float maxHealth = 20.0f;
     private boolean isDead = false;
