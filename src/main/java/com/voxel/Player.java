@@ -84,6 +84,34 @@ public class Player {
 
     // Health / death / spawn
     private float health = 20.0f;
+    private int experienceLevel = 0;
+    private int experiencePoints = 0;
+    /** Cumulative XP across the whole save; level is derived from this. */
+    private int totalExperience = 0;
+
+    public int getExperienceLevel() { return experienceLevel; }
+    public int getExperiencePoints() { return experiencePoints; }
+    public int getTotalExperience() { return totalExperience; }
+
+    /** XP threshold to reach the next level. Mirrors the Minecraft curve
+     *  level² + 6 · level, capped so very small XP gains don't insta-level
+     *  in the first few levels. */
+    public int xpForNextLevel() {
+        int lvl = experienceLevel;
+        if (lvl >= 30) return 9 * lvl - 158;
+        if (lvl >= 16) return 5 * lvl - 38;
+        return 2 * lvl + 7;
+    }
+
+    public void addExperience(int amount) {
+        if (amount <= 0) return;
+        experiencePoints += amount;
+        totalExperience += amount;
+        while (experiencePoints >= xpForNextLevel()) {
+            experiencePoints -= xpForNextLevel();
+            experienceLevel++;
+        }
+    }
     private float maxHealth = 20.0f;
     private boolean isDead = false;
     private float fallDistance = 0.0f;

@@ -2462,6 +2462,58 @@ public class Main {
                 player.setBeaconBuffs(jumpBuff, speedBuff, regenBuff);
             }
 
+            // ── XP orbs: dead mobs that haven't already dropped XP get an
+            // ExperienceOrbEntity emission at their position. We rely on a
+            // "markedDropped" flag to avoid double-emission per frame.
+            if (entityManager != null) {
+                java.util.List<com.voxel.entity.Entity> liveEntities = entityManager.getEntitiesSnapshot();
+                for (com.voxel.entity.Entity e : liveEntities) {
+                    int xpValue = 0;
+                    boolean alreadyDropped = false;
+                    if (e instanceof com.voxel.entity.EnemyEntity) {
+                        com.voxel.entity.EnemyEntity ee = (com.voxel.entity.EnemyEntity) e;
+                        if (ee.isDead() && !ee.markedXpDropped()) {
+                            xpValue = ee.xpDropValue();
+                            ee.markXpDropped();
+                        } else if (ee.markedXpDropped()) {
+                            alreadyDropped = true;
+                        }
+                    } else if (e instanceof com.voxel.entity.EnderDragonEntity) {
+                        com.voxel.entity.EnderDragonEntity dr =
+                                (com.voxel.entity.EnderDragonEntity) e;
+                        if (dr.isDead() && !dr.markedXpDropped()) {
+                            xpValue = 12000; // Mojang's XP for the dragon
+                            dr.markXpDropped();
+                        }
+                    } else if (e instanceof com.voxel.entity.WitherEntity) {
+                        com.voxel.entity.WitherEntity w =
+                                (com.voxel.entity.WitherEntity) e;
+                        if (w.isDead() && !w.markedXpDropped()) {
+                            xpValue = 50; // Mojang's XP for the Wither
+                            w.markXpDropped();
+                        }
+                    } else if (e instanceof com.voxel.entity.MagmaCubeEntity) {
+                        com.voxel.entity.MagmaCubeEntity mc =
+                                (com.voxel.entity.MagmaCubeEntity) e;
+                        if (mc.isDead() && !mc.markedXpDropped()) {
+                            xpValue = mc.xpDropValue();
+                            mc.markXpDropped();
+                        }
+                    }
+                    if (xpValue > 0) {
+                        com.voxel.entity.ExperienceOrbEntity orb =
+                                new com.voxel.entity.ExperienceOrbEntity(
+                                        95_000 + entityManager.getEntityCount(),
+                                        new Vector3f(e.getPosition().x,
+                                                e.getPosition().y + 0.5f,
+                                                e.getPosition().z),
+                                        xpValue, textureManager);
+                        orb.setNearestPlayer(player);
+                        entityManager.addEntity(orb);
+                    }
+                }
+            }
+
             // ── Wither death → drop nether star ──
             // Wither entities are tracked by type: scan the entity list each
             // tick for a dead Wither, drop a Nether Star, and forget about it.

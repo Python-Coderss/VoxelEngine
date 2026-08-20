@@ -54,6 +54,9 @@ public class WitherEntity extends Entity {
 
     private boolean dropped = false;
     public boolean markedDropped() { return dropped; }
+    public boolean markedXpDropped() { return dropped; }
+    public void markXpDropped() { dropped = true; }
+    public int xpDropValue() { return 50; }
     public void markDropped() { dropped = true; }
 
     /**

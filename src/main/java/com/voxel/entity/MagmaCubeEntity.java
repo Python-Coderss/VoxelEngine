@@ -83,5 +83,19 @@ public class MagmaCubeEntity extends EnemyEntity {
     public Vector3f getLastJumpVelocity() { return lastJumpVelocity; }
 
     private boolean dead = false;
+    private boolean xpDropped = false;
     public boolean isDead() { return dead; }
+    public boolean markedXpDropped() { return xpDropped; }
+    public void markXpDropped() { xpDropped = true; }
+
+    /** Mojang: size 1 → 3 XP, size 4 → 17 XP. Linear scale. */
+    public int xpDropValue() {
+        switch (size) {
+            case 1: return 3;
+            case 2: return 7;
+            case 3: return 11;
+            case 4: return 17;
+            default: return 5;
+        }
+    }
 }
