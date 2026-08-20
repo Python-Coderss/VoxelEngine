@@ -1164,7 +1164,9 @@ public class Main {
                 break;
             case "magma_cube":
             case "magmacube":
-                mob = genericMob(pos, "magma_cube.json");
+                mob = new com.voxel.entity.MagmaCubeEntity(
+                        nextSpawnCommandId++, pos, textureManager, player, 4);
+                ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
                 break;
             case "squid":
                 mob = genericMob(pos, "squid.json");
