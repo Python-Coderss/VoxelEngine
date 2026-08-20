@@ -171,11 +171,25 @@ public class BlockInteraction {
                 com.voxel.entity.Entity target = ctx.entityManager.getEntity(entityHit[0]);
                 if (target != null) {
                     boolean damaged = false;
+                    // Tool damage multipliers. Mojang's bare-hand swing deals 1
+                    // HP; swords multiply by 4, axes by 2. We detect by item-id
+                    // substring so any sword/axe auto-registered via
+                    // MinecraftContentLoader gets the right multiplier
+                    // without an explicit registration table.
+                    float damageMult = 1.0f;
+                    ItemDefinitions.ItemStack held = ctx.playerInventory.getSelected();
+                    if (held != null) {
+                        String id = held.itemId;
+                        if (id.contains("sword")) damageMult = 4.0f;
+                        else if (id.contains("axe")) damageMult = 2.0f;
+                    }
+                    float swingDamage = 1.0f * damageMult;
                     // Generic EnemyEntity path: drain health + apply knockback.
                     if (target instanceof com.voxel.entity.EnemyEntity) {
                         com.voxel.entity.EnemyEntity enemy =
                                 (com.voxel.entity.EnemyEntity) target;
-                        enemy.takeDamage(1.0f, new Vector3f(0.05f, 0.10f, 0.05f));
+                        enemy.takeDamage(swingDamage,
+                                new Vector3f(0.05f * damageMult, 0.10f, 0.05f * damageMult));
                         damaged = true;
                     }
                     // Boss-specific onPunch hooks.
