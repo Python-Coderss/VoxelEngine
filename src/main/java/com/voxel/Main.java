@@ -1182,7 +1182,9 @@ public class Main {
                 mob = genericMob(pos, "illager.json");
                 break;
             case "wither":
-                mob = genericMob(pos, "wither.json");
+                mob = new com.voxel.entity.WitherEntity(
+                        nextSpawnCommandId++, pos, textureManager, entityManager);
+                ((com.voxel.entity.WitherEntity) mob).world = world;
                 break;
             case "wolf":
                 mob = genericMob(pos, "wolf.json");
@@ -2403,6 +2405,24 @@ public class Main {
                         dragon.markDropped();
                         setStatus("The Ender Dragon has been slain");
                         needsWorldUpload = true;
+                    }
+                }
+            }
+
+            // ── Wither death → drop nether star ──
+            // Wither entities are tracked by type: scan the entity list each
+            // tick for a dead Wither, drop a Nether Star, and forget about it.
+            if (entityManager != null) {
+                java.util.List<com.voxel.entity.Entity> liveEntities = entityManager.getEntitiesSnapshot();
+                for (com.voxel.entity.Entity e : liveEntities) {
+                    if (e instanceof com.voxel.entity.WitherEntity) {
+                        com.voxel.entity.WitherEntity w = (com.voxel.entity.WitherEntity) e;
+                        if (w.isDead() && !w.markedDropped()) {
+                            w.dropLoot(ctx.droppedItemManager);
+                            w.markDropped();
+                            setStatus("The Wither has been slain");
+                            needsWorldUpload = true;
+                        }
                     }
                 }
             }
