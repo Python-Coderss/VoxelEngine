@@ -316,6 +316,13 @@ public class EntityManager {
         return entities.get(index);
     }
 
+    /** Defensive snapshot for callers that need to iterate without risking
+     *  ConcurrentModificationException when other code mutates the entity
+     *  list (e.g. when a tick adds a dropped item while we scan). */
+    public java.util.List<Entity> getEntitiesSnapshot() {
+        return new java.util.ArrayList<>(entities);
+    }
+
     /** Remove dead enemies and expired fireballs from the entity list. */
     public void pruneExpired() {
         entities.removeIf(e -> {
