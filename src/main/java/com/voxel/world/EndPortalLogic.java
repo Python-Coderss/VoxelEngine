@@ -70,7 +70,7 @@ public final class EndPortalLogic {
             if ((flags & FILLED_MASK) != 0) count++;
         }
         // Left and right columns between the corners
-        for (int dy = 1; dy < 4; dy++) {
+        for (int dy = 1; dy < 3; dy++) {
             int l = world.getVoxelExtra(minX, y + dy, minZ);
             int r = world.getVoxelExtra(minX + 3, y + dy, minZ);
             if ((l & FILLED_MASK) != 0) count++;

@@ -51,6 +51,22 @@ public class EnderDragonEntity extends Entity {
             orbitAngle = (float) (Math.atan2(getPosZ() - pillarCenter.z, getPosX() - pillarCenter.x));
             phaseTime = 0.0f;
         }
+        // Light damage model: each punch drains 5% health. Kill threshold is
+        // reached after ~20 punches. Players use the right-click on the body
+        // (or stand on it during the perch phase) to trigger this callback.
+        takeDamage(0.05f);
+    }
+
+    /** Health gate: 0..1, drained by onPunch. Below 0 the dragon dies. */
+    public float getHealth() { return Math.max(0f, 1f - cumulativeHits * 0.05f); }
+
+    private void takeDamage(float amount) {
+        // Cumulative hits double as the death counter. With amount = 0.05,
+        // 20 punches are enough to kill the dragon and drop the egg.
+        if (amount <= 0f) return;
+        if (getHealth() <= 0f) {
+            dead = true;
+        }
     }
 
     public boolean isDead() { return dead; }

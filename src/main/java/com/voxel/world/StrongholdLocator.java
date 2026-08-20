@@ -57,10 +57,10 @@ public final class StrongholdLocator {
      * any prior fallback — the locator now reflects the real portal position.
      */
     public static void setCenter(int x, int z) {
+        if (debugOverride) return; // a debug-set center wins over worldgen
         centerX = x;
         centerZ = z;
         spawned = true;
-        debugOverride = false;
     }
 
     /**
@@ -89,6 +89,8 @@ public final class StrongholdLocator {
         centerX = 0;
         centerZ = 0;
         debugOverride = false;
+        strongholdChunkX = 0;
+        strongholdChunkZ = 0;
     }
 
     /**
