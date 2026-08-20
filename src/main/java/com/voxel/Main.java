@@ -115,6 +115,7 @@ public class Main {
     public volatile boolean needsWorldUpload = false;
     public volatile boolean needsCursorUpdate = false;
     public int locBiomeMap, locUITexture, locUISource;
+    public int locDimensionId, locFogColor, locSkyTint;
     public int locHeartUVs;
     public int locCraftingItemCount;
     public int locDestroyStages; // cached u_DestroyStages (was a per-frame glGetUniformLocation)
@@ -1053,6 +1054,9 @@ public class Main {
         locBiomeMap = glGetUniformLocation(computeProgram, "u_BiomeMap");
         locUITexture = glGetUniformLocation(computeProgram, "u_UITexture");
         locUISource = glGetUniformLocation(computeProgram, "u_UISource");
+        locDimensionId = glGetUniformLocation(computeProgram, "u_DimensionID");
+        locFogColor = glGetUniformLocation(computeProgram, "u_FogColor");
+        locSkyTint = glGetUniformLocation(computeProgram, "u_SkyTint");
         locHeartUVs = glGetUniformLocation(computeProgram, "u_HeartUVs");
         locCraftingItemCount = glGetUniformLocation(computeProgram, "u_CraftingItemCount");
         locDestroyStages = glGetUniformLocation(computeProgram, "u_DestroyStages");
@@ -4317,6 +4321,27 @@ public class Main {
         glActiveTexture(GL_TEXTURE10);
         glBindTexture(GL_TEXTURE_2D, hud.uiManager.getUITexture());
         glUniform1i(locUITexture, 10);
+
+        // ── Per-dimension atmosphere ──
+        // Overworld keeps the bright daylight palette; Nether leans deep
+        // red; End is intentionally dark with a magenta horizon.
+        glUniform1i(locDimensionId, activeDimension == null ? 0 : activeDimension.id);
+        float fogR, fogG, fogB, skyR, skyG, skyB;
+        if (activeDimension == com.voxel.world.DimensionType.NETHER) {
+            fogR = 0.42f; fogG = 0.05f; fogB = 0.05f;
+            skyR = 0.30f; skyG = 0.06f; skyB = 0.06f;
+        } else if (activeDimension == com.voxel.world.DimensionType.END) {
+            fogR = 0.05f; fogG = 0.02f; fogB = 0.07f;
+            skyR = 0.10f; skyG = 0.04f; skyB = 0.18f;
+        } else {
+            // Overworld + Aether + Portal Hall: a neutral blue-grey that
+            // matches the daytime atmosphere the rest of the lighting pass
+            // assumes.
+            fogR = 0.62f; fogG = 0.70f; fogB = 0.85f;
+            skyR = 1.00f; skyG = 1.00f; skyB = 1.00f;
+        }
+        glUniform3f(locFogColor, fogR, fogG, fogB);
+        glUniform3f(locSkyTint, skyR, skyG, skyB);
 
         // ── Map preview: simplified biome view for unloaded chunks ──
         // Upload any freshly-baked region, then bind + drive the uniforms. The
