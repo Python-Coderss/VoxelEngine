@@ -315,6 +315,7 @@ public class EntityManager {
     public void pruneExpired() {
         entities.removeIf(e -> {
             if (e instanceof FireballEntity) return ((FireballEntity) e).isExpired();
+            if (e instanceof ArrowEntity) return ((ArrowEntity) e).isExpired();
             if (e instanceof EnemyEntity) return ((EnemyEntity) e).isDead();
             return false;
         });

@@ -152,6 +152,9 @@ public class Main {
     public volatile boolean panoramaActive = false;
     private int currentTutorialZone = -1; // last showcase zone the popup announced
     private boolean tutorialMinecartsSpawned = false; // rideable coaster carts spawned yet
+    private final java.util.Set<Integer> tutorialMobZonesSpawned = new java.util.HashSet<>(); // zones whose mobs are placed
+    private int nextTutorialMobId = 65000; // unique id counter for tutorial-zone mobs
+    private int nextSpawnCommandId = 75000; // unique id counter for /spawn-created mobs
     private com.voxel.World panoramaWorld;
     private int panoramaNextSlot = 0;
     private float panoramaAngle = 0f;    // orbit angle (radians)
@@ -480,6 +483,7 @@ public class Main {
         ctx.updateCursorMode = this::updateCursorMode;
         ctx.dismountMinecart = () -> dismountMinecart(ctx.ridingMinecart);
         ctx.statusConsumer = this::setStatus;
+        ctx.spawnMobCommand = this::spawnMobAtLook;
         ctx.uiDirtyMarker = () -> { hud.inventoryUiDirty = true; };
         ctx.villagerAudioManager = villagerAudioManager;
 
@@ -1092,50 +1096,69 @@ public class Main {
         locMapBorder = glGetUniformLocation(computeProgram, "u_MapBorder");
     }
 
-    public void spawnInitialEnemies(Player p) {
-        com.voxel.entity.CreeperEntity.setChunkManager(chunkManager);
-        for (int i = 0; i < 3; i++) {
-            com.voxel.entity.ZombieEntity zombie = new com.voxel.entity.ZombieEntity(100 + i, new Vector3f(6 + i * 12, 64, 6), textureManager, p);
-            zombie.dimension = activeDimension;
-            zombie.setWorld(world);
-            entityManager.addEntity(zombie);
-        }
+    /**
+     * Spawns a mob of the given type where the player is looking (the empty
+     * cell in front of the targeted block, dropped to the ground). This
+     * replaces the old startup auto-spawn: mobs now appear only when the player
+     * asks for them via {@code /spawn <mob>}.
+     */
+    private void spawnMobAtLook(String type) {
+        Vector3f pos = spawnPosAtLook();
 
-        // Creepers near spawn, biome-tinted to blend with the surrounding grass.
-        for (int i = 0; i < 2; i++) {
-            float cx = 10 + i * 16;
-            float cz = -6 - i * 4;
-            int cy = 64;
-            for (int y = 127; y >= 0; y--) {
-                if (world.getVoxel((int) cx, y, (int) cz) > 0) { cy = y + 1; break; }
+        com.voxel.entity.Entity mob;
+        switch (type) {
+            case "zombie":
+                mob = new com.voxel.entity.ZombieEntity(nextSpawnCommandId++, pos, textureManager, player);
+                ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
+                break;
+            case "skeleton":
+                mob = new com.voxel.entity.SkeletonEntity(nextSpawnCommandId++, pos, textureManager, player);
+                ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
+                break;
+            case "spider":
+                mob = new com.voxel.entity.SpiderEntity(nextSpawnCommandId++, pos, textureManager, player);
+                ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
+                break;
+            case "creeper": {
+                com.voxel.entity.CreeperEntity creeper = new com.voxel.entity.CreeperEntity(
+                    nextSpawnCommandId++, pos, textureManager, player);
+                creeper.setWorld(world);
+                com.voxel.entity.CreeperEntity.setChunkManager(chunkManager);
+                int grassRGB = grassColorAt((int) Math.floor(pos.x), (int) Math.floor(pos.z));
+                creeper.tintColor.set(
+                    ((grassRGB >> 16) & 0xFF) / 255.0f,
+                    ((grassRGB >> 8) & 0xFF) / 255.0f,
+                    (grassRGB & 0xFF) / 255.0f);
+                creeper.tintAmount = 1.0f;
+                mob = creeper;
+                break;
             }
-            com.voxel.entity.CreeperEntity creeper = new com.voxel.entity.CreeperEntity(
-                200 + i, new Vector3f(cx, cy, cz), textureManager, p);
-            creeper.dimension = activeDimension;
-            creeper.setWorld(world);
-            // Re-green the creeper's grayscale skin with the fixed color of its
-            // biome category (matches the grass block variant beneath it).
-            int grassRGB = grassColorAt((int) cx, (int) cz);
-            creeper.tintColor.set(
-                ((grassRGB >> 16) & 0xFF) / 255.0f,
-                ((grassRGB >> 8) & 0xFF) / 255.0f,
-                (grassRGB & 0xFF) / 255.0f);
-            creeper.tintAmount = 1.0f;
-            entityManager.addEntity(creeper);
+            case "blaze":
+                mob = new BlazeEntity(nextSpawnCommandId++, pos, textureManager, player);
+                ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
+                break;
+            case "pigman":
+            case "zombie_pigman":
+            case "zombiepigman":
+                mob = new ZombiePigmanEntity(nextSpawnCommandId++, pos, textureManager, player);
+                ((com.voxel.entity.EnemyEntity) mob).setWorld(world);
+                break;
+            case "villager":
+                mob = new VillagerEntity(nextSpawnCommandId++, pos, textureManager);
+                ((VillagerEntity) mob).setWorld(world);
+                break;
+            default:
+                setStatus("Unknown mob: " + type + ". Try: zombie, skeleton, spider, creeper, villager, blaze, pigman.");
+                return;
         }
 
-        // Spawn initial villagers near villages
-        spawnInitialVillagers();
+        mob.dimension = activeDimension;
+        entityManager.addEntity(mob);
+        setStatus("Spawned " + type);
     }
 
-    /**
-     * Debug helper: spawns a creeper where the player is looking. If the look
-     * ray hits a block, the creeper appears in the empty cell in front of that
-     * block face; otherwise it spawns 10 blocks along the ray. It then drops
-     * straight down to stand on the first solid block, and is biome-tinted to
-     * match the surrounding grass.
-     */
-    private void spawnCreeperAtLook() {
+    /** Raycasts from the player's view and returns a grounded spawn position. */
+    private Vector3f spawnPosAtLook() {
         Vector3f spawnPos;
         int[] hit = raycastBlock(64.0f);
         if (hit != null) {
@@ -1152,26 +1175,15 @@ public class Main {
         int sx = (int) Math.floor(spawnPos.x);
         int sz = (int) Math.floor(spawnPos.z);
         int sy = (int) Math.floor(spawnPos.y);
-        int ground = -1;
         for (int y = Math.min(sy, 255); y >= 0; y--) {
-            if (world.getVoxel(sx, y, sz) != 0) { ground = y; break; }
+            if (world.getVoxel(sx, y, sz) != 0) { sy = y + 1; break; }
         }
-        if (ground >= 0) sy = ground + 1;
+        return new Vector3f(sx + 0.5f, sy, sz + 0.5f);
+    }
 
-        com.voxel.entity.CreeperEntity creeper = new com.voxel.entity.CreeperEntity(
-            60000 + (int) (Math.random() * 1000),
-            new Vector3f(sx + 0.5f, sy, sz + 0.5f), textureManager, player);
-        creeper.dimension = activeDimension;
-        creeper.setWorld(world);
-        com.voxel.entity.CreeperEntity.setChunkManager(chunkManager);
-        int grassRGB = grassColorAt(sx, sz);
-        creeper.tintColor.set(
-            ((grassRGB >> 16) & 0xFF) / 255.0f,
-            ((grassRGB >> 8) & 0xFF) / 255.0f,
-            (grassRGB & 0xFF) / 255.0f);
-        creeper.tintAmount = 1.0f;
-        entityManager.addEntity(creeper);
-        setStatus("Spawned creeper");
+    /** Debug helper (C key): spawns a creeper at the player's look target. */
+    private void spawnCreeperAtLook() {
+        spawnMobAtLook("creeper");
     }
 
     public void spawnNetherMobs(Player p) {
@@ -1197,21 +1209,79 @@ public class Main {
         setStatus("Entered the Nether... hostile mobs near!");
     }
 
-    public void spawnInitialVillagers() {
-        // Spawn a few villagers near the player's spawn for testing
-        for (int i = 0; i < 4; i++) {
-            float vx = 20 + i * 8;
-            float vz = 20 - i * 5;
-            int vy = 65;
-            // Find surface
-            for (int y = 127; y >= 0; y--) {
-                if (world.getVoxel((int)vx, y, (int)vz) > 0) { vy = y + 1; break; }
-            }
-            VillagerEntity villager = new VillagerEntity(50000 + i, new Vector3f(vx, vy, vz), textureManager);
-            villager.dimension = activeDimension;
-            villager.setWorld(world);
-            entityManager.addEntity(villager);
+    /**
+     * Places a themed mob roster in a showcase zone the first time the player
+     * enters it. The tutorial world is handcrafted and block-explosions would
+     * wreck it, so only zombies, skeletons and spiders are used — no creepers.
+     */
+    private void spawnTutorialZoneMobs(int zoneIdx) {
+        if (zoneIdx < 0 || !tutorialMobZonesSpawned.add(zoneIdx)) return;
+        int cx = com.voxel.world.TutorialWorldAuthor.zones()[zoneIdx].cx;
+        int cz = com.voxel.world.TutorialWorldAuthor.zones()[zoneIdx].cz;
+        switch (zoneIdx) {
+            case 4: // Biome Garden — spiders prowl the treeline
+                spawnTutorialSpider(cx - 12, cz + 4);
+                spawnTutorialSpider(cx + 10, cz - 3);
+                spawnTutorialSpider(cx - 4, cz + 6);
+                spawnTutorialSpider(cx + 6, cz + 3);
+                break;
+            case 6: // Quarry Mine — skeletons guard the dig rim
+                spawnTutorialSkeleton(cx - 12, cz);
+                spawnTutorialSkeleton(cx + 12, cz + 2);
+                spawnTutorialSkeleton(cx, cz - 12);
+                spawnTutorialSkeleton(cx + 8, cz + 12);
+                spawnTutorialSpider(cx - 10, cz + 10);
+                spawnTutorialSpider(cx + 10, cz - 10);
+                break;
+            case 9: // Combat Arena — a mixed gladiator roster
+                spawnTutorialSkeleton(cx - 6, cz);
+                spawnTutorialSkeleton(cx, cz - 6);
+                spawnTutorialSkeleton(cx + 6, cz);
+                spawnTutorialSkeleton(cx, cz + 6);
+                spawnTutorialZombie(cx - 4, cz - 4);
+                spawnTutorialZombie(cx + 4, cz - 4);
+                spawnTutorialZombie(cx - 4, cz + 4);
+                spawnTutorialZombie(cx + 4, cz + 4);
+                spawnTutorialSpider(cx, cz - 8);
+                spawnTutorialSpider(cx, cz + 8);
+                break;
+            default:
+                break;
         }
+    }
+
+    /** Surface Y (one above the topmost solid block) at a column, for standing mobs. */
+    private int surfaceYAt(float x, float z) {
+        int ix = (int) Math.floor(x);
+        int iz = (int) Math.floor(z);
+        for (int y = 127; y >= 0; y--) {
+            if (world.getVoxel(ix, y, iz) > 0) return y + 1;
+        }
+        return 64;
+    }
+
+    private void spawnTutorialSkeleton(float x, float z) {
+        com.voxel.entity.SkeletonEntity skeleton = new com.voxel.entity.SkeletonEntity(
+            nextTutorialMobId++, new Vector3f(x + 0.5f, surfaceYAt(x, z), z + 0.5f), textureManager, player);
+        skeleton.dimension = activeDimension;
+        skeleton.setWorld(world);
+        entityManager.addEntity(skeleton);
+    }
+
+    private void spawnTutorialSpider(float x, float z) {
+        com.voxel.entity.SpiderEntity spider = new com.voxel.entity.SpiderEntity(
+            nextTutorialMobId++, new Vector3f(x + 0.5f, surfaceYAt(x, z), z + 0.5f), textureManager, player);
+        spider.dimension = activeDimension;
+        spider.setWorld(world);
+        entityManager.addEntity(spider);
+    }
+
+    private void spawnTutorialZombie(float x, float z) {
+        com.voxel.entity.ZombieEntity zombie = new com.voxel.entity.ZombieEntity(
+            nextTutorialMobId++, new Vector3f(x + 0.5f, surfaceYAt(x, z), z + 0.5f), textureManager, player);
+        zombie.dimension = activeDimension;
+        zombie.setWorld(world);
+        entityManager.addEntity(zombie);
     }
 
     /**
@@ -1232,14 +1302,24 @@ public class Main {
         dimensionManager.setWorldSeed(ctx.worldSeed);
         dimensionManager.setTutorialWorld(ctx.tutorialWorld);
         dimensionManager.createDimension(DimensionType.OVERWORLD, 8);
+        // createDimension populates the dimension map but leaves the active
+        // dimension pointer alone; make sure it targets the Overworld we just
+        // built so the getters below can never resolve to null.
+        dimensionManager.switchTo(DimensionType.OVERWORLD);
         // Push the configured X/Z int bits into the Beta terrain precision tuning
         com.voxel.world.WorldGenerator activeGen = dimensionManager.getActiveGenerator();
         if (activeGen instanceof com.voxel.world.BetaWorldGenerator) {
             ((com.voxel.world.BetaWorldGenerator) activeGen).setWorldSize(ctx.worldSize);
         }
 
-        world = dimensionManager.getActiveWorld();
-        chunkManager = dimensionManager.getActiveChunkManager();
+        world = dimensionManager.getWorld(DimensionType.OVERWORLD, 8);
+        chunkManager = dimensionManager.getChunkManager(DimensionType.OVERWORLD, 8);
+        if (world == null || chunkManager == null) {
+            throw new IllegalStateException(
+                "Overworld dimension failed to initialize (world=" + world
+                + ", chunkManager=" + chunkManager
+                + ", active=" + dimensionManager.getActiveDimension() + ")");
+        }
         ctx.world = world;
         ctx.chunkManager = chunkManager;
         ctx.dimensionManager = dimensionManager;
@@ -1274,8 +1354,6 @@ public class Main {
         ctx.worldSaveManager.loadChestData(activeDimension, ctx.chestManager);
         playerEntity.dimension = activeDimension;
         entityManager.addEntity(playerEntity);
-
-        spawnInitialEnemies(player);
 
         // Hand the GPU world-upload to the render thread (uploadWorldToGpu() is
         // a GL-only call; ctx.uploadWorldToGpu is already wired to
@@ -1859,6 +1937,10 @@ public class Main {
                     }
                     tutorialMinecartsSpawned = true;
                 }
+                // Populate showcase zones with themed mobs the first time the
+                // player enters them (the combat arena and quarry should not sit
+                // empty — they exist to be fought in).
+                spawnTutorialZoneMobs(currentTutorialZone);
             }
 
             handleInput(dt);
@@ -2114,7 +2196,7 @@ public class Main {
         }
         aiUpdateOffset = (aiUpdateOffset + processed) % Math.max(1, totalEntities);
 
-        // Fireball cleanup + player damage (cheap — always full-scan)
+        // Projectile cleanup + player damage (cheap — always full-scan)
         for (int i = entityManager.getEntityCount() - 1; i >= 0; i--) {
             com.voxel.entity.Entity e = entityManager.getEntity(i);
             if (e instanceof FireballEntity) {
@@ -2128,6 +2210,17 @@ public class Main {
                     player.takeDamage(4.0f);
                     fb.expire();
                     ctx.setStatus("Hit by a blaze fireball!");
+                }
+            } else if (e instanceof com.voxel.entity.ArrowEntity) {
+                com.voxel.entity.ArrowEntity arrow = (com.voxel.entity.ArrowEntity) e;
+                if (arrow.isExpired()) {
+                    continue;
+                }
+                Vector3f pPos2 = player.getPosition();
+                if (arrow.getPosition().distanceSquared(pPos2) < 1.6f) {
+                    player.takeDamage(com.voxel.entity.ArrowEntity.DAMAGE);
+                    arrow.expire();
+                    ctx.setStatus("Hit by a skeleton's arrow!");
                 }
             }
         }

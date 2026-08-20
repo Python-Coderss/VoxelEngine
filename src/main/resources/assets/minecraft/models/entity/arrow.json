@@ -1,0 +1,13 @@
+{
+  "parts": [
+    {
+      "name": "shaft",
+      "from": [-1.0, -1.0, -6.0],
+      "size": [2.0, 2.0, 12.0],
+      "absolute_offset": [0.0, 0.0, 0.0],
+      "texture": "arrow",
+      "uv": [0, 0],
+      "texture_mapping": "planar"
+    }
+  ]
+}

@@ -11,7 +11,8 @@ import org.joml.Vector3f;
 public class FireballEntity extends Entity {
 
     private final Vector3f velocity;
-    private float life = 4.0f;
+    /** Maximum lifetime before an unimpacted fireball despawns. */
+    private float life = 30.0f;
     private boolean expired = false;
 
     public World world;

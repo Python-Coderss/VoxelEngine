@@ -18,14 +18,23 @@ public class BlazeEntity extends EnemyEntity {
     private static final float FIREBALL_SPEED = 9.0f;
 
     private final com.voxel.utils.TextureManager textureManager;
+    private final ModelPart[] rods = new ModelPart[12];
     private float shootCooldown = 1.5f;
     private float bobPhase = 0.0f;
+    private float lastBobOffset = 0.0f;
+    private float rodAge = 0.0f;
     private int fireballCounter = 0;
 
     public BlazeEntity(int id, Vector3f position, com.voxel.utils.TextureManager textureManager, Player p2) {
         super(id, position, textureManager, p2);
         this.textureManager = textureManager;
         loadModel("src/main/resources/assets/minecraft/models/entity/blaze.json", textureManager);
+        for (ModelPart part : parts) {
+            if (part.name.startsWith("rod_")) {
+                int rod = Integer.parseInt(part.name.substring("rod_".length())) - 1;
+                if (rod >= 0 && rod < rods.length) rods[rod] = part;
+            }
+        }
     }
 
     @Override
@@ -33,15 +42,51 @@ public class BlazeEntity extends EnemyEntity {
         super.update(dt);
         if (isDead()) return;
 
-        // Floating bob: gentle vertical sine motion.
+        // EnemyEntity already supplies movement bob. Add only this frame's
+        // delta so the hover offset cannot accumulate into vertical drift.
         bobPhase += dt * 2.6f;
         float bob = (float) Math.sin(bobPhase) * 0.14f;
-        long bobFp = com.voxel.utils.FixedPoint.fromFloat(bob);
-        // super.update() already applied walk-bob on posY; add the hover bob on top.
-        addFixed(0, bobFp, 0);
+        addFixed(0,
+                com.voxel.utils.FixedPoint.fromFloat(bob - lastBobOffset),
+                0);
+        lastBobOffset = bob;
+
+        // ModelBlaze receives ageInTicks, so advance the rod animation at the
+        // same 20 ticks/sec rate as Minecraft's client model.
+        rodAge += dt * 20.0f;
+        updateRodRing(0, 4, rodAge * (float) Math.PI * -0.1f, 9.0f,
+                -2.0f, 0.25f, 2.0f, 0);
+        updateRodRing(4, 8, (float) Math.PI / 4.0f + rodAge * (float) Math.PI * 0.03f,
+                7.0f, 2.0f, 0.25f, 2.0f, 4);
+        updateRodRing(8, 12, 0.47123894f + rodAge * (float) Math.PI * -0.05f,
+                5.0f, 11.0f, 0.5f, 1.5f, 8);
 
         // Slow idle spin of the whole body.
         rotation.y += dt * 18.0f;
+    }
+
+    /** Apply one of vanilla ModelBlaze's four-rod orbit rings. */
+    private void updateRodRing(int first, int end, float angle, float radius,
+                               float baseY, float verticalRate, float indexRate,
+                               int modelIndexBase) {
+        for (int i = first; i < end; i++) {
+            ModelPart rod = rods[i];
+            if (rod == null) continue;
+            int ringIndex = i - first;
+            float sourceY = baseY
+                    + (float) Math.cos(((ringIndex + modelIndexBase) * indexRate + rodAge) * verticalRate);
+            float x = -(float) Math.cos(angle) * radius;
+            float y = 20.0f - sourceY;
+            float z = -(float) Math.sin(angle) * radius;
+            // Mirror the vanilla model on all three axes around the head
+            // center. The engine's Y axis points upward while ModelBlaze's
+            // source coordinates are rendered under a negative-Y scale.
+            // absoluteOffset is only the rotation pivot; offset is the actual
+            // cube origin, so keep both at the mirrored rod point.
+            rod.offset.set(x, y, z);
+            rod.absoluteOffset.set(x, y, z);
+            angle += 1.0f;
+        }
     }
 
     @Override
