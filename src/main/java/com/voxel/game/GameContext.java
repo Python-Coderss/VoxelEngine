@@ -64,11 +64,14 @@ public class GameContext {
     public volatile String saveName = "world";
 
     // ── Main menu state machine ──
-    public enum MenuScreen { MAIN, NEW_WORLD_NAME, NEW_WORLD_SEED, NEW_WORLD_SIZE, NEW_WORLD_MODE, LOAD_SAVE, IN_GAME }
+    public enum MenuScreen { MAIN, NEW_WORLD_NAME, NEW_WORLD_SEED, NEW_WORLD_SIZE, NEW_WORLD_MODE, LOAD_SAVE, OPTIONS, IN_GAME }
     /** Which menu screen is active (MAIN = title screen, IN_GAME = in world). */
     public volatile MenuScreen menuScreen = MenuScreen.MAIN;
     /** Currently highlighted menu option index. */
     public volatile int menuSelection = 0;
+    /** Set by mouse-driven menu controls; consumed by the logic thread. */
+    public volatile boolean menuConfirmRequested = false;
+    public volatile boolean menuBackRequested = false;
     /** Cursor row for the load-save list. */
     public volatile int saveListSelection = 0;
     /** Saves found on disk (refreshed when the menu opens). */
@@ -274,6 +277,11 @@ public class GameContext {
 
     // --- Fluid ---
     public com.voxel.world.FluidManager fluidManager;
+
+    // --- Pause/menu state ---
+    public volatile boolean pauseMenuOpen = false;
+    public volatile int pauseSelection = 0;
+    public volatile boolean pauseConfirmRequested = false;
 
     // --- Active UI state (which overlay is shown) ---
     public enum ActiveUI { NONE, INVENTORY, CHEST, FURNACE, CRAFTING_TABLE, SURFACE_CRAFTING, COMMAND_BLOCK, TV, MAP }
@@ -567,8 +575,9 @@ public class GameContext {
         if (pendingSpawnX == Integer.MIN_VALUE || chunkManager == null) return false;
 
         int centerCx = Math.floorDiv(pendingSpawnX, 16);
+        int centerCy = Math.floorDiv(pendingSpawnY, 16);
         int centerCz = Math.floorDiv(pendingSpawnZ, 16);
-        if (!chunkManager.areSpawnChunksGenerated(centerCx, centerCz)) return false;
+        if (!chunkManager.areSpawnChunksGenerated(centerCx, centerCy, centerCz)) return false;
 
         spawnLoadingMessage = "Detecting surface...";
         int surfaceY;

@@ -63,6 +63,40 @@ public class ChunkManagerGridReadyTest {
     }
 
     @Test
+    public void reportsFalseWhileDiskRestoreIsInProgress() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        WorldSaveManager saveManager = new WorldSaveManager(
+                System.getProperty("java.io.tmpdir") + "/voxel-disk-ready-test-" + System.nanoTime()) {
+            @Override
+            public boolean loadChunk(DimensionType dim, int cx, int cz, World world) {
+                started.countDown();
+                try {
+                    release.await(15, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return true;
+            }
+        };
+        World world = new World(128);
+        BlockDataManager blockData = fullBlockData();
+        ChunkManager cm = new ChunkManager(world, fastEmptyGenerator(),
+                new LightEngine(world, blockData), 4, saveManager,
+                DimensionType.OVERWORLD, null, blockData);
+        try {
+            cm.update(new Vector3f(8f, 88f, 8f), 0f);
+            assertTrue("disk restore never started", started.await(15, TimeUnit.SECONDS));
+            // The first bootstrap column is registered before loadChunk writes
+            // its data. It must not be considered ready during that window.
+            assertFalse(cm.isPlayerSectionGenerated(-1, PCY, -1));
+        } finally {
+            release.countDown();
+            cm.shutdown();
+        }
+    }
+
+    @Test
     public void reportsFalseBeforeAnyChunksExist() {
         ChunkManager cm = newChunkManager(fastEmptyGenerator());
         try {

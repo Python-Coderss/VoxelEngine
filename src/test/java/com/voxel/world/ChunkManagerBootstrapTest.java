@@ -42,6 +42,15 @@ public class ChunkManagerBootstrapTest {
     }
 
     @Test
+    public void playerBoundaryRefreshesOnAnyChunkAxis() {
+        assertFalse(ChunkManager.crossedPlayerChunkBoundary(-1000, -1000, -1000, 0, 0, 0));
+        assertFalse(ChunkManager.crossedPlayerChunkBoundary(4, 7, 3, 4, 7, 3));
+        assertTrue(ChunkManager.crossedPlayerChunkBoundary(4, 7, 3, 5, 7, 3));
+        assertTrue(ChunkManager.crossedPlayerChunkBoundary(4, 7, 3, 4, 8, 3));
+        assertTrue(ChunkManager.crossedPlayerChunkBoundary(4, 7, 3, 4, 7, 4));
+    }
+
+    @Test
     public void pendingDecorationPriorityPrefersNearbyColumns() {
         long nearby = ((long) 1 << 32) | 1L;
         long distant = ((long) 8 << 32) | 8L;

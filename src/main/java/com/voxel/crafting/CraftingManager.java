@@ -652,6 +652,31 @@ public class CraftingManager {
         }, "wood_shovel", 1);
     }
 
+    /** Adds a shaped recipe imported from the vanilla resource pack. */
+    public void addLoadedShaped(String[][] pattern, String resultItemId, int resultCount, int gridSize) {
+        if (pattern == null || resultItemId == null || (gridSize != 2 && gridSize != 3)) return;
+        CraftingRecipe recipe = new CraftingRecipe(copyPattern(pattern), resultItemId, resultCount, gridSize);
+        if (gridSize == 2) recipes2x2.add(recipe);
+        else recipes3x3.add(recipe);
+    }
+
+    /** Adds a shapeless recipe imported from the vanilla resource pack. */
+    public void addLoadedShapeless(List<String> ingredients, String resultItemId, int resultCount, int gridSize) {
+        if (ingredients == null || ingredients.isEmpty() || resultItemId == null
+                || (gridSize != 2 && gridSize != 3)) return;
+        CraftingRecipe recipe = new CraftingRecipe(new ArrayList<>(ingredients), resultItemId, resultCount, gridSize);
+        if (gridSize == 2) recipes2x2.add(recipe);
+        else recipes3x3.add(recipe);
+    }
+
+    private static String[][] copyPattern(String[][] pattern) {
+        String[][] copy = new String[pattern.length][];
+        for (int row = 0; row < pattern.length; row++) {
+            copy[row] = pattern[row] == null ? null : pattern[row].clone();
+        }
+        return copy;
+    }
+
     private void addRecipe2x2(String[][] pattern, String resultItemId, int resultCount) {
         recipes2x2.add(new CraftingRecipe(pattern, resultItemId, resultCount, 2));
     }
@@ -717,19 +742,57 @@ public class CraftingManager {
                 String gridItem = (r < grid.length && c < grid[r].length) ? grid[r][c] : null;
                 if (gridItem == null) continue;
                 itemCount++;
-                if (!remaining.remove(gridItem)) return false;
+                int match = findIngredient(remaining, gridItem);
+                if (match < 0) return false;
+                remaining.remove(match);
             }
         }
         return itemCount == ingredients.size() && remaining.isEmpty();
+    }
+
+    private static int findIngredient(List<String> ingredients, String actual) {
+        for (int i = 0; i < ingredients.size(); i++) {
+            if (ingredientMatches(ingredients.get(i), actual)) return i;
+        }
+        return -1;
+    }
+
+    /** Matches the compact tag/alternative tokens emitted by VanillaRecipeLoader. */
+    private static boolean ingredientMatches(String expected, String actual) {
+        if (expected == null || actual == null) return expected == actual;
+        if (expected.equals(actual)) return true;
+        if (expected.startsWith("@{") && expected.endsWith("}")) {
+            String options = expected.substring(2, expected.length() - 1);
+            for (String option : options.split("\\|")) {
+                if (ingredientMatches(option, actual)) return true;
+            }
+            return false;
+        }
+        if (!expected.startsWith("@")) return false;
+        String tag = expected.substring(1);
+        if ("wool".equals(tag)) return actual.endsWith("_wool") || "wool".equals(actual);
+        if ("dyes".equals(tag)) return actual.endsWith("_dye") || "dye".equals(actual);
+        if ("planks".equals(tag)) return actual.endsWith("_planks");
+        if ("logs".equals(tag)) return actual.endsWith("_log");
+        if ("colors".equals(tag)) return actual.endsWith("_wool") || actual.endsWith("_dye");
+        return false;
     }
 
     /**
      * Matches a shaped recipe in any cardinal rotation. Reflections are not
      * accepted: rotating a recipe is allowed, mirroring it is a different shape.
      */    private boolean matchesPattern(String[][] grid, String[][] pattern, int size) {
+        int height = pattern.length;
+        int width = height == 0 || pattern[0] == null ? 0 : pattern[0].length;
         for (int rotation = 0; rotation < 4; rotation++) {
-            if (matchesPatternRotation(grid, pattern, size, rotation, 0, 0)) {
-                return true;
+            int rotatedHeight = (rotation % 2 == 0) ? height : width;
+            int rotatedWidth = (rotation % 2 == 0) ? width : height;
+            for (int offsetRow = 0; offsetRow + rotatedHeight <= size; offsetRow++) {
+                for (int offsetCol = 0; offsetCol + rotatedWidth <= size; offsetCol++) {
+                    if (matchesPatternRotation(grid, pattern, size, rotation, offsetRow, offsetCol)) {
+                        return true;
+                    }
+                }
             }
         }
         return false;
@@ -752,14 +815,17 @@ public class CraftingManager {
         return false;
     }
     private boolean matchesPatternRotation(String[][] grid, String[][] pattern, int size, int rotation, int offsetRow, int offsetCol) {
-        int psize = pattern.length; // rotation happens within the pattern's own dimensions
+        int height = pattern.length;
+        int width = height == 0 || pattern[0] == null ? 0 : pattern[0].length;
+        int rotatedHeight = (rotation % 2 == 0) ? height : width;
+        int rotatedWidth = (rotation % 2 == 0) ? width : height;
         for (int r = 0; r < size; r++) {
             for (int c = 0; c < size; c++) {
                 String gridItem = (r < grid.length && c < grid[r].length) ? grid[r][c] : null;
                 int pr = r - offsetRow;
                 int pc = c - offsetCol;
                 String patternItem = null;
-                if (pr >= 0 && pr < psize && pc >= 0 && pc < psize) {
+                if (pr >= 0 && pr < rotatedHeight && pc >= 0 && pc < rotatedWidth) {
                     int sourceRow;
                     int sourceCol;
                     switch (rotation) {
@@ -768,16 +834,16 @@ public class CraftingManager {
                             sourceCol = pc;
                             break;
                         case 1: // 90 degrees clockwise
-                            sourceRow = psize - 1 - pc;
+                            sourceRow = height - 1 - pc;
                             sourceCol = pr;
                             break;
                         case 2: // 180 degrees
-                            sourceRow = psize - 1 - pr;
-                            sourceCol = psize - 1 - pc;
+                            sourceRow = height - 1 - pr;
+                            sourceCol = width - 1 - pc;
                             break;
                         case 3: // 270 degrees clockwise
                             sourceRow = pc;
-                            sourceCol = psize - 1 - pr;
+                            sourceCol = width - 1 - pr;
                             break;
                         default:
                             return false;
@@ -788,7 +854,7 @@ public class CraftingManager {
                 if (patternItem == null) {
                     if (gridItem != null) return false;
                 } else {
-                    if (gridItem == null || !gridItem.equals(patternItem)) return false;
+                    if (gridItem == null || !ingredientMatches(patternItem, gridItem)) return false;
                 }
             }
         }
