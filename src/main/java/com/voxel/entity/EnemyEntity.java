@@ -20,6 +20,7 @@ public class EnemyEntity extends Entity {
     private float health = 20.0f;
     private float maxHealth = 20.0f;
     private boolean isDead = false;
+    private boolean xpDropped = false;
     public float hitFlashTime = 0.0f;
     private float windUpTime = 0.0f;
     private boolean isWindingUp = false;
@@ -480,6 +481,12 @@ public class EnemyEntity extends Entity {
     }
 
     public boolean isDead() { return isDead; }
+    public boolean markedXpDropped() { return xpDropped; }
+    public void markXpDropped() { xpDropped = true; }
+
+    /** Default XP drop on death. Mojang-specific values live in subclasses;
+     *  generic enemies fall back to 5 XP (the standard monster value). */
+    public int xpDropValue() { return 5; }
     public void setWorld(World world) { this.world = world; }
 
     private static class Node {

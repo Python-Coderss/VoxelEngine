@@ -1,0 +1,5 @@
+{
+  "parts": [
+    {"name":"orb","from":[-3,0,-3],"size":[6,6,6],"absolute_offset":[0,3,0],"texture":"items/experience_orb","uv":[0,0],"texture_mapping":"cuboid_atlas"}
+  ]
+}

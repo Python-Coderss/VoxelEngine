@@ -85,6 +85,9 @@ public class EnderDragonEntity extends Entity {
     public boolean isDead() { return dead; }
     public void markDead() { dead = true; }
     public boolean markedDropped() { return dropped; }
+    public boolean markedXpDropped() { return dropped; }
+    public void markXpDropped() { dropped = true; }
+    public int xpDropValue() { return 12000; }
     public void markDropped() { dropped = true; }
 
     public EnderDragonEntity(int id, Vector3f position, com.voxel.utils.TextureManager textureManager,
