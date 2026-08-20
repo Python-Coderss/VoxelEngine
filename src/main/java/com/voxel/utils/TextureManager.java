@@ -284,12 +284,63 @@ public class TextureManager {
             loadAndUploadTexture(entityTexturePaths.get(i), i, ENTITY_TEXTURE_SIZE);
         }
 
+        // The Iron Golem source atlas is 128x128, while entity layers are 64x64.
+        // Store its native pixels as eight 64x32 strips in the unused lower halves
+        // of eight consecutive layers; the virtual cuboid mapper selects a strip.
+        prepareIronGolemVirtualAtlas();
+
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
         glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    }
+
+    /**
+     * Packs the native 128x128 Iron Golem atlas into eight 64x32 strips.
+     * Each strip occupies rows 32..63 of one 64x64 entity layer; the upper
+     * half retains a normal 64x32 entity texture (or remains transparent).
+     */
+    private void prepareIronGolemVirtualAtlas() {
+        Integer sourceIndex = entityTextureToIndex.get("iron_golem");
+        if (sourceIndex == null || sourceIndex < 0 || sourceIndex >= entityTexturePaths.size()) return;
+        if (entityTexturePaths.size() + 8 > entityLayerCount) {
+            System.err.println("Not enough entity texture headroom for the Iron Golem virtual atlas");
+            return;
+        }
+
+        try {
+            BufferedImage source = ImageIO.read(new File(entityTexturePaths.get(sourceIndex)));
+            if (source == null || source.getWidth() != 128 || source.getHeight() != 128) return;
+
+            BufferedImage host = null;
+            for (String path : entityTexturePaths) {
+                BufferedImage candidate = ImageIO.read(new File(path));
+                if (candidate != null && candidate.getWidth() == 64 && candidate.getHeight() == 32) {
+                    host = candidate;
+                    break;
+                }
+            }
+
+            int baseLayer = entityTexturePaths.size();
+            for (int strip = 0; strip < 8; strip++) {
+                BufferedImage packed = new BufferedImage(ENTITY_TEXTURE_SIZE, ENTITY_TEXTURE_SIZE,
+                        BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g = packed.createGraphics();
+                if (host != null) g.drawImage(host, 0, 0, null);
+                int sourceX = (strip & 1) * 64;
+                int sourceY = (strip / 2) * 32;
+                g.drawImage(source.getSubimage(sourceX, sourceY, 64, 32), 0, 32, null);
+                g.dispose();
+                uploadFrameToLayer(packed, baseLayer + strip, ENTITY_TEXTURE_SIZE);
+            }
+
+            // Model parts use this alias with virtual 128px cuboid mapping.
+            entityTextureToIndex.put("iron_golem_virtual", baseLayer);
+        } catch (IOException e) {
+            System.err.println("Failed to pack the Iron Golem virtual atlas: " + e.getMessage());
+        }
     }
 
     // ========================================================================

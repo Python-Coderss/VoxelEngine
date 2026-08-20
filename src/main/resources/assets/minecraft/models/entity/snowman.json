@@ -1,0 +1,56 @@
+{
+  "parts": [
+    {
+      "name": "head",
+      "from": [-3.5, 20.5, -3.5],
+      "size": [7.0, 7.0, 7.0],
+      "absolute_offset": [0.0, 20.0, 0.0],
+      "texture": "snowman",
+      "uv": [0.0, 0.0],
+      "uv_size": [8.0, 8.0, 8.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body",
+      "from": [-4.5, 11.5, -4.5],
+      "size": [9.0, 9.0, 9.0],
+      "absolute_offset": [0.0, 11.0, 0.0],
+      "texture": "snowman",
+      "uv": [0.0, 16.0],
+      "uv_size": [10.0, 10.0, 10.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "bottom_body",
+      "from": [-5.5, 0.5, -5.5],
+      "size": [11.0, 11.0, 11.0],
+      "absolute_offset": [0.0, 0.0, 0.0],
+      "texture": "snowman",
+      "uv": [0.0, 36.0],
+      "uv_size": [12.0, 12.0, 12.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "right_hand",
+      "from": [-10.5, 16.5, -0.5],
+      "size": [11.0, 1.0, 1.0],
+      "absolute_offset": [0.0, 18.0, 0.0],
+      "rotation": [0.0, 0.0, 57.2958],
+      "texture": "snowman",
+      "uv": [32.0, 0.0],
+      "uv_size": [12.0, 2.0, 2.0],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "left_hand",
+      "from": [-10.5, 16.5, -0.5],
+      "size": [11.0, 1.0, 1.0],
+      "absolute_offset": [0.0, 18.0, 0.0],
+      "rotation": [0.0, 180.0, -57.2958],
+      "texture": "snowman",
+      "uv": [32.0, 0.0],
+      "uv_size": [12.0, 2.0, 2.0],
+      "texture_mapping": "cuboid_atlas"
+    }
+  ]
+}

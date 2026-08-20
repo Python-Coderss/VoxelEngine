@@ -9,6 +9,8 @@ import org.joml.Vector3f;
 public class ModelPart {
     public static final int TEXTURE_MAPPING_PLANAR = 0;
     public static final int TEXTURE_MAPPING_CUBOID_ATLAS = 1;
+    /** Virtual 128px atlas packed into 64x32 strips across entity layers. */
+    public static final int TEXTURE_MAPPING_VIRTUAL_CUBOID_ATLAS = 2;
 
     public String name;
     public Vector3f offset; // Relative to 0,0,0 in 32x32x32 space

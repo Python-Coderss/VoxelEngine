@@ -1,0 +1,53 @@
+{
+  "parent": "snowman.json",
+  "parts": [
+    {
+      "name": "pumpkin_front",
+      "from": [-5.0, 19.0, 5.0],
+      "size": [10.0, 10.0, 0.02],
+      "absolute_offset": [0.0, 20.0, 0.0],
+      "texture": "pumpkin_face_off_entity",
+      "texture_mapping": "planar"
+    },
+    {
+      "name": "pumpkin_back",
+      "from": [-5.0, 19.0, -5.02],
+      "size": [10.0, 10.0, 0.02],
+      "absolute_offset": [0.0, 20.0, 0.0],
+      "texture": "pumpkin_side_entity",
+      "texture_mapping": "planar"
+    },
+    {
+      "name": "pumpkin_left",
+      "from": [-5.02, 19.0, -5.0],
+      "size": [0.02, 10.0, 10.0],
+      "absolute_offset": [0.0, 20.0, 0.0],
+      "texture": "pumpkin_side_entity",
+      "texture_mapping": "planar"
+    },
+    {
+      "name": "pumpkin_right",
+      "from": [5.0, 19.0, -5.0],
+      "size": [0.02, 10.0, 10.0],
+      "absolute_offset": [0.0, 20.0, 0.0],
+      "texture": "pumpkin_side_entity",
+      "texture_mapping": "planar"
+    },
+    {
+      "name": "pumpkin_top",
+      "from": [-5.0, 29.0, -5.0],
+      "size": [10.0, 0.02, 10.0],
+      "absolute_offset": [0.0, 20.0, 0.0],
+      "texture": "pumpkin_top_entity",
+      "texture_mapping": "planar"
+    },
+    {
+      "name": "pumpkin_bottom",
+      "from": [-5.0, 18.98, -5.0],
+      "size": [10.0, 0.02, 10.0],
+      "absolute_offset": [0.0, 20.0, 0.0],
+      "texture": "pumpkin_top_entity",
+      "texture_mapping": "planar"
+    }
+  ]
+}
