@@ -42,6 +42,7 @@
       "from": [-2.0, 11.0, 5.0],
       "size": [4.0, 6.0, 1.0],
       "absolute_offset": [0.0, 19.0, -2.0],
+      "rotation": [90.0, 0.0, 0.0],
       "texture": "cow/cow",
       "uv": [52, 0],
       "texture_mapping": "cuboid_atlas"
@@ -66,18 +67,18 @@
     },
     {
       "name": "leg_3",
-      "from": [2.0, 0.0, 3.0],
+      "from": [2.0, 0.0, 4.0],
       "size": [4.0, 12.0, 4.0],
-      "absolute_offset": [4.0, 12.0, 5.0],
+      "absolute_offset": [4.0, 12.0, 6.0],
       "texture": "cow/cow",
       "uv": [0, 16],
       "texture_mapping": "cuboid_atlas"
     },
     {
       "name": "leg_4",
-      "from": [-6.0, 0.0, 3.0],
+      "from": [-6.0, 0.0, 4.0],
       "size": [4.0, 12.0, 4.0],
-      "absolute_offset": [-4.0, 12.0, 5.0],
+      "absolute_offset": [-4.0, 12.0, 6.0],
       "texture": "cow/cow",
       "uv": [0, 16],
       "texture_mapping": "cuboid_atlas"

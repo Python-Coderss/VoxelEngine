@@ -21,7 +21,7 @@
     },
     {
       "name": "leg_1",
-      "from": [2.0, 0.0, -9.0],
+      "from": [1.0, 0.0, -9.0],
       "size": [4.0, 12.0, 4.0],
       "absolute_offset": [3.0, 12.0, -7.0],
       "texture": "sheep/sheep",
@@ -30,7 +30,7 @@
     },
     {
       "name": "leg_2",
-      "from": [-6.0, 0.0, -9.0],
+      "from": [-5.0, 0.0, -9.0],
       "size": [4.0, 12.0, 4.0],
       "absolute_offset": [-3.0, 12.0, -7.0],
       "texture": "sheep/sheep",
@@ -39,7 +39,7 @@
     },
     {
       "name": "leg_3",
-      "from": [2.0, 0.0, 3.0],
+      "from": [1.0, 0.0, 3.0],
       "size": [4.0, 12.0, 4.0],
       "absolute_offset": [3.0, 12.0, 5.0],
       "texture": "sheep/sheep",
@@ -48,7 +48,7 @@
     },
     {
       "name": "leg_4",
-      "from": [-6.0, 0.0, 3.0],
+      "from": [-5.0, 0.0, 3.0],
       "size": [4.0, 12.0, 4.0],
       "absolute_offset": [-3.0, 12.0, 5.0],
       "texture": "sheep/sheep",

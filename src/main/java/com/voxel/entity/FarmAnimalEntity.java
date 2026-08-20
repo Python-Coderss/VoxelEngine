@@ -7,7 +7,7 @@ import java.util.Random;
 /** Shared passive behavior for the small farm-animal mobs. */
 public class FarmAnimalEntity extends Entity {
     protected final Random random = new Random();
-    protected final ModelPart[] legs;
+    protected ModelPart[] legs;
     protected float animTime = 0.0f;
     private float wanderTimer = 0.0f;
     private float wanderYaw = 0.0f;
@@ -20,6 +20,11 @@ public class FarmAnimalEntity extends Entity {
                                String modelPath, String... legNames) {
         super(id, position);
         loadModel(modelPath, textureManager);
+        refreshLegParts(legNames);
+    }
+
+    /** Rebind animated limbs after a state/model swap. */
+    protected final void refreshLegParts(String... legNames) {
         legs = new ModelPart[legNames.length];
         for (int i = 0; i < legNames.length; i++) {
             legs[i] = findPart(legNames[i]);

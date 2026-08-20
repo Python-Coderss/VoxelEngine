@@ -1160,11 +1160,18 @@ public class Main {
                 ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
                 break;
             case "sheep":
-                mob = new com.voxel.entity.SheepEntity(nextSpawnCommandId++, pos, textureManager, player);
+            case "sheep_unsheared":
+            case "unsheared_sheep":
+                mob = new com.voxel.entity.SheepEntity(nextSpawnCommandId++, pos, textureManager, player, false);
+                ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
+                break;
+            case "sheep_sheared":
+            case "sheared_sheep":
+                mob = new com.voxel.entity.SheepEntity(nextSpawnCommandId++, pos, textureManager, player, true);
                 ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
                 break;
             default:
-                setStatus("Unknown mob: " + type + ". Try: zombie, skeleton, spider, creeper, villager, blaze, pigman, pig, cow, chicken, sheep.");
+                setStatus("Unknown mob: " + type + ". Try: zombie, skeleton, spider, creeper, villager, blaze, pigman, pig, cow, chicken, sheep, sheep_sheared.");
                 return;
         }
 

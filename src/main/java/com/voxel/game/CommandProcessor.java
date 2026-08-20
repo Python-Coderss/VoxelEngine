@@ -322,7 +322,7 @@ public class CommandProcessor {
         sb.append("\n  /give <item> [amount] - Give yourself an item");
         sb.append("\n  /slotclear [slot] - Clear inventory slot");
         sb.append("\n  /spawn - Teleport to spawn");
-        sb.append("\n  /spawn <mob> - Spawn a mob where you're looking (zombie, skeleton, spider, creeper, villager, blaze, pigman, pig, cow, chicken, sheep)");
+        sb.append("\n  /spawn <mob> - Spawn a mob where you're looking (zombie, skeleton, spider, creeper, villager, blaze, pigman, pig, cow, chicken, sheep, sheep_sheared)");
         sb.append("\n  /tp <x> <y> <z> - Teleport to coordinates");
         sb.append("\n  /unstuck - Move upward until the player is clear");
         sb.append("\n  /dimension <overworld|nether|end|aether|error502|portal_hall> - Switch dimension");
