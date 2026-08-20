@@ -9,8 +9,10 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.lwjgl.system.MemoryUtil;
 
 import static org.lwjgl.opengl.GL11.*;
@@ -205,23 +207,35 @@ public class BlockDataManager {
         resolveModelRecursive(name, modelsDir, textureMap, data);
 
         // Map collected textures from the model to the 6 physical faces.
-        String all = textureMap.get("all");
-        String side = textureMap.get("side");
-        String end = textureMap.get("end");
-        String top = textureMap.get("top");
-        String bottom = textureMap.get("bottom");
-        String particle = textureMap.get("particle");
+        String all = resolveTextureValue(textureMap.get("all"), textureMap);
+        String side = resolveTextureValue(textureMap.get("side"), textureMap);
+        String end = resolveTextureValue(textureMap.get("end"), textureMap);
+        String top = resolveTextureValue(textureMap.get("top"), textureMap);
+        String bottom = resolveTextureValue(textureMap.get("bottom"), textureMap);
+        String particle = resolveTextureValue(textureMap.get("particle"), textureMap);
 
-        String representativeTexture = textureMap.getOrDefault("up", top != null ? top : (end != null ? end : (all != null ? all : particle)));
+        // Some vanilla models use custom texture keys such as "front", "base",
+        // or "bars" without defining the conventional cube keys. Keep those
+        // models renderable by falling back to the first concrete texture value.
+        String fallbackTexture = firstConcreteTexture(textureMap);
+        String representativeTexture = firstTexture(top, end, all, particle, fallbackTexture);
+        representativeTexture = firstTexture(
+                resolveTextureValue(textureMap.get("up"), textureMap), representativeTexture);
 
-        // Map common Minecraft JSON keys to the 6 face indices.
-        assignFace(data, 0, textureMap.getOrDefault("down", bottom != null ? bottom : (end != null ? end : (all != null ? all : particle))),
-                textureManager);
+        // Map common Minecraft JSON keys to the 6 physical face indices. Model
+        // parents commonly express these as references (for example "#top"),
+        // so resolve the references before asking TextureManager for an index.
+        assignFace(data, 0, firstTexture(resolveTextureValue(textureMap.get("down"), textureMap),
+                bottom, end, all, fallbackTexture), textureManager);
         assignFace(data, 1, representativeTexture, textureManager);
-        assignFace(data, 2, textureMap.getOrDefault("north", side != null ? side : (all != null ? all : particle)), textureManager);
-        assignFace(data, 3, textureMap.getOrDefault("south", side != null ? side : (all != null ? all : particle)), textureManager);
-        assignFace(data, 4, textureMap.getOrDefault("west", side != null ? side : (all != null ? all : particle)), textureManager);
-        assignFace(data, 5, textureMap.getOrDefault("east", side != null ? side : (all != null ? all : particle)), textureManager);
+        assignFace(data, 2, firstTexture(resolveTextureValue(textureMap.get("north"), textureMap),
+                side, all, fallbackTexture), textureManager);
+        assignFace(data, 3, firstTexture(resolveTextureValue(textureMap.get("south"), textureMap),
+                side, all, fallbackTexture), textureManager);
+        assignFace(data, 4, firstTexture(resolveTextureValue(textureMap.get("west"), textureMap),
+                side, all, fallbackTexture), textureManager);
+        assignFace(data, 5, firstTexture(resolveTextureValue(textureMap.get("east"), textureMap),
+                side, all, fallbackTexture), textureManager);
 
         // Calculate albedo using TextureUtils — search known texture directories
         if (representativeTexture != null) {
@@ -282,11 +296,6 @@ public class BlockDataManager {
             }
         }
 
-        // Set isTintable from parsed tintIndex
-        if (data.tintIndex > 0) {
-            data.isTintable = 1;
-        }
-
         // Set isFullBlock based on block type
         if (name.startsWith("item_") || name.contains("slab") || name.contains("stairs") || name.contains("fence") ||
                 name.contains("wall") || name.contains("door") || name.contains("trapdoor") ||
@@ -307,9 +316,6 @@ public class BlockDataManager {
         }
         if (name.contains("redstone_dust") || name.equals("redstone_wire")) {
             data.effect = MaterialEffect.WIRE;
-            data.tintIndex = 0; // Redstone wire handles its own color via WIRE effect
-            data.tintFaceMask = 0;
-            data.isTintable = 0;
         }
         applyMiningDefaults(name, data);
 
@@ -328,6 +334,35 @@ public class BlockDataManager {
 
     private void registerNameAlias(String alias, int id) {
         nameToId.put(alias.toLowerCase(), id);
+    }
+
+    /** Returns the first non-reference texture in a model texture map. */
+    private String firstConcreteTexture(Map<String, String> textureMap) {
+        for (String value : textureMap.values()) {
+            if (value != null && !value.startsWith("#")) return value;
+        }
+        return null;
+    }
+
+    /** Resolves a Minecraft model texture reference such as "#front". */
+    private String resolveTextureValue(String value, Map<String, String> textureMap) {
+        return resolveTextureValue(value, textureMap, new HashSet<String>());
+    }
+
+    private String resolveTextureValue(String value, Map<String, String> textureMap,
+                                      Set<String> resolving) {
+        if (value == null || !value.startsWith("#")) return value;
+        String key = value.substring(1);
+        if (!resolving.add(key)) return null; // malformed/cyclic model references
+        return resolveTextureValue(textureMap.get(key), textureMap, resolving);
+    }
+
+    /** Returns the first non-null texture candidate. */
+    private String firstTexture(String... candidates) {
+        for (String candidate : candidates) {
+            if (candidate != null && !candidate.startsWith("#")) return candidate;
+        }
+        return null;
     }
 
     private void applyMiningDefaults(String name, BlockData data) {
@@ -510,16 +545,8 @@ public class BlockDataManager {
                                 JSONObject face = faces.getJSONObject(names[j]);
                                 if (face.has("uv")) {
                                     JSONArray uv = face.getJSONArray("uv");
-                                    uvs[j] = packUV(uv.getInt(0), uv.getInt(1), uv.getInt(2), uv.getInt(3));
-                                }
-                                // Parse tintindex: MC 0→grass(1), MC 1→foliage(2)
-                                if (face.has("tintindex")) {
-                                    int ti = face.getInt("tintindex") + 1;
-                                    if (ti > data.tintIndex) {
-                                        data.tintIndex = ti;
-                                    }
-                                    // Mark this specific face as tinted in the per-face mask
-                                    data.tintFaceMask |= (1 << j);
+                                    uvs[j] = packUV((int) Math.round(uv.getDouble(0)), (int) Math.round(uv.getDouble(1)),
+                                            (int) Math.round(uv.getDouble(2)), (int) Math.round(uv.getDouble(3)));
                                 }
                             }
                         }
@@ -956,43 +983,13 @@ public class BlockDataManager {
         return data != null ? data.albedo : java.awt.Color.WHITE;
     }
 
-    /** Override tinting after registration (disable biome coloring). */
-    public void setBlockTintable(int blockId, boolean tintable) {
-        BlockData data = blockRegistry.get(blockId);
-        if (data != null) {
-            data.isTintable = tintable ? 1 : 0;
-            if (!tintable) {
-                data.tintIndex = 0;
-                data.tintFaceMask = 0;
-            }
-        }
-    }
-
     /**
-     * Sets the fixed tint color for a block (0xRRGGBB) and neutralizes its
-     * grayscale albedo so the tint alone drives the face color. Blocks tinted
-     * this way no longer vary with world location — their color is a property
-     * of the block type (e.g. jungle grass vs. plains grass).
-     */
-    public void setBlockTintColor(int blockId, int rgb) {
-        BlockData data = blockRegistry.get(blockId);
-        if (data != null) {
-            data.tintColor = rgb & 0xFFFFFF;
-            data.isTintable = 1;
-        }
-    }
-
-    /**
-     * The color an item icon should render with: the block's fixed tint if it
-     * has one, otherwise its average texture albedo.
+     * The color an item icon should render with (the block's average albedo;
+     * biome tinting has been removed).
      */
     public java.awt.Color getTintColorOrAlbedo(int blockId) {
         BlockData data = blockRegistry.get(blockId);
-        if (data == null) return java.awt.Color.WHITE;
-        if (data.isTintable == 1 && data.tintColor != 0xFFFFFF) {
-            return new java.awt.Color((data.tintColor >> 16) & 0xFF, (data.tintColor >> 8) & 0xFF, data.tintColor & 0xFF);
-        }
-        return data.albedo;
+        return data != null ? data.albedo : java.awt.Color.WHITE;
     }
 
     public String getName(int blockId) {

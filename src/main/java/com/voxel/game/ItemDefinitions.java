@@ -452,6 +452,38 @@ public class ItemDefinitions {
         registerTool(itemId, displayName, textureName, toolType, miningSpeed, color, 0);
     }
 
+    /** Returns whether an item ID has already been registered. */
+    public boolean hasItem(String itemId) {
+        return itemId != null && itemRegistry.containsKey(itemId.toLowerCase(Locale.ROOT));
+    }
+
+    /**
+     * Registers a resource-pack item that is not one of the hand-authored
+     * gameplay definitions. Block-backed models reuse their block ID; item-only
+     * models remain inventory-visible and intentionally are not placeable until
+     * a gameplay definition is added.
+     */
+    public void registerGeneratedItem(String itemId, String displayName, int blockId, int iconLayer) {
+        String normalized = itemId.toLowerCase(Locale.ROOT);
+        if (itemRegistry.containsKey(normalized)) return;
+
+        if (blockId > 0 && blockItemByBlockId.containsKey(blockId)) {
+            registerAlias(normalized, blockItemByBlockId.get(blockId));
+            return;
+        }
+
+        Color albedo = blockId > 0 ? blockDataManager.getAlbedo(blockId) : Color.WHITE;
+        Vector4f color = new Vector4f(albedo.getRed() / 255.0f, albedo.getGreen() / 255.0f,
+                albedo.getBlue() / 255.0f, 1.0f);
+        ItemKind kind = blockId > 0 ? ItemKind.BLOCK : ItemKind.TOOL;
+        ItemDefinition definition = new ItemDefinition(normalized, displayName, kind,
+                blockId, blockId, iconLayer, ToolType.HAND, 1.0f, 64, color, 0);
+        itemRegistry.put(normalized, definition);
+        if (blockId > 0) blockItemByBlockId.put(blockId, normalized);
+        registerAlias(normalized, normalized);
+        registerAlias(displayName.toLowerCase(Locale.ROOT).replace(' ', '_'), normalized);
+    }
+
     public void registerAlias(String alias, String itemId) {
         itemAliases.put(alias.toLowerCase(Locale.ROOT), itemId);
     }

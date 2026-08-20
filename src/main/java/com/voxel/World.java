@@ -4,6 +4,11 @@ import org.joml.Vector3i;
 import java.nio.IntBuffer;
 import org.lwjgl.system.MemoryUtil;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+
 /**
  * The World class represents the entire voxel world.
  * It uses a two-level structure for efficient storage:
@@ -62,6 +67,12 @@ public class World {
 
     /** Maximum number of chunks that can be stored in memory. Set at construction. */
     private final int poolSize;
+
+    // Structure/feature writes may target a section that has not been allocated
+    // yet. Keep those writes instead of silently dropping them; ChunkManager
+    // persists them as semi-generated chunk data and applies them when the target
+    // section becomes available.
+    private final ConcurrentMap<DeferredVoxelKey, Integer> deferredVoxelWrites = new ConcurrentHashMap<>();
 
     // Sliding window offset: absolute world coordinate of the buffer's minimum corner.
     // All coordinates passed to public methods are treated as absolute world coords.
@@ -445,7 +456,8 @@ public void clearLightPoolSlot(int slot) {
 }
 
     /**
-     * Sets a voxel ID at world coordinates. Does nothing if the chunk is not allocated.
+     * Sets a voxel ID at world coordinates. Unallocated targets are retained as
+     * deferred writes so structure edges are not lost.
      */
     public void setVoxel(int x, int y, int z, int type) {
         setVoxelWithData(x, y, z, type, 0);
@@ -455,7 +467,7 @@ public void clearLightPoolSlot(int slot) {
      * Sets a voxel ID with extra data at world coordinates.
      * The extra data is packed into bits 16-23 of the stored int,
      * useful for per-voxel metadata like redstone power level.
-     * Does nothing if the chunk is not allocated.
+     * Unallocated targets are retained as deferred writes.
      */
     public void setVoxelWithData(int x, int y, int z, int type, int extra) {
         setVoxelWithFlags(x, y, z, type, extra, 0);
@@ -465,22 +477,103 @@ public void clearLightPoolSlot(int slot) {
      * Sets a voxel ID with extra data (bits 16-23) and high flags (bits 24-30)
      * at world coordinates. High flags carry per-voxel state such as the kinetic
      * spinning bit consumed by the raytracer shader.
-     * Does nothing if the chunk is not allocated.
+     * Unallocated targets are retained as deferred writes.
      */
     public void setVoxelWithFlags(int x, int y, int z, int type, int extra, int flags) {
         int rx = x - offsetX;
         int ry = y - offsetY;
         int rz = z - offsetZ;
-        if (rx < 0 || ry < 0 || rz < 0 || rx >= REGION_SIZE * CHUNK_SIZE || ry >= REGION_SIZE * CHUNK_SIZE || rz >= REGION_SIZE * CHUNK_SIZE) return;
+        if (rx < 0 || ry < 0 || rz < 0 || rx >= REGION_SIZE * CHUNK_SIZE || ry >= REGION_SIZE * CHUNK_SIZE || rz >= REGION_SIZE * CHUNK_SIZE) {
+            deferVoxelWrite(x, y, z, type, extra, flags);
+            return;
+        }
 
         int cx = rx >> 4;
         int cy = ry >> 4;
         int cz = rz >> 4;
         int tableIdx = cx + cy * REGION_SIZE + cz * REGION_SIZE * REGION_SIZE;
         int slot = indirectionTable[tableIdx];
-        if (slot == EMPTY) return;
+        if (slot == EMPTY) {
+            deferVoxelWrite(x, y, z, type, extra, flags);
+            return;
+        }
 
         setVoxelInPool(slot, rx & 15, ry & 15, rz & 15, type, extra, flags);
+    }
+
+    /**
+     * Queues a voxel write for a structure whose target section is not loaded.
+     * Air writes are retained too because structures use them to carve terrain.
+     */
+    private void deferVoxelWrite(int x, int y, int z, int type, int extra, int flags) {
+        int packed = (type & 0xFFFF) | ((extra & 0xFF) << 16) | ((flags & 0x7F) << 24);
+        queueDeferredVoxelWrite(x, y, z, packed);
+    }
+
+    /** Queues a persisted semi-generated write without applying it prematurely. */
+    public void queueDeferredVoxelWrite(int x, int y, int z, int raw) {
+        deferredVoxelWrites.put(new DeferredVoxelKey(x, y, z), raw);
+    }
+
+    /** Returns and removes all deferred writes for persistence. */
+    public List<DeferredVoxelWrite> drainDeferredVoxelWrites() {
+        List<DeferredVoxelWrite> result = new ArrayList<>();
+        for (java.util.Map.Entry<DeferredVoxelKey, Integer> entry : deferredVoxelWrites.entrySet()) {
+            if (deferredVoxelWrites.remove(entry.getKey(), entry.getValue())) {
+                DeferredVoxelKey key = entry.getKey();
+                result.add(new DeferredVoxelWrite(key.x, key.y, key.z, entry.getValue()));
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Applies deferred writes for one now-registered section and returns the
+     * writes that were consumed so their semi-generated records can be acked.
+     */
+    public List<DeferredVoxelWrite> applyDeferredVoxelWrites(int cx, int cy, int cz) {
+        int slot = getChunkSlot(cx << 4, cy << 4, cz << 4);
+        if (slot == EMPTY) return java.util.Collections.emptyList();
+        List<DeferredVoxelWrite> applied = new ArrayList<>();
+        for (java.util.Map.Entry<DeferredVoxelKey, Integer> entry : deferredVoxelWrites.entrySet()) {
+            DeferredVoxelKey key = entry.getKey();
+            if ((key.x >> 4) != cx || (key.y >> 4) != cy || (key.z >> 4) != cz) continue;
+            Integer raw = entry.getValue();
+            if (!deferredVoxelWrites.remove(key, raw)) continue;
+            setVoxelInPool(slot, key.x & 15, key.y & 15, key.z & 15,
+                    raw & 0xFFFF, (raw >>> 16) & 0xFF, (raw >>> 24) & 0x7F);
+            applied.add(new DeferredVoxelWrite(key.x, key.y, key.z, raw));
+        }
+        return applied;
+    }
+
+    /** A deferred structure/feature write awaiting its target section. */
+    public static final class DeferredVoxelWrite {
+        public final int x, y, z, raw;
+        public DeferredVoxelWrite(int x, int y, int z, int raw) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.raw = raw;
+        }
+    }
+
+    private static final class DeferredVoxelKey {
+        final int x, y, z;
+        DeferredVoxelKey(int x, int y, int z) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+        @Override public boolean equals(Object other) {
+            if (!(other instanceof DeferredVoxelKey)) return false;
+            DeferredVoxelKey key = (DeferredVoxelKey) other;
+            return x == key.x && y == key.y && z == key.z;
+        }
+        @Override public int hashCode() {
+            int result = 31 * x + y;
+            return 31 * result + z;
+        }
     }
 
 

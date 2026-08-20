@@ -71,6 +71,30 @@ public class LightEngine {
     public static final int MAX_LIGHT = 15;
 
     /**
+     * Gamma used to decode the normalized block-light level before it enters
+     * the linear scene-lighting calculations. The raytracer mirrors this value
+     * in its GLSL helper; output encoding is performed separately with sRGB.
+     */
+    public static final float BLOCK_LIGHT_GAMMA = 2.2f;
+
+    /**
+     * Converts a raw 0..255 light-pool channel to linear 0..255 intensity.
+     * Both endpoints are preserved: 0 stays dark and 255 stays full brightness.
+     */
+    public static float decodeBlockLight(float encodedChannel) {
+        float normalized = Math.max(0.0f, Math.min(1.0f, encodedChannel / 255.0f));
+        return (float) Math.pow(normalized, BLOCK_LIGHT_GAMMA) * 255.0f;
+    }
+
+    /** Exact scalar sRGB encoding used by the final shader output. */
+    public static float linearToSrgb(float linear) {
+        float clamped = Math.max(0.0f, linear);
+        return clamped <= 0.0031308f
+                ? clamped * 12.92f
+                : 1.055f * (float) Math.pow(clamped, 1.0f / 2.4f) - 0.055f;
+    }
+
+    /**
      * Additive headroom for block-light tint contributions.
      *
      * Block RGB is the additive sum of every overlapping per-type tint, each of
@@ -580,9 +604,13 @@ public class LightEngine {
                 // Tinted contribution, scaled by LIGHT_TINT_HEADROOM so
                 // overlapping sources add without saturating a channel. The
                 // tint ratio (hue) is unchanged — only the magnitude shrinks.
-                int cr = level * tr / (15 * LIGHT_TINT_HEADROOM);
-                int cg = level * tg / (15 * LIGHT_TINT_HEADROOM);
-                int cb = level * tb / (15 * LIGHT_TINT_HEADROOM);
+                // Round the headroom-scaled channel instead of truncating it.
+                // A full 255 channel divided by four is 63.75; truncation made
+                // a maximum light top out at 252 after the shader restored the
+                // headroom, subtly lowering the bright endpoint.
+                int cr = Math.round(level * tr / (15.0f * LIGHT_TINT_HEADROOM));
+                int cg = Math.round(level * tg / (15.0f * LIGHT_TINT_HEADROOM));
+                int cb = Math.round(level * tb / (15.0f * LIGHT_TINT_HEADROOM));
 
                 int current = mainPool[idx];
                 int curR = (current >>> 8) & 0xFF;

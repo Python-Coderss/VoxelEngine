@@ -143,8 +143,6 @@ uniform samplerBuffer u_BlockAABBs;
 uniform isamplerBuffer u_BlockAABBInfo;
 uniform isamplerBuffer u_BlockAABBUVs;
 uniform sampler2D u_BiomeMap;
-uniform sampler2D u_GrassColormap;
-uniform sampler2D u_FoliageColormap;
 uniform sampler2D u_UITexture;
 uniform sampler2D u_UISource;
 uniform sampler2DArray u_DestroyStages;
@@ -218,6 +216,24 @@ Atmosphere GetAtmosphere(float t) {
 }
 
 vec3 ACESFilm(vec3 x) { return clamp((x*(2.51*x + 0.03))/(x*(2.43*x + 0.59) + 0.14), 0.0, 1.0); }
+
+// The light pool and all scene math are linear-light. Encode to sRGB exactly
+// once at the output instead of applying an approximate power curve to the
+// block-light term (which makes low-level light look washed out and double-
+// corrects it when the scene is tone-mapped).
+vec3 linearToSrgb(vec3 linear) {
+    linear = max(linear, vec3(0.0));
+    vec3 low = linear * 12.92;
+    vec3 high = 1.055 * pow(linear, vec3(1.0 / 2.4)) - 0.055;
+    return mix(high, low, step(linear, vec3(0.0031308)));
+}
+
+// LightEngine stores Minecraft's 0..15 levels as 0..255 channels (level * 17),
+// with a four-source headroom divisor. Decode the raw channel before the scene
+// is tone-mapped. The 0 and 255 endpoints stay unchanged.
+float decodeBlockLight(float encodedChannel) {
+    return pow(clamp(encodedChannel / 255.0, 0.0, 1.0), 2.2) * 255.0;
+}
 
 // ── Cartoon-style helpers ──
 // Deterministic screen-space hash (dither + volumetric shaft detail).
@@ -1637,7 +1653,7 @@ void main() {
     vec3 rd = normalize(camForward + ndc.x * (float(sz.x)/sz.y) * camRight + ndc.y * camUp);
     
     vec4 uiCol = texture(u_UITexture, (vec2(px) + 0.5) / vec2(sz));
-    if (uiCol.a >= 0.99) { imageStore(imgOutput, px, vec4(pow(uiCol.rgb, vec3(1.0/2.2)), 1.0)); return; }
+    if (uiCol.a >= 0.99) { imageStore(imgOutput, px, vec4(linearToSrgb(uiCol.rgb), 1.0)); return; }
 
     // Atmosphere pre-computed on CPU (AtmosphereRenderer) — avoids per-pixel computation
     Atmosphere at;
@@ -1793,7 +1809,7 @@ void main() {
             if (texel.a < 0.1) {
                 trans = 1.0; alb = vec3(1.0); refl = 0.0;
             } else {
-                alb = texel.rgb * (vec3(d2.rgb)/255.0);
+                alb = texel.rgb;
                 trans = 1.0 - texel.a; refl = 0.1;
                 // Sun diffuse (no shadow ray — light pools only feed god rays)
                 float sunVisC = max(0.0, dot(n, at.sunDir));
@@ -2023,7 +2039,7 @@ void main() {
 
             vec4 texSample = texture(u_BlockTextures, vec3(finalUv, float(tex)));
             float diffuseFactor = float((animPacked >> 8) & 0xFF) / 255.0;
-            alb = texSample.rgb * (vec3(d2.rgb)/255.0) * diffuseFactor;
+            alb = texSample.rgb * diffuseFactor;
 
             // Transparency Logic: Combine base transparency and texture alpha
             float baseTrans = float(d1.z) / 255.0;
@@ -2096,15 +2112,6 @@ void main() {
                 final += throu * alb * emissive * 2.0;
             }
 
-            // Fixed per-block tint: grass/leaf variants carry their own color (a
-            // block-type property) instead of a location-based biome colormap lookup.
-            // Per-face tint mask in bits 24-29: bit j (0-5) set if face j should tint.
-            { int ti = (d1.w >> 22) & 3;
-              int tintFaceMask = (d1.w >> 24) & 0x3F;
-              if (ti > 0 && ((tintFaceMask >> texFace) & 1) == 1 && texSample.a > 0.5) {
-                alb *= vec3(d3.rgb) / 255.0;
-              } }
-
             // Sample the baked RGB lightmap (block light from the LightPool SSBO).
             ivec3 lightSamplePos = ivec3(floor(hp + n * 0.5));
             vec4 lightMap = sampleLightmap(lightSamplePos);
@@ -2123,7 +2130,11 @@ void main() {
             float blockG = lightMap.z * TINT_HEADROOM;
             float blockB = lightMap.w * TINT_HEADROOM;
             float blockIntensity = max(max(blockR, blockG), blockB);
-            float blockContrib = max(blockIntensity * 5.0, 1.0) / 255.0;
+            // Undo the CPU headroom divisor before decoding. Keep intensity and
+            // tint separate: gamma-correcting each channel independently would
+            // shift amber/red lights toward white or black.
+            float linearBlockLevel = decodeBlockLight(blockIntensity);
+            float blockContrib = (linearBlockLevel / 255.0) * 5.0;
             float totalLightContrib = max(skyContrib, blockContrib);
             // Apply block light tint: color the beam with the RGB light source color
             vec3 blockTint = vec3(1.0);
@@ -2290,5 +2301,5 @@ void main() {
         result = mix(lo, hi, smoothstep(0.38, 0.62, frac)) / 12.0;
     }
     if (uiCol.a > 0.0) result = mix(result, uiCol.rgb, uiCol.a);
-    imageStore(imgOutput, px, vec4(pow(result, vec3(1.0/2.2)), 1.0));
+    imageStore(imgOutput, px, vec4(linearToSrgb(result), 1.0));
 }

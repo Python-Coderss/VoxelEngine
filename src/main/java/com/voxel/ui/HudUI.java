@@ -132,6 +132,21 @@ public class HudUI {
     public UILayer.UITextElement spawnLoadingStatus;
     public UILayer.UITextElement spawnLoadingSpinner;
 
+    // ── Structured menu controls ──
+    public static final int MENU_BUTTON_COUNT = 8;
+    public final UILayer.UIElement[] menuButtonBackgrounds = new UILayer.UIElement[MENU_BUTTON_COUNT];
+    public final UILayer.UITextElement[] menuButtonLabels = new UILayer.UITextElement[MENU_BUTTON_COUNT];
+    public UILayer.UITextElement menuSubtitle;
+    public UILayer.UITextElement menuHint;
+
+    // ── In-game pause menu ──
+    public UILayer.UIElement pauseDimmer;
+    public UILayer.UIElement pausePanel;
+    public final UILayer.UIElement[] pauseButtonBackgrounds = new UILayer.UIElement[3];
+    public final UILayer.UITextElement[] pauseButtonLabels = new UILayer.UITextElement[3];
+    public UILayer.UITextElement pauseTitle;
+    public UILayer.UITextElement pauseHint;
+
     public double itemNameDisplayUntil = 0.0;
     public boolean inventoryUiDirty = true;
 
@@ -866,8 +881,8 @@ public class HudUI {
         // renders underneath them; theme-aware color set in
         // updateSpawnLoadingOverlay().
         menuTextPanel = new UILayer.UIElement(
-            new Vector2f(main.width / 2f - 350, main.height / 2f - 115),
-            new Vector2f(700, 330),
+            new Vector2f(main.width / 2f - 350, main.height / 2f - 220),
+            new Vector2f(700, 500),
             new Vector4f(0.05f, 0.06f, 0.09f, 0.55f)
         );
         menuTextPanel.visible = false;
@@ -907,6 +922,84 @@ public class HudUI {
         spawnLoadingStatus.visible = false;
         spawnLoadingStatus.charLineLimit = 52;
         layer.addElement(spawnLoadingStatus);
+
+        // Structured main-menu rows. Backgrounds receive clicks; labels are
+        // intentionally non-interactive so they do not steal the hit target.
+        float menuX = main.width / 2f - 250f;
+        float menuY = main.height / 2f - 42f;
+        for (int i = 0; i < MENU_BUTTON_COUNT; i++) {
+            final int row = i;
+            UILayer.UIElement bg = new UILayer.UIElement(
+                new Vector2f(menuX, menuY + i * 48f),
+                new Vector2f(500, 40),
+                new Vector4f(0.08f, 0.12f, 0.18f, 0.92f));
+            bg.visible = false;
+            bg.onClick = () -> main.requestMenuSelection(row);
+            menuButtonBackgrounds[i] = bg;
+            layer.addElement(bg);
+
+            UILayer.UITextElement label = new UILayer.UITextElement(
+                new Vector2f(menuX + 20, menuY + i * 48f + 8),
+                "", 1.55f, new Vector4f(0.92f, 0.95f, 1.0f, 1.0f), fontTextureId);
+            label.visible = false;
+            label.charLineLimit = 54;
+            menuButtonLabels[i] = label;
+            layer.addElement(label);
+        }
+        menuSubtitle = new UILayer.UITextElement(
+            new Vector2f(main.width / 2f - 250f, main.height / 2f - 104f),
+            "", 1.35f, new Vector4f(0.72f, 0.80f, 0.90f, 1.0f), fontTextureId);
+        menuSubtitle.visible = false;
+        menuSubtitle.charLineLimit = 62;
+        layer.addElement(menuSubtitle);
+        menuHint = new UILayer.UITextElement(
+            new Vector2f(main.width / 2f - 250f, main.height - 48f),
+            "", 1.2f, new Vector4f(0.78f, 0.84f, 0.92f, 0.95f), fontTextureId);
+        menuHint.visible = false;
+        menuHint.charLineLimit = 80;
+        layer.addElement(menuHint);
+
+        // Pause menu sits above the world and below its button labels.
+        pauseDimmer = new UILayer.UIElement(
+            new Vector2f(0, 0), new Vector2f(main.width, main.height),
+            new Vector4f(0.015f, 0.025f, 0.05f, 0.58f));
+        pauseDimmer.visible = false;
+        pauseDimmer.onClick = null;
+        layer.addElement(pauseDimmer);
+        pausePanel = new UILayer.UIElement(
+            new Vector2f(main.width / 2f - 250f, main.height / 2f - 160f),
+            new Vector2f(500, 330),
+            new Vector4f(0.045f, 0.065f, 0.11f, 0.96f));
+        pausePanel.visible = false;
+        layer.addElement(pausePanel);
+        pauseTitle = new UILayer.UITextElement(
+            new Vector2f(main.width / 2f - 210f, main.height / 2f - 130f),
+            "PAUSED", 3.2f, new Vector4f(0.95f, 0.82f, 0.35f, 1), fontTextureId);
+        pauseTitle.visible = false;
+        layer.addElement(pauseTitle);
+        for (int i = 0; i < pauseButtonBackgrounds.length; i++) {
+            final int row = i;
+            float y = main.height / 2f - 60f + i * 54f;
+            UILayer.UIElement bg = new UILayer.UIElement(
+                new Vector2f(main.width / 2f - 210f, y), new Vector2f(420, 44),
+                new Vector4f(0.10f, 0.15f, 0.23f, 0.96f));
+            bg.visible = false;
+            bg.onClick = () -> main.requestPauseSelection(row);
+            pauseButtonBackgrounds[i] = bg;
+            layer.addElement(bg);
+            UILayer.UITextElement label = new UILayer.UITextElement(
+                new Vector2f(main.width / 2f - 190f, y + 9), "", 1.55f,
+                new Vector4f(0.92f, 0.95f, 1.0f, 1), fontTextureId);
+            label.visible = false;
+            pauseButtonLabels[i] = label;
+            layer.addElement(label);
+        }
+        pauseHint = new UILayer.UITextElement(
+            new Vector2f(main.width / 2f - 210f, main.height / 2f + 126f),
+            "ESC resume   ENTER select", 1.15f,
+            new Vector4f(0.70f, 0.78f, 0.88f, 1), fontTextureId);
+        pauseHint.visible = false;
+        layer.addElement(pauseHint);
     }
 
     // ── Slot click handlers ───────────────────────────────────────────────────────
@@ -1653,7 +1746,123 @@ public class HudUI {
         }
     }
 
+    /** Updates structured startup and pause controls, including hover feedback. */
+    public void updateMenuControls(double time) {
+        boolean inMenu = ctx.menuScreen != GameContext.MenuScreen.IN_GAME;
+        boolean paused = ctx.pauseMenuOpen && !inMenu;
+        String[] labels = new String[MENU_BUTTON_COUNT];
+        int count = 0;
+        menuSubtitle.text = "";
+        menuHint.text = "";
+
+        if (inMenu) {
+            switch (ctx.menuScreen) {
+                case MAIN:
+                    labels = new String[] { "NEW WORLD", "TUTORIAL WORLD", "LOAD SAVE", "OPTIONS", "", "", "", "" };
+                    count = 4;
+                    menuSubtitle.text = "A small voxel world with big ideas";
+                    menuHint.text = "ARROWS / WHEEL select   ENTER / CLICK confirm   ESC back";
+                    break;
+                case NEW_WORLD_NAME:
+                    labels = new String[] { "CONTINUE", "BACK", "", "", "", "", "", "" };
+                    count = 2;
+                    menuSubtitle.text = "WORLD NAME: " + ctx.menuTextInput + "_";
+                    menuHint.text = "TYPE A NAME   ENTER / CLICK CONTINUE   ESC back";
+                    break;
+                case NEW_WORLD_SEED:
+                    labels = new String[] { "CONTINUE", "BACK", "", "", "", "", "", "" };
+                    count = 2;
+                    menuSubtitle.text = "SEED: " + (ctx.menuTextInput.length() == 0 ? "RANDOM" : ctx.menuTextInput + "_");
+                    menuHint.text = "BLANK USES A RANDOM SEED   ENTER / CLICK CONTINUE";
+                    break;
+                case NEW_WORLD_SIZE:
+                    com.voxel.world.WorldSize[] sizes = com.voxel.world.WorldSize.values();
+                    count = Math.min(sizes.length + 1, MENU_BUTTON_COUNT);
+                    for (int i = 0; i < count - 1; i++) labels[i] = sizes[i].displayName();
+                    labels[count - 1] = "BACK";
+                    menuSubtitle.text = "WORLD SIZE   •   BORDER " + sizes[ctx.worldSizeSelection].borderRadius() / 1000 + "K";
+                    menuHint.text = "ARROWS / CLICK choose size   ENTER confirm";
+                    break;
+                case NEW_WORLD_MODE:
+                    labels = new String[] { "SURVIVAL", "CREATIVE", "CREATE WORLD", "BACK", "", "", "", "" };
+                    count = 4;
+                    menuSubtitle.text = "GAME MODE: " + (ctx.gameMode == GameContext.GameMode.CREATIVE ? "CREATIVE" : "SURVIVAL");
+                    menuHint.text = "CLICK A MODE, THEN CREATE WORLD   ESC back";
+                    break;
+                case LOAD_SAVE:
+                    int saves = Math.min(ctx.saveList.size(), 5);
+                    count = Math.min(saves + 3, MENU_BUTTON_COUNT);
+                    for (int i = 0; i < saves; i++) labels[i] = ctx.saveList.get(i);
+                    if (count >= 3) {
+                        labels[count - 3] = "LOAD SELECTED";
+                        labels[count - 2] = "DELETE SELECTED";
+                        labels[count - 1] = "BACK";
+                    }
+                    menuSubtitle.text = saves == 0 ? "NO SAVES FOUND" : "SELECT A WORLD TO CONTINUE";
+                    menuHint.text = "CLICK A WORLD TO SELECT   ENTER LOAD   BACKSPACE DELETE   ESC back";
+                    break;
+                case OPTIONS:
+                    labels = new String[] { "THEME: " + (ctx.uiTheme == GameContext.UiTheme.DARK ? "DARK" : "LIGHT"), "BACK", "", "", "", "", "", "" };
+                    count = 2;
+                    menuSubtitle.text = "CONTROLS & ACCESSIBILITY\nWASD MOVE   MOUSE LOOK   E INVENTORY   M MAP";
+                    menuHint.text = "ESC back   ENTER / CLICK select";
+                    break;
+                default: break;
+            }
+        }
+
+        for (int i = 0; i < MENU_BUTTON_COUNT; i++) {
+            boolean visible = inMenu && !paused && i < count && labels[i] != null && !labels[i].isEmpty();
+            menuButtonBackgrounds[i].visible = visible;
+            menuButtonLabels[i].visible = visible;
+            if (!visible) continue;
+            boolean hover = menuButtonBackgrounds[i].isPointInside(ctx.lastMouseX, ctx.lastMouseY);
+            boolean selected = i == ctx.menuSelection;
+            if (ctx.menuScreen == GameContext.MenuScreen.LOAD_SAVE && i < Math.min(ctx.saveList.size(), 5)) {
+                selected = i == ctx.saveListSelection;
+            } else if (ctx.menuScreen == GameContext.MenuScreen.NEW_WORLD_SIZE
+                    && i < com.voxel.world.WorldSize.values().length) {
+                selected = i == ctx.worldSizeSelection;
+            } else if (ctx.menuScreen == GameContext.MenuScreen.NEW_WORLD_MODE && i < 2) {
+                selected = (i == 1) == (ctx.gameMode == GameContext.GameMode.CREATIVE);
+            }
+            menuButtonBackgrounds[i].color.set(
+                hover || selected ? 0.18f : 0.08f,
+                hover || selected ? 0.38f : 0.12f,
+                hover || selected ? 0.42f : 0.18f,
+                hover ? 0.98f : 0.92f);
+            menuButtonLabels[i].text = labels[i];
+            float scale = menuButtonLabels[i].scale;
+            float textWidth = labels[i].length() * 8f * scale;
+            menuButtonLabels[i].pos.set(menuButtonBackgrounds[i].pos.x
+                    + Math.max(18f, (menuButtonBackgrounds[i].size.x - textWidth) * 0.5f),
+                    menuButtonBackgrounds[i].pos.y + 8f);
+        }
+        menuSubtitle.visible = inMenu && !paused;
+        menuHint.visible = inMenu && !paused;
+
+        pauseDimmer.visible = paused;
+        pausePanel.visible = paused;
+        pauseTitle.visible = paused;
+        pauseHint.visible = paused;
+        String[] pauseLabels = { "RESUME", "THEME: " + (ctx.uiTheme == GameContext.UiTheme.DARK ? "DARK" : "LIGHT"), "SAVE & QUIT" };
+        for (int i = 0; i < pauseButtonBackgrounds.length; i++) {
+            pauseButtonBackgrounds[i].visible = paused;
+            pauseButtonLabels[i].visible = paused;
+            pauseButtonLabels[i].text = pauseLabels[i];
+            if (paused) {
+                boolean hover = pauseButtonBackgrounds[i].isPointInside(ctx.lastMouseX, ctx.lastMouseY);
+                boolean selected = i == ctx.pauseSelection;
+                pauseButtonBackgrounds[i].color.set(hover || selected ? 0.18f : 0.10f,
+                    hover || selected ? 0.38f : 0.15f,
+                    hover || selected ? 0.42f : 0.23f,
+                    hover ? 1.0f : 0.96f);
+            }
+        }
+    }
+
     public void updateSpawnLoadingOverlay(double time) {
+        updateMenuControls(time);
         boolean inMenu = ctx.menuScreen != GameContext.MenuScreen.IN_GAME;
         boolean loading = ctx.spawnLoading;
         boolean preWorld = ctx.initializing || inMenu;
@@ -1673,9 +1882,11 @@ public class HudUI {
         }
         spawnLoadingBackground.visible = loading && preWorld && !menuActive;
         loadingPopupBackground.visible = loading && !preWorld && !menuActive;
-        spawnLoadingTitle.visible = loading || menuActive;
-        spawnLoadingSpinner.visible = loading || menuActive;
-        spawnLoadingStatus.visible = loading || menuActive;
+        // Structured controls replace the old monolithic menu text. Keep the
+        // legacy title/spinner/status for world loading only.
+        spawnLoadingTitle.visible = loading && !menuActive;
+        spawnLoadingSpinner.visible = loading && !menuActive;
+        spawnLoadingStatus.visible = loading && !menuActive;
         if (!loading && !menuActive) return;
 
         String title = "WORLD INITIALIZING";
@@ -1702,7 +1913,7 @@ public class HudUI {
         // Translucent text backdrop (menu only): dark pane in dark mode, pale
         // pane in light mode so the theme's text color stays readable over the
         // 3D panorama behind it.
-        menuTextPanel.visible = menuActive;
+        menuTextPanel.visible = menuActive && !ctx.pauseMenuOpen;
         if (dark) {
             menuTextPanel.color.set(0.05f, 0.06f, 0.09f, 0.55f);
         } else {

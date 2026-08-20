@@ -114,7 +114,7 @@ public class Main {
     public int locBlockTextures, locEntityTextures, locBlockData, locBlockAABBs, locBlockAABBInfo, locBlockAABBUVs;
     public volatile boolean needsWorldUpload = false;
     public volatile boolean needsCursorUpdate = false;
-    public int locBiomeMap, locGrassColormap, locUITexture, locFoliageColormap, locUISource;
+    public int locBiomeMap, locUITexture, locUISource;
     public int locHeartUVs;
     public int locCraftingItemCount;
     public int locDestroyStages; // cached u_DestroyStages (was a per-frame glGetUniformLocation)
@@ -255,44 +255,6 @@ public class Main {
     public static final int CRAFTING_SLOTS = 5;
     public static final int CRAFTING_RESULT_SLOT = 4;
 
-    // Fixed biome-category tint colors (0xRRGGBB). Grass block variants and the
-    // creeper's re-greened skin use the GRASS_* constants; leaves use FOLIAGE_*.
-    // These replace the old location-based biome colormap sampling.
-    private static final int GRASS_PLAINS = 0x91BD59;
-    private static final int GRASS_TAIGA   = 0x86B783;
-    private static final int GRASS_JUNGLE  = 0x59C93C;
-    private static final int GRASS_SWAMP   = 0x6A7039;
-    private static final int GRASS_SAVANNA = 0xBFB755;
-    private static final int GRASS_TUNDRA  = 0x80B497;
-    private static final int FOLIAGE_OAK      = 0x48B518;
-    private static final int FOLIAGE_SPRUCE   = 0x619961;
-    private static final int FOLIAGE_JUNGLE   = 0x30BB0B;
-    private static final int FOLIAGE_DARK_OAK = 0x2E7D2E;
-
-    /** Fixed grass tint color for a biome category (0xRRGGBB). */
-    private static int grassColorForCategory(com.voxel.biome.Biome.Category cat) {
-        switch (cat) {
-            case TAIGA:   return GRASS_TAIGA;
-            case JUNGLE:  return GRASS_JUNGLE;
-            case SWAMP:   return GRASS_SWAMP;
-            case SAVANNA: return GRASS_SAVANNA;
-            case ICY:     return GRASS_TUNDRA;
-            default:      return GRASS_PLAINS;
-        }
-    }
-
-    /** Fixed grass tint at a world position, chosen by biome category. */
-    private int grassColorAt(int x, int z) {
-        if (biomeManager != null) {
-            com.voxel.biome.BiomeProvider provider = biomeManager.getBiomeProvider();
-            if (provider != null) {
-                com.voxel.biome.Biome biome = provider.getBiome(x, z);
-                if (biome != null) return grassColorForCategory(biome.getCategory());
-            }
-        }
-        return GRASS_PLAINS;
-    }
-
     public Thread logicThread;
     public volatile boolean running = true;
     public CameraMode cameraMode = CameraMode.FIRST_PERSON;
@@ -332,6 +294,7 @@ public class Main {
 
         // Save data on shutdown (including the level.dat player state)
         if (ctx.worldSaveManager != null) {
+            if (ctx.chunkManager != null) ctx.chunkManager.savePendingChanges();
             ctx.worldSaveManager.saveCraftingData(ctx.activeDimension, ctx.craftingTableManager);
             ctx.worldSaveManager.saveSurfaceCraftingData(ctx.activeDimension, ctx.surfaceCraftingManager);
             ctx.worldSaveManager.saveCommandBlockData(ctx.activeDimension, ctx.commandBlockManager);
@@ -490,6 +453,9 @@ public class Main {
         // Create extracted subsystems
         itemDefinitions = new ItemDefinitions();
         itemDefinitions.setup(blockDataManager, textureManager);
+        com.voxel.utils.MinecraftContentLoader.registerMissingItems(
+                itemDefinitions, blockDataManager, textureManager,
+                "src/main/resources/assets/minecraft/models/item");
         ctx.itemDefinitions = itemDefinitions;
 
         // Build canonical block/item registry (deduplicates direction/level/model variants)
@@ -528,6 +494,11 @@ public class Main {
 
         // Initialize crafting system (MUST be before setupUi)
         craftingManager = new CraftingManager();
+        int vanillaRecipeCount = com.voxel.crafting.VanillaRecipeLoader.load(
+                craftingManager,
+                "src/main/resources/assets/minecraft/recipes",
+                new java.util.HashSet<>(itemDefinitions.getRegistry().keySet()));
+        System.out.println("[MC content] Crafting registry ready with " + vanillaRecipeCount + " imported recipes");
         ctx.craftingManager = craftingManager;
 
         hud = new com.voxel.ui.HudUI(ctx, this, cameraController, playerInventory, textureManager, itemDefinitions, biomeManager);
@@ -1080,9 +1051,7 @@ public class Main {
         locBlockAABBInfo = glGetUniformLocation(computeProgram, "u_BlockAABBInfo");
         locBlockAABBUVs = glGetUniformLocation(computeProgram, "u_BlockAABBUVs");
         locBiomeMap = glGetUniformLocation(computeProgram, "u_BiomeMap");
-        locGrassColormap = glGetUniformLocation(computeProgram, "u_GrassColormap");
         locUITexture = glGetUniformLocation(computeProgram, "u_UITexture");
-        locFoliageColormap = glGetUniformLocation(computeProgram, "u_FoliageColormap");
         locUISource = glGetUniformLocation(computeProgram, "u_UISource");
         locHeartUVs = glGetUniformLocation(computeProgram, "u_HeartUVs");
         locCraftingItemCount = glGetUniformLocation(computeProgram, "u_CraftingItemCount");
@@ -1223,12 +1192,6 @@ public class Main {
                     nextSpawnCommandId++, pos, textureManager, player);
                 creeper.setWorld(world);
                 com.voxel.entity.CreeperEntity.setChunkManager(chunkManager);
-                int grassRGB = grassColorAt((int) Math.floor(pos.x), (int) Math.floor(pos.z));
-                creeper.tintColor.set(
-                    ((grassRGB >> 16) & 0xFF) / 255.0f,
-                    ((grassRGB >> 8) & 0xFF) / 255.0f,
-                    (grassRGB & 0xFF) / 255.0f);
-                creeper.tintAmount = 1.0f;
                 mob = creeper;
                 break;
             }
@@ -1489,26 +1452,33 @@ public class Main {
         // tutorial world re-fires title cards.
         currentTutorialZone = -1;
         tutorialMinecartsSpawned = false;
-        // Create only Overworld at startup; other dimensions lazy-load.
+        // Create only the saved dimension at startup; other dimensions lazy-load.
+        // A save may have been last used outside the Overworld, and restoring its
+        // coordinates into an Overworld manager makes the player appear stuck in
+        // an unloaded/empty region.
+        DimensionType initialDimension = ctx.loadPending ? ctx.loadDimension : DimensionType.OVERWORLD;
+        int initialRenderDistance = initialDimension == DimensionType.OVERWORLD ? 8 : 6;
         dimensionManager = new DimensionManager(blockDataManager, ctx.worldSaveManager, biomeManager);
         dimensionManager.setWorldSeed(ctx.worldSeed);
         dimensionManager.setTutorialWorld(ctx.tutorialWorld);
-        dimensionManager.createDimension(DimensionType.OVERWORLD, 8);
+        dimensionManager.createDimension(initialDimension, initialRenderDistance);
         // createDimension populates the dimension map but leaves the active
-        // dimension pointer alone; make sure it targets the Overworld we just
-        // built so the getters below can never resolve to null.
-        dimensionManager.switchTo(DimensionType.OVERWORLD);
+        // dimension pointer alone; make sure it targets the selected dimension
+        // so the getters below can never resolve to null.
+        dimensionManager.switchTo(initialDimension);
+        activeDimension = initialDimension;
+        ctx.activeDimension = initialDimension;
         // Push the configured X/Z int bits into the Beta terrain precision tuning
         com.voxel.world.WorldGenerator activeGen = dimensionManager.getActiveGenerator();
         if (activeGen instanceof com.voxel.world.BetaWorldGenerator) {
             ((com.voxel.world.BetaWorldGenerator) activeGen).setWorldSize(ctx.worldSize);
         }
 
-        world = dimensionManager.getWorld(DimensionType.OVERWORLD, 8);
-        chunkManager = dimensionManager.getChunkManager(DimensionType.OVERWORLD, 8);
+        world = dimensionManager.getWorld(initialDimension, initialRenderDistance);
+        chunkManager = dimensionManager.getChunkManager(initialDimension, initialRenderDistance);
         if (world == null || chunkManager == null) {
             throw new IllegalStateException(
-                "Overworld dimension failed to initialize (world=" + world
+                initialDimension.name + " dimension failed to initialize (world=" + world
                 + ", chunkManager=" + chunkManager
                 + ", active=" + dimensionManager.getActiveDimension() + ")");
         }
@@ -1538,6 +1508,7 @@ public class Main {
         ctx.fluidManager = new com.voxel.world.FluidManager(world, chunkManager, blockDataManager, false);
         chunkManager.setFluidManager(ctx.fluidManager);
 
+        player.setDimension(activeDimension);
         playerEntity = new com.voxel.entity.PlayerEntity(10_000, new Vector3f(player.getPosition()), textureManager);
         ctx.worldSaveManager.loadCommandBlockData(activeDimension, ctx.commandBlockManager);
         ctx.worldSaveManager.loadSurfaceCraftingData(activeDimension, ctx.surfaceCraftingManager);
@@ -1556,10 +1527,15 @@ public class Main {
         // chunks finish generating + the surface is detected, the loading overlay
         // hides.
         ctx.spawnLoadingMessage = ctx.loadPending ? "Loading world..." : "Generating spawn chunks...";
-        // Loading a save: resolve spawn near the saved position so the surface
-        // probe lands on real terrain, then apply the exact saved state after
-        // spawn resolution completes (see applyLoadedPlayerState).
+        // A save load must move the bootstrap player to the saved column before
+        // asking ChunkManager to stream terrain. Previously spawn resolution used
+        // the saved X/Z while the manager still queued the default (0, 0) column,
+        // so areSpawnChunksGenerated() waited forever for chunks that were never
+        // requested. The exact saved state is applied again after the readiness
+        // probe, but the bootstrap position must already be in the saved section.
         if (ctx.loadPending) {
+            player.setPosition(ctx.loadX, ctx.loadY, ctx.loadZ);
+            player.resetVelocity();
             ctx.beginSpawnResolution((int) Math.floor(ctx.loadX), (int) Math.floor(ctx.loadZ));
         } else {
             ctx.beginSpawnResolution(0, 0);
@@ -1738,13 +1714,133 @@ public class Main {
      * (title screen, new-world wizard, save selection). Called from tick()
      * while ctx.menuScreen != IN_GAME and the world has not been created yet.
      */
+    /** Requests a menu row activation from the render-thread mouse callback. */
+    public void requestMenuSelection(int index) {
+        if (ctx == null || ctx.menuScreen == GameContext.MenuScreen.IN_GAME) return;
+        ctx.menuSelection = Math.max(0, index);
+        switch (ctx.menuScreen) {
+            case LOAD_SAVE:
+                // Save rows select; the explicit LOAD button commits.
+                if (index < Math.min(ctx.saveList.size(), 5)) {
+                    ctx.saveListSelection = index;
+                    return;
+                }
+                if (index == Math.min(ctx.saveList.size(), 5)) {
+                    ctx.menuConfirmRequested = true;
+                    return;
+                }
+                if (index == Math.min(ctx.saveList.size(), 5) + 1) {
+                    requestDeleteSelectedSave();
+                    return;
+                }
+                requestMenuBack();
+                return;
+            case NEW_WORLD_SIZE:
+                if (index < com.voxel.world.WorldSize.values().length) {
+                    ctx.worldSizeSelection = index;
+                    ctx.menuConfirmRequested = true;
+                } else requestMenuBack();
+                return;
+            case NEW_WORLD_MODE:
+                if (index == 0 || index == 1) {
+                    ctx.gameMode = index == 1 ? GameContext.GameMode.CREATIVE : GameContext.GameMode.SURVIVAL;
+                } else if (index == 2) ctx.menuConfirmRequested = true;
+                else requestMenuBack();
+                return;
+            case MAIN:
+                ctx.menuConfirmRequested = true;
+                return;
+            case OPTIONS:
+                if (index == 0) {
+                    ctx.uiTheme = ctx.uiTheme == GameContext.UiTheme.DARK
+                        ? GameContext.UiTheme.LIGHT : GameContext.UiTheme.DARK;
+                } else requestMenuBack();
+                return;
+            case NEW_WORLD_NAME:
+            case NEW_WORLD_SEED:
+                if (index == 0) ctx.menuConfirmRequested = true;
+                else requestMenuBack();
+                return;
+            default: return;
+        }
+    }
+
+    public void requestMenuBack() {
+        if (ctx != null) ctx.menuBackRequested = true;
+    }
+
+    public void requestDeleteSelectedSave() {
+        if (ctx == null || ctx.saveList.isEmpty()) return;
+        String doomed = ctx.saveList.get(Math.max(0, Math.min(ctx.saveListSelection, ctx.saveList.size() - 1)));
+        com.voxel.world.WorldSaveManager.deleteSave(doomed);
+        ctx.saveList = com.voxel.world.WorldSaveManager.listSaves();
+        ctx.saveListSelection = Math.min(ctx.saveListSelection, Math.max(0, ctx.saveList.size() - 1));
+        setStatus("Deleted save \"" + doomed + "\"");
+    }
+
+    public void requestPauseSelection(int index) {
+        if (ctx == null || !ctx.pauseMenuOpen) return;
+        ctx.pauseSelection = Math.max(0, Math.min(2, index));
+        ctx.pauseConfirmRequested = true;
+    }
+
+    private void handlePauseMenuInput() {
+        boolean confirm = ctx.pauseConfirmRequested;
+        ctx.pauseConfirmRequested = false;
+        if (menuKeyPressed(GLFW_KEY_UP)) ctx.pauseSelection = (ctx.pauseSelection + 2) % 3;
+        if (menuKeyPressed(GLFW_KEY_DOWN)) ctx.pauseSelection = (ctx.pauseSelection + 1) % 3;
+        if (menuKeyPressed(GLFW_KEY_ESCAPE)) {
+            ctx.pauseMenuOpen = false;
+            updateCursorMode();
+            return;
+        }
+        if (!confirm && !menuKeyPressed(GLFW_KEY_ENTER)) return;
+        switch (ctx.pauseSelection) {
+            case 0:
+                ctx.pauseMenuOpen = false;
+                updateCursorMode();
+                break;
+            case 1:
+                ctx.uiTheme = ctx.uiTheme == GameContext.UiTheme.DARK
+                    ? GameContext.UiTheme.LIGHT : GameContext.UiTheme.DARK;
+                ctx.pauseConfirmRequested = false;
+                break;
+            case 2:
+                // The normal shutdown path persists level.dat and pending chunks.
+                ctx.pauseMenuOpen = false;
+                glfwSetWindowShouldClose(window, true);
+                break;
+            default: break;
+        }
+    }
+
     private void handleMainMenuInput() {
         com.voxel.world.WorldSize[] sizes = com.voxel.world.WorldSize.values();
         GameContext.MenuScreen screen = ctx.menuScreen;
+        boolean confirmRequested = ctx.menuConfirmRequested;
+        ctx.menuConfirmRequested = false;
+        if (ctx.menuBackRequested) {
+            ctx.menuBackRequested = false;
+            switch (screen) {
+                case MAIN: break;
+                case NEW_WORLD_NAME:
+                case NEW_WORLD_SEED:
+                case LOAD_SAVE: ctx.menuScreen = GameContext.MenuScreen.MAIN; ctx.menuSelection = 0; break;
+                case NEW_WORLD_SIZE: ctx.menuScreen = GameContext.MenuScreen.NEW_WORLD_SEED; ctx.menuTextActive = true; break;
+                case NEW_WORLD_MODE: ctx.menuScreen = GameContext.MenuScreen.NEW_WORLD_SIZE; break;
+                case OPTIONS: ctx.menuScreen = GameContext.MenuScreen.MAIN; ctx.menuSelection = 3; break;
+                default: break;
+            }
+            return;
+        }
+        if (screen != GameContext.MenuScreen.MAIN && menuKeyPressed(GLFW_KEY_ESCAPE)) {
+            requestMenuBack();
+            return;
+        }
 
         switch (screen) {
             case MAIN: {
-                // Title screen: New World / Tutorial World / Load Save / Theme
+                // Title screen: world creation, tutorial, saves, and options.
                 int optionCount = 4;
                 if (menuKeyPressed(GLFW_KEY_UP)) {
                     ctx.menuSelection--;
@@ -1754,7 +1850,7 @@ public class Main {
                     ctx.menuSelection++;
                     if (ctx.menuSelection >= optionCount) ctx.menuSelection = 0;
                 }
-                if (menuKeyPressed(GLFW_KEY_ENTER)) {
+                if (menuKeyPressed(GLFW_KEY_ENTER) || confirmRequested) {
                     switch (ctx.menuSelection) {
                         case 0: // New World
                             ctx.menuScreen = GameContext.MenuScreen.NEW_WORLD_NAME;
@@ -1778,9 +1874,9 @@ public class Main {
                             ctx.saveListSelection = 0;
                             ctx.menuScreen = GameContext.MenuScreen.LOAD_SAVE;
                             break;
-                        case 3: // Theme
-                            ctx.uiTheme = ctx.uiTheme == GameContext.UiTheme.DARK
-                                ? GameContext.UiTheme.LIGHT : GameContext.UiTheme.DARK;
+                        case 3: // Options
+                            ctx.menuScreen = GameContext.MenuScreen.OPTIONS;
+                            ctx.menuSelection = 0;
                             break;
                     }
                 }
@@ -1788,7 +1884,7 @@ public class Main {
             }
 
             case NEW_WORLD_NAME: {
-                if (menuKeyPressed(GLFW_KEY_ENTER)) {
+                if (menuKeyPressed(GLFW_KEY_ENTER) || confirmRequested) {
                     String name = ctx.menuTextInput.toString().trim();
                     if (name.isEmpty()) name = "New World";
                     // Sanitize: keep folder-safe characters only
@@ -1803,7 +1899,7 @@ public class Main {
             }
 
             case NEW_WORLD_SEED: {
-                if (menuKeyPressed(GLFW_KEY_ENTER)) {
+                if (menuKeyPressed(GLFW_KEY_ENTER) || confirmRequested) {
                     String seedText = ctx.menuTextInput.toString().trim();
                     if (seedText.isEmpty()) {
                         ctx.randomSeed = true;
@@ -1833,7 +1929,7 @@ public class Main {
                     ctx.worldSizeSelection++;
                     if (ctx.worldSizeSelection >= sizes.length) ctx.worldSizeSelection = 0;
                 }
-                if (menuKeyPressed(GLFW_KEY_ENTER)) {
+                if (menuKeyPressed(GLFW_KEY_ENTER) || confirmRequested) {
                     ctx.worldSize = sizes[ctx.worldSizeSelection];
                     ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
                     ctx.gameMode = GameContext.GameMode.SURVIVAL;
@@ -1847,7 +1943,7 @@ public class Main {
                     ctx.gameMode = ctx.gameMode == GameContext.GameMode.SURVIVAL
                         ? GameContext.GameMode.CREATIVE : GameContext.GameMode.SURVIVAL;
                 }
-                if (menuKeyPressed(GLFW_KEY_ENTER)) {
+                if (menuKeyPressed(GLFW_KEY_ENTER) || confirmRequested) {
                     // Commit the new world: create save manager + seed, then let
                     // initializeWorldPhase() run on the next tick.
                     ctx.worldSeed = ctx.randomSeed ? ctx.menuSeed : ctx.menuSeed;
@@ -1859,6 +1955,21 @@ public class Main {
                     ctx.menuTextActive = false;
                     ctx.spawnLoadingMessage = "Generating spawn chunks...";
                     setStatus("Created world \"" + ctx.saveName + "\" (seed " + ctx.worldSeed + ")");
+                }
+                break;
+            }
+
+            case OPTIONS: {
+                if (menuKeyPressed(GLFW_KEY_UP) || menuKeyPressed(GLFW_KEY_DOWN)) {
+                    ctx.menuSelection = (ctx.menuSelection + 1) % 2;
+                }
+                if (menuKeyPressed(GLFW_KEY_ENTER) || confirmRequested) {
+                    if (ctx.menuSelection == 0) {
+                        ctx.uiTheme = ctx.uiTheme == GameContext.UiTheme.DARK
+                            ? GameContext.UiTheme.LIGHT : GameContext.UiTheme.DARK;
+                    } else {
+                        requestMenuBack();
+                    }
                 }
                 break;
             }
@@ -2047,6 +2158,14 @@ public class Main {
         if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME) {
             handleMainMenuInput();
             ctx.spawnLoadingMessage = buildMenuMessage();
+            return;
+        }
+
+        // Pause owns the logic thread after the world is ready: rendering and UI
+        // continue, but movement, AI, fluids, redstone, and chunk streaming stop.
+        if (ctx.pauseMenuOpen) {
+            handlePauseMenuInput();
+            lastLogicTickNanos = System.nanoTime();
             return;
         }
 
@@ -2550,7 +2669,7 @@ public class Main {
             // Mirror the render-loop camera height so chunks stream in around
             // whatever zoom level the player is viewing.
             float mapCamY = mapCameraHeight(ctx.mapDisplayZoom);
-            chunkManager.updateFixedPosition(
+            chunkManager.updateMapFixedPosition(
                 FixedPoint.fromFloat(ctx.mapPanX),
                 FixedPoint.fromFloat(mapCamY),
                 FixedPoint.fromFloat(ctx.mapPanY), 0f);
@@ -2569,6 +2688,7 @@ public class Main {
         if (++autosaveCounter >= 200) {
             autosaveCounter = 0;
             if (ctx.worldSaveManager != null && player != null && playerInventory != null) {
+                if (ctx.chunkManager != null) ctx.chunkManager.savePendingChanges();
                 ctx.worldSaveManager.saveLevelData(ctx, player, playerInventory);
                 if (ctx.machineManager != null) {
                     ctx.worldSaveManager.saveMachineData(ctx.activeDimension, ctx.machineManager);
@@ -3263,6 +3383,25 @@ public class Main {
         // Menu screens own the keyboard (world does not exist yet). The menu
         // keys are polled by the logic thread, but block gameplay hotkeys here.
         if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME) return;
+        if (action == GLFW_PRESS && key == GLFW_KEY_ESCAPE) {
+            if (ctx.pauseMenuOpen) {
+                ctx.pauseMenuOpen = false;
+                updateCursorMode();
+                return;
+            }
+            if (ctx.mapOpen) {
+                ctx.mapOpen = false;
+                ctx.activeUI = GameContext.ActiveUI.NONE;
+                needsCursorUpdate = true;
+                return;
+            }
+            if (!inventoryOpen && !commandMode && ctx.activeUI == GameContext.ActiveUI.NONE) {
+                ctx.pauseMenuOpen = true;
+                ctx.pauseSelection = 0;
+                updateCursorMode();
+                return;
+            }
+        }
         if (action == GLFW_PRESS) {
             // Creative mode: DELETE destroys the held stack (or the selected hotbar
             // item when not holding anything). Non-printable, so it never collides
@@ -3610,11 +3749,24 @@ public class Main {
 
     public void handleMouseButton(long win, int button, int action, int mods) {
         // Mouse callbacks may arrive before the game context/UI are ready.
-        if (ctx == null || player == null || blockInteraction == null) return;
-        // During menu screens the world does not exist; clicks must not raycast.
-        if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME) return;
+        if (ctx == null || player == null || blockInteraction == null) return;        // During startup menus the world does not exist; route clicks only to
+        // menu controls and never into gameplay raycasts.
+        if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME) {
+            if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT) {
+                hud.handleMouseClick(lastMouseX, lastMouseY);
+            }
+            return;
+        }
 
-        // Map drag pan: LEFT or RIGHT mouse both pan (like Google Maps). A
+        if (ctx.pauseMenuOpen) {
+
+            if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT) {
+                hud.handleMouseClick(lastMouseX, lastMouseY);
+            }
+            return;
+        }
+
+        // Map drag pan: LEFT or RIGHT mouse both pan (like Google Maps).
         // left press first tries the map overlay buttons (zoom/reset/center);
         // if none is hit, the press starts a drag. Everything is consumed so
         // world actions (break/place) never fire underneath the map UI.
@@ -3867,7 +4019,7 @@ public class Main {
 
     public void updateCursorMode() {
         boolean inMenu = ctx != null && ctx.menuScreen != GameContext.MenuScreen.IN_GAME;
-        boolean freeCursor = inMenu || inventoryOpen || commandMode || ctx.mapOpen;
+        boolean freeCursor = inMenu || inventoryOpen || commandMode || ctx.mapOpen || (ctx != null && ctx.pauseMenuOpen);
         glfwSetInputMode(window, GLFW_CURSOR, freeCursor ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
         if (freeCursor) {
             // Resync the tracked cursor position with the OS position. After
@@ -4044,15 +4196,9 @@ public class Main {
         glActiveTexture(GL_TEXTURE8);
         glBindTexture(GL_TEXTURE_2D, biomeManager.getBiomeMapId());
         glUniform1i(locBiomeMap, 8);
-        glActiveTexture(GL_TEXTURE9);
-        glBindTexture(GL_TEXTURE_2D, biomeManager.getGrassColormapId());
-        glUniform1i(locGrassColormap, 9);
         glActiveTexture(GL_TEXTURE10);
         glBindTexture(GL_TEXTURE_2D, hud.uiManager.getUITexture());
         glUniform1i(locUITexture, 10);
-        glActiveTexture(GL_TEXTURE14);
-        glBindTexture(GL_TEXTURE_2D, biomeManager.getFoliageColormapId());
-        glUniform1i(locFoliageColormap, 14);
 
         // ── Map preview: simplified biome view for unloaded chunks ──
         // Upload any freshly-baked region, then bind + drive the uniforms. The
@@ -4103,10 +4249,6 @@ public class Main {
         textureManager.loadDestroyStages("src/main/resources/assets/minecraft/textures/blocks");
         
         biomeManager = new com.voxel.utils.BiomeManager();
-        biomeManager.loadColormaps(
-            "src/main/resources/assets/minecraft/textures/colormap/grass.png",
-            "src/main/resources/assets/minecraft/textures/colormap/foliage.png"
-        );
         
         blockDataManager = new BlockDataManager();
         blockRegistry = new BlockRegistry();
@@ -4114,29 +4256,23 @@ public class Main {
         blockRegistry.register("grass_block", 1);
         shaderBlockRegistry.register(1, 1);
         blockDataManager.registerBlock(1, "grass_block", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.setBlockTintColor(1, GRASS_PLAINS);
         // Per-biome-category grass variants: same model as grass_block, but each
         // carries a fixed category tint color instead of a location-based sample.
         blockRegistry.register("taiga_grass", 86);
         shaderBlockRegistry.register(86, 86);
         blockDataManager.registerBlock(86, "taiga_grass", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.setBlockTintColor(86, GRASS_TAIGA);
         blockRegistry.register("jungle_grass", 87);
         shaderBlockRegistry.register(87, 87);
         blockDataManager.registerBlock(87, "jungle_grass", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.setBlockTintColor(87, GRASS_JUNGLE);
         blockRegistry.register("swamp_grass", 88);
         shaderBlockRegistry.register(88, 88);
         blockDataManager.registerBlock(88, "swamp_grass", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.setBlockTintColor(88, GRASS_SWAMP);
         blockRegistry.register("savanna_grass", 89);
         shaderBlockRegistry.register(89, 89);
         blockDataManager.registerBlock(89, "savanna_grass", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.setBlockTintColor(89, GRASS_SAVANNA);
         blockRegistry.register("tundra_grass", 90);
         shaderBlockRegistry.register(90, 90);
         blockDataManager.registerBlock(90, "tundra_grass", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.setBlockTintColor(90, GRASS_TUNDRA);
         blockRegistry.register("stone", 2);
         shaderBlockRegistry.register(2, 2);
         blockDataManager.registerBlock(2, "stone", textureManager, "src/main/resources/assets/minecraft/models/block");
@@ -4146,7 +4282,6 @@ public class Main {
         blockRegistry.register("oak_leaves", 4);
         shaderBlockRegistry.register(4, 4);
         blockDataManager.registerBlock(4, "oak_leaves", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.setBlockTintColor(4, FOLIAGE_OAK);
         blockRegistry.register("oak_log", 5);
         shaderBlockRegistry.register(5, 5);
         blockDataManager.registerBlock(5, "oak_log", textureManager, "src/main/resources/assets/minecraft/models/block");
@@ -4364,7 +4499,6 @@ public class Main {
         blockRegistry.register("tallgrass", 123);
         shaderBlockRegistry.register(123, 123);
         blockDataManager.registerBlock(123, "tallgrass", textureManager, "src/main/resources/assets/minecraft/models/block");
-        blockDataManager.setBlockTintColor(123, GRASS_PLAINS);
         blockRegistry.register("blue_aercloud", 124);
         shaderBlockRegistry.register(124, 124);
         blockDataManager.registerBlock(124, "blue_aercloud", textureManager, aetherModels, 100, 0, 255);
@@ -4382,7 +4516,6 @@ public class Main {
         blockRegistry.register("tallgrass", 35);
         shaderBlockRegistry.register(35, 35);
         blockDataManager.registerBlock(35, "tallgrass", textureManager, mcModels);
-        blockDataManager.setBlockTintColor(35, GRASS_PLAINS);
         blockRegistry.register("dead_bush", 36);
         shaderBlockRegistry.register(36, 36);
         blockDataManager.registerBlock(36, "dead_bush", textureManager, mcModels);
@@ -4407,7 +4540,6 @@ public class Main {
         blockDataManager.setEffect(41, BlockDataManager.MaterialEffect.NONE);
         blockDataManager.setTransparency(41, 0);
         blockDataManager.setReflectivity(41, 0);
-        blockDataManager.setBlockTintColor(41, 0x2E7D32);
         blockRegistry.register("pumpkin", 42);
         shaderBlockRegistry.register(42, 42);
         blockDataManager.registerBlock(42, "pumpkin", textureManager, mcModels);
@@ -4429,14 +4561,12 @@ public class Main {
         blockRegistry.register("spruce_leaves", 48);
         shaderBlockRegistry.register(48, 48);
         blockDataManager.registerBlock(48, "spruce_leaves", textureManager, mcModels);
-        blockDataManager.setBlockTintColor(48, FOLIAGE_SPRUCE);
         blockRegistry.register("jungle_log", 49);
         shaderBlockRegistry.register(49, 49);
         blockDataManager.registerBlock(49, "jungle_log", textureManager, mcModels);
         blockRegistry.register("jungle_leaves", 50);
         shaderBlockRegistry.register(50, 50);
         blockDataManager.registerBlock(50, "jungle_leaves", textureManager, mcModels);
-        blockDataManager.setBlockTintColor(50, FOLIAGE_JUNGLE);
         blockRegistry.register("acacia_log", 51);
         shaderBlockRegistry.register(51, 51);
         blockDataManager.registerBlock(51, "acacia_log", textureManager, mcModels);
@@ -4446,7 +4576,6 @@ public class Main {
         blockRegistry.register("dark_oak_leaves", 53);
         shaderBlockRegistry.register(53, 53);
         blockDataManager.registerBlock(53, "dark_oak_leaves", textureManager, mcModels);
-        blockDataManager.setBlockTintColor(53, FOLIAGE_DARK_OAK);
         blockRegistry.register("gravel", 54);
         shaderBlockRegistry.register(54, 54);
         blockDataManager.registerBlock(54, "gravel", textureManager, mcModels);
@@ -4481,7 +4610,6 @@ public class Main {
         blockRegistry.register("fern", 64);
         shaderBlockRegistry.register(64, 64);
         blockDataManager.registerBlock(64, "fern", textureManager, mcModels);
-        blockDataManager.setBlockTintColor(64, GRASS_PLAINS);
         blockRegistry.register("hardened_clay", 65);
         shaderBlockRegistry.register(65, 65);
         blockDataManager.registerBlock(65, "hardened_clay", textureManager, mcModels);
@@ -5251,6 +5379,14 @@ public class Main {
         shaderBlockRegistry.register(471, 471);
         blockDataManager.registerBlock(471, "iron_bars_post", textureManager, mcModels, 120, 0, 255);
         blockDataManager.setFullBlock(471, false);
+
+        // Auto-register every remaining vanilla 1.12.2 blockstate from the resource pack.
+        // Hand-authored IDs above remain authoritative; new content gets stable IDs
+        // after the existing registry and reuses the native Minecraft models/textures.
+        com.voxel.utils.MinecraftContentLoader.registerMissingBlocks(
+                blockDataManager, blockRegistry, shaderBlockRegistry, textureManager,
+                "src/main/resources/assets/minecraft/blockstates",
+                "src/main/resources/assets/minecraft/models/block", 472);
 
         // Register shader state variants for directional and on/off blocks
         shaderBlockRegistry.registerOnOff(28, true, 30);

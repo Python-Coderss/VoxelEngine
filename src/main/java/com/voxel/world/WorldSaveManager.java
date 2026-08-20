@@ -15,7 +15,9 @@ import org.json.JSONObject;
 import java.io.*;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
@@ -37,6 +39,8 @@ public class WorldSaveManager {
      * magic and falls back to the legacy short-only format.
      */
     public static final int CHUNK_MAGIC = 0x564F5856; // "VOXV"
+    /** Semi-generated structure/feature writes awaiting a target chunk section. */
+    private static final int PENDING_MAGIC = 0x564F5850; // "VOXP"
 
     private final String basePath;
 
@@ -109,6 +113,12 @@ public class WorldSaveManager {
         return new File(regionDir, cx + "_" + cz + ".dat");
     }
 
+    /** Sidecar containing structure writes made while a target section was absent. */
+    private File getPendingChunkFile(DimensionType dim, int cx, int cz) {
+        File chunk = getChunkFile(dim, cx, cz);
+        return new File(chunk.getParentFile(), cx + "_" + cz + ".pending");
+    }
+
     /** Returns the crafting data file for a dimension. */
     private File getCraftingFile(DimensionType dim) {
         return new File(getDimensionDir(dim), "crafting.dat");
@@ -169,7 +179,10 @@ public class WorldSaveManager {
      */
     public boolean loadChunk(DimensionType dim, int cx, int cz, World world) {
         File file = getChunkFile(dim, cx, cz);
-        if (!file.exists()) return false;
+        if (!file.exists()) {
+            loadPendingVoxels(dim, cx, cz, world);
+            return false;
+        }
 
         try (DataInputStream in = new DataInputStream(
                 new BufferedInputStream(new GZIPInputStream(new FileInputStream(file))))) {
@@ -210,12 +223,129 @@ public class WorldSaveManager {
                 world.setVoxelWithData(wx, wy, wz, blockType, extra);
             }
 
+            // Restore structure writes after the base chunk data is registered.
+            // World keeps writes for sections that are still outside the current
+            // Y window; those are applied when the section eventually loads.
+            loadPendingVoxels(dim, cx, cz, world);
             WorldGenLogger.log("DISK_LOAD dim=" + dim.name + " chunk(" + cx + "," + cz + ") blocks=" + count + " <- " + file.getPath());
             return true;
         } catch (IOException e) {
             WorldGenLogger.log("DISK_LOAD_ERR dim=" + dim.name + " chunk(" + cx + "," + cz + ") " + e.getMessage());
             System.err.println("Failed to load chunk (" + cx + "," + cz + "): " + e.getMessage());
             return false;
+        }
+    }
+
+    /**
+     * Persists writes whose structure/feature source crossed into an unallocated
+     * target section. These sidecars are intentionally separate from the full
+     * chunk file: the target may still need procedural terrain generation.
+     */
+    public void savePendingVoxels(DimensionType dim, List<World.DeferredVoxelWrite> writes) {
+        if (writes == null || writes.isEmpty()) return;
+        Map<Long, List<World.DeferredVoxelWrite>> grouped = new HashMap<>();
+        for (World.DeferredVoxelWrite write : writes) {
+            int cx = Math.floorDiv(write.x, 16);
+            int cz = Math.floorDiv(write.z, 16);
+            long key = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
+            grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(write);
+        }
+        for (Map.Entry<Long, List<World.DeferredVoxelWrite>> entry : grouped.entrySet()) {
+            int cx = (int) (entry.getKey() >> 32);
+            int cz = (int) (long) entry.getKey();
+            File file = getPendingChunkFile(dim, cx, cz);
+            file.getParentFile().mkdirs();
+            Map<PendingKey, Integer> merged = readPendingFile(file);
+            for (World.DeferredVoxelWrite write : entry.getValue()) {
+                merged.put(new PendingKey(write.x, write.y, write.z), write.raw);
+            }
+            writePendingFile(file, merged);
+            WorldGenLogger.log("DISK_PENDING_SAVE dim=" + dim.name + " chunk(" + cx + "," + cz + ") writes=" + entry.getValue().size());
+        }
+    }
+
+    /** Queues persisted semi-generated writes into World for application after generation. */
+    private void loadPendingVoxels(DimensionType dim, int cx, int cz, World world) {
+        File file = getPendingChunkFile(dim, cx, cz);
+        if (!file.exists()) return;
+        for (Map.Entry<PendingKey, Integer> entry : readPendingFile(file).entrySet()) {
+            PendingKey key = entry.getKey();
+            world.queueDeferredVoxelWrite(key.x, key.y, key.z, entry.getValue());
+        }
+    }
+
+    /** Removes semi-generated records once their target writes are in a live section. */
+    public void acknowledgePendingVoxels(DimensionType dim, List<World.DeferredVoxelWrite> applied) {
+        if (applied == null || applied.isEmpty()) return;
+        Map<Long, List<World.DeferredVoxelWrite>> grouped = new HashMap<>();
+        for (World.DeferredVoxelWrite write : applied) {
+            int cx = Math.floorDiv(write.x, 16);
+            int cz = Math.floorDiv(write.z, 16);
+            long key = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
+            grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(write);
+        }
+        for (Map.Entry<Long, List<World.DeferredVoxelWrite>> entry : grouped.entrySet()) {
+            int cx = (int) (entry.getKey() >> 32);
+            int cz = (int) (long) entry.getKey();
+            File file = getPendingChunkFile(dim, cx, cz);
+            Map<PendingKey, Integer> remaining = readPendingFile(file);
+            for (World.DeferredVoxelWrite write : entry.getValue()) {
+                PendingKey key = new PendingKey(write.x, write.y, write.z);
+                Integer current = remaining.get(key);
+                if (current != null && current == write.raw) remaining.remove(key);
+            }
+            if (remaining.isEmpty()) file.delete();
+            else writePendingFile(file, remaining);
+        }
+    }
+
+    private Map<PendingKey, Integer> readPendingFile(File file) {
+        Map<PendingKey, Integer> result = new HashMap<>();
+        if (!file.exists()) return result;
+        try (DataInputStream in = new DataInputStream(new BufferedInputStream(
+                new GZIPInputStream(new FileInputStream(file))))) {
+            if (in.readInt() != PENDING_MAGIC) return result;
+            int count = in.readInt();
+            for (int i = 0; i < count; i++) {
+                result.put(new PendingKey(in.readInt(), in.readInt(), in.readInt()), in.readInt());
+            }
+        } catch (IOException e) {
+            WorldGenLogger.log("DISK_PENDING_LOAD_ERR " + file.getPath() + " " + e.getMessage());
+        }
+        return result;
+    }
+
+    private void writePendingFile(File file, Map<PendingKey, Integer> writes) {
+        if (writes.isEmpty()) {
+            file.delete();
+            return;
+        }
+        try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(
+                new GZIPOutputStream(new FileOutputStream(file))))) {
+            out.writeInt(PENDING_MAGIC);
+            out.writeInt(writes.size());
+            for (Map.Entry<PendingKey, Integer> entry : writes.entrySet()) {
+                out.writeInt(entry.getKey().x);
+                out.writeInt(entry.getKey().y);
+                out.writeInt(entry.getKey().z);
+                out.writeInt(entry.getValue());
+            }
+        } catch (IOException e) {
+            System.err.println("Failed to save pending structure data: " + e.getMessage());
+        }
+    }
+
+    private static final class PendingKey {
+        final int x, y, z;
+        PendingKey(int x, int y, int z) { this.x = x; this.y = y; this.z = z; }
+        @Override public boolean equals(Object other) {
+            if (!(other instanceof PendingKey)) return false;
+            PendingKey key = (PendingKey) other;
+            return x == key.x && y == key.y && z == key.z;
+        }
+        @Override public int hashCode() {
+            int result = 31 * x + y;
+            return 31 * result + z;
         }
     }
 
@@ -307,10 +437,17 @@ public class WorldSaveManager {
             PlayerState ps = new PlayerState();
             ps.x = playerJson.optDouble("x", 0);
             ps.y = playerJson.optDouble("y", 64);
-            ps.z = playerJson.optDouble("z", 0);
-            ps.yaw = (float) playerJson.optDouble("yaw", -90);
-            ps.pitch = (float) playerJson.optDouble("pitch", 0);
-            ps.health = (float) playerJson.optDouble("health", 20);
+            ps.z = playerJson.optDouble("z", 0);                ps.yaw = (float) playerJson.optDouble("yaw", -90);
+                ps.pitch = (float) playerJson.optDouble("pitch", 0);
+                ps.health = (float) playerJson.optDouble("health", 20);
+                // Keep the saved dimension separate from the active dimension
+                // until Main has built the correct world/chunk manager.
+                String savedDimension = playerJson.optString("dimension", DimensionType.OVERWORLD.name);
+                try {
+                    ctx.loadDimension = DimensionType.valueOf(savedDimension.toUpperCase(java.util.Locale.ROOT));
+                } catch (IllegalArgumentException ignored) {
+                    ctx.loadDimension = DimensionType.OVERWORLD;
+                }
             JSONArray invJson = playerJson.optJSONArray("inventory");
             if (invJson != null) {
                 for (int i = 0; i < invJson.length(); i++) {

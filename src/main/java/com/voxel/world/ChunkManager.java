@@ -98,6 +98,11 @@ public class ChunkManager {
     private int lastPlayerCX = -1000, lastPlayerCZ = -1000, lastPlayerCY = -1000;
     private float lastYaw = 0;
 
+    // Boundary tracking is kept separate from lastPlayerC* because the map camera
+    // also uses the streaming center API. Only player updates may trigger the
+    // current-chunk GPU refresh; opening/panning the map must not do so.
+    private int lastBoundaryPlayerCX = -1000, lastBoundaryPlayerCY = -1000, lastBoundaryPlayerCZ = -1000;
+
     // ── Center-ray look-ahead preload ──
     // Last column queued by requestLookAhead + when, so turning toward a boundary
     // can't spam the gen queue with identical tasks. volatile: written by the
@@ -302,22 +307,70 @@ public class ChunkManager {
      * Vector3f rendering view cannot round a far-land position into a neighbor.
      */
     public void updateFixedPosition(long fixedX, long fixedY, long fixedZ, float yaw) {
+        updateFixedPosition(fixedX, fixedY, fixedZ, yaw, true);
+    }
+
+    /** Streaming-center update used by the map camera; never reloads for its moves. */
+    public void updateMapFixedPosition(long fixedX, long fixedY, long fixedZ, float yaw) {
+        updateFixedPosition(fixedX, fixedY, fixedZ, yaw, false);
+    }
+
+    private void updateFixedPosition(long fixedX, long fixedY, long fixedZ, float yaw,
+                                     boolean playerMovement) {
         int pcx = FixedPoint.blockX(fixedX) >> 4;
         int pcy = FixedPoint.blockX(fixedY) >> 4;
         int pcz = FixedPoint.blockX(fixedZ) >> 4;
 
+        boolean playerBoundary = playerMovement
+                && crossedPlayerChunkBoundary(lastBoundaryPlayerCX, lastBoundaryPlayerCY,
+                        lastBoundaryPlayerCZ, pcx, pcy, pcz);
+        if (playerMovement) {
+            lastBoundaryPlayerCX = pcx;
+            lastBoundaryPlayerCY = pcy;
+            lastBoundaryPlayerCZ = pcz;
+        }
+
         // Trigger on any chunk-coordinate change: X, Y, Z, or teleport
-        if (pcx != lastPlayerCX || pcy != lastPlayerCY || pcz != lastPlayerCZ) {
+        if (pcx != lastPlayerCX || pcy != lastPlayerCY || pcz != lastPlayerCZ || playerBoundary) {
             lastPlayerCX = pcx;
             lastPlayerCY = pcy;
             lastPlayerCZ = pcz;
             lastYaw = yaw;
 
-            // Push to front of queue — manage preempts stale load tasks
+            // Push to front of queue — manage preempts stale load tasks. Any
+            // player chunk-boundary crossing also refreshes the destination
+            // section through the normal GPU upload path.
             int pcxFinal = pcx, pcyFinal = pcy, pczFinal = pcz;
             float yawFinal = yaw;
-            taskQueue.addFirst(() -> manageChunks(pcxFinal, pcyFinal, pczFinal, yawFinal));
+            taskQueue.addFirst(() -> {
+                // Map updates can overwrite the streaming-center fields before
+                // this task runs. Restore the player target for the reload and
+                // manage pass so its Y-range is centered on the real player.
+                if (playerMovement) {
+                    lastPlayerCX = pcxFinal;
+                    lastPlayerCY = pcyFinal;
+                    lastPlayerCZ = pczFinal;
+                    if (playerBoundary) markChunkDirtyForGpu(pcxFinal, pcyFinal, pczFinal);
+                }
+                manageChunks(pcxFinal, pcyFinal, pczFinal, yawFinal);
+            });
         }
+    }
+
+    /**
+     * Marks the exact section entered by the player for the normal render-thread
+     * GPU upload path. CPU chunk state is intentionally left untouched: this is
+     * a refresh of the GPU copy, not a disk unload/reload.
+     */
+    private void markChunkDirtyForGpu(int cx, int cy, int cz) {
+        NavigableMap<Integer, Integer> slots = loadedChunks.get(chunkKey(cx, cz));
+        if (slots == null) return; // manageChunks will dirty newly generated slots
+        Integer slot = slots.get(cy);
+        if (slot == null || slot == World.EMPTY) return;
+        dirtySlots.add(slot);
+        tableDirty.set(true);
+        WorldGenLogger.logChunk("GPU_REFRESH", cx, cy, cz,
+                "player crossed chunk boundary");
     }
 
     /**
@@ -441,7 +494,11 @@ public class ChunkManager {
      * Thread-safe: reads ConcurrentHashMap, safe from any thread.
      */
     public boolean isChunkLoaded(int cx, int cz) {
-        return loadedChunks.containsKey(chunkKey(cx, cz));
+        NavigableMap<Integer, Integer> slots = loadedChunks.get(chunkKey(cx, cz));
+        if (slots == null || slots.isEmpty()) return false;
+        // loadedChunks can briefly retain a stale column while a pinned light
+        // snapshot finishes. Do not report that detached column as loaded.
+        return isColumnRegistered(cx, cz, slots);
     }
 
     /**
@@ -450,14 +507,32 @@ public class ChunkManager {
      * published before its sections are filled.
      */
     public boolean areSpawnChunksGenerated(int centerCx, int centerCz) {
+        return areSpawnChunksGenerated(centerCx, lastPlayerCY, centerCz);
+    }
+
+    /** Same readiness check with an explicit vertical center for spawn loads. */
+    public boolean areSpawnChunksGenerated(int centerCx, int centerCy, int centerCz) {
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
-                if (!fullyGeneratedColumns.contains(chunkKey(centerCx + dx, centerCz + dz))) {
-                    return false;
+                int cx = centerCx + dx;
+                int cz = centerCz + dz;
+                // The marker is only an optimization/history bit. Readiness must
+                // come from the live slot map: recentering and light pinning can
+                // temporarily make the marker stale even when the sections are
+                // already present (or leave a marker behind after detaching them).
+                for (int cy = centerCy - 1; cy <= centerCy + 1; cy++) {
+                    if (!isSectionReady(cx, cy, cz)) return false;
                 }
             }
         }
         return true;
+    }
+
+    /** Returns true when the player's 16³ chunk changed on any axis. */
+    static boolean crossedPlayerChunkBoundary(int previousCx, int previousCy, int previousCz,
+                                              int currentCx, int currentCy, int currentCz) {
+        return previousCx != -1000 && previousCy != -1000
+                && (currentCx != previousCx || currentCy != previousCy || currentCz != previousCz);
     }
 
     /**
@@ -469,11 +544,25 @@ public class ChunkManager {
      * Thread-safe: reads ConcurrentHashMaps and the world indirection table.
      */
     public boolean isPlayerSectionGenerated(int pcx, int pcy, int pcz) {
-        long key = chunkKey(pcx, pcz);
-        if (!loadedChunks.containsKey(key)) return false;
-        if (world.getChunkSlot(pcx << 4, pcy << 4, pcz << 4) == World.EMPTY) return false;
+        return isSectionReady(pcx, pcy, pcz);
+    }
+
+    /**
+     * Checks the live section state rather than a column/readiness marker.
+     * Slots are published before disk I/O or terrain generation begins, so both
+     * the indirection table and the per-column loading set are required. This
+     * also rejects columns detached by a buffer recenter while their map entry
+     * is still retained for an in-flight light snapshot.
+     */
+    private boolean isSectionReady(int cx, int cy, int cz) {
+        long key = chunkKey(cx, cz);
+        NavigableMap<Integer, Integer> slots = loadedChunks.get(key);
+        if (slots == null) return false;
+        Integer slot = slots.get(cy);
+        if (slot == null || slot == World.EMPTY) return false;
+        if (world.getChunkSlot(cx << 4, cy << 4, cz << 4) != slot) return false;
         Set<Integer> loading = columnSectionsLoaded.get(key);
-        return loading == null || !loading.contains(pcy);
+        return loading == null || !loading.contains(cy);
     }
 
     /**
@@ -680,6 +769,23 @@ public class ChunkManager {
         return true;
     }
 
+    /** Applies pending cross-chunk structure writes to a newly available section. */
+    private void applyDeferredVoxelWrites(int cx, int cy, int cz) {
+        List<World.DeferredVoxelWrite> applied = world.applyDeferredVoxelWrites(cx, cy, cz);
+        if (applied.isEmpty()) return;
+        int slot = world.getChunkSlot(cx << 4, cy << 4, cz << 4);
+        if (slot != World.EMPTY) dirtySlots.add(slot);
+        tableDirty.set(true);
+        if (saveManager != null) saveManager.acknowledgePendingVoxels(dimension, applied);
+    }
+
+    /** Flushes deferred structure writes into semi-generated chunk sidecars. */
+    public void savePendingChanges() {
+        if (saveManager == null) return;
+        List<World.DeferredVoxelWrite> writes = world.drainDeferredVoxelWrites();
+        if (!writes.isEmpty()) saveManager.savePendingVoxels(dimension, writes);
+    }
+
     // GPU upload queries (called from main thread)
     public Set<Integer> getDirtySlots() { return dirtySlots; }
     public boolean isTableDirty() { return tableDirty.get(); }
@@ -738,6 +844,8 @@ public class ChunkManager {
         taskQueue.clear(); // Discard stale tasks from old dimension
         genThread.interrupt();
         try { genThread.join(5000); } catch (InterruptedException ignored) {}
+        // Preserve any structure writes produced by the final generation task.
+        savePendingChanges();
 
         // Shut down light thread
         lightRunning = false;
@@ -1441,7 +1549,7 @@ public class ChunkManager {
                     if (freeSlotTop < 2) evictFarthestColumn(cx, cz);
                     if (freeSlotTop < 1) continue;
 
-                    slots = new TreeMap<>();
+                    slots = new ConcurrentSkipListMap<>();
                     loadedChunks.put(colKey, slots);
                     cancelledLightTasks.remove(colKey);
                     columnsCreated++;
@@ -1461,6 +1569,13 @@ public class ChunkManager {
                         world.setChunkSlot(cx, cy, cz, slot);
                     }
 
+                    // Mark the allocated sections before disk I/O. The slots are
+                    // registered first so loadChunk can write into them, but they
+                    // must not look ready to the logic thread during that write.
+                    for (int cy : immediateSections) {
+                        if (slots.containsKey(cy)) markGenerating(colKey, cy);
+                    }
+
                     // Try disk load — voxels land in the registered slots above.
                     boolean fromDisk = saveManager != null && saveManager.loadChunk(dimension, cx, cz, world);
                     if (fromDisk) markDiskLoaded(cx, cz);
@@ -1470,9 +1585,10 @@ public class ChunkManager {
                         if (slot == null) continue;
 
                         if (!fromDisk) {
-                            markGenerating(colKey, cy);
                             generateBaseTerrain(cx, cy, cz, slot);
+                            applyDeferredVoxelWrites(cx, cy, cz);
                             decorateSectionIfAllowed(cx, cy, cz, slot);
+                            applyDeferredVoxelWrites(cx, cy, cz);
 
                             int bmBase = slot << 7;
                             boolean anySolid = false;
@@ -1480,13 +1596,15 @@ public class ChunkManager {
                                 if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
                             }
                             if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
-                            unmarkGenerating(colKey, cy);
                         }
+                        applyDeferredVoxelWrites(cx, cy, cz);
+                        unmarkGenerating(colKey, cy);
                         mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
                         dirtySlots.add(slot);
                         sectionsLoaded++;
                     }
 
+                savePendingChanges();
                 tableDirty.set(true);
                 scheduleFluidsInColumn(cx, cz, slots);
                 scheduleColumnLighting(cx, cz, colKey, slots);
@@ -1523,7 +1641,9 @@ public class ChunkManager {
                         world.setChunkSlot(cx, cy, cz, slot);
                         markGenerating(colKey, cy);
                         generateBaseTerrain(cx, cy, cz, slot);
+                        applyDeferredVoxelWrites(cx, cy, cz);
                         decorateSectionIfAllowed(cx, cy, cz, slot);
+                        applyDeferredVoxelWrites(cx, cy, cz);
 
                         int bmBase = slot << 7;
                         boolean anySolid = false;
@@ -1531,6 +1651,7 @@ public class ChunkManager {
                             if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
                         }
                         if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
+                        applyDeferredVoxelWrites(cx, cy, cz);
                         unmarkGenerating(colKey, cy);
                         mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
                         dirtySlots.add(slot);
@@ -1561,6 +1682,7 @@ public class ChunkManager {
             }
         }
 
+        savePendingChanges();
         if (columnsCreated > 0 || sectionsLoaded > 0) {
             WorldGenLogger.log("3x3x3 grid: created " + columnsCreated + " columns, loaded " + sectionsLoaded + " sections at (" + pcx + "," + pcy + "," + pcz + ")");
         }
@@ -1627,7 +1749,7 @@ public class ChunkManager {
     private void generateOneColumn(int cx, int cz) {
         long colKey = chunkKey(cx, cz);
 
-        NavigableMap<Integer, Integer> slots = new TreeMap<>();
+        NavigableMap<Integer, Integer> slots = new ConcurrentSkipListMap<>();
         loadedChunks.put(colKey, slots);
         cancelledLightTasks.remove(colKey);
         fillBiomeColumn(cx, cz);
@@ -1644,6 +1766,11 @@ public class ChunkManager {
             world.setChunkSlot(cx, cy, cz, slot);
         }
 
+        // Mark sections before disk I/O so readiness cannot observe a partially
+        // restored column through the registered slots.
+        columnSectionsLoaded.put(colKey, ConcurrentHashMap.newKeySet());
+        for (int cy : slots.keySet()) markGenerating(colKey, cy);
+
         // Try disk load first — voxels land in the registered slots above.
         boolean fromDisk = saveManager != null && saveManager.loadChunk(dimension, cx, cz, world);
         if (fromDisk) markDiskLoaded(cx, cz);
@@ -1653,8 +1780,8 @@ public class ChunkManager {
             if (slot == null) continue;
 
             if (!fromDisk) {
-                markGenerating(colKey, cy);
                 generateBaseTerrain(cx, cy, cz, slot);
+                applyDeferredVoxelWrites(cx, cy, cz);
                 decorateSectionIfAllowed(cx, cy, cz, slot);
 
                 int bmBase = slot << 7;
@@ -1665,10 +1792,13 @@ public class ChunkManager {
                 if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
                 unmarkGenerating(colKey, cy);
             }
+            applyDeferredVoxelWrites(cx, cy, cz);
+            unmarkGenerating(colKey, cy);
             mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
             dirtySlots.add(slot);
         }
 
+        savePendingChanges();
         tableDirty.set(true);
         scheduleFluidsInColumn(cx, cz, slots);
         scheduleColumnLighting(cx, cz, colKey, slots);
@@ -1721,7 +1851,7 @@ public class ChunkManager {
         if (slots == null) {
             // First section of this column: create the column, try disk load
             if (freeSlotTop < 1) return;
-            slots = new TreeMap<>();
+            slots = new ConcurrentSkipListMap<>();
             loadedChunks.put(colKey, slots);
             cancelledLightTasks.remove(colKey);
             columnSectionsLoaded.put(colKey, ConcurrentHashMap.newKeySet());
@@ -1745,6 +1875,10 @@ public class ChunkManager {
                 world.setChunkSlot(cx, scy, cz, slot);
             }
 
+            // Mark sections before disk I/O. Registration alone is not readiness:
+            // the load may still be filling the pool from disk.
+            for (int scy : slots.keySet()) markGenerating(colKey, scy);
+
             // Try disk load — voxels land in the registered slots above. If no
             // save exists, generate terrain for every registered section so the
             // column completes in one task.
@@ -1754,6 +1888,8 @@ public class ChunkManager {
                 for (int scy : orderedSections(yMin, yMax)) {
                     Integer slot = slots.get(scy);
                     if (slot == null) continue;
+                    applyDeferredVoxelWrites(cx, scy, cz);
+                    unmarkGenerating(colKey, scy);
                     mcLightEngine.bakeChunkOcclusion(slot, cx, scy, cz);
                     dirtySlots.add(slot);
                 }
@@ -1761,9 +1897,10 @@ public class ChunkManager {
                 for (int scy : orderedSections(yMin, yMax)) {
                     Integer slot = slots.get(scy);
                     if (slot == null) continue;
-                    markGenerating(colKey, scy);
                     generateBaseTerrain(cx, scy, cz, slot);
+                    applyDeferredVoxelWrites(cx, scy, cz);
                     decorateSectionIfAllowed(cx, scy, cz, slot);
+                    applyDeferredVoxelWrites(cx, scy, cz);
 
                     int bmBase = slot << 7;
                     boolean anySolid = false;
@@ -1771,11 +1908,13 @@ public class ChunkManager {
                         if (world.getBitmaskPool()[bmBase + w] != 0) { anySolid = true; break; }
                     }
                     if (!anySolid) { computeChunkDirSDF(slot, cx, scy, cz); dirtySlots.add(slot); }
+                    applyDeferredVoxelWrites(cx, scy, cz);
                     unmarkGenerating(colKey, scy);
                     mcLightEngine.bakeChunkOcclusion(slot, cx, scy, cz);
                     dirtySlots.add(slot);
                 }
             }
+            savePendingChanges();
             tableDirty.set(true);
             scheduleFluidsInColumn(cx, cz, slots);
             scheduleColumnLighting(cx, cz, colKey, slots);
@@ -1809,7 +1948,9 @@ public class ChunkManager {
         world.clearChunkPoolSlot(slot);
         world.setChunkSlot(cx, cy, cz, slot);
         generateBaseTerrain(cx, cy, cz, slot);
+        applyDeferredVoxelWrites(cx, cy, cz);
         decorateSectionIfAllowed(cx, cy, cz, slot);
+        applyDeferredVoxelWrites(cx, cy, cz);
 
         // Directional SDF for empty chunks
         int bmBase = slot << 7;
@@ -1838,6 +1979,7 @@ public class ChunkManager {
         // A section arriving next to an existing section changes the vertical
         // sky-light path. Queue one complete-column rebuild on the dedicated
         // Lighting thread; duplicate arrivals coalesce by column key.
+        savePendingChanges();
         if (slots.lowerKey(cy) != null || slots.higherKey(cy) != null) {
             // Trim first: the relight snapshot must never retain a section whose
             // slot has just been returned to the allocator.
@@ -2077,6 +2219,7 @@ public class ChunkManager {
         if (slot == null) return false;
 
         generator.decorate(cx, 4, cz, slot, world);
+        savePendingChanges();
         generationStages.put(key, GenerationStage.DECORATED);
         deferredBetaDecoration.remove(key);
         dirtySlots.addAll(slots.values());
