@@ -164,6 +164,25 @@ public class UIManager {
             y += charSize;
         }
     }
+
+    /**
+     * Draws text with a flat colour outline: the string is stamped four
+     * times (left/right/up/down by {@code outlineWidth}) in {@code outlineColor}
+     * beneath the fill pass. Outline alpha is scaled by the fill alpha.
+     */
+    public void drawStringOutlined(String text, float x, float y, float scale, Vector4f color,
+                                   int fontTextureId, int charLineLimit, int lineOffset,
+                                   Vector4f outlineColor, float outlineWidth) {
+        if (fontTextureId == 0 || text == null || text.isEmpty()) return;
+        Vector4f oc = new Vector4f(outlineColor.x, outlineColor.y, outlineColor.z,
+            outlineColor.w * color.w);
+        float w = outlineWidth;
+        drawString(text, x - w, y, scale, oc, fontTextureId, charLineLimit, lineOffset);
+        drawString(text, x + w, y, scale, oc, fontTextureId, charLineLimit, lineOffset);
+        drawString(text, x, y - w, scale, oc, fontTextureId, charLineLimit, lineOffset);
+        drawString(text, x, y + w, scale, oc, fontTextureId, charLineLimit, lineOffset);
+        drawString(text, x, y, scale, color, fontTextureId, charLineLimit, lineOffset);
+    }
     
     private java.util.List<String> wrapText(String text, int charLineLimit) {
         java.util.List<String> lines = new java.util.ArrayList<>();

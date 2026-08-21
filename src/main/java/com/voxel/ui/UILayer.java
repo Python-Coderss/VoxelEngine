@@ -76,6 +76,10 @@ public class UILayer {
         public float scale;
         public int charLineLimit = 0;   // 0 = no wrapping
         public int lineOffset = 0;       // lines to skip from top (for scrolling)
+        /** When true, text renders with a flat outline (see outlineColor). */
+        public boolean outlined = false;
+        public Vector4f outlineColor = new Vector4f(0f, 0f, 0f, 1f);
+        public float outlineWidth = 1f;
         
         public UITextElement(Vector2f pos, String text, float scale, Vector4f color, int fontTextureId) {
             super(pos, new Vector2f(0, 0), color);
@@ -87,7 +91,12 @@ public class UILayer {
         @Override
         public void render(UIManager manager) {
             if (!visible || text == null || text.isEmpty()) return;
-            manager.drawString(text, pos.x, pos.y, scale, color, textureId, charLineLimit, lineOffset);
+            if (outlined) {
+                manager.drawStringOutlined(text, pos.x, pos.y, scale, color, textureId,
+                    charLineLimit, lineOffset, outlineColor, outlineWidth);
+            } else {
+                manager.drawString(text, pos.x, pos.y, scale, color, textureId, charLineLimit, lineOffset);
+            }
         }
     }
 }
