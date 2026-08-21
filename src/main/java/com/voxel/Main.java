@@ -153,6 +153,7 @@ public class Main {
     public volatile boolean panoramaActive = false;
     private int currentTutorialZone = -1; // last showcase zone the popup announced
     private boolean tutorialMinecartsSpawned = false; // rideable coaster carts spawned yet
+    private boolean pointClickDemoSpawned = false; // demo-world villager spawned yet
     private final java.util.Set<Integer> tutorialMobZonesSpawned = new java.util.HashSet<>(); // zones whose mobs are placed
     private int nextTutorialMobId = 65000; // unique id counter for tutorial-zone mobs
     private int nextSpawnCommandId = 75000; // unique id counter for /spawn-created mobs
@@ -259,6 +260,43 @@ public class Main {
     public Thread logicThread;
     public volatile boolean running = true;
     public CameraMode cameraMode = CameraMode.FIRST_PERSON;
+
+    // MCSM (Story Mode) point-and-click: the OS cursor is captured (can't
+    // leave the window) but never shown. A virtual cursor that tracks mouse
+    // movement is drawn instead and acts as the click target for mining,
+    // placing and entity attacks. Pushing it against a screen edge pans the
+    // camera (RTS/MCSM-style) instead of dead-ending.
+    public boolean pointAndClickMode = true;
+    private static final float PAC_EDGE_MARGIN = 40.0f;   // dead zone before edge-pan kicks in
+    private static final float PAC_EDGE_PAN_RATE = 120.0f; // deg/sec at full edge push
+    private float pacVirtX, pacVirtY;
+    private boolean pacVirtInit = false;
+    // Smoothed virtual cursor (what the reticle actually follows) so the
+    // pointer doesn't jitter on a frame skip.
+    private float pacSmoothX, pacSmoothY;
+    // True when the world-space ray under the cursor currently hits a block or
+    // entity the player can interact with — the HUD uses this to widen/colour
+    // the reticle (the MCSM "hover" affordance).
+    public volatile boolean pacHoveringInteractable = false;
+
+    /** Raw virtual cursor position (pre-smoothing) for point-and-click mode. */
+    public float getVirtualCursorX() { return pacVirtInit ? pacVirtX : width / 2f; }
+    public float getVirtualCursorY() { return pacVirtInit ? pacVirtY : height / 2f; }
+
+    /** Smoothed virtual cursor position — the reticle tracks this. */
+    public float getSmoothedCursorX() { return pacVirtInit ? pacSmoothX : width / 2f; }
+    public float getSmoothedCursorY() { return pacVirtInit ? pacSmoothY : height / 2f; }
+
+    /** Signed edge-pan deltas (deg) for this frame, from the virtual cursor. */
+    private void computeEdgePan(float[] out) {
+        float panX = 0f, panY = 0f;
+        if (pacVirtX <= PAC_EDGE_MARGIN) panX -= (1f - pacVirtX / PAC_EDGE_MARGIN);
+        else if (pacVirtX >= width - 1 - PAC_EDGE_MARGIN) panX += (1f - (width - 1 - pacVirtX) / PAC_EDGE_MARGIN);
+        if (pacVirtY <= PAC_EDGE_MARGIN) panY += (1f - pacVirtY / PAC_EDGE_MARGIN);
+        else if (pacVirtY >= height - 1 - PAC_EDGE_MARGIN) panY -= (1f - (height - 1 - pacVirtY) / PAC_EDGE_MARGIN);
+        out[0] = Math.max(-1f, Math.min(1f, panX));
+        out[1] = Math.max(-1f, Math.min(1f, panY));
+    }
 
     public volatile float craftingCameraYaw;    // Fixed yaw while using crafting table (volatile: read by GL thread)
     public volatile float craftingCameraPitch;   // Fixed pitch while using crafting table
@@ -423,6 +461,11 @@ public class Main {
             @Override
             public void onLevelUp(int newLevel) {
                 setStatus("Level up! You are now level " + newLevel);
+                // Cinematic flourish at meaningful level milestones (level 1,
+                // 5, 10, ...). One-shot so early-game mob grinding isn't gated.
+                if (ctx != null && ctx.cinematic != null) {
+                    ctx.cinematic.playLevelUp(newLevel);
+                }
             }
         });
 
@@ -436,6 +479,7 @@ public class Main {
         // Create shared game context (world/chunkManager/dimensionManager filled below after init)
         ctx = new GameContext();
         cameraController = new CameraController(ctx, this);
+        ctx.cinematic = new com.voxel.cinematic.CinematicSystem(ctx);
         ctx.activeDimension = activeDimension;
         ctx.commandBlockManager.beginDimension(activeDimension.id);
         ctx.entityManager = entityManager;
@@ -1478,6 +1522,7 @@ public class Main {
         dimensionManager = new DimensionManager(blockDataManager, ctx.worldSaveManager, biomeManager);
         dimensionManager.setWorldSeed(ctx.worldSeed);
         dimensionManager.setTutorialWorld(ctx.tutorialWorld);
+        dimensionManager.setPointClickWorld(ctx.pointClickWorld);
         dimensionManager.createDimension(initialDimension, initialRenderDistance);
         // createDimension populates the dimension map but leaves the active
         // dimension pointer alone; make sure it targets the selected dimension
@@ -1890,7 +1935,7 @@ public class Main {
         switch (screen) {
             case MAIN: {
                 // Title screen: world creation, tutorial, saves, and options.
-                int optionCount = 4;
+                int optionCount = 5;
                 if (menuKeyPressed(GLFW_KEY_UP)) {
                     ctx.menuSelection--;
                     if (ctx.menuSelection < 0) ctx.menuSelection = optionCount - 1;
@@ -1902,6 +1947,7 @@ public class Main {
                 if (menuKeyPressed(GLFW_KEY_ENTER) || confirmRequested) {
                     switch (ctx.menuSelection) {
                         case 0: // New World
+                            ctx.pointClickWorld = false;
                             ctx.menuScreen = GameContext.MenuScreen.NEW_WORLD_NAME;
                             ctx.menuTextActive = true;
                             ctx.menuTextInput.setLength(0);
@@ -1909,6 +1955,7 @@ public class Main {
                             break;
                         case 1: // Tutorial World (load the bundled handcrafted world)
                             ctx.tutorialWorld = true;
+                            ctx.pointClickWorld = false;
                             ctx.saveName = "tutorial";
                             // The handcrafted world ships in git-tracked resources
                             // (not the git-ignored saves/ dir). Copy it into the
@@ -1918,12 +1965,25 @@ public class Main {
                             ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
                             setStatus("Entering Tutorial World — a hand-built Create showcase!");
                             break;
-                        case 2: // Load Save
+                        case 2: // Point & Click Demo (separate small showcase world)
+                            ctx.tutorialWorld = false;
+                            ctx.pointClickWorld = true;
+                            ctx.saveName = "pointclick";
+                            copyPointClickTemplate();
+                            loadSaveIntoContext("pointclick");
+                            ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
+                            // Demo world is built for point-and-click — force it on.
+                            pointAndClickMode = true;
+                            ctx.cursorRayOverride = null;
+                            updateCursorMode();
+                            setStatus("Point & Click Demo — move the cursor, hover the prompts, click to act.");
+                            break;
+                        case 3: // Load Save
                             ctx.saveList = com.voxel.world.WorldSaveManager.listSaves();
                             ctx.saveListSelection = 0;
                             ctx.menuScreen = GameContext.MenuScreen.LOAD_SAVE;
                             break;
-                        case 3: // Options
+                        case 4: // Options
                             ctx.menuScreen = GameContext.MenuScreen.OPTIONS;
                             ctx.menuSelection = 0;
                             break;
@@ -2003,6 +2063,10 @@ public class Main {
                     ctx.menuScreen = GameContext.MenuScreen.IN_GAME;
                     ctx.menuTextActive = false;
                     ctx.spawnLoadingMessage = "Generating spawn chunks...";
+                    if (ctx.cinematic != null) {
+                        ctx.cinematic.resetFirstTimeFlags();
+                        ctx.cinematic.playIntro();
+                    }
                     setStatus("Created world \"" + ctx.saveName + "\" (seed " + ctx.worldSeed + ")");
                 }
                 break;
@@ -2070,6 +2134,30 @@ public class Main {
         copyDir(src, dst);
     }
 
+    /**
+     * Materialises the Point & Click demo world into the save dir.
+     *
+     * Generated at runtime from {@link com.voxel.world.PointClickWorldAuthor}
+     * (same code that produced the bundled template) so it works no matter
+     * what the process working directory is — the old approach of copying
+     * src/main/resources/pointclick_world with a relative path silently
+     * failed when launched from an IDE/jar, leaving nothing but the flat
+     * fallback plain (no plaza).
+     */
+    private void copyPointClickTemplate() {
+        java.io.File dst = new java.io.File(com.voxel.world.WorldSaveManager.SAVES_DIR, "pointclick");
+        com.voxel.world.WorldSaveManager.deleteSave("pointclick");
+        try {
+            com.voxel.tools.PointClickWorldExporter.exportTo(dst);
+        } catch (Exception e) {
+            System.err.println("Failed to generate Point & Click demo world: " + e);
+            e.printStackTrace();
+            // Last-resort fallback: copy the bundled template if it is on disk.
+            java.io.File src = new java.io.File("src/main/resources/pointclick_world");
+            if (src.isDirectory()) copyDir(src, dst);
+        }
+    }
+
     private static void copyDir(java.io.File src, java.io.File dst) {
         if (src.isDirectory()) {
             dst.mkdirs();
@@ -2106,6 +2194,7 @@ public class Main {
         ctx.menuScreen = GameContext.MenuScreen.IN_GAME;
         ctx.menuTextActive = false;
         ctx.spawnLoadingMessage = "Loading world...";
+        if (ctx.cinematic != null) ctx.cinematic.playIntro();
         setStatus("Loading save \"" + name + "\"");
     }
 
@@ -2118,7 +2207,7 @@ public class Main {
         StringBuilder sb = new StringBuilder();
         if (screen == GameContext.MenuScreen.MAIN) {
             sb.append("VOXEL ENGINE\n\n");
-            String[] options = { "New World", "Tutorial World", "Load Save", "Theme: " +
+            String[] options = { "New World", "Tutorial World", "Point & Click Demo", "Load Save", "Theme: " +
                 (ctx.uiTheme == GameContext.UiTheme.DARK ? "Dark" : "Light") };
             for (int i = 0; i < options.length; i++) {
                 sb.append(ctx.menuSelection == i ? "> " : "  ").append(options[i]).append("\n");
@@ -2301,6 +2390,20 @@ public class Main {
                 // player enters them (the combat arena and quarry should not sit
                 // empty — they exist to be fought in).
                 spawnTutorialZoneMobs(currentTutorialZone);
+            }
+
+            // Point & Click demo world: spawn the plaza villager once the
+            // world is ready (the demo world has no zones, so this is the
+            // analog of the tutorial world's zone-mob spawning).
+            if ("pointclick".equals(ctx.saveName) && !pointClickDemoSpawned
+                    && !ctx.initializing && ctx.world != null && ctx.entityManager != null) {
+                pointClickDemoSpawned = true;
+                int demoG = com.voxel.world.PointClickWorldAuthor.G;
+                com.voxel.entity.VillagerEntity v = new com.voxel.entity.VillagerEntity(
+                    nextTutorialMobId++, new Vector3f(-2.5f, demoG + 1, 4.5f), textureManager);
+                v.dimension = activeDimension;
+                v.setWorld(world);
+                entityManager.addEntity(v);
             }
 
             handleInput(dt);
@@ -2673,6 +2776,7 @@ public class Main {
 
         worldTime += dt;
         ctx.worldTime = worldTime;
+        if (ctx.cinematic != null) ctx.cinematic.tick(dt);
         VillagerEntity.setGlobalWorldTime(worldTime);
         blockInteraction.updateMining(dt);
         blockInteraction.updatePlacementPreview();
@@ -3257,6 +3361,11 @@ public class Main {
             if (player.isDead()) {
                 statusMessage = "YOU DIED! Press R to respawn.";
                 statusUntil = glfwGetTime() + 1.0;
+                if (ctx.cinematic != null) ctx.cinematic.deathFade();
+            } else if (ctx.cinematic != null && player.getHealth() <= 6.0f && player.getHealth() > 0f) {
+                // One-time low-health warning scene (the pulse continues in
+                // HudUI while health stays critical; this scene is the reveal).
+                ctx.cinematic.playLowHealthWarning();
             }
 
             // Sync dimension changes from GameContext (render loop needs current world)
@@ -3320,6 +3429,8 @@ public class Main {
             hud.updateSpawnLoadingOverlay(glfwGetTime());
             hud.updateTutorialPopup(glfwGetTime());
             hud.updateWindowTitle();
+            if (ctx != null) hud.updateCinematic(glfwGetTime());
+            if (ctx != null) hud.updateBillboards(glfwGetTime());
 
             hud.uiManager.begin();
             for (UILayer layer : hud.uiLayers) layer.render(hud.uiManager);
@@ -3341,6 +3452,7 @@ public class Main {
             float playerPartialTicks = Math.min(1.0f, elapsedSincePlayerTick / Player.TICK_RATE_SECONDS);
 
             // Camera uses interpolated player position
+            if (ctx != null) updatePointAndClick();
             Vector3f cameraPos = cameraController.getActiveCameraPosition(playerPartialTicks);
 
             // ── Map: top-down camera, height derived from zoom level ──
@@ -3411,7 +3523,8 @@ public class Main {
             int cbx, cby, cbz;
             float cfx, cfy, cfz;
             boolean detachedCamera = ctx.craftingCutsceneActive || ctx.craftingTableOpen
-                || ctx.furnaceCutsceneActive || ctx.mapOpen;
+                || ctx.furnaceCutsceneActive || ctx.mapOpen
+                || (ctx.cinematic != null && ctx.cinematic.cameraActive());
             if (cameraMode == CameraMode.FIRST_PERSON && !detachedCamera) {
                 // Interpolate in pure fixed-point (no float→long precision loss)
                 long px = FixedPoint.lerp(player.getFixedPrevX(), player.getFixedX(), playerPartialTicks);
@@ -3705,6 +3818,10 @@ public class Main {
 
             if (key == GLFW_KEY_R && player.isDead()) {
                 player.respawn();
+                if (ctx.cinematic != null) {
+                    ctx.cinematic.respawnFade();
+                    ctx.cinematic.resetLowHealthFlag();
+                }
                 setStatus("Respawned.");
                 return;
             }
@@ -3725,6 +3842,17 @@ public class Main {
 
             if (key == GLFW_KEY_F5) {
                 toggleCameraMode();
+                return;
+            }
+
+            if (key == GLFW_KEY_F6) {
+                pointAndClickMode = !pointAndClickMode;
+                ctx.cursorRayOverride = null;
+                pacHoveringInteractable = false;
+                setStatus(pointAndClickMode
+                    ? "Controls: MCSM point & click (virtual cursor + edge-pan)"
+                    : "Controls: FPS mouselook");
+                updateCursorMode();
                 return;
             }
 
@@ -3997,6 +4125,23 @@ public class Main {
         lastMouseX = (float) xpos;
         lastMouseY = (float) ypos;
 
+        if (pointAndClickMode) {
+            // MCSM point-and-click: the OS cursor is captured but hidden; a
+            // virtual cursor accumulates mouse deltas and is the click target.
+            // Mouse movement moves the cursor (not the camera) — the camera is
+            // panned only when the cursor pushes against a window edge (handled
+            // per-frame in updatePointAndClick, so edge-pan keeps working even
+            // when the mouse is held still against the edge).
+            if (!pacVirtInit) {
+                pacVirtX = width / 2f;
+                pacVirtY = height / 2f;
+                pacVirtInit = true;
+            }
+            pacVirtX = Math.max(0f, Math.min(width - 1f, pacVirtX + xoffset));
+            pacVirtY = Math.max(0f, Math.min(height - 1f, pacVirtY - yoffset));
+            return; // camera turn is driven by edge-pan, not raw mouse delta
+        }
+
         float sensitivity = 0.1f;
         yaw += xoffset * sensitivity;
         pitch += yoffset * sensitivity;
@@ -4017,13 +4162,35 @@ public class Main {
         }
     }
 
+    /**
+     * Screen coordinates clicks should be tested against. In point-and-click
+     * gameplay the visible cursor is the virtual (smoothed) one — the OS cursor
+     * is captured and frozen, so lastMouseX/Y would point somewhere else. When
+     * a menu/UI has released the OS cursor, its real position is correct.
+     */
+    private float hudMouseX() {
+        if (pointAndClickMode && pacVirtInit && ctx != null
+                && glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED) {
+            return getSmoothedCursorX();
+        }
+        return lastMouseX;
+    }
+
+    private float hudMouseY() {
+        if (pointAndClickMode && pacVirtInit && ctx != null
+                && glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED) {
+            return getSmoothedCursorY();
+        }
+        return lastMouseY;
+    }
+
     public void handleMouseButton(long win, int button, int action, int mods) {
         // Mouse callbacks may arrive before the game context/UI are ready.
         if (ctx == null || player == null || blockInteraction == null) return;        // During startup menus the world does not exist; route clicks only to
         // menu controls and never into gameplay raycasts.
         if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME) {
             if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT) {
-                hud.handleMouseClick(lastMouseX, lastMouseY);
+                hud.handleMouseClick(hudMouseX(), hudMouseY());
             }
             return;
         }
@@ -4031,7 +4198,7 @@ public class Main {
         if (ctx.pauseMenuOpen) {
 
             if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT) {
-                hud.handleMouseClick(lastMouseX, lastMouseY);
+                hud.handleMouseClick(hudMouseX(), hudMouseY());
             }
             return;
         }
@@ -4044,12 +4211,13 @@ public class Main {
             boolean isLeft = button == GLFW_MOUSE_BUTTON_LEFT;
             boolean isRight = button == GLFW_MOUSE_BUTTON_RIGHT;
             if (action == GLFW_PRESS && (isLeft || isRight)) {
+                float mx = hudMouseX(), my = hudMouseY();
                 // Left press on an overlay button: fire it, do NOT start a drag.
-                boolean hitButton = isLeft && hud.handleMouseClick((float) lastMouseX, (float) lastMouseY);
+                boolean hitButton = isLeft && hud.handleMouseClick(mx, my);
                 if (!hitButton) {
                     ctx.mapDragging = true;
-                    ctx.mapDragStartX = (float) lastMouseX;
-                    ctx.mapDragStartY = (float) lastMouseY;
+                    ctx.mapDragStartX = mx;
+                    ctx.mapDragStartY = my;
                     ctx.mapDragPanStartX = ctx.mapPanX;
                     ctx.mapDragPanStartY = ctx.mapPanY;
                 }
@@ -4078,7 +4246,7 @@ public class Main {
         // Explicit HUD controls take priority over the world/table raycast. This
         // lets the MCSM Craft button consume the click instead of treating it as
         // a miss and continuing into inventory/world input.
-        if (ctx.craftingTableOpen && inventoryOpen && hud.handleMouseClick(lastMouseX, lastMouseY)) {
+        if (ctx.craftingTableOpen && inventoryOpen && hud.handleMouseClick(hudMouseX(), hudMouseY())) {
             return;
         }
 
@@ -4094,7 +4262,7 @@ public class Main {
 
         // Crafting table drag-and-drop via 3D raycast
         if (ctx.craftingTableOpen && inventoryOpen) {
-            System.out.println("Crafting: mouse click at screen (" + lastMouseX + "," + lastMouseY + ")");
+            System.out.println("Crafting: mouse click at screen (" + hudMouseX() + "," + hudMouseY() + ")");
             int cell = raycastCraftingCell();
             if (cell >= 0) {
                 System.out.println("Crafting: slot click " + cell);
@@ -4108,7 +4276,7 @@ public class Main {
 
         if (inventoryOpen) {
             for (int i = hud.uiLayers.size() - 1; i >= 0; i--) {
-                if (hud.uiLayers.get(i).handleMouseClick(lastMouseX, lastMouseY)) return;
+                if (hud.uiLayers.get(i).handleMouseClick(hudMouseX(), hudMouseY())) return;
             }
             return;
         }
@@ -4118,6 +4286,7 @@ public class Main {
         // Cutscenes take over input entirely: never let a stray click place or
         // break blocks, or re-trigger the cutscene mid-animation.
         if (ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive || ctx.tvCutsceneActive) return;
+        if (ctx.cinematic != null && ctx.cinematic.cameraActive()) return;
 
         if (button == GLFW_MOUSE_BUTTON_RIGHT) {
             if ((mods & GLFW_MOD_ALT) != 0) {
@@ -4186,6 +4355,102 @@ public class Main {
         hud.inventoryUiDirty = true;
         setStatus("Given " + def.displayName + " x" + amount);
     }
+
+    /**
+     * MCSM point-and-click per-frame update (render thread):
+     *  1. Keep the OS mouse captured + hidden during gameplay so it can't
+     *     escape the window (menus release it via updateCursorMode).
+     *  2. Smooth the virtual cursor toward its raw position so the reticle
+     *     doesn't jitter on frame skips.
+     *  3. Edge-pan: when the virtual cursor pushes against a window edge,
+     *     rotate the camera yaw/pitch proportional to the push (MCSM/RTS).
+     *  4. Publish the world-space picking ray under the (smoothed) cursor so
+     *     mining, placing and entity attacks all follow the pointer
+     *     (ctx.cursorRayOverride), and set pacHoveringInteractable for the HUD.
+     */
+    private void updatePointAndClick() {
+        boolean active = pointAndClickMode
+                && ctx != null && ctx.menuScreen == GameContext.MenuScreen.IN_GAME
+                && !inventoryOpen && !commandMode && !ctx.mapOpen && !ctx.pauseMenuOpen;
+        if (!active) {
+            ctx.cursorRayOverride = null;
+            pacHoveringInteractable = false;
+            return;
+        }
+
+        // Hard-guarantee the OS mouse is captured during gameplay (menus and
+        // UI screens release it; updateCursorMode isn't re-run on every path).
+        if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED) {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            firstMouse = true;
+        }
+
+        if (!pacVirtInit) {
+            pacVirtX = width / 2f;
+            pacVirtY = height / 2f;
+            pacSmoothX = pacVirtX;
+            pacSmoothY = pacVirtY;
+            pacVirtInit = true;
+        }
+
+        // --- Edge-pan (frame-rate independent) ---
+        long nowNanos = System.nanoTime();
+        float dt = pacLastUpdateNanos == 0L ? 1.0f / 60.0f
+                : (float) Math.min(0.1, (nowNanos - pacLastUpdateNanos) / 1e9);
+        pacLastUpdateNanos = nowNanos;
+        edgePanTmp[0] = 0f; edgePanTmp[1] = 0f;
+        computeEdgePan(edgePanTmp);
+        float panX = edgePanTmp[0] * PAC_EDGE_PAN_RATE * dt;
+        float panY = edgePanTmp[1] * PAC_EDGE_PAN_RATE * dt;
+        if (panX != 0f || panY != 0f) {
+            yaw += panX;
+            pitch += panY;
+            if (pitch > 89.0f) pitch = 89.0f;
+            if (pitch < -89.0f) pitch = -89.0f;
+            ctx.yaw = yaw;
+            ctx.pitch = pitch;
+        }
+
+        // --- Smooth the reticle position (exponential; ~0.85 per frame) ---
+        float k = 1.0f - (float) Math.exp(-22.0 * dt);
+        pacSmoothX += (pacVirtX - pacSmoothX) * k;
+        pacSmoothY += (pacVirtY - pacSmoothY) * k;
+
+        // --- World-space ray under the smoothed virtual cursor ---
+        float curX = pacSmoothX;
+        float curY = pacSmoothY;
+        Vector3f pos = cameraController.getActiveCameraPosition();
+        Vector3f dir = getLookDirection();
+        float fovRad = (float) Math.toRadians(70.0);
+        float aspect = (float) width / (float) height;
+        Matrix4f proj = new Matrix4f().perspective(fovRad, aspect, 0.1f, 2048.0f);
+        Matrix4f view = new Matrix4f().lookAt(pos, new Vector3f(pos).add(dir), new Vector3f(0, 1, 0));
+        float ndcX = (curX / width) * 2.0f - 1.0f;
+        float ndcY = 1.0f - (curY / height) * 2.0f;
+        Matrix4f inv = new Matrix4f(proj).mul(view).invert();
+        Vector3f nearW = new Vector3f(ndcX, ndcY, -1.0f).mulProject(inv);
+        Vector3f farW = new Vector3f(ndcX, ndcY, 1.0f).mulProject(inv);
+        Vector3f rayDir = new Vector3f(farW).sub(nearW).normalize();
+        ctx.cursorRayOverride = new float[]{ nearW.x, nearW.y, nearW.z, rayDir.x, rayDir.y, rayDir.z };
+
+        // --- Hover affordance: is there a block or entity under the cursor? ---
+        // Only run once the logic thread has committed a world + entity
+        // manager (ctx.initializing flips false after initializeWorldPhase).
+        // During the spawn-loading phase ctx.world/entityManager are still null.
+        pacHoveringInteractable = false;
+        if (blockInteraction != null && ctx.player != null && !ctx.player.isDead()
+                && !ctx.initializing && ctx.world != null && ctx.entityManager != null) {
+            int[] blockHit = blockInteraction.raycastBlock(6.0f);
+            if (blockHit != null) {
+                pacHoveringInteractable = true;
+            } else {
+                int[] entityHit = blockInteraction.raycastEntity(6.0f);
+                if (entityHit != null) pacHoveringInteractable = true;
+            }
+        }
+    }
+    private final float[] edgePanTmp = new float[2];
+    private long pacLastUpdateNanos;
 
     public void toggleCameraMode() {
         CameraMode[] modes = CameraMode.values();
@@ -6197,8 +6462,18 @@ public class Main {
     }
 
     public int[] raycastBlock(float maxDist) {
-        Vector3f dir = getLookDirection();
-        Vector3f pos = getActiveCameraPosition();
+        // Honor the point-and-click cursor ray so targeting is consistent
+        // with BlockInteraction.raycastBlock in PAC mode.
+        Vector3f dir;
+        Vector3f pos;
+        float[] cursorRay = ctx != null ? ctx.cursorRayOverride : null;
+        if (cursorRay != null) {
+            pos = new Vector3f(cursorRay[0], cursorRay[1], cursorRay[2]);
+            dir = new Vector3f(cursorRay[3], cursorRay[4], cursorRay[5]);
+        } else {
+            dir = getLookDirection();
+            pos = getActiveCameraPosition();
+        }
         float step = 0.05f;
         int lastX = (int) Math.floor(pos.x);
         int lastY = (int) Math.floor(pos.y);

@@ -53,6 +53,40 @@ public class HudUI {
     public int loadingPopupTextureId = 0;
 
     public UILayer.UIElement crosshairElement;
+
+    // Dedicated UI layers. The static layer holds rarely-changing chrome
+    // (hotbar, hearts, inventory panels); the dynamic layer holds per-frame
+    // moving things (the virtual cursor, cinematic overlays, interaction
+    // billboards) and is added LAST so it renders on top of everything.
+    public UILayer staticLayer;
+    public UILayer dynamicLayer;
+
+    // ── Cinematic overlays (movie mode) ──
+    public UILayer.UIElement cineBarTop, cineBarBottom;
+    public UILayer.UIElement cineFadeQuad;      // fullscreen black/red fade
+    public UILayer.UITextElement cineTitleText, cineSubtitleText;
+    private double lowHealthPulseTime = 0;
+
+    // ── MCSM interaction billboards ("click here" markers) ──
+    // Procedurally generated exclamation-point glyph (white with glow).
+    public int cursorTextureId = 0;
+    // Virtual cursor asset (ui/cursor.png) — the in-world pointer reticle.
+    public com.voxel.game.InteractionBillboardSystem billboards;
+    private static final int MAX_BILLBOARDS = 16;
+    private static final int MAX_MARKER_ACTIONS = 4;
+    /** Quads per marker: 4 black square-outline strips + 4 white edges +
+     *  black/white diagonal + black/white stem. */
+    private static final int MARKER_PART_COUNT = 12;
+    // Part indices (draw order matters: black beneath white).
+    private static final int P_BL = 0, P_BR = 1, P_BT = 2, P_BB = 3;
+    private static final int P_WL = 4, P_WR = 5, P_WT = 6, P_WB = 7;
+    private static final int P_BDIA = 8, P_WDIA = 9, P_BSTEM = 10, P_WSTEM = 11;
+    /** Grey outline width on both sides of every white line. */
+    private static final float MARKER_OUTLINE = 1f;
+    public final UILayer.UIElement[][] markerParts = new UILayer.UIElement[MAX_BILLBOARDS][MARKER_PART_COUNT];
+    public final UILayer.UITextElement[] markerNameTexts = new UILayer.UITextElement[MAX_BILLBOARDS];
+    public final UILayer.UITextElement[][] markerActionTexts = new UILayer.UITextElement[MAX_BILLBOARDS][MAX_MARKER_ACTIONS];
+
     public UILayer.UIElement hotbarActiveElement;
     public UILayer.UIElement inventoryPanelElement;
     public UILayer.UIElement carriedItemElement;
@@ -181,6 +215,8 @@ public class HudUI {
         this.textureManager = textureManager;
         this.itemDefinitions = itemDefinitions;
         this.biomeManager = biomeManager;
+        // MCSM interaction billboards — needs Main for camera/projection helpers.
+        this.billboards = new com.voxel.game.InteractionBillboardSystem(ctx, main);
     }
 
     // ── Setup ─────────────────────────────────────────────────────────────────────
@@ -189,29 +225,104 @@ public class HudUI {
 
     public void setup(int width, int height) {
         uiManager = new UIManager(width, height);
-        UILayer hudLayer = new UILayer();
+        // Two dedicated layers: static chrome (hotbar/hearts/inventory) and
+        // dynamic per-frame elements (cursor, cinematic overlays, billboards).
+        // dynamicLayer is added LAST so it renders on top of everything.
+        staticLayer = new UILayer();
+        dynamicLayer = new UILayer();
 
-        crosshairElement = new UILayer.UIElement(
-            new Vector2f(width / 2f - 2, height / 2f - 2),
-            new Vector2f(4, 4),
-            new Vector4f(1, 1, 1, 1)
-        );
-        hudLayer.addElement(crosshairElement);
-
+        // --- Static layer: inventory panel + hotbar/hearts/crafting chrome ---
         inventoryPanelElement = new UILayer.UIElement(
             new Vector2f(Main.HOTBAR_X - 8, Main.HOTBAR_Y - 12),
             new Vector2f(Main.INVENTORY_PANEL_WIDTH, Main.INVENTORY_PANEL_HEIGHT),
             new Vector4f(0, 0, 0, 0.45f)
         );
         inventoryPanelElement.visible = false;
-        hudLayer.addElement(inventoryPanelElement);
+        staticLayer.addElement(inventoryPanelElement);
 
+        // --- Dynamic layer: virtual cursor, cinematic overlays, billboards ---
+        // The virtual cursor: a textured reticle (ui/cursor.png). Falls back to
+        // a solid white quad if the asset fails to load.
+        cursorTextureId = loadCursorTexture();
+        crosshairElement = new UILayer.UIElement(
+            new Vector2f(width / 2f - 12, height / 2f - 12),
+            new Vector2f(24, 24),
+            new Vector4f(1, 1, 1, 1)
+        );
+        crosshairElement.textureId = cursorTextureId;
+        dynamicLayer.addElement(crosshairElement);
+
+        // Cinematic overlays: letterbox bars, fullscreen fade, title cards.
+        cineBarTop = new UILayer.UIElement(
+            new Vector2f(0, 0), new Vector2f(width, 0), new Vector4f(0, 0, 0, 1));
+        cineBarTop.visible = false;
+        dynamicLayer.addElement(cineBarTop);
+        cineBarBottom = new UILayer.UIElement(
+            new Vector2f(0, height), new Vector2f(width, 0), new Vector4f(0, 0, 0, 1));
+        cineBarBottom.visible = false;
+        dynamicLayer.addElement(cineBarBottom);
+        cineFadeQuad = new UILayer.UIElement(
+            new Vector2f(0, 0), new Vector2f(width, height), new Vector4f(0, 0, 0, 0));
+        cineFadeQuad.visible = false;
+        dynamicLayer.addElement(cineFadeQuad);
+        cineTitleText = new UILayer.UITextElement(
+            new Vector2f(width / 2f - 200, height * 0.68f), "", 3.0f,
+            new Vector4f(0.95f, 0.9f, 0.75f, 0), fontTextureId);
+        cineTitleText.visible = false;
+        dynamicLayer.addElement(cineTitleText);
+        cineSubtitleText = new UILayer.UITextElement(
+            new Vector2f(width / 2f - 160, height * 0.68f + 40), "", 1.5f,
+            new Vector4f(0.85f, 0.85f, 0.85f, 0), fontTextureId);
+        cineSubtitleText.visible = false;
+        dynamicLayer.addElement(cineSubtitleText);
+
+        // Point-and-click prompts, MCSM-style: a hollow square on the target,
+        // a 45° elbow line out of its corner, then a vertical stem running to
+        // the name + action text list. Built from solid colour quads (no
+        // textures) so the lines stay pixel-crisp at any resolution.
+        // Every white line gets a pure-black backing quad extending 2px on
+        // both sides (the outline). Parts per marker, added in draw order so
+        // black always renders beneath white:
+        // [0..3] black square-outline strips (top/bottom/left/right)
+        // [4..7] white square edges (L,R,T,B)
+        // [8] black diagonal backing   [9] white diagonal
+        // [10] black stem backing      [11] white stem
+        for (int i = 0; i < MAX_BILLBOARDS; i++) {
+            for (int p = 0; p < MARKER_PART_COUNT; p++) {
+                UILayer.UIElement part = new UILayer.UIElement(
+                    new Vector2f(-100, -100), new Vector2f(2, 2),
+                    new Vector4f(1, 1, 1, 0)); // textureId 0 = solid quad
+                part.visible = false;
+                dynamicLayer.addElement(part);
+                markerParts[i][p] = part;
+            }
+            UILayer.UITextElement name = new UILayer.UITextElement(
+                new Vector2f(-100, -100), "", 1.3f,
+                new Vector4f(1, 1, 1, 0), fontTextureId);
+            name.visible = false;
+            dynamicLayer.addElement(name);
+            markerNameTexts[i] = name;
+            for (int j = 0; j < MAX_MARKER_ACTIONS; j++) {
+                UILayer.UITextElement act = new UILayer.UITextElement(
+                    new Vector2f(-100, -100), "", 1.2f,
+                    new Vector4f(1, 1, 1, 0), fontTextureId);
+                act.visible = false;
+                dynamicLayer.addElement(act);
+                markerActionTexts[i][j] = act;
+            }
+        }
+
+        // Load shared UI assets, then build the static inventory chrome onto
+        // the static layer.
         tryLoadUiTexture();
         tryLoadFontTexture();
         tryLoadLoadingTexture();
         tryLoadLoadingPopupTexture();
-        buildInventoryUi(hudLayer);
-        uiLayers.add(hudLayer);
+        buildInventoryUi(staticLayer);
+
+        // Order matters: static first, dynamic on top.
+        uiLayers.add(staticLayer);
+        uiLayers.add(dynamicLayer);
     }
 
     public void tryLoadUiTexture() {
@@ -223,6 +334,60 @@ public class HudUI {
             }
         } catch (Exception e) {
             System.err.println("Note: ui.png not found at src/main/resources/ui/");
+        }
+    }
+
+    /**
+     * Load the virtual-cursor asset (ui/cursor.png). If the PNG is missing it
+     * is generated once on disk (an MCSM-style pointer: a glowing arrow tip
+     * inside a broken ring reticle) so the asset is real, editable, and
+     * reloadable. Returns a GL texture id, or 0 if loading fails (the
+     * crosshair then falls back to a solid quad).
+     */
+    public int loadCursorTexture() {
+        java.io.File cursorFile = new java.io.File("src/main/resources/ui/cursor.png");
+        if (!cursorFile.exists()) {
+            generateCursorAsset(cursorFile);
+        }
+        try {
+            int tex = UIManager.loadTexture(cursorFile.getPath());
+            if (tex != 0) System.out.println("[UI] Loaded virtual cursor asset: " + cursorFile.getPath());
+            return tex;
+        } catch (Exception e) {
+            System.err.println("Note: cursor.png could not be loaded; using solid quad");
+            return 0;
+        }
+    }
+
+    /**
+     * Procedurally write a 24x24 cursor PNG: a bold black square center with
+     * a thick bright white outline — a high-contrast crosshair that reads
+     * against any background. The drawn content is an 8x8 black core framed
+     * by a 2px white ring, centered in the 24x24 canvas.
+     */
+    private void generateCursorAsset(java.io.File out) {
+        try {
+            int size = 24;
+            java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(
+                size, size, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            java.awt.Graphics2D g = img.createGraphics();
+            // 8x8 black core at pixels 8..15, framed by a 2px white ring
+            // (pixels 6..17 = 12x12 outline square).
+            int coreMin = 8, coreMax = 15;             // 8px black core
+            int outlineMin = coreMin - 2, outlineMax = coreMax + 2; // 2px white ring
+            // White outline (filled square, then overdrawn by black core).
+            g.setColor(new java.awt.Color(255, 255, 255, 255));
+            g.fillRect(outlineMin, outlineMin,
+                outlineMax - outlineMin + 1, outlineMax - outlineMin + 1);
+            // Black center core.
+            g.setColor(new java.awt.Color(0, 0, 0, 255));
+            g.fillRect(coreMin, coreMin, coreMax - coreMin + 1, coreMax - coreMin + 1);
+            g.dispose();
+            out.getParentFile().mkdirs();
+            javax.imageio.ImageIO.write(img, "PNG", out);
+            System.out.println("[UI] Generated virtual cursor asset: " + out.getPath());
+        } catch (Exception e) {
+            System.err.println("Note: failed to generate cursor.png: " + e.getMessage());
         }
     }
 
@@ -1163,7 +1328,10 @@ public class HudUI {
         prevSelectedSlot = selSlot;
         prevHealth = hp;
         double time = glfwGetTime();
-        crosshairElement.visible = !main.inventoryOpen && !main.commandMode;
+        // NOTE: the virtual cursor (crosshairElement) is positioned every
+        // frame in updateBillboards(), NOT here — updateInventoryUi has an
+        // early-return dirty guard that would freeze the cursor in place
+        // whenever nothing in the inventory changed.
         inventoryPanelElement.visible = main.inventoryOpen;
         hotbarActiveElement.visible = true;
         hotbarActiveElement.pos.y = Main.HOTBAR_Y + playerInventory.getSelectedSlot() * Main.SLOT_H;
@@ -1583,6 +1751,14 @@ public class HudUI {
             }
 
             ItemDefinition definition = itemDefinitions.getDefinition(stack.itemId);
+            if (definition == null) {
+                // Unknown item id in save data — skip rendering rather than crash.
+                itemElement.visible = false;
+                countBar.visible = false;
+                digit1.visible = false;
+                digit2.visible = false;
+                continue;
+            }
             itemElement.visible = true;
             itemElement.textureId = textureManager.getTextureArrayId();
             itemElement.textureType = 2; // Array
@@ -1758,8 +1934,8 @@ public class HudUI {
         if (inMenu) {
             switch (ctx.menuScreen) {
                 case MAIN:
-                    labels = new String[] { "NEW WORLD", "TUTORIAL WORLD", "LOAD SAVE", "OPTIONS", "", "", "", "" };
-                    count = 4;
+                    labels = new String[] { "NEW WORLD", "TUTORIAL WORLD", "POINT & CLICK DEMO", "LOAD SAVE", "OPTIONS", "", "", "" };
+                    count = 5;
                     menuSubtitle.text = "A small voxel world with big ideas";
                     menuHint.text = "ARROWS / WHEEL select   ENTER / CLICK confirm   ESC back";
                     break;
@@ -1993,6 +2169,249 @@ public class HudUI {
             // Pulse the instructions text
             float pulse = 0.6f + 0.4f * (float)Math.abs(Math.sin(time * 2.0));
             tvInstructionsText.color.set(0.7f, 0.7f, 0.7f, pulse);
+        }
+    }
+
+    /**
+     * Cinematic overlay pass (render thread): letterbox bars, fade-to-black/red,
+     * title cards, and the low-health red pulse. Reads state from ctx.cinematic.
+     */
+    public void updateCinematic(double time) {
+        com.voxel.cinematic.CinematicSystem cine = ctx.cinematic;
+        float barH = 0f, fadeA = 0f, fadeR = 0f, textA = 0f;
+        String title = null, subtitle = null;
+
+        if (cine != null) {
+            barH = cine.letterbox * main.height * 0.12f;
+            fadeA = cine.fadeAlpha;
+            fadeR = cine.fadeRed;
+            textA = cine.textAlpha;
+            title = cine.title;
+            subtitle = cine.subtitle;
+        }
+
+        // Letterbox bars
+        boolean barsVisible = barH > 0.5f;
+        cineBarTop.visible = barsVisible;
+        cineBarBottom.visible = barsVisible;
+        if (barsVisible) {
+            cineBarTop.size.set(main.width, barH);
+            cineBarTop.pos.set(0, 0);
+            cineBarBottom.size.set(main.width, barH);
+            cineBarBottom.pos.set(0, main.height - barH);
+        }
+
+        // Fade overlay (black or dark red)
+        boolean fadeVisible = fadeA > 0.01f;
+        cineFadeQuad.visible = fadeVisible;
+        if (fadeVisible) {
+            cineFadeQuad.color.set(fadeR * 0.35f, 0f, 0f, fadeA);
+        }
+
+        // Title cards
+        boolean titleVisible = textA > 0.02f && title != null && !title.isEmpty();
+        cineTitleText.visible = titleVisible;
+        cineSubtitleText.visible = titleVisible && subtitle != null && !subtitle.isEmpty();
+        if (titleVisible) {
+            cineTitleText.text = title;
+            cineTitleText.textureId = fontTextureId; // built pre-font-load
+            cineTitleText.color.w = textA;
+            cineSubtitleText.text = subtitle == null ? "" : subtitle;
+            cineSubtitleText.textureId = fontTextureId; // built pre-font-load
+            cineSubtitleText.color.w = textA * 0.9f;
+        }
+
+        // Low-health red pulse (polish; independent of scenes)
+        boolean hurtPulse = ctx.player != null && !ctx.player.isDead() && ctx.player.getHealth() <= 6.0f;
+        if (hurtPulse) {
+            lowHealthPulseTime += 1.0 / 60.0;
+            float pulse = 0.10f + 0.08f * (float) Math.sin(lowHealthPulseTime * 4.0);
+            if (fadeVisible) {
+                cineFadeQuad.color.set(
+                    Math.max(cineFadeQuad.color.x(), 0.45f), 0f, 0f,
+                    Math.min(1f, fadeA + pulse));
+            } else {
+                cineFadeQuad.visible = true;
+                cineFadeQuad.color.set(0.45f, 0f, 0f, pulse);
+            }
+        }
+    }
+
+    /**
+     * Billboard pass: drive detection + project markers, then position the
+     * prompt geometry and text list. Everything brightens to white when the
+     * cursor hovers a marker's anchor.
+     */
+    public void updateBillboards(double time) {
+        // --- Virtual cursor (runs every frame, no dirty guard) ---
+        // This MUST live here rather than in updateInventoryUi(), whose early-
+        // return dirty check would freeze the cursor in place whenever no
+        // inventory state changed.
+        if (crosshairElement != null) {
+            crosshairElement.visible = !main.inventoryOpen && !main.commandMode;
+            if (crosshairElement.visible && main.pointAndClickMode
+                    && ctx.menuScreen == GameContext.MenuScreen.IN_GAME) {
+                // Small black-core/white-outline cursor (4x4 content in a 16x16
+                // texture). Rendered ~16px so the outline is crisp; grows to 20px
+                // + green tint when an interactable is under the cursor.
+                float sz = main.pacHoveringInteractable ? 20f : 16f;
+                float half = sz / 2f;
+                crosshairElement.pos.set(main.getSmoothedCursorX() - half, main.getSmoothedCursorY() - half);
+                crosshairElement.size.set(sz, sz);
+                crosshairElement.color.set(
+                    main.pacHoveringInteractable ? 0.4f : 1f,
+                    main.pacHoveringInteractable ? 1f : 1f,
+                    main.pacHoveringInteractable ? 0.4f : 1f,
+                    1f);
+            } else {
+                // FPS mouselook or menus: tiny centered crosshair.
+                float sz = 4f;
+                crosshairElement.pos.set(main.width / 2f - sz / 2f, main.height / 2f - sz / 2f);
+                crosshairElement.size.set(sz, sz);
+                crosshairElement.color.set(1, 1, 1, 1);
+            }
+        }
+
+        if (billboards == null) return;
+        billboards.update(time);
+        int count = billboards.getMarkerCount();
+        for (int i = 0; i < MAX_BILLBOARDS; i++) {
+            boolean on = i < count;
+            for (int p = 0; p < MARKER_PART_COUNT; p++) markerParts[i][p].visible = on;
+            UILayer.UITextElement nameEl = markerNameTexts[i];
+            if (!on) {
+                nameEl.visible = false;
+                for (int j = 0; j < MAX_MARKER_ACTIONS; j++) markerActionTexts[i][j].visible = false;
+                continue;
+            }
+            float x = billboards.getMarkerX(i);
+            float y = billboards.getMarkerY(i);
+            float a = billboards.getMarkerAlpha(i);
+            boolean hot = billboards.isMarkerHighlighted(i);
+            String name = billboards.getMarkerName(i);
+            int nAct = Math.min(billboards.getMarkerActionCount(i), MAX_MARKER_ACTIONS);
+
+            // --- Text metrics (needed before choosing line direction) ---
+            float nameScale = hot ? 2.67f : 2.17f;
+            float actScale = hot ? 2.25f : 1.92f;
+            float nameLineH = 12f * nameScale;
+            float actLineH = 11f * actScale;
+            float listH = nameLineH + nAct * actLineH;
+
+            // --- Palette: white lines with a grey 1px outline on both sides ---
+            Vector4f white = new Vector4f(1f, 1f, 1f, a);
+            Vector4f grey = new Vector4f(0.55f, 0.55f, 0.55f, a);
+
+            // --- Geometry: hollow square -> 45° elbow -> vertical stem ---
+            float sq = hot ? 45f : 35f, half = sq / 2f;
+            float t = 5f;                       // line thickness
+            float o = MARKER_OUTLINE;           // grey outline width per side
+            float d = hot ? 130f : 100f;        // diagonal advance per axis
+            float stemLen = hot ? 210f : 170f;
+
+            // Flip the elbow downward when the text list would run off-screen.
+            boolean up = (y - half - d - stemLen - listH) > 8f;
+            int dir = up ? 1 : -1;
+
+            // Hollow square centred on the anchor (white edges inside the
+            // square bounds; black strips wrap 2px around the outside,
+            // covering corners via the full-width top/bottom strips).
+            UILayer.UIElement wl = markerParts[i][P_WL], wr = markerParts[i][P_WR];
+            UILayer.UIElement wt = markerParts[i][P_WT], wb = markerParts[i][P_WB];
+            wl.pos.set(x - half, y - half);           wl.size.set(t, sq);
+            wr.pos.set(x + half - t, y - half);       wr.size.set(t, sq);
+            wt.pos.set(x - half, y - half);           wt.size.set(sq, t);
+            wb.pos.set(x - half, y + half - t);       wb.size.set(sq, t);
+            UILayer.UIElement bl = markerParts[i][P_BL], br = markerParts[i][P_BR];
+            UILayer.UIElement bt = markerParts[i][P_BT], bb = markerParts[i][P_BB];
+            bt.pos.set(x - half - o, y - half - o);   bt.size.set(sq + 2 * o, o);
+            bb.pos.set(x - half - o, y + half);       bb.size.set(sq + 2 * o, o);
+            bl.pos.set(x - half - o, y - half);       bl.size.set(o, sq);
+            br.pos.set(x + half, y - half);           br.size.set(o, sq);
+
+            // 45° elbow out of the square's right corner. The UI shader
+            // rotates around uPos (the quad's top-left corner), NOT its
+            // centre — so back off along the rotated thickness axis to place
+            // the bar's leading edge exactly on the corner. With y-down and
+            // clockwise-positive rotation, +45° runs up-right and -45° down-
+            // right; sin(45°)=cos(45°)=k.
+            float k = 0.70710678f;
+            float sSin = dir > 0 ? k : -k;      // sin(±45°)
+            float diagLen = d * 1.4142f;
+            float cornerX = x + half, cornerY = up ? y - half : y + half;
+            UILayer.UIElement wdia = markerParts[i][P_WDIA];
+            wdia.rotation = dir > 0 ? 45f : -45f;
+            wdia.pos.set(cornerX - (t / 2f) * sSin, cornerY - (t / 2f) * k);
+            wdia.size.set(diagLen, t);
+            // Black backing: same pivot math with thickness t+2o and length
+            // diagLen+2o; its local top-left sits at (-o,-o) relative to the
+            // white bar's frame → world offset R·(-o,-o) = (-o(c+s), o(s-c)).
+            UILayer.UIElement bdia = markerParts[i][P_BDIA];
+            bdia.rotation = wdia.rotation;
+            bdia.pos.set(wdia.pos.x - o * (k + sSin), wdia.pos.y + o * (sSin - k));
+            bdia.size.set(diagLen + 2 * o, t + 2 * o);
+
+            // Vertical stem from the elbow to the text list.
+            float elbowX = cornerX + d, elbowY = cornerY - dir * d;
+            float stemTop = dir > 0 ? elbowY - stemLen : elbowY;
+            UILayer.UIElement wstem = markerParts[i][P_WSTEM];
+            wstem.pos.set(elbowX - t / 2f, stemTop);
+            wstem.size.set(t, stemLen);
+            UILayer.UIElement bstem = markerParts[i][P_BSTEM];
+            bstem.pos.set(elbowX - t / 2f - o, stemTop - o);
+            bstem.size.set(t + 2 * o, stemLen + 2 * o);
+
+            for (int pIdx : new int[]{P_BL, P_BR, P_BT, P_BB, P_BDIA, P_BSTEM}) {
+                markerParts[i][pIdx].color.set(grey);
+            }
+            for (int pIdx : new int[]{P_WL, P_WR, P_WT, P_WB, P_WDIA, P_WSTEM}) {
+                markerParts[i][pIdx].color.set(white);
+            }
+
+            // --- Name + action list beside the end of the stem ---
+            float listX = elbowX + 20f;
+            float widest = (name == null ? 0 : name.length()) * 8f * nameScale;
+            for (int j = 0; j < nAct; j++) {
+                String s = billboards.getMarkerAction(i, j);
+                widest = Math.max(widest, (s == null ? 0 : s.length()) * 8f * actScale);
+            }
+            if (listX + widest > main.width - 40f) {
+                listX = elbowX - 20f - widest; // mirror to the left of the stem
+            }
+
+            // Grey outline shared by all prompt text (alpha tracks the fill).
+            Vector4f textOutline = new Vector4f(0.35f, 0.35f, 0.35f, 1f);
+
+            nameEl.visible = true;
+            // These elements are built before tryLoadFontTexture() runs, so
+            // they captured fontTextureId == 0; refresh the id every frame.
+            nameEl.textureId = fontTextureId;
+            nameEl.text = name == null ? "" : name;
+            nameEl.scale = nameScale;
+            nameEl.color.set(white);
+            nameEl.outlined = true;
+            nameEl.outlineColor.set(textOutline);
+            nameEl.outlineWidth = 2f;
+            // Stack: name first, then actions; block starts just past the stem.
+            float lineY = dir > 0 ? elbowY - stemLen - listH - 4f : elbowY + stemLen + 4f;
+            nameEl.pos.set(listX, lineY);
+            lineY += nameLineH;
+            for (int j = 0; j < MAX_MARKER_ACTIONS; j++) {
+                UILayer.UITextElement act = markerActionTexts[i][j];
+                if (j >= nAct) { act.visible = false; continue; }
+                act.visible = true;
+                act.textureId = fontTextureId;
+                act.outlined = true;
+                act.outlineColor.set(textOutline);
+                act.outlineWidth = 2f;
+                String s = billboards.getMarkerAction(i, j);
+                act.text = s == null ? "" : "- " + s;
+                act.scale = actScale;
+                float acol = hot ? 1f : 0.7f;
+                act.color.set(acol, acol, acol, a);
+                act.pos.set(listX, lineY);
+                lineY += actLineH;
+            }
         }
     }
 

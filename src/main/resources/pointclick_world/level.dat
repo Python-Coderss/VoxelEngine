@@ -1,0 +1,80 @@
+{
+  "worldTime": 720,
+  "seed": 42,
+  "saveName": "pointclick",
+  "tutorial": false,
+  "gameMode": "SURVIVAL",
+  "lastPlayed": 1787338197295,
+  "worldSize": "SMALL",
+  "player": {
+    "x": 0.5,
+    "y": 63,
+    "health": 20,
+    "z": 0.5,
+    "pitch": 0,
+    "inventory": [
+      {
+        "item": "flint_and_steel",
+        "durability": 0,
+        "count": 8,
+        "slot": 0
+      },
+      {
+        "item": "water_bucket",
+        "durability": 0,
+        "count": 8,
+        "slot": 1
+      },
+      {
+        "item": "ender_eye",
+        "durability": 0,
+        "count": 8,
+        "slot": 2
+      },
+      {
+        "item": "oak_log",
+        "durability": 0,
+        "count": 8,
+        "slot": 3
+      },
+      {
+        "item": "coal",
+        "durability": 0,
+        "count": 8,
+        "slot": 4
+      },
+      {
+        "item": "iron_ore",
+        "durability": 0,
+        "count": 8,
+        "slot": 5
+      },
+      {
+        "item": "stick",
+        "durability": 0,
+        "count": 16,
+        "slot": 6
+      },
+      {
+        "item": "torch",
+        "durability": 0,
+        "count": 8,
+        "slot": 7
+      },
+      {
+        "item": "apple",
+        "durability": 0,
+        "count": 8,
+        "slot": 8
+      },
+      {
+        "item": "iron_ingot",
+        "durability": 0,
+        "count": 8,
+        "slot": 9
+      }
+    ],
+    "dimension": "overworld",
+    "yaw": -90
+  }
+}
