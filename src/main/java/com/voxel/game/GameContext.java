@@ -82,6 +82,8 @@ public class GameContext {
     public volatile boolean menuTextActive = false;
     /** True when the Tutorial World (Create showcase) was chosen from the menu. */
     public volatile boolean tutorialWorld = false;
+    /** True when the Point & Click demo world was chosen from the menu. */
+    public volatile boolean pointClickWorld = false;
     /** Last seed parsed from the menu (0 = random). */
     public volatile long menuSeed = 0L;
     /** True when the menu was told to use a random seed. */
@@ -164,6 +166,11 @@ public class GameContext {
 
     // --- Camera ---
     public float yaw = -90, pitch = 0;
+    // --- MCSM point-and-click: when non-null, world-space picking ray {ox,oy,oz,dx,dy,dz} under the free cursor. ---
+    public volatile float[] cursorRayOverride;
+
+    // --- Cinematic system (movie mode: scenes + letterbox/fade/title overlays) ---
+    public com.voxel.cinematic.CinematicSystem cinematic;
     public float playerYaw = -90;
     public float lastMouseX = 640, lastMouseY = 360;
     public boolean firstMouse = true;
@@ -240,6 +247,8 @@ public class GameContext {
     public ChestManager chestManager = new ChestManager();
     public boolean chestOpen = false;
     public int chestBlockX, chestBlockY, chestBlockZ;
+    /** Smooth lid progress for the one currently selected chest (0 closed, 1 open). */
+    public volatile float chestLidAngle = 0.0f;
     // Crafting grid item texture layers for 3D rendering (-1 = empty slot)
     public int[] craftingItemLayers = new int[]{-1,-1,-1,-1,-1,-1,-1,-1,-1};
 
@@ -523,6 +532,12 @@ public class GameContext {
         player.resetVelocity();
         player.setDimension(target);
         beginSpawnResolution(spawnX, spawnZ);
+        // Cinematic: one-time first-Nether reveal when entering the Nether.
+        // The scene is queued onto the logic thread's cinematic tick, which
+        // reads player position after the teleport has landed.
+        if (cinematic != null && target == DimensionType.NETHER) {
+            cinematic.playFirstNether();
+        }
         // Keep /spawn and death aligned with the safe location resolved for the
         // dimension the player just entered.
         player.setSpawnPoint(new Vector3f(player.getPosition()));

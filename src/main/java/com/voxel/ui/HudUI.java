@@ -6,6 +6,7 @@ import com.voxel.entity.EnemyEntity;
 import com.voxel.entity.Entity;
 import com.voxel.entity.EntityManager;
 import com.voxel.game.FurnaceManager;
+import com.voxel.game.ChestManager;
 import com.voxel.crafting.CraftingManager;
 import com.voxel.game.GameContext;
 import com.voxel.game.GameContext.ActiveUI;
@@ -65,6 +66,7 @@ public class HudUI {
     public UILayer.UIElement cineBarTop, cineBarBottom;
     public UILayer.UIElement cineFadeQuad;      // fullscreen black/red fade
     public UILayer.UITextElement cineTitleText, cineSubtitleText;
+    public UILayer.UITextElement cineSkipHint;      // "ESC to skip" during scenes
     private double lowHealthPulseTime = 0;
 
     // ── MCSM interaction billboards ("click here" markers) ──
@@ -111,11 +113,16 @@ public class HudUI {
     public UILayer.UITextElement furnaceFuelText;
 
     public UILayer.UIElement chestPanelBg;
-    public final UILayer.UIElement[] chestSlotBackgrounds = new UILayer.UIElement[20];
-    public final UILayer.UIElement[] chestSlotItems       = new UILayer.UIElement[20];
-    public final UILayer.UIElement[] chestCountBars       = new UILayer.UIElement[20];
-    public final UILayer.UIElement[] chestCountDigit1     = new UILayer.UIElement[20];
-    public final UILayer.UIElement[] chestCountDigit2     = new UILayer.UIElement[20];
+    public UILayer.UITextElement chestTitle;
+    public static final int CHEST_COLS = 9;
+    public static final int CHEST_ROWS = 3;
+    private static final int CHEST_SLOT_W = 64;
+    private static final int CHEST_SLOT_H = 64;
+    public final UILayer.UIElement[] chestSlotBackgrounds = new UILayer.UIElement[ChestManager.CHEST_SLOTS];
+    public final UILayer.UIElement[] chestSlotItems       = new UILayer.UIElement[ChestManager.CHEST_SLOTS];
+    public final UILayer.UIElement[] chestCountBars       = new UILayer.UIElement[ChestManager.CHEST_SLOTS];
+    public final UILayer.UIElement[] chestCountDigit1     = new UILayer.UIElement[ChestManager.CHEST_SLOTS];
+    public final UILayer.UIElement[] chestCountDigit2     = new UILayer.UIElement[ChestManager.CHEST_SLOTS];
 
     // ── Creative item picker ──
     /** 10 columns x 6 rows of picker slots (fits 720p without scrolling for most filters). */
@@ -275,6 +282,11 @@ public class HudUI {
             new Vector4f(0.85f, 0.85f, 0.85f, 0), fontTextureId);
         cineSubtitleText.visible = false;
         dynamicLayer.addElement(cineSubtitleText);
+        cineSkipHint = new UILayer.UITextElement(
+            new Vector2f(width / 2f - 55f, height * 0.82f), "", 1.3f,
+            new Vector4f(0.8f, 0.8f, 0.8f, 0), fontTextureId);
+        cineSkipHint.visible = false;
+        dynamicLayer.addElement(cineSkipHint);
 
         // Point-and-click prompts, MCSM-style: a hollow square on the target,
         // a 45° elbow line out of its corner, then a vertical stem running to
@@ -632,13 +644,15 @@ public class HudUI {
             layer.addElement(playerHearts[i]);
         }
 
-        // Furnace UI
-        int furnaceX = Main.HOTBAR_X + 20;
-        int furnaceY = Main.HOTBAR_Y - 160;
+        // Furnace UI: derive the origin from the panel bounds instead of the
+        // top-left hotbar. The old HOTBAR_Y - 160 anchor clipped the panel on
+        // normal 720px windows and made the furnace appear off-center.
         int furnaceSlotW = Main.SLOT_W;
         int furnaceSlotH = Main.SLOT_H;
         int furnacePanelW = 4 * furnaceSlotW + 80;
         int furnacePanelH = 2 * furnaceSlotH + 60;
+        int furnaceX = Math.max(8, (main.width - furnacePanelW) / 2);
+        int furnaceY = Math.max(8, (main.height - furnacePanelH) / 2);
 
         furnacePanelBg = new UILayer.UIElement(
             new Vector2f(furnaceX - 10, furnaceY - 10),
@@ -688,46 +702,57 @@ public class HudUI {
         furnaceProgressBar.visible = false;
         layer.addElement(furnaceProgressBar);
 
-        // Chest UI
-        float chestGridW = 10 * (Main.SLOT_W + 8) - 8;
-        float chestGridH = 2 * Main.SLOT_H;
-        int chestX = Main.HOTBAR_X;
-        int chestY = Main.HOTBAR_Y - (int)chestGridH - 20;
+        // Chest UI: the vanilla single-chest layout is 9 columns × 3 rows.
+        // Center it in the viewport so it is never clipped by the HUD's small
+        // top-left hotbar, and leave a title strip above the slots.
+        float chestGridW = CHEST_COLS * (CHEST_SLOT_W + 8) - 8;
+        float chestGridH = CHEST_ROWS * CHEST_SLOT_H;
+        int preferredChestX = Main.HOTBAR_X + Main.INVENTORY_PANEL_WIDTH + 24;
+        int chestX = preferredChestX + chestGridW <= main.width
+                ? preferredChestX
+                : Math.max(8, (int) ((main.width - chestGridW) / 2f));
+        int chestY = Math.max(64, (int) ((main.height - chestGridH) / 2f) + 22);
 
-        chestPanelBg = new UILayer.UIElement(new Vector2f(chestX - 8, chestY - 12), new Vector2f(chestGridW + 16, chestGridH + 24), new Vector4f(0.2f, 0.15f, 0.1f, 0.6f));
+        chestPanelBg = new UILayer.UIElement(new Vector2f(chestX - 16, chestY - 52),
+            new Vector2f(chestGridW + 32, chestGridH + 68),
+            new Vector4f(0.10f, 0.07f, 0.045f, 0.94f));
         chestPanelBg.visible = false;
         layer.addElement(chestPanelBg);
+        chestTitle = new UILayer.UITextElement(new Vector2f(chestX, chestY - 40),
+            "CHEST", 2.0f, new Vector4f(1.0f, 0.82f, 0.42f, 1.0f), fontTextureId);
+        chestTitle.visible = false;
+        layer.addElement(chestTitle);
 
-        for (int i = 0; i < 20; i++) {
-            int row = i / 10;
-            int col = i % 10;
-            float cx = chestX + col * (Main.SLOT_W + 8);
-            float cy = chestY + row * Main.SLOT_H;
+        for (int i = 0; i < ChestManager.CHEST_SLOTS; i++) {
+            int row = i / CHEST_COLS;
+            int col = i % CHEST_COLS;
+            float cx = chestX + col * (CHEST_SLOT_W + 8);
+            float cy = chestY + row * CHEST_SLOT_H;
 
-            UILayer.UIElement bg = new UILayer.UIElement(new Vector2f(cx, cy), new Vector2f(Main.SLOT_W, Main.SLOT_H), new Vector4f(0.85f, 0.7f, 0.55f, 1));
+            UILayer.UIElement bg = new UILayer.UIElement(            new Vector2f(cx, cy), new Vector2f(CHEST_SLOT_W, CHEST_SLOT_H), new Vector4f(0.85f, 0.7f, 0.55f, 1));
             final int slotIdx = i;
             bg.onClick = () -> { main.handleChestSlotClick(slotIdx); inventoryUiDirty = true; };
             bg.visible = false;
             chestSlotBackgrounds[i] = bg;
             layer.addElement(bg);
 
-            UILayer.UIElement itemEl = new UILayer.UIElement(new Vector2f(cx + 24, cy + 16), new Vector2f(40, 40), new Vector4f(0, 0, 0, 0));
+            UILayer.UIElement itemEl = new UILayer.UIElement(new Vector2f(cx + 12, cy + 12), new Vector2f(40, 40), new Vector4f(0, 0, 0, 0));
             itemEl.visible = false;
             chestSlotItems[i] = itemEl;
             layer.addElement(itemEl);
 
-            UILayer.UIElement countBar = new UILayer.UIElement(new Vector2f(cx + 12, cy + Main.SLOT_H - 12), new Vector2f(0, 6), new Vector4f(1, 1, 1, 0.9f));
+            UILayer.UIElement countBar = new UILayer.UIElement(new Vector2f(cx + 8, cy + CHEST_SLOT_H - 10), new Vector2f(0, 5), new Vector4f(1, 1, 1, 0.9f));
             countBar.visible = false;
             chestCountBars[i] = countBar;
             layer.addElement(countBar);
 
-            UILayer.UIElement digit1 = new UILayer.UIElement(new Vector2f(cx + Main.SLOT_W - 32, cy + Main.SLOT_H - 24), new Vector2f(16, 16), new Vector4f(1, 1, 1, 1));
+            UILayer.UIElement digit1 = new UILayer.UIElement(new Vector2f(cx + CHEST_SLOT_W - 26, cy + CHEST_SLOT_H - 22), new Vector2f(13, 13), new Vector4f(1, 1, 1, 1));
             digit1.visible = false;
             digit1.textureId = fontTextureId;
             chestCountDigit1[i] = digit1;
             layer.addElement(digit1);
 
-            UILayer.UIElement digit2 = new UILayer.UIElement(new Vector2f(cx + Main.SLOT_W - 18, cy + Main.SLOT_H - 24), new Vector2f(16, 16), new Vector4f(1, 1, 1, 1));
+            UILayer.UIElement digit2 = new UILayer.UIElement(new Vector2f(cx + CHEST_SLOT_W - 13, cy + CHEST_SLOT_H - 22), new Vector2f(13, 13), new Vector4f(1, 1, 1, 1));
             digit2.visible = false;
             digit2.textureId = fontTextureId;
             chestCountDigit2[i] = digit2;
@@ -1222,6 +1247,17 @@ public class HudUI {
     }
 
 
+    /** Applies the correct atlas and crop for an inventory/creative icon. */
+    private void applyItemIcon(UILayer.UIElement element, ItemDefinition def) {
+        element.textureId = def.entityIcon
+                ? textureManager.getEntityTextureArrayId()
+                : textureManager.getTextureArrayId();
+        element.textureType = 2;
+        element.layer = def.iconLayer;
+        element.uvOffset.set(def.iconUv.x, def.iconUv.y);
+        element.uvScale.set(def.iconUv.z, def.iconUv.w);
+    }
+
     public void handleChestSlotClick(int slot) {
 
         ItemStack[] chestInv = ctx.chestManager.getInventory(ctx.chestBlockX, ctx.chestBlockY, ctx.chestBlockZ);
@@ -1293,9 +1329,7 @@ public class HudUI {
         carriedItemElement.visible = main.inventoryOpen && carried != null;
         if (carriedItemElement.visible) {
             ItemDefinition carriedDef = itemDefinitions.getDefinition(carried.itemId);
-            carriedItemElement.textureId = textureManager.getTextureArrayId();
-            carriedItemElement.textureType = 2;
-            carriedItemElement.layer = carriedDef.iconLayer;
+            applyItemIcon(carriedItemElement, carriedDef);
             carriedItemElement.color.set(1, 1, 1, 0.9f);
             carriedItemElement.pos.set(main.lastMouseX - 14, main.lastMouseY - 14);
             carriedItemElement.size.set(28, 28);
@@ -1361,7 +1395,8 @@ public class HudUI {
             craftingButtonText.visible = false;
             craftingButtonItem.visible = false;
             chestPanelBg.visible = false;
-            for (int i = 0; i < 20; i++) {
+            chestTitle.visible = false;
+            for (int i = 0; i < ChestManager.CHEST_SLOTS; i++) {
                 chestSlotBackgrounds[i].visible = false;
                 chestSlotItems[i].visible = false;
                 chestCountBars[i].visible = false;
@@ -1384,9 +1419,7 @@ public class HudUI {
                 ItemDefinition def = itemDefinitions.getDefinition(state.input.itemId);
                 if (def != null) {
                     furnaceInputItem.visible = true;
-                    furnaceInputItem.textureId = textureManager.getTextureArrayId();
-                    furnaceInputItem.textureType = 2;
-                    furnaceInputItem.layer = def.iconLayer;
+                    applyItemIcon(furnaceInputItem, def);
                     furnaceInputItem.color.set(1, 1, 1, 1);
                 } else {
                     furnaceInputItem.visible = false;
@@ -1400,9 +1433,7 @@ public class HudUI {
                 ItemDefinition def = itemDefinitions.getDefinition(state.fuel.itemId);
                 if (def != null) {
                     furnaceFuelItem.visible = true;
-                    furnaceFuelItem.textureId = textureManager.getTextureArrayId();
-                    furnaceFuelItem.textureType = 2;
-                    furnaceFuelItem.layer = def.iconLayer;
+                    applyItemIcon(furnaceFuelItem, def);
                     furnaceFuelItem.color.set(1, 1, 1, 1);
                 } else {
                     furnaceFuelItem.visible = false;
@@ -1416,9 +1447,7 @@ public class HudUI {
                 ItemDefinition def = itemDefinitions.getDefinition(state.output.itemId);
                 if (def != null) {
                     furnaceOutputItem.visible = true;
-                    furnaceOutputItem.textureId = textureManager.getTextureArrayId();
-                    furnaceOutputItem.textureType = 2;
-                    furnaceOutputItem.layer = def.iconLayer;
+                    applyItemIcon(furnaceOutputItem, def);
                     furnaceOutputItem.color.set(1, 1, 1, 1);
                 } else {
                     furnaceOutputItem.visible = false;
@@ -1479,9 +1508,10 @@ public class HudUI {
             furnaceFuelText.visible = false;
 
             chestPanelBg.visible = main.inventoryOpen;
+            chestTitle.visible = main.inventoryOpen;
 
             ItemStack[] chestInv = ctx.chestManager.getInventory(ctx.chestBlockX, ctx.chestBlockY, ctx.chestBlockZ);
-            for (int i = 0; i < 20; i++) {
+            for (int i = 0; i < ChestManager.CHEST_SLOTS; i++) {
                 boolean slotVisible = main.inventoryOpen;
                 chestSlotBackgrounds[i].visible = slotVisible;
 
@@ -1500,13 +1530,18 @@ public class HudUI {
                 }
 
                 ItemDefinition def = itemDefinitions.getDefinition(stack.itemId);
+                if (def == null || def.iconLayer < 0) {
+                    itemEl.visible = false;
+                    countBar.visible = false;
+                    digit1.visible = false;
+                    digit2.visible = false;
+                    continue;
+                }
                 itemEl.visible = true;
-                itemEl.textureId = textureManager.getTextureArrayId();
-                itemEl.textureType = 2;
-                itemEl.layer = def.iconLayer;
+                applyItemIcon(itemEl, def);
                 itemEl.color.set(1, 1, 1, 1);
                 itemEl.size.set(40, 40);
-                itemEl.pos.set(chestSlotBackgrounds[i].pos.x + 24, chestSlotBackgrounds[i].pos.y + 16);
+                itemEl.pos.set(chestSlotBackgrounds[i].pos.x + 12, chestSlotBackgrounds[i].pos.y + 12);
 
                 if (main.inventoryOpen && chestSlotBackgrounds[i].isPointInside(main.lastMouseX, main.lastMouseY)) {
                     if (def != null) {
@@ -1520,8 +1555,8 @@ public class HudUI {
                 if (def != null && def.maxStack > 1 && stack.count > 1) {
                     countBar.visible = true;
                     countBar.color.set(def.color.x, def.color.y, def.color.z, 0.85f);
-                    countBar.pos.set(chestSlotBackgrounds[i].pos.x + 12, chestSlotBackgrounds[i].pos.y + Main.SLOT_H - 12);
-                    countBar.size.set((Main.SLOT_W - 24) * Math.min(stack.count, def.maxStack) / (float) def.maxStack, 6);
+                    countBar.pos.set(chestSlotBackgrounds[i].pos.x + 8, chestSlotBackgrounds[i].pos.y + CHEST_SLOT_H - 10);
+                    countBar.size.set((CHEST_SLOT_W - 16) * Math.min(stack.count, def.maxStack) / (float) def.maxStack, 5);
 
                     if (fontTextureId != 0) {
                         if (stack.count >= 10) {
@@ -1555,7 +1590,8 @@ public class HudUI {
             }
         } else {
             chestPanelBg.visible = false;
-            for (int i = 0; i < 20; i++) {
+            chestTitle.visible = false;
+            for (int i = 0; i < ChestManager.CHEST_SLOTS; i++) {
                 chestSlotBackgrounds[i].visible = false;
                 chestSlotItems[i].visible = false;
                 chestCountBars[i].visible = false;
@@ -1577,7 +1613,8 @@ public class HudUI {
             }
             furnacePanelBg.visible = false;
             chestPanelBg.visible = false;
-            for (int i = 0; i < 20; i++) {
+            chestTitle.visible = false;
+            for (int i = 0; i < ChestManager.CHEST_SLOTS; i++) {
                 chestSlotBackgrounds[i].visible = false;
                 chestSlotItems[i].visible = false;
             }
@@ -1628,9 +1665,7 @@ public class HudUI {
                 creativeSlotItemIds[i] = def.id;
                 bg.visible = true;
                 itemEl.visible = true;
-                itemEl.textureId = textureManager.getTextureArrayId();
-                itemEl.textureType = 2;
-                itemEl.layer = def.iconLayer;
+                applyItemIcon(itemEl, def);
                 itemEl.color.set(1, 1, 1, 1);
                 itemEl.size.set(40, 40);
                 itemEl.pos.set(bg.pos.x + 12, bg.pos.y + 12);
@@ -1669,9 +1704,7 @@ public class HudUI {
             if (craftingButton.visible) {
                 ItemDefinition resultDef = itemDefinitions.getDefinition(playerInventory.getCrafting3x3ResultItemId());
                 if (resultDef != null) {
-                    craftingButtonItem.textureId = textureManager.getTextureArrayId();
-                    craftingButtonItem.textureType = 2;
-                    craftingButtonItem.layer = resultDef.iconLayer;
+                    applyItemIcon(craftingButtonItem, resultDef);
                     craftingButtonItem.color.set(1, 1, 1, 1);
                 } else {
                     craftingButtonItem.visible = false;
@@ -1689,7 +1722,8 @@ public class HudUI {
             furnaceFuelBar.visible = false;
             furnaceFuelText.visible = false;
             chestPanelBg.visible = false;
-            for (int i = 0; i < 20; i++) {
+            chestTitle.visible = false;
+            for (int i = 0; i < ChestManager.CHEST_SLOTS; i++) {
                 chestSlotBackgrounds[i].visible = false;
                 chestSlotItems[i].visible = false;
                 chestCountBars[i].visible = false;
@@ -1712,9 +1746,7 @@ public class HudUI {
                 ItemDefinition resultDef = itemDefinitions.getDefinition(
                     playerInventory.getSurfaceCraftingPreview().resultItemId);
                 if (resultDef != null) {
-                    craftingButtonItem.textureId = textureManager.getTextureArrayId();
-                    craftingButtonItem.textureType = 2;
-                    craftingButtonItem.layer = resultDef.iconLayer;
+                    applyItemIcon(craftingButtonItem, resultDef);
                     craftingButtonItem.color.set(1, 1, 1, 1);
                 } else {
                     craftingButtonItem.visible = false;
@@ -1760,9 +1792,7 @@ public class HudUI {
                 continue;
             }
             itemElement.visible = true;
-            itemElement.textureId = textureManager.getTextureArrayId();
-            itemElement.textureType = 2; // Array
-            itemElement.layer = definition.iconLayer;
+            applyItemIcon(itemElement, definition);
             itemElement.color.set(1, 1, 1, 1);
             
             if (definition.kind == ItemDefinitions.ItemKind.TOOL) {
@@ -2219,6 +2249,16 @@ public class HudUI {
             cineSubtitleText.text = subtitle == null ? "" : subtitle;
             cineSubtitleText.textureId = fontTextureId; // built pre-font-load
             cineSubtitleText.color.w = textA * 0.9f;
+        }
+
+        // "ESC to skip" prompt while a scene plays (gentle pulse)
+        boolean skipHint = cine != null && cine.skipHintVisible;
+        cineSkipHint.visible = skipHint;
+        if (skipHint) {
+            cineSkipHint.pos.set(main.width / 2f - 55f, main.height - barH - 26f);
+            cineSkipHint.text = "ESC to skip";
+            cineSkipHint.textureId = fontTextureId;
+            cineSkipHint.color.w = 0.45f + 0.25f * (float) Math.sin(time * 4.0);
         }
 
         // Low-health red pulse (polish; independent of scenes)
