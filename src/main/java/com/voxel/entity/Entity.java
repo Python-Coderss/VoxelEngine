@@ -36,6 +36,16 @@ public class Entity {
     public Vector3f tintColor = new Vector3f(1.0f, 1.0f, 1.0f);
     public float tintAmount = 0.0f;
 
+    // ── Picking (raycast) box ──
+    // Width across X/Z and full height from the entity's feet. Defaults match
+    // a humanoid; large entities (dragons, withers) override so clicking them
+    // doesn't require pixel-perfect aim at an invisible 0.6-wide column.
+    protected float pickWidth = 0.6f;
+    protected float pickHeight = 1.8f;
+
+    public float getPickWidth() { return pickWidth; }
+    public float getPickHeight() { return pickHeight; }
+
     // ── Animation system ──
     private Animation currentAnimation = null;
     private String currentAnimName = null;

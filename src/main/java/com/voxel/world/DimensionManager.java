@@ -21,6 +21,8 @@ public class DimensionManager {
     private long worldSeed = 0L;
     /** When true, the Overworld is built as a flat Tutorial World showcase. */
     private boolean tutorialWorld = false;
+    /** When true, the Overworld is built as the flat Point & Click demo world. */
+    private boolean pointClickWorld = false;
 
     public DimensionManager(BlockDataManager blockDataManager, WorldSaveManager saveManager, BiomeManager biomeManager) {
         this.blockDataManager = blockDataManager;
@@ -39,6 +41,11 @@ public class DimensionManager {
     /** Selects the flat Tutorial World generator for the Overworld. */
     public void setTutorialWorld(boolean tutorialWorld) {
         this.tutorialWorld = tutorialWorld;
+    }
+
+    /** Selects the flat Point & Click demo generator for the Overworld. */
+    public void setPointClickWorld(boolean pointClickWorld) {
+        this.pointClickWorld = pointClickWorld;
     }
 
     /** Mixes the world seed into a per-dimension noise seed, keeping 0 → classic. */
@@ -78,6 +85,11 @@ public class DimensionManager {
                 // for any chunk outside the template (and matches the template's
                 // grass/dirt/stone profile at the boundary).
                 generator = new TutorialWorldGenerator(typeSeed, blockDataManager);
+            } else if (pointClickWorld) {
+                // The Point & Click demo plaza is a bundled handcrafted map; this
+                // flat generator matches its base terrain so there's no Beta
+                // terrain bleeding in at the edges.
+                generator = new PointClickWorldGenerator(typeSeed, blockDataManager);
             } else {
             // The normal Overworld uses the faithful Beta 1.8.1 continental
             // generator (Adventure Update terrain) with vanilla precision.

@@ -50,6 +50,7 @@ public class PortalSystem {
 
         ctx.switchToDimension(target);
         ctx.lastPortalTeleportTime = now;
+        if (ctx.cinematic != null) ctx.cinematic.playPortalTravel();
         ctx.setStatus("Teleported to " + target.name);
     }
 

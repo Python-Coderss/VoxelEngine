@@ -35,6 +35,15 @@ public class CameraController {
     private final GameContext ctx;
     private final com.voxel.Main main;
 
+    // Third-person camera smoothing state (exponential, frame-rate independent)
+    private final Vector3f smoothedCamPos = new Vector3f();
+    private boolean hasSmoothedCam = false;
+    private double lastCamTime = -1.0;
+    // Tracks the cinematic-camera handoff so the first frame after a scene
+    // ends snaps to the true desired position instead of lerping from the
+    // stale (pre-scene) smoothed value — which would visibly lurch.
+    private boolean wasCinematic = false;
+
     public CameraController(GameContext ctx, com.voxel.Main main) {
         this.ctx = ctx;
         this.main = main;
@@ -77,6 +86,13 @@ public class CameraController {
      * @param partialTicks  render interpolation alpha (0-1)
      */
     public Vector3f getActiveCameraPosition(float partialTicks) {
+        // Cinematic scenes own the camera outright. Note that we're inside
+        // a scene so the first frame after it ends can reset the smoother.
+        if (ctx.cinematic != null && ctx.cinematic.cameraActive()) {
+            wasCinematic = true;
+            return new Vector3f(ctx.cinematic.getCamPos());
+        }
+
         // Crafting cutscene progress
         if (ctx.craftingCutsceneActive) {
             float t = Math.min(1.0f, ctx.craftingCutsceneTimer / GameContext.CRAFTING_CUTSCENE_DURATION);
@@ -121,7 +137,22 @@ public class CameraController {
         Vector3f target = ctx.player.getInterpolatedPosition(partialTicks).add(0, THIRD_PERSON_TARGET_HEIGHT, 0, new Vector3f());
         target.add(right.mul(0.6f, new Vector3f()));
         Vector3f desired = new Vector3f(target).sub(new Vector3f(look).mul(THIRD_PERSON_DISTANCE));
-        return resolveCameraCollision(target, desired);
+        Vector3f resolved = resolveCameraCollision(target, desired);
+
+        // Exponential smoothing: kills the jitter from collision snap-back and
+        // player interpolation steps without adding noticeable input lag.
+        double now = org.lwjgl.glfw.GLFW.glfwGetTime();
+        float dt = (lastCamTime < 0) ? 0.016f : (float) Math.min(0.1, now - lastCamTime);
+        lastCamTime = now;
+        if (!hasSmoothedCam || ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive || wasCinematic) {
+            smoothedCamPos.set(resolved);
+            hasSmoothedCam = true;
+            wasCinematic = false;
+            return new Vector3f(resolved);
+        }
+        float k = 1.0f - (float) Math.exp(-18.0 * dt);
+        smoothedCamPos.fma(k, new Vector3f(resolved).sub(smoothedCamPos));
+        return new Vector3f(smoothedCamPos);
     }
 
     /** Step-based raymarch from origin toward desired, stopping just before a solid voxel. */

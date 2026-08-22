@@ -44,6 +44,9 @@ public class WitherEntity extends Entity {
         super(id, position);
         this.entityManager = entityManager;
         this.dimension = com.voxel.world.DimensionType.OVERWORLD;
+        // Big flying boss: generous pick box so clicks/punches connect.
+        this.pickWidth = 3.0f;
+        this.pickHeight = 3.5f;
         loadModel("src/main/resources/assets/minecraft/models/entity/wither.json", textureManager);
     }
 

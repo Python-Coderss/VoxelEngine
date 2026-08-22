@@ -51,7 +51,8 @@ public class PlayerController {
      */
     public void handleInput(float dt) {
         if (main.inventoryOpen || main.commandMode || main.player.isDead()
-                || ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive) return;
+                || ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive
+                || (ctx.cinematic != null && ctx.cinematic.cameraActive())) return;
 
         // Forward / right vectors for WASD
         double ry = Math.toRadians(main.yaw);

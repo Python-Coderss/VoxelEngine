@@ -311,3 +311,13 @@ drop their base log item.
 - **WorldSize enum:** TINY(16b)/SMALL(18b)/MEDIUM(20b)/LARGE(24b)/HUGE(28b) — legacy from the precision layer; no longer affects generation (the 1.8.1 port is vanilla precision). `WorldSize.fromString(name)` still parses case-insensitively.
 - **WorldBorderManager:** Hard world border at `(1L << (intBits-1)) - 16` blocks. `clamp(Player)` pushes player back on X/Z and displays a 3s "You have reached the world border!" message. `getBorderMessage()` returns transient messages for HUD display.
 - **World border:** `WorldBorderManager` clamps the player at `(1L << (intBits-1)) - 16` with the default 20-bit width (the `WorldSize`/`/worldsize` machinery from the old precision layer is retained but `setWorldSize` is a no-op, so the border no longer moves).
+
+### Point-and-Click Function Pass (2026-08-21)
+
+**Input split in BlockInteraction:** `tryUseTarget(hit, hitBlock)` = shared use-dispatch (eye insert/throw, command editor, TV/furnace cutscenes, blaze burner, copper tank, crank, bearing, vault/chest, repeater/comparator, crafting table); `finishPlaceAttempt` = item tail + placement; `attemptClickInteract()` = PAC left-click uses the hovered target (Main.handleMouseButton consumes click so it doesn't also mine). Holding still mines; FPS mode unchanged.
+
+**Raycast:** `raycastBlock(maxDist, includeFluids)` exact DDA traversal; fluids transparent unless includeFluids (bucket scoop). Per-entity pick boxes via Entity.getPickWidth/Height (dragon 4x5, wither 3x3.5, magma scales); melee reach 6.0 matches hover affordance. updatePointAndClick deactivates during cutscenes/cinematics.
+
+**Cutscenes:** ESC skips cinematic scenes (+HUD "ESC to skip"); level-up queue no longer swallowed; nightfall guards UI/death/cutscenes; directed cameras lift out of terrain; crafting/furnace walk targets validate walkable sides; TV camera sits player-side and aims at the screen.
+
+**Chest model + hinge animation (in progress):** chest.json elements (body+lid+latch), isFullBlock=false forced for chest, hasHinge bit = d3.w bit 7, shader rotates lid ray around back-hinge by CPU-ticked uniform angle.

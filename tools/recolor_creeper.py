@@ -16,7 +16,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 FIND = os.path.join(ROOT, 'tools', 'assets', 'alpha_grass_top.png')
 REPLACE = os.path.join(ROOT, 'src', 'main', 'resources', 'assets', 'minecraft',
-                       'textures', 'blocks', 'grass_block_top.png')
+                       'textures', 'blocks', 'grass_top.png')
 CREEPER = os.path.join(ROOT, 'src', 'main', 'resources', 'assets', 'minecraft',
                        'textures', 'entity', 'creeper', 'creeper.png')
 
