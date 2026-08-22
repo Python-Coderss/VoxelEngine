@@ -13,3 +13,15 @@ __pycache__/
 *.pyc
 
 saves/
+
+# Native LWJGL library cache (extracted at runtime)
+.lwjgl/
+
+# Agent collaboration protocol copy (not project source)
+collaboration.txt
+
+# Shared agent workspace (per-session coordination, not project history)
+.agents/
+
+# Generated visual-harness artifacts (inspect locally, do not commit)
+screenshots/chest_harness/

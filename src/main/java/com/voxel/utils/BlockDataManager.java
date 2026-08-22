@@ -127,6 +127,11 @@ public class BlockDataManager {
         public boolean isRotating;
         public float rotationSpeed; // revolutions per second, 0 = static
 
+        // Hinge-animated part: element index 1 of this block's model is a lid
+        // that rotates around its bMin.y/z edge (chest). The raytracer rotates
+        // it by u_HingeAngle while u_HingeOn selects the animating block.
+        public boolean hasHinge;
+
         // Color of emitted block light. Packed as 0x00RRGGBB (each 0-255). Default white.
         // Applied at the light intensity level determined by emissive.
         public int lightColor = 0x00FFFFFF;
@@ -309,6 +314,12 @@ public class BlockDataManager {
         }
         if (name.contains("water") || name.contains("lava")) {
             data.effect = MaterialEffect.LIQUID;
+        }
+        // Chest: real multi-part model (body + hinged lid + latch) rendered via
+        // the AABB path; element index 1 is the hinge-animated lid.
+        if (name.equals("chest") && !data.aabbs.isEmpty()) {
+            data.isFullBlock = false;
+            data.hasHinge = true;
         }
         if (name.contains("portal")) {
             data.effect = MaterialEffect.PORTAL;
@@ -613,6 +624,8 @@ public class BlockDataManager {
                 // ivec4 3: (tintR, tintG, tintB, faceAnimMask | isRotating | speed<<8).
                 //   bits 0-5:  faceAnimMask (bit i = face i animated)
                 //   bit 6:     isRotating (kinetic part that spins around its axle)
+                //   bit 7:     hasHinge (part index 1 is a hinge-animated lid,
+                //              rotated by u_HingeAngle around its bMin.y/z edge)
                 //   bits 8-23: rotationSpeed as fixed-point (rev/sec * 256)
                 // The shader uses the speed to scroll/rotate the gear UVs smoothly
                 // instead of stepping through discrete animation frames.
@@ -620,7 +633,8 @@ public class BlockDataManager {
                 buffer.put((data.tintColor >> 8) & 0xFF);
                 buffer.put(data.tintColor & 0xFF);
                 int fixedSpeed = Math.max(0, Math.min(0xFFFF, Math.round(data.rotationSpeed * 256.0f)));
-                int packed3w = (data.faceAnimMask & 0x3F) | ((data.isRotating ? 1 : 0) << 6) | (fixedSpeed << 8);
+                int packed3w = (data.faceAnimMask & 0x3F) | ((data.isRotating ? 1 : 0) << 6)
+                        | ((data.hasHinge ? 1 : 0) << 7) | (fixedSpeed << 8);
                 buffer.put(packed3w);
             } else {
                 // Fill with -1 for unused IDs.

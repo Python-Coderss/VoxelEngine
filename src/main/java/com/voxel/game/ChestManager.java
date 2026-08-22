@@ -8,12 +8,15 @@ import java.util.Map;
 
 /**
  * Stores per-block chest inventory data.
- * Each chest has 20 slots (4 columns × 5 rows) of ItemStack storage.
+ * Each chest has 27 slots (9 columns × 3 rows) of ItemStack storage.
  * Maps block positions (packed as long) to arrays of ItemStack[20].
  * Supports save/load to a binary file for world persistence.
  */
 public class ChestManager {
-    public static final int CHEST_SLOTS = 20;
+    /** Vanilla single-chest capacity: three rows of nine slots. */
+    public static final int CHEST_SLOTS = 27;
+    private static final int LEGACY_CHEST_SLOTS = 20;
+    private static final int FILE_MAGIC = 0x56434832; // VCH2
 
     /** Maps packed block position (x,y,z) -> ItemStack[CHEST_SLOTS]. */
     private final Map<Long, ItemStack[]> chestData = new HashMap<>();
@@ -26,6 +29,16 @@ public class ChestManager {
     /** Returns the inventory array for a chest at the given position, or null if none. */
     public ItemStack[] getInventory(int x, int y, int z) {
         return chestData.get(packPos(x, y, z));
+    }
+
+    /** Returns an existing inventory or creates an empty persistent inventory for a chest. */
+    public ItemStack[] getOrCreateInventory(int x, int y, int z) {
+        ItemStack[] inv = getInventory(x, y, z);
+        if (inv == null) {
+            inv = new ItemStack[CHEST_SLOTS];
+            chestData.put(packPos(x, y, z), inv);
+        }
+        return inv;
     }
 
     /** Sets the inventory for a chest at the given position. Deep-copies the array. */
@@ -61,6 +74,7 @@ public class ChestManager {
     /** Saves all chest data to a file. */
     public void saveToFile(File file) throws IOException {
         try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(file)))) {
+            out.writeInt(FILE_MAGIC);
             out.writeInt(chestData.size());
             for (Map.Entry<Long, ItemStack[]> entry : chestData.entrySet()) {
                 out.writeLong(entry.getKey());
@@ -84,11 +98,14 @@ public class ChestManager {
         chestData.clear();
         if (!file.exists()) return;
         try (DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(file)))) {
-            int count = in.readInt();
+            int header = in.readInt();
+            boolean legacy = header != FILE_MAGIC;
+            int count = legacy ? header : in.readInt();
+            int slotsOnDisk = legacy ? LEGACY_CHEST_SLOTS : CHEST_SLOTS;
             for (int i = 0; i < count; i++) {
                 long key = in.readLong();
                 ItemStack[] inv = new ItemStack[CHEST_SLOTS];
-                for (int j = 0; j < CHEST_SLOTS; j++) {
+                for (int j = 0; j < slotsOnDisk; j++) {
                     if (in.readBoolean()) {
                         String itemId = in.readUTF();
                         int c = in.readInt();

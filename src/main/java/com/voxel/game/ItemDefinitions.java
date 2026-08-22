@@ -28,19 +28,34 @@ public class ItemDefinitions {
         public final int blockId;
         public final int dropBlockId; // separate model for dropped items (vertical plane vs horizontal crafting table)
         public final int iconLayer;
+        /** True when the icon comes from the native 64x64 entity texture array. */
+        public final boolean entityIcon;
+        /** Normalized crop within the icon texture (used by atlas-backed icons). */
+        public final Vector4f iconUv;
         public final ToolType toolType;
         public final float miningSpeed;
         public final int maxStack;
         public final Vector4f color;
         public final int tier; // 0=hand, 1=wood, 2=stone, 3=iron, 4=diamond
 
-        public ItemDefinition(String id, String displayName, ItemKind kind, int blockId, int dropBlockId, int iconLayer, ToolType toolType, float miningSpeed, int maxStack, Vector4f color, int tier) {
+        public ItemDefinition(String id, String displayName, ItemKind kind, int blockId, int dropBlockId,
+                               int iconLayer, ToolType toolType, float miningSpeed, int maxStack,
+                               Vector4f color, int tier) {
+            this(id, displayName, kind, blockId, dropBlockId, iconLayer, toolType, miningSpeed,
+                    maxStack, color, tier, false, new Vector4f(0, 0, 1, 1));
+        }
+
+        public ItemDefinition(String id, String displayName, ItemKind kind, int blockId, int dropBlockId,
+                               int iconLayer, ToolType toolType, float miningSpeed, int maxStack,
+                               Vector4f color, int tier, boolean entityIcon, Vector4f iconUv) {
             this.id = id;
             this.displayName = displayName;
             this.kind = kind;
             this.blockId = blockId;
             this.dropBlockId = dropBlockId;
             this.iconLayer = iconLayer;
+            this.entityIcon = entityIcon;
+            this.iconUv = new Vector4f(iconUv);
             this.toolType = toolType;
             this.miningSpeed = miningSpeed;
             this.maxStack = maxStack;
@@ -413,8 +428,17 @@ public class ItemDefinitions {
         }
         Color albedo = blockDataManager.getTintColorOrAlbedo(blockId);
         Vector4f color = new Vector4f(albedo.getRed() / 255.0f, albedo.getGreen() / 255.0f, albedo.getBlue() / 255.0f, 1.0f);
-        int iconLayer = textureManager.getTextureIndex(textureName);
-        ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.BLOCK, blockId, iconLayer, ToolType.HAND, 1.0f, 64, color);
+        boolean entityIcon = "chest".equals(itemId);
+        int iconLayer = entityIcon
+                ? textureManager.getEntityTextureIndex("chest/normal")
+                : textureManager.getTextureIndex(textureName);
+        // Crop the north-facing body panel from vanilla normal.png for a useful
+        // inventory/creative icon instead of displaying the whole entity atlas.
+        Vector4f iconUv = entityIcon
+                ? new Vector4f(0f, 33f / 64f, 14f / 64f, 10f / 64f)
+                : new Vector4f(0, 0, 1, 1);
+        ItemDefinition definition = new ItemDefinition(itemId, displayName, ItemKind.BLOCK, blockId,
+                blockId, iconLayer, ToolType.HAND, 1.0f, 64, color, 0, entityIcon, iconUv);
         itemRegistry.put(itemId, definition);
         blockItemByBlockId.put(blockId, itemId);
         registerAlias(itemId, itemId);

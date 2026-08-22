@@ -62,8 +62,12 @@ public class BlockInteraction {
         // The ancient-builder facility's sealed test chest is the lore source of
         // power fragments. Populate it lazily so it persists through the normal
         // ChestManager save/load path without coupling world generation to UI state.
+        // Ordinary placed chests need a storage record too; otherwise the UI opens
+        // successfully but every slot click is discarded because the inventory is null.
+        ctx.chestManager.getOrCreateInventory(x, y, z);
         if (com.voxel.world.AncientBuilderFacility.isPowerFragmentChest(x, y, z)
-                && ctx.chestManager.getInventory(x, y, z) == null) {
+                && ctx.chestManager.getInventory(x, y, z) != null
+                && com.voxel.game.ChestManager.isChestEmpty(ctx.chestManager.getInventory(x, y, z))) {
             ItemStack[] inv = new ItemStack[ChestManager.CHEST_SLOTS];
             inv[0] = new ItemStack(CommandBlockManager.POWER_FRAGMENT, 4);
             ctx.chestManager.setInventory(x, y, z, inv);
@@ -106,12 +110,33 @@ public class BlockInteraction {
 
         // Approach direction: the adjacent block on the clicked face (hit[3]/hit[5]).
         // If the top/bottom face was clicked, fall back to the player's approach.
+        // The chosen side must be WALKABLE — otherwise try the other sides so
+        // the cutscene doesn't march the player into solid rock.
         int dx = hit[3] - fx;
         int dz = hit[5] - fz;
         if (dx == 0 && dz == 0) {
-            dx = (int) Math.signum(playerPos.x - (fx + 0.5f));
-            dz = (int) Math.signum(playerPos.z - (fz + 0.5f));
-            if (dx == 0 && dz == 0) dz = 1;
+            float pdx = playerPos.x - (fx + 0.5f);
+            float pdz = playerPos.z - (fz + 0.5f);
+            if (Math.abs(pdx) >= Math.abs(pdz)) {
+                dx = pdx >= 0 ? 1 : -1; dz = 0;
+            } else {
+                dx = 0; dz = pdz >= 0 ? 1 : -1;
+            }
+        }
+        int[][] sides = { {dx, dz}, {1, 0}, {-1, 0}, {0, 1}, {0, -1} };
+        for (int[] s : sides) {
+            if (s[0] == 0 && s[1] == 0) continue;
+            boolean dup = false;
+            for (int[] p : sides) {
+                if (p == s) break;
+                if (p[0] == s[0] && p[1] == s[1]) { dup = true; break; }
+            }
+            if (dup) continue;
+            if (walkableCell(fx + s[0], fy, fz + s[1])) {
+                dx = s[0];
+                dz = s[1];
+                break;
+            }
         }
 
         // Walk target: one block away from the furnace on the approach side
@@ -157,7 +182,10 @@ public class BlockInteraction {
 
     public void updateMining(float dt) {
         if (ctx.inventoryOpen || ctx.commandMode || !ctx.leftMouseHeld || ctx.player.isDead()
-                || ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive || ctx.tvCutsceneActive) {
+                || ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive || ctx.tvCutsceneActive
+                // B4: during a cinematic the cursor ray is one frame stale —
+                // never mine/punch through it while the director owns the view.
+                || (ctx.cinematic != null && ctx.cinematic.cameraActive())) {
             resetMining();
             return;
         }
@@ -166,7 +194,9 @@ public class BlockInteraction {
         // missing piece that lets bosses like the Ender Dragon / Wither /
         // Magma Cube actually take damage from a player swing.
         if (ctx.leftMousePressedThisFrame && ctx.entityManager != null) {
-            int[] entityHit = raycastEntity(5.5f);
+            // 6.0f matches the reach used by the PAC hover affordance — if the
+            // reticle highlights an entity, a click must actually connect.
+            int[] entityHit = raycastEntity(6.0f);
             if (entityHit != null) {
                 com.voxel.entity.Entity target = ctx.entityManager.getEntity(entityHit[0]);
                 if (target != null) {
@@ -688,8 +718,17 @@ public class BlockInteraction {
 
     /** Raycast against entities. Returns {entityIndex, hitDistanceBits} or null. */
     public int[] raycastEntity(float maxDist) {
-        Vector3f dir = getLookDirection();
-        Vector3f pos = getActiveCameraPosition();
+        if (ctx.entityManager == null) return null;
+        Vector3f dir;
+        Vector3f pos;
+        float[] cursorRay = ctx.cursorRayOverride;
+        if (cursorRay != null) {
+            pos = new Vector3f(cursorRay[0], cursorRay[1], cursorRay[2]);
+            dir = new Vector3f(cursorRay[3], cursorRay[4], cursorRay[5]);
+        } else {
+            dir = getLookDirection();
+            pos = getActiveCameraPosition();
+        }
         float closestT = maxDist;
         int closestIdx = -1;
 
@@ -703,9 +742,9 @@ public class BlockInteraction {
             if (e instanceof com.voxel.entity.EnemyEntity && ((com.voxel.entity.EnemyEntity) e).isDead()) continue;
 
             Vector3f ePos = e.getPosition();
-            float w = 0.3f, h = 0.9f;
+            float w = e.getPickWidth() * 0.5f;
             Vector3f bMin = new Vector3f(ePos.x - w, ePos.y, ePos.z - w);
-            Vector3f bMax = new Vector3f(ePos.x + w, ePos.y + h * 2, ePos.z + w);
+            Vector3f bMax = new Vector3f(ePos.x + w, ePos.y + e.getPickHeight(), ePos.z + w);
 
             Vector3f invDir = new Vector3f(1.0f / dir.x, 1.0f / dir.y, 1.0f / dir.z);
             float t1 = (bMin.x - pos.x) * invDir.x, t2 = (bMax.x - pos.x) * invDir.x;
@@ -896,7 +935,11 @@ public class BlockInteraction {
 
     public void attemptPlaceBlock() {
         if (ctx.player.isDead()) return;
-        int[] hit = raycastBlock(6.0f);
+        // An empty bucket must be able to target fluids themselves — every
+        // other interaction treats water/lava as transparent.
+        ItemDefinitions.ItemStack preselected = ctx.playerInventory.getSelected();
+        boolean scooping = preselected != null && "bucket".equals(preselected.itemId);
+        int[] hit = raycastBlock(6.0f, scooping);
 
         // Check for entity interaction — if player looks at a villager (even through no block)
         if (!ctx.inventoryOpen && !ctx.commandMode && !ctx.tvCutsceneActive && !ctx.craftingCutsceneActive && !ctx.furnaceCutsceneActive) {
@@ -925,9 +968,24 @@ public class BlockInteraction {
 
         if (hit == null) return;
 
-        // Right-click on a crafting table block — start cutscene walk to table
         int hitBlock = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
 
+        // Shared "use" dispatch: every interactive block consumes the action
+        // (right-click use, or left-click in point-and-click mode).
+        if (tryUseTarget(hit, hitBlock)) return;
+
+        // Item-dependent tool actions + actual placement.
+        finishPlaceAttempt(hit, hitBlock);
+    }
+
+    /**
+     * Shared "use" dispatch for the block under the cursor: every interactive
+     * block consumes the click (open UI, walk-up cutscene, fuel, cycle...).
+     * Runs for right-click use and for left-click in point-and-click mode so
+     * a plain click on a highlighted thing just works.
+     * Returns true when something consumed the click.
+     */
+    private boolean tryUseTarget(int[] hit, int hitBlock) {
         // ── End Portal: insert eye of ender into portal frame ──
         if (com.voxel.world.EndPortalLogic.isFrameBlock(ctx.blockDataManager, hitBlock)
                 && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
@@ -942,7 +1000,7 @@ public class BlockInteraction {
                 } else {
                     ctx.setStatus("This frame already has an eye");
                 }
-                return;
+                return true;
             }
         }
 
@@ -958,26 +1016,26 @@ public class BlockInteraction {
                 throwEyeOfEnder();
                 heldStack.count--;
                 if (heldStack.count <= 0) ctx.playerInventory.clearSlot(ctx.playerInventory.getSelectedSlot());
-                return;
+                return true;
             }
         }
 
         // Right-click on a command block opens the ancient-builder program editor.
         if (CommandBlockManager.isCommandBlock(hitBlock) && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
             openCommandBlockEditor(hit[0], hit[1], hit[2]);
-            return;
+            return true;
         }
 
         // Right-click on villager TV block — start TV cutscene
         if (hitBlock == BLOCK_TV && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
             startTVCutscene(hit);
-            return;
+            return true;
         }
 
         // Right-click on furnace — walk-up cutscene, then the furnace UI opens
         if ((hitBlock == BLOCK_FURNACE || hitBlock == BLOCK_FURNACE_ON) && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive && !ctx.furnaceCutsceneActive && !ctx.furnaceOpen) {
             startFurnaceCutscene(hit);
-            return;
+            return true;
         }
 
         // Right-click on blaze burner: add fuel (coal, blaze rod, blaze powder)
@@ -993,7 +1051,7 @@ public class BlockInteraction {
                     held.count--;
                     if (held.count <= 0) ctx.playerInventory.clearSlot(ctx.playerInventory.getSelectedSlot());
                     ctx.setStatus("Added fuel to blaze burner");
-                    return;
+                    return true;
                 }
             }
         }
@@ -1006,13 +1064,13 @@ public class BlockInteraction {
                     if (ctx.copperTankManager.fill(hit[0], hit[1], hit[2])) {
                         ctx.playerInventory.replaceSelected("bucket");
                         ctx.setStatus("Filled copper tank");
-                        return;
+                        return true;
                     }
                 } else if (held.itemId.equals("bucket")) {
                     if (ctx.copperTankManager.drain(hit[0], hit[1], hit[2])) {
                         ctx.playerInventory.replaceSelected("water_bucket");
                         ctx.setStatus("Drained copper tank");
-                        return;
+                        return true;
                     }
                 }
             }
@@ -1022,7 +1080,7 @@ public class BlockInteraction {
         if (hitBlock == BLOCK_HAND_CRANK && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && ctx.machineManager != null) {
             ctx.machineManager.spinCrank(hit[0], hit[1], hit[2]);
             ctx.setStatus("Cranked — the network spins for 5 seconds");
-            return;
+            return true;
         }
 
         // Right-click windmill bearing: report the sail setup
@@ -1031,25 +1089,25 @@ public class BlockInteraction {
             int sails = ctx.machineManager.windmillSailCount(hit[0], hit[1], hit[2]);
             boolean spinning = ctx.machineManager.isWindmillSpinning(hit[0], hit[1], hit[2]);
             ctx.setStatus("Windmill bearing: " + sails + " sails, " + (spinning ? "spinning" : "needs 2+ exposed sails"));
-            return;
+            return true;
         }
 
         // Right-click item vault: opens like a chest
         if (hitBlock == BLOCK_ITEM_VAULT && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.chestOpen) {
             openVault(hit[0], hit[1], hit[2]);
-            return;
+            return true;
         }
 
         // Right-click on chest
         if (hitBlock == BLOCK_CHEST && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.chestOpen) {
             openChest(hit[0], hit[1], hit[2]);
-            return;
+            return true;
         }
 
         // Right-click on a repeater cycles its delay; on a comparator toggles mode
         if (com.voxel.world.RedstoneManager.isRepeater(hitBlock) || com.voxel.world.RedstoneManager.isComparator(hitBlock)) {
             if (ctx.inventoryOpen || ctx.craftingCutsceneActive || ctx.tvCutsceneActive || ctx.furnaceCutsceneActive || ctx.chestOpen) {
-                return;
+                return true;
             }
             int raw = ctx.world.getRawVoxel(hit[0], hit[1], hit[2]);
             if (com.voxel.world.RedstoneManager.isRepeater(hitBlock)) {
@@ -1063,7 +1121,7 @@ public class BlockInteraction {
                 ctx.chunkManager.setVoxelWithData(hit[0], hit[1], hit[2], newId, 0);
                 ctx.setStatus(newId >= 345 ? "Comparator mode: subtract" : "Comparator mode: compare");
             }
-            return;
+            return true;
         }
 
         if (hitBlock == 115 && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.craftingTableOpen) {
@@ -1087,7 +1145,7 @@ public class BlockInteraction {
                     }
                     ctx.craftingTableManager.setGrid(hit[0], hit[1], hit[2], existingGrid);
                     ctx.setStatus("Extracted items from crafting table");
-                    return;
+                    return true;
                 }
             }
 
@@ -1097,28 +1155,53 @@ public class BlockInteraction {
 
 
 
-            // Compute target position: snap to the nearest walkable side of the table
+            // Compute target position: snap to the nearest WALKABLE side of
+            // the table. Candidates are tried in preference order — clicked
+            // face, the player's approach axis, then the remaining sides — so
+            // the scripted walk never shoves the player into a wall when the
+            // obvious side is sealed off.
             Vector3f tableCenter = new Vector3f(hit[0] + 0.5f, hit[1], hit[2] + 0.5f);
             Vector3f playerPos = ctx.player.getPosition();
 
-            float targetX, targetZ, targetY = hit[1];
-            // If the clicked face is top/bottom (adjacent block has same x/z as table),
-            // fall back to using the player's approach direction to find the nearest side
-            if (hit[3] == hit[0] && hit[5] == hit[2]) {
-                // Determine which side of the table the player is approaching from
-                float dx = playerPos.x - tableCenter.x;
-                float dz = playerPos.z - tableCenter.z;
-                if (Math.abs(dx) >= Math.abs(dz)) {
-                    targetX = hit[0] + (dx >= 0 ? 1.5f : -0.5f);
+            float targetX = 0f, targetZ = 0f, targetY = hit[1];
+            int faceDx = hit[3] - hit[0];
+            int faceDz = hit[5] - hit[2];
+            float adx = playerPos.x - tableCenter.x;
+            float adz = playerPos.z - tableCenter.z;
+            int appX = Math.abs(adx) >= Math.abs(adz) ? (adx >= 0 ? 1 : -1) : 0;
+            int appZ = appX == 0 ? (adz >= 0 ? 1 : -1) : 0;
+
+            int[][] prefs = new int[][] {
+                {faceDx, faceDz}, {appX, appZ},
+                {1, 0}, {-1, 0}, {0, 1}, {0, -1}
+            };
+            boolean foundSide = false;
+            for (int i = 0; i < prefs.length && !foundSide; i++) {
+                int dx = prefs[i][0], dz = prefs[i][1];
+                if (dx == 0 && dz == 0) continue;
+                for (int j = 0; j < i; j++) {
+                    if (prefs[j][0] == dx && prefs[j][1] == dz) { dx = 0; dz = 0; break; }
+                }
+                if (dx == 0 && dz == 0) continue;
+                if (walkableCell(hit[0] + dx, hit[1], hit[2] + dz)) {
+                    targetX = hit[0] + dx + 0.5f;
+                    targetZ = hit[2] + dz + 0.5f;
+                    foundSide = true;
+                }
+            }
+            if (!foundSide) {
+                // Everything sealed: keep the legacy choice (clicked face or
+                // approach axis) rather than refusing to open the UI.
+                if (faceDx != 0 || faceDz != 0) {
+                    targetX = hit[3] + 0.5f;
+                    targetZ = hit[5] + 0.5f;
+                } else if (Math.abs(adx) >= Math.abs(adz)) {
+                    targetX = hit[0] + (adx >= 0 ? 1.5f : -0.5f);
                     targetZ = tableCenter.z;
                 } else {
                     targetX = tableCenter.x;
-                    targetZ = hit[2] + (dz >= 0 ? 1.5f : -0.5f);
+                    targetZ = hit[2] + (adz >= 0 ? 1.5f : -0.5f);
                 }
-            } else {
-                // Side face click: walk to the center of the adjacent block
-                targetX = hit[3] + 0.5f;
-                targetZ = hit[5] + 0.5f;
             }
             ctx.cutsceneTargetPos.set(targetX, targetY, targetZ);
 
@@ -1177,9 +1260,18 @@ public class BlockInteraction {
             ctx.craftingCutsceneActive = true;
             ctx.craftingCutsceneTimer = 0.0f;
             ctx.setStatus("Walking to crafting table...");
-            return;
+            return true;
         }
 
+        return false;
+    }
+
+    /**
+     * Item-dependent tail of use/place: tool actions, buckets, minecarts and
+     * the actual block placement. Runs only when no interactive block
+     * consumed the click.
+     */
+    private void finishPlaceAttempt(int[] hit, int hitBlock) {
         ItemDefinitions.ItemStack selected = ctx.playerInventory.getSelected();
         if (selected == null) { ctx.setStatus("Selected slot is empty"); return; }
         ItemDefinitions.ItemDefinition def = ctx.itemDefinitions.getDefinition(selected.itemId);
@@ -1365,6 +1457,12 @@ public class BlockInteraction {
             }
             int dirBlockId = getDirectionalPistonId(placeBlockId, direction);
             if (!ctx.chunkManager.setVoxel(px, py, pz, dirBlockId)) return;
+        } else if (placeBlockId == BLOCK_CHEST) {
+            // Chests face the player, matching Minecraft's placement behavior. Store
+            // the horizontal facing in the same extra-data bits used by machines.
+            int chestFacing = chestFacingFromPlayer(ctx.player.getPosition().x,
+                    ctx.player.getPosition().z, px, pz);
+            if (!ctx.chunkManager.setVoxelWithData(px, py, pz, placeBlockId, chestFacing)) return;
         } else if (placeBlockId == 294 || placeBlockId == 263 || (placeBlockId >= 409 && placeBlockId <= 413)) {
             // Cogwheel (294) + encased fan + directional Create machines: encode the
             // axle/facing direction into extra data (bits 16-18).
@@ -1409,6 +1507,39 @@ public class BlockInteraction {
             if (selected.count <= 0) ctx.playerInventory.setSlot(ctx.playerInventory.getSelectedSlot(), null);
         }
         if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
+    }
+
+    /**
+     * Point-and-click left click: interact with whatever is under the cursor.
+     * Friendly entities (villagers, minecarts) are talked to / ridden instead
+     * of punched, and interactive blocks run their use action exactly like a
+     * right-click. Returns true when the click was consumed.
+     */
+    public boolean attemptClickInteract() {
+        if (ctx.player.isDead() || ctx.inventoryOpen || ctx.commandMode
+                || ctx.tvCutsceneActive || ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive) return false;
+
+        // Friendly entity under the cursor? Interact instead of swinging.
+        int[] ent = raycastEntity(6.0f);
+        if (ent != null && ctx.entityManager != null) {
+            com.voxel.entity.Entity e = ctx.entityManager.getEntity(ent[0]);
+            if (e instanceof com.voxel.entity.VillagerEntity || e instanceof com.voxel.entity.MinecartEntity) {
+                float entDist = Float.intBitsToFloat(ent[1]);
+                int[] hit = raycastBlock(6.0f);
+                float blockDist = hit != null ? getActiveCameraPosition().distance(
+                    new Vector3f(hit[0] + 0.5f, hit[1] + 0.5f, hit[2] + 0.5f)) : Float.MAX_VALUE;
+                if (entDist < blockDist) {
+                    interactWithEntity(e);
+                    return true;
+                }
+            }
+        }
+
+        // Interactive block under the cursor? Run its use action.
+        int[] hit = raycastBlock(6.0f);
+        if (hit == null) return false;
+        int hitBlock = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
+        return tryUseTarget(hit, hitBlock);
     }
 
     /**
@@ -1460,6 +1591,18 @@ public class BlockInteraction {
      * orientable gears (the facing is the direction the axle/head points).
      * Public static so it can be regression-tested without GL.
      */
+    /**
+     * Returns the horizontal direction from a placed chest toward the player:
+     * 2=north, 3=south, 4=west, 5=east. This is deliberately independent of
+     * the clicked support face so floor and wall-adjacent placements agree.
+     */
+    public static int chestFacingFromPlayer(float playerX, float playerZ, int chestX, int chestZ) {
+        float dx = playerX - (chestX + 0.5f);
+        float dz = playerZ - (chestZ + 0.5f);
+        if (Math.abs(dx) >= Math.abs(dz)) return dx >= 0.0f ? 5 : 4;
+        return dz >= 0.0f ? 3 : 2;
+    }
+
     public static int facingFromClickedFace(int[] hit, int px, int py, int pz) {
         int dx = hit[0] - px;
         int dy = hit[1] - py;
@@ -1518,27 +1661,71 @@ public class BlockInteraction {
     }
 
     public int[] raycastBlock(float maxDist) {
-        Vector3f dir = getLookDirection();
-        Vector3f pos = getActiveCameraPosition();
-        float step = 0.05f;
-        int lastX = (int) Math.floor(pos.x);
-        int lastY = (int) Math.floor(pos.y);
-        int lastZ = (int) Math.floor(pos.z);
-        Vector3f cur = new Vector3f(pos);
-        for (float d = 0; d <= maxDist; d += step) {
-            cur.set(pos).fma(d, dir);
-            int cx = (int) Math.floor(cur.x);
-            int cy = (int) Math.floor(cur.y);
-            int cz = (int) Math.floor(cur.z);
-            if (cx != lastX || cy != lastY || cz != lastZ) {
-                int blockId = ctx.world.getVoxel(cx, cy, cz);
-                if (blockId != 0) {
-                    return new int[]{cx, cy, cz, lastX, lastY, lastZ};
-                }
-                lastX = cx; lastY = cy; lastZ = cz;
-            }
+        return raycastBlock(maxDist, false);
+    }
+
+    /**
+     * Exact DDA (Amanatides & Woo) voxel traversal from the camera/cursor ray.
+     * Unlike the old fixed-step march this can never skip through a block
+     * corner or clip a glancing hit, and it touches one voxel per cell crossed
+     * instead of 20 samples per block. Fluids are transparent by default so
+     * blocks behind water/lava stay clickable; pass {@code includeFluids=true}
+     * for bucket scooping.
+     * Returns {x,y,z, adjX,adjY,adjZ} or null when nothing is hit in range.
+     */
+    public int[] raycastBlock(float maxDist, boolean includeFluids) {
+        if (ctx.world == null) return null;
+        Vector3f dir;
+        Vector3f pos;
+        float[] cursorRay = ctx.cursorRayOverride;
+        if (cursorRay != null) {
+            pos = new Vector3f(cursorRay[0], cursorRay[1], cursorRay[2]);
+            dir = new Vector3f(cursorRay[3], cursorRay[4], cursorRay[5]);
+        } else {
+            dir = getLookDirection();
+            pos = getActiveCameraPosition();
         }
-        return null;
+
+        int x = (int) Math.floor(pos.x);
+        int y = (int) Math.floor(pos.y);
+        int z = (int) Math.floor(pos.z);
+        int lastX = x, lastY = y, lastZ = z;
+
+        int stepX = dir.x > 0 ? 1 : -1;
+        int stepY = dir.y > 0 ? 1 : -1;
+        int stepZ = dir.z > 0 ? 1 : -1;
+        // Distance along the ray to the first X/Y/Z cell boundary...
+        float tDeltaX = dir.x == 0f ? Float.MAX_VALUE : Math.abs(1.0f / dir.x);
+        float tDeltaY = dir.y == 0f ? Float.MAX_VALUE : Math.abs(1.0f / dir.y);
+        float tDeltaZ = dir.z == 0f ? Float.MAX_VALUE : Math.abs(1.0f / dir.z);
+        float tMaxX = dir.x == 0f ? Float.MAX_VALUE
+                : ((dir.x > 0 ? (x + 1 - pos.x) : (pos.x - x)) / Math.abs(dir.x));
+        float tMaxY = dir.y == 0f ? Float.MAX_VALUE
+                : ((dir.y > 0 ? (y + 1 - pos.y) : (pos.y - y)) / Math.abs(dir.y));
+        float tMaxZ = dir.z == 0f ? Float.MAX_VALUE
+                : ((dir.z > 0 ? (z + 1 - pos.z) : (pos.z - z)) / Math.abs(dir.z));
+
+        while (true) {
+            // Advance to whichever boundary is nearest (the exact DDA order).
+            if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
+                if (tMaxX > maxDist) return null;
+                lastX = x; x += stepX;
+                tMaxX += tDeltaX;
+            } else if (tMaxY <= tMaxZ) {
+                if (tMaxY > maxDist) return null;
+                lastY = y; y += stepY;
+                tMaxY += tDeltaY;
+            } else {
+                if (tMaxZ > maxDist) return null;
+                lastZ = z; z += stepZ;
+                tMaxZ += tDeltaZ;
+            }
+            int blockId = ctx.world.getVoxel(x, y, z);
+            if (blockId == 0) continue;
+            if (!includeFluids && isWaterBlock(blockId)) continue;
+            if (!includeFluids && blockId == BLOCK_LAVA) continue;
+            return new int[]{x, y, z, lastX, lastY, lastZ};
+        }
     }
 
     /**
@@ -1586,6 +1773,19 @@ public class BlockInteraction {
         float pMinY = pos.y, pMaxY = pos.y + PLAYER_HEIGHT;
         float pMinZ = pos.z - PLAYER_HALF_WIDTH, pMaxZ = pos.z + PLAYER_HALF_WIDTH;
         return pMaxX > x && pMinX < x + 1 && pMaxY > y && pMinY < y + 1 && pMaxZ > z && pMinZ < z + 1;
+    }
+
+    /**
+     * Cutscene walk targets must be standable: both the feet and head cells
+     * must be free of full blocks, otherwise the scripted walk teleports the
+     * player into a wall.
+     */
+    private boolean walkableCell(int x, int y, int z) {
+        for (int dy = 0; dy < 2; dy++) {
+            int v = ctx.world.getVoxel(x, y + dy, z);
+            if (v != 0 && ctx.blockDataManager.isFullBlock(v)) return false;
+        }
+        return true;
     }
 
     /** Start the TV watching cutscene. */
@@ -1639,17 +1839,43 @@ public class BlockInteraction {
         float tvCY = hit[1] + 0.8f;
         float tvCZ = hit[2] + 0.5f;
 
-        // Camera: position 2 blocks away from TV's front face
-        float cx = tvCX;
+        // Camera: on the player's side of the TV at screen height, stepped
+        // back until it clears any solid blocks. The old hardcoded +Z offset
+        // ended up behind the TV or inside terrain depending on approach.
+        float dirX = playerPos.x - tvCX;
+        float dirZ = playerPos.z - tvCZ;
+        float len = (float) Math.sqrt(dirX * dirX + dirZ * dirZ);
+        if (len < 0.001f) { dirX = 0f; dirZ = 1f; len = 1f; }
+        dirX /= len;
+        dirZ /= len;
+        float cx = tvCX + dirX * 2.5f;
         float cy = tvCY + 0.3f;
-        float cz = tvCZ + 2.5f; // In front of the TV
+        float cz = tvCZ + dirZ * 2.5f;
+        float[] distances = {2.5f, 3.0f, 3.5f, 4.0f, 5.0f, 6.0f, 8.0f};
+        for (float dist : distances) {
+            float sx = tvCX + dirX * dist;
+            float sz = tvCZ + dirZ * dist;
+            int voxel = ctx.world.getVoxel((int) Math.floor(sx), (int) Math.floor(cy), (int) Math.floor(sz));
+            if (voxel == 0 || !ctx.blockDataManager.isFullBlock(voxel)) {
+                cx = sx;
+                cz = sz;
+                break;
+            }
+        }
 
         ctx.tvCutsceneCameraStart.set(playerPos.x, playerPos.y + 1.6f, playerPos.z);
         ctx.tvCutsceneCameraTarget.set(cx, cy, cz);
         ctx.tvCutsceneStartYaw = ctx.yaw;
         ctx.tvCutsceneStartPitch = ctx.pitch;
-        ctx.tvCutsceneTargetYaw = -90;
-        ctx.tvCutsceneTargetPitch = -10;
+        // Aim exactly at the screen from wherever the camera landed (yaw
+        // convention: look = (cos yaw cos pitch, sin pitch, sin yaw cos pitch)).
+        float ddx = tvCX - cx, ddy = tvCY - cy, ddz = tvCZ - cz;
+        float horiz = (float) Math.sqrt(ddx * ddx + ddz * ddz);
+        // Shortest angular path across the ±180° seam.
+        float rawYaw = (float) Math.toDegrees(Math.atan2(ddz, ddx));
+        float dYaw = ((rawYaw - ctx.tvCutsceneStartYaw + 540.0f) % 360.0f) - 180.0f;
+        ctx.tvCutsceneTargetYaw = ctx.tvCutsceneStartYaw + dYaw;
+        ctx.tvCutsceneTargetPitch = (float) Math.toDegrees(Math.atan2(ddy, horiz));
 
         ctx.tvCutsceneActive = true;
         ctx.tvCutsceneTimer = 0.0f;

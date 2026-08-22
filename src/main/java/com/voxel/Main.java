@@ -1032,10 +1032,16 @@ public class Main {
         glProgramUniform1i(computeProgram, atmosphereRenderer.locDimensionID(), DimensionType.OVERWORLD.id);
         glProgramUniform3i(computeProgram, 6, 0, 0, 0); // world offset
 
-        // No break overlay, no underwater camera.
+        // No break overlay, no underwater camera, and no animated chest in the
+        // menu panorama. Explicitly clear it so a previous gameplay frame cannot
+        // leak hinge state into the menu pass.
         glProgramUniform1i(computeProgram, LOC_UNDER_WATER, 0);
         glProgramUniform3i(computeProgram, 19, 0, 0, 0);
         glProgramUniform1f(computeProgram, 20, 0.0f);
+        glProgramUniform3i(computeProgram, 49, 0, 0, 0);
+        glProgramUniform1f(computeProgram, 50, 0.0f);
+        glProgramUniform1i(computeProgram, 51, 0);
+        glProgramUniform1i(computeProgram, 52, -1);
         int destroyBaseLayer = textureManager.getTextureIndex("destroy_stage_0");
         glProgramUniform1i(computeProgram, 21, destroyBaseLayer < 0 ? -1 : destroyBaseLayer);
 
@@ -2776,6 +2782,18 @@ public class Main {
 
         worldTime += dt;
         ctx.worldTime = worldTime;
+
+        // Animate the selected chest independently of the inventory UI state. The
+        // target is driven by chestOpen, while the closing branch continues after
+        // the UI has cleared that flag so the lid eases fully shut.
+        float chestTarget = ctx.chestOpen ? 1.0f : 0.0f;
+        float chestStep = Math.min(1.0f, Math.max(0.0f, dt) * 4.0f);
+        if (ctx.chestLidAngle < chestTarget) {
+            ctx.chestLidAngle = Math.min(chestTarget, ctx.chestLidAngle + chestStep);
+        } else if (ctx.chestLidAngle > chestTarget) {
+            ctx.chestLidAngle = Math.max(chestTarget, ctx.chestLidAngle - chestStep);
+        }
+
         if (ctx.cinematic != null) ctx.cinematic.tick(dt);
         VillagerEntity.setGlobalWorldTime(worldTime);
         blockInteraction.updateMining(dt);
@@ -3361,7 +3379,12 @@ public class Main {
             if (player.isDead()) {
                 statusMessage = "YOU DIED! Press R to respawn.";
                 statusUntil = glfwGetTime() + 1.0;
-                if (ctx.cinematic != null) ctx.cinematic.deathFade();
+                if (ctx.cinematic != null) {
+                    // B3: a camera scene must not keep steering the view while
+                    // dead — abort it (restores saved yaw/pitch) before the fade.
+                    ctx.cinematic.abort();
+                    ctx.cinematic.deathFade();
+                }
             } else if (ctx.cinematic != null && player.getHealth() <= 6.0f && player.getHealth() > 0f) {
                 // One-time low-health warning scene (the pulse continues in
                 // HudUI while health stays critical; this scene is the reveal).
@@ -3606,6 +3629,24 @@ public class Main {
             int destroyBaseLayer = textureManager.getTextureIndex("destroy_stage_0");
             glProgramUniform1i(computeProgram, 21, destroyBaseLayer < 0 ? -1 : destroyBaseLayer);
 
+            // Hinge animation: keep the chest's absolute block position relative to
+            // the current sliding window. During closing, retain the last position
+            // until the angle reaches zero so the lid does not snap shut elsewhere.
+            glProgramUniform1i(computeProgram, 52,
+                    textureManager.getEntityTextureIndex("chest/normal"));
+            boolean chestAnimating = ctx.chestOpen || ctx.chestLidAngle > 0.0001f;
+            if (chestAnimating) {
+                glProgramUniform3i(computeProgram, 49, ctx.chestBlockX - wox,
+                        ctx.chestBlockY - woy, ctx.chestBlockZ - woz);
+                // Negative opens the lid up and toward the back (-Z).
+                glProgramUniform1f(computeProgram, 50, -(float) (ctx.chestLidAngle * 1.92f));
+                glProgramUniform1i(computeProgram, 51, 1);
+            } else {
+                glProgramUniform3i(computeProgram, 49, 0, 0, 0);
+                glProgramUniform1f(computeProgram, 50, 0.0f);
+                glProgramUniform1i(computeProgram, 51, 0);
+            }
+
             // Semi-transparent placement preview (ghost block). previewX/Y/Z are in
             // ABSOLUTE world coords like breakTarget*, so subtract the sliding-window
             // offset so the shader's buffer-relative DDA matches it.
@@ -3819,6 +3860,9 @@ public class Main {
             if (key == GLFW_KEY_R && player.isDead()) {
                 player.respawn();
                 if (ctx.cinematic != null) {
+                    // B3: release any camera-controlling scene so respawn isn't
+                    // viewed through a still-hijacked camera, then fade in.
+                    ctx.cinematic.abort();
                     ctx.cinematic.respawnFade();
                     ctx.cinematic.resetLowHealthFlag();
                 }
@@ -3956,6 +4000,12 @@ public class Main {
             }
 
             if (key == GLFW_KEY_ESCAPE) {
+                // Skippable cinematic scene playing? ESC hands control back.
+                if (ctx.cinematic != null && ctx.cinematic.active && !player.isDead()) {
+                    ctx.cinematic.skip();
+                    setStatus("Skipped");
+                    return;
+                }
                 if (ctx.tvWatching) {
                     // Exit TV watching mode
                     blockInteraction.stopWatchingTV();
@@ -4234,6 +4284,19 @@ public class Main {
                 ctx.leftMouseHeld = true;
                 leftMousePressedThisFrame = true;
                 ctx.leftMousePressedThisFrame = true;
+
+                // Point-and-click: a plain click USES whatever is under the
+                // cursor (open chest/furnace/table/TV, talk to villagers...)
+                // instead of only starting to mine. Holding still mines.
+                boolean pureGameplay = !inventoryOpen && !commandMode && !ctx.craftingTableOpen
+                        && !ctx.surfaceCraftingOpen && !ctx.chestOpen && !ctx.furnaceOpen
+                        && !ctx.craftingCutsceneActive && !ctx.furnaceCutsceneActive && !ctx.tvCutsceneActive;
+                if (pointAndClickMode && pureGameplay && blockInteraction.attemptClickInteract()) {
+                    // Consumed by a use-interaction: don't also mine/punch it.
+                    leftMousePressedThisFrame = false;
+                    ctx.leftMousePressedThisFrame = false;
+                    blockInteraction.resetMining();
+                }
             } else if (action == GLFW_RELEASE) {
                 leftMouseHeld = false;
                 ctx.leftMouseHeld = false;
@@ -4371,7 +4434,11 @@ public class Main {
     private void updatePointAndClick() {
         boolean active = pointAndClickMode
                 && ctx != null && ctx.menuScreen == GameContext.MenuScreen.IN_GAME
-                && !inventoryOpen && !commandMode && !ctx.mapOpen && !ctx.pauseMenuOpen;
+                && !inventoryOpen && !commandMode && !ctx.mapOpen && !ctx.pauseMenuOpen
+                // Cutscenes own the camera: edge-pan must not fight the director
+                // lerp (both write yaw/pitch), and the cursor ray is meaningless.
+                && !ctx.craftingCutsceneActive && !ctx.furnaceCutsceneActive && !ctx.tvCutsceneActive
+                && !(ctx.cinematic != null && ctx.cinematic.cameraActive());
         if (!active) {
             ctx.cursorRayOverride = null;
             pacHoveringInteractable = false;

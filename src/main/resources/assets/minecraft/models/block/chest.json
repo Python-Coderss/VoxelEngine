@@ -1,6 +1,33 @@
 {
-    "parent": "block/stone",
+    "parent": "block/block",
     "textures": {
-        "all": "minecraft:blocks/oak_planks"
-    }
+        "chest": "minecraft:blocks/stone",
+        "particle": "minecraft:blocks/stone"
+    },
+    "elements": [
+        {
+            "from": [1, 0, 1],
+            "to": [15, 10, 15],
+            "faces": {
+                "down":  { "texture": "#chest" },
+                "up":    { "texture": "#chest" },
+                "north": { "texture": "#chest" },
+                "south": { "texture": "#chest" },
+                "west":  { "texture": "#chest" },
+                "east":  { "texture": "#chest" }
+            }
+        },
+        {
+            "from": [1, 10, 0],
+            "to": [15, 14, 16],
+            "faces": {
+                "down":  { "texture": "#chest" },
+                "up":    { "texture": "#chest" },
+                "north": { "texture": "#chest" },
+                "south": { "texture": "#chest" },
+                "west":  { "texture": "#chest" },
+                "east":  { "texture": "#chest" }
+            }
+        }
+    ]
 }
