@@ -1290,18 +1290,30 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                         bool animLid = u_HingeOn == 1 && ((d3h.w >> 7) & 1) == 1
                                        && all(equal(mp, u_HingePos));
                         float hca = cos(u_HingeAngle), hsa = sin(u_HingeAngle);
+                        // A voxel may contain multiple overlapping AABBs (the chest
+                        // body and lid can overlap at the hinge). Do not return the
+                        // first array entry: that can make a farther malformed quad
+                        // win over a nearer visible part. Select the nearest positive
+                        // surface across every AABB in this voxel first.
+                        float bestAT = 1e30;
+                        int bestK = -1;
+                        int bestSide = 2;
+                        vec3 bestNormal = vec3(0.0, 1.0, 0.0);
                         for (int k = 0; k < min(aabbCount, 6); k++) {
                             vec3 bMin = texelFetch(u_BlockAABBs, aabbOffset + k * 2).xyz + blockOrigin;
                             vec3 bMax = texelFetch(u_BlockAABBs, aabbOffset + k * 2 + 1).xyz + blockOrigin;
                             float aTn, aTf;
                             bool hit;
                             vec3 roL = chestRo, rdL = chestRd;
-                            if (animLid && k == 1) {
-                                // The closed lid rotates upward toward its front
+                            if (animLid && (k == 1 || k == 2)) {
+                                // The closed lid and its front latch rotate together
+                                // upward around the shared rear hinge.
                                 // (-Z) around the rear/top edge at max-Z. World
                                 // geometry = R_x(+angle) * closed geometry, so
                                 // transform the ray by R_x(-angle).
-                                vec3 P = vec3(blockOrigin.x, bMin.y, bMin.z);
+                                vec3 P = (k == 1)
+                                        ? vec3(blockOrigin.x, bMin.y, bMin.z)
+                                        : vec3(blockOrigin.x, blockOrigin.y + 10.0, blockOrigin.z + 1.0);
                                 vec3 d0v = chestRo - P;
                                 roL = P + vec3(d0v.x,
                                                hca * d0v.y + hsa * d0v.z,
@@ -1313,59 +1325,71 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                             } else {
                                 hit = intersectAABB(roL, rdL, bMin, bMax, aTn, aTf);
                             }
-                            if (hit) {
-                                if (aTn < exitT) {
-                                    resVoxel = voxelType;
-                                    resWirePower = wirePower;
-                                    resWireConn = wireConn;
-                                    resKineticActive = kinActive;
-                                    resKineticReverse = kinReverse;
-                                    resFacing = facingVox;
-                                    resT = aTn;
-                                    resAabbIdx = (aabbOffset / 2) + k;
-                                    resBlockData1 = d1;
-                                    if (animLid && k == 1) {
-                                        // Face normal from the LOCAL hit, rotated
-                                        // back to world; side=-1 sentinel tells
-                                        // traceAll to use resNormal verbatim.
-                                        vec3 hpL = roL + rdL * aTn;
-                                        vec3 cL = (bMin + bMax) * 0.5;
-                                        vec3 hsL = max((bMax - bMin) * 0.5, vec3(1e-4));
-                                        vec3 q = (hpL - cL) / hsL;
-                                        vec3 aq = abs(q);
-                                        vec3 nL = (aq.x > aq.y && aq.x > aq.z)
-                                                ? vec3(sign(q.x), 0.0, 0.0)
-                                                : ((aq.y > aq.z) ? vec3(0.0, sign(q.y), 0.0)
-                                                                 : vec3(0.0, 0.0, sign(q.z)));
-                                        // Convert the local closed-lid normal through
-                                        // the forward pose rotation (the hit ray used
-                                        // the inverse rotation above).
-                                        vec3 nCanonical = vec3(nL.x,
-                                                         hca * nL.y - hsa * nL.z,
-                                                         hsa * nL.y + hca * nL.z);
-                                        resNormal = chestBlock ? chestRotation * nCanonical : nCanonical;
-                                        resSide = -1;
-                                    } else {
-                                        vec3 hitCanonical = roL + rdL * aTn;
-                                        vec3 center = (bMin + bMax) * 0.5;
-                                        vec3 halfSize = (bMax - bMin) * 0.5;
-                                        vec3 localP = abs((hitCanonical - center) / max(halfSize, vec3(0.0001)));
-                                        if (localP.x >= localP.y && localP.x >= localP.z) resSide = 0;
-                                        else if (localP.y >= localP.z) resSide = 1;
-                                        else resSide = 2;
-                                        if (chestBlock) {
-                                            vec3 localNormal = (resSide == 0)
-                                                    ? vec3(sign(hitCanonical.x - center.x), 0.0, 0.0)
-                                                    : (resSide == 1)
-                                                    ? vec3(0.0, sign(hitCanonical.y - center.y), 0.0)
-                                                    : vec3(0.0, 0.0, sign(hitCanonical.z - center.z));
-                                            resNormal = chestRotation * localNormal;
-                                            resSide = -1;
-                                        }
+                            // If the ray starts inside an AABB, use its exit rather
+                            // than a negative entry distance. Negative t values were
+                            // another way for a hidden quad to win depth selection.
+                            float candidateT = aTn > 0.0 ? aTn : aTf;
+                            float partExitT = exitT;
+                            if (chestBlock && k == 2) {
+                                // The latch extends one pixel beyond the voxel's
+                                // front face; allow that exact extension without
+                                // allowing arbitrary neighboring geometry to win.
+                                partExitT += 0.0625 / max(abs(chestRd.z), 0.0001);
+                            }
+                            if (hit && candidateT > 0.0 && candidateT < partExitT && candidateT < bestAT) {
+                                bestAT = candidateT;
+                                bestK = k;
+                                if (animLid && (bestK == 1 || bestK == 2)) {
+                                    // Face normal from the LOCAL hit, rotated
+                                    // back to world; side=-1 sentinel tells
+                                    // traceAll to use bestNormal verbatim.
+                                    vec3 hpL = roL + rdL * candidateT;
+                                    vec3 cL = (bMin + bMax) * 0.5;
+                                    vec3 hsL = max((bMax - bMin) * 0.5, vec3(1e-4));
+                                    vec3 q = (hpL - cL) / hsL;
+                                    vec3 aq = abs(q);
+                                    vec3 nL = (aq.x > aq.y && aq.x > aq.z)
+                                            ? vec3(sign(q.x), 0.0, 0.0)
+                                            : ((aq.y > aq.z) ? vec3(0.0, sign(q.y), 0.0)
+                                                             : vec3(0.0, 0.0, sign(q.z)));
+                                    vec3 nCanonical = vec3(nL.x,
+                                                     hca * nL.y - hsa * nL.z,
+                                                     hsa * nL.y + hca * nL.z);
+                                    bestNormal = chestBlock ? chestRotation * nCanonical : nCanonical;
+                                    bestSide = -1;
+                                } else {
+                                    vec3 hitCanonical = roL + rdL * candidateT;
+                                    vec3 center = (bMin + bMax) * 0.5;
+                                    vec3 halfSize = (bMax - bMin) * 0.5;
+                                    vec3 localP = abs((hitCanonical - center) / max(halfSize, vec3(0.0001)));
+                                    if (localP.x >= localP.y && localP.x >= localP.z) bestSide = 0;
+                                    else if (localP.y >= localP.z) bestSide = 1;
+                                    else bestSide = 2;
+                                    if (chestBlock) {
+                                        vec3 localNormal = (bestSide == 0)
+                                                ? vec3(sign(hitCanonical.x - center.x), 0.0, 0.0)
+                                                : (bestSide == 1)
+                                                ? vec3(0.0, sign(hitCanonical.y - center.y), 0.0)
+                                                : vec3(0.0, 0.0, sign(hitCanonical.z - center.z));
+                                        bestNormal = chestRotation * localNormal;
+                                        bestSide = -1;
                                     }
-                                    return true;
                                 }
                             }
+                        }
+                        if (bestK >= 0) {
+                            resVoxel = voxelType;
+                            resWirePower = wirePower;
+                            resWireConn = wireConn;
+                            resKineticActive = kinActive;
+                            resKineticReverse = kinReverse;
+                            resFacing = facingVox;
+                            resT = bestAT;
+                            resAabbIdx = (aabbOffset / 2) + bestK;
+                            resBlockData1 = d1;
+                            resNormal = bestNormal;
+                            resSide = bestSide;
+                            return true;
                         }
                         }
                     }
@@ -2163,14 +2187,16 @@ void main() {
 
             // Chests are block entities in Minecraft and use the native 64x64
             // entity atlas rather than a downscaled block texture. The model's
-            // two AABBs map to the vanilla base (texture V=19) and lid (V=0)
-            // cuboid regions in normal.png.
+            // Three AABBs map to the vanilla body/lid cuboids and the small
+            // grey latch region in normal.png.
             bool chestEntitySample = false;
+            bool chestLatchSample = false;
+            int chestElement = -1;
             vec2 chestEntityUv = finalUv;
             if (voxel == 118u && u_ChestTextureLayer >= 0 && aabbIdx >= 0) {
                 ivec4 chestInfo = texelFetch(u_BlockAABBInfo, int(voxel));
-                int chestElement = aabbIdx - chestInfo.x / 2;
-                if (chestElement == 0 || chestElement == 1) {
+                chestElement = aabbIdx - chestInfo.x / 2;
+                if (chestElement == 0 || chestElement == 1 || chestElement == 2) {
                     vec3 chestMin = texelFetch(u_BlockAABBs, aabbIdx * 2).xyz;
                     vec3 chestMax = texelFetch(u_BlockAABBs, aabbIdx * 2 + 1).xyz;
                     vec3 chestOrigin = vec3(gTraceBlockOrigin);
@@ -2185,11 +2211,12 @@ void main() {
                     vec3 chestNormal = normalize(transpose(chestRotation) * n);
                     bool selectedChest = u_HingeOn == 1
                             && all(equal(gTraceBlockOrigin, u_HingePos));
-                    if (chestElement == 1 && selectedChest) {
+                    if ((chestElement == 1 || chestElement == 2) && selectedChest) {
                         float chestCos = cos(u_HingeAngle), chestSin = sin(u_HingeAngle);
-                        // Convert the hit point/normal from the posed lid back to
-                        // the closed canonical cuboid for atlas lookup.
-                        vec3 chestPivot = chestOrigin + vec3(0.0, chestMin.y, chestMin.z);
+                        // Convert the posed lid/latch point and normal back to the
+                        // closed canonical cuboid for atlas lookup. Both parts use
+                        // the same rear hinge at block-local (0, 10, 1).
+                        vec3 chestPivot = chestOrigin + vec3(0.0, 10.0, 1.0);
                         vec3 chestDelta = chestPoint - chestPivot;
                         chestPoint = chestPivot + vec3(chestDelta.x,
                                 chestCos * chestDelta.y + chestSin * chestDelta.z,
@@ -2218,9 +2245,19 @@ void main() {
                         chestU = chestRel.z;
                         chestV = 1.0 - chestRel.y;
                     }
-                    // Vanilla ModelChest cuboid atlas layout, in pixels.
+                    // Rotate chest UVs 180 degrees in texture space. This only
+                    // changes atlas orientation; the lid hinge animation remains
+                    // driven by the same world-space angle and pivot.
+                    chestU = 1.0 - chestU;
+                    chestV = 1.0 - chestV;
+                    // Vanilla ModelChest atlas layout, in pixels.
+                    // Element 2 is the small front latch/grey tab at the
+                    // upper-left of normal.png; body and lid use cuboid strips.
                     vec4 region;
-                    if (chestElement == 1) {
+                    if (chestElement == 2) {
+                        region = vec4(0.0, 0.0, 6.0, 5.0);
+                        chestLatchSample = true;
+                    } else if (chestElement == 1) {
                         if (chestFace == 0)      region = vec4(28.0, 0.0, 42.0, 14.0);
                         else if (chestFace == 1) region = vec4(14.0, 0.0, 28.0, 14.0);
                         else if (chestFace == 2) region = vec4(28.0, 14.0, 42.0, 19.0);
@@ -2235,14 +2272,23 @@ void main() {
                         else if (chestFace == 4) region = vec4(42.0, 33.0, 56.0, 43.0);
                         else                      region = vec4(0.0, 33.0, 14.0, 43.0);
                     }
-                    chestEntityUv = (region.xy + vec2(chestU, chestV)
-                            * (region.zw - region.xy)) / 64.0;
+                    // The latch crop is only 6x5 pixels at the atlas edge. Sampling
+                    // the entity array with mipmaps blends it with transparent atlas
+                    // texels and turns the metal into a hole. Keep all chest parts at
+                    // base level and sample inside the region's texel centers.
+                    vec2 chestUvFrac = clamp(vec2(chestU, chestV), vec2(0.02), vec2(0.98));
+                    chestEntityUv = (region.xy + vec2(0.5) + chestUvFrac
+                            * max(region.zw - region.xy - vec2(1.0), vec2(0.0))) / 64.0;
                     chestEntitySample = true;
                 }
             }
             vec4 texSample = chestEntitySample
-                    ? texture(u_EntityTextures, vec3(chestEntityUv, float(u_ChestTextureLayer)))
+                    ? textureLod(u_EntityTextures, vec3(chestEntityUv, float(u_ChestTextureLayer)), 0.0)
                     : texture(u_BlockTextures, vec3(finalUv, float(tex)));
+            // Keep the latch visibly metallic even if atlas alpha/mip state is
+            // unavailable on an older driver. Geometry and atlas mapping still
+            // identify the exact latch part; this is only a material fallback.
+            if (chestLatchSample) texSample = vec4(0.62, 0.62, 0.62, 1.0);
             float diffuseFactor = float((animPacked >> 8) & 0xFF) / 255.0;
             alb = texSample.rgb * diffuseFactor;
 
