@@ -32,6 +32,9 @@ public class MagmaCubeEntity extends EnemyEntity {
                             Player p, int size) {
         super(id, position, textureManager, p);
         this.size = Math.max(1, Math.min(4, size));
+        // Pick box tracks the cube's size tier (Mojang: size 4 ≈ 2 blocks).
+        this.pickWidth = 0.5f * this.size;
+        this.pickHeight = 0.55f * this.size;
         loadModel("src/main/resources/assets/minecraft/models/entity/magma_cube.json", textureManager);
         // Visual scale would normally be applied via setScale(), but Entity
         // doesn't expose that yet — for now we just remember the size and

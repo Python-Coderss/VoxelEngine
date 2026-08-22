@@ -95,6 +95,9 @@ public class EnderDragonEntity extends Entity {
         super(id, position);
         this.entityManager = entityManager;
         this.dimension = com.voxel.world.DimensionType.END;
+        // Huge flying boss: generous pick box so clicks/punches connect.
+        this.pickWidth = 4.0f;
+        this.pickHeight = 5.0f;
         loadModel("src/main/resources/assets/minecraft/models/entity/dragon.json", textureManager);
     }
 

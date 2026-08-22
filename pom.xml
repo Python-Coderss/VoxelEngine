@@ -181,6 +181,18 @@
                             <mainClass>com.voxel.tools.TutorialWorldExporter</mainClass>
                         </configuration>
                     </execution>
+                    <!-- One-time dev tool: build the Point & Click demo world and
+                         export it into src/main/resources/pointclick_world. Run with:
+                         MAVEN_OPTS="-Xmx2g" ./mvnw compile exec:java@export-pointclick -->
+                    <execution>
+                        <id>export-pointclick</id>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>com.voxel.tools.PointClickWorldExporter</mainClass>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
             <plugin>
