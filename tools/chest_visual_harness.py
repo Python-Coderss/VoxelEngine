@@ -34,12 +34,15 @@ REGIONS = {
         "north": (28, 14, 42, 19), "south": (14, 14, 28, 19),
         "west": (42, 14, 56, 19), "east": (0, 14, 14, 19),
     },
+    "latch": {face: (0, 0, 6, 5) for face in FACE_NAMES},
 }
 
 BODY_MIN = (1.0, 0.0, 1.0)
 BODY_MAX = (15.0, 10.0, 15.0)
-LID_MIN = (1.0, 10.0, 0.0)
-LID_MAX = (15.0, 14.0, 16.0)
+LID_MIN = (1.0, 10.0, 1.0)
+LID_MAX = (15.0, 14.0, 15.0)
+LATCH_MIN = (7.0, 8.0, 16.0)
+LATCH_MAX = (9.0, 12.0, 17.0)
 HINGE_ANGLE = -1.92
 
 
@@ -65,6 +68,13 @@ def assert_shader_contract(shader: str) -> dict:
         raise AssertionError("shader has no vanilla chest entity-atlas sampling path")
     if "hinfo.x / 2" not in shader:
         raise AssertionError("shader does not convert packed AABB offsets to element indices")
+    # The AABB loop must choose the nearest positive hit across overlapping parts;
+    # returning the first array entry allows a farther black/invalid quad to win.
+    for needle in ("float bestAT = 1e30", "float candidateT = aTn > 0.0 ? aTn : aTf",
+                   "candidateT < bestAT", "if (bestK >= 0)",
+                   "textureLod(u_EntityTextures,", "chestLatchSample"):
+        if needle not in shader:
+            raise AssertionError(f"shader is missing nearest-AABB selection: {needle}")
     return {str(location): name for location, name in sorted(by_location.items())}
 
 
@@ -84,17 +94,20 @@ def assert_orientation_contract(shader: str) -> dict:
 
     for needle in ("chestFacing == 2 ? 3.14159265",
                    "chestFacing == 4 ? -1.57079633",
-                   "chestFacing == 5 ? 1.57079633"):
+                   "chestFacing == 5 ? 1.57079633",
+                   "chestU = 1.0 - chestU", "chestV = 1.0 - chestV"):
         assert needle in shader, f"shader is missing orientation mapping: {needle}"
     return actual
 
 
 def assert_model(model: dict) -> None:
-    assert len(model.get("elements", [])) == 2, "chest must have exactly body + lid elements"
+    assert len(model.get("elements", [])) == 3, "chest must have body + lid + latch elements"
     assert model["elements"][0]["from"] == [1, 0, 1]
     assert model["elements"][0]["to"] == [15, 10, 15]
-    assert model["elements"][1]["from"] == [1, 10, 0]
-    assert model["elements"][1]["to"] == [15, 14, 16]
+    assert model["elements"][1]["from"] == [1, 10, 1]
+    assert model["elements"][1]["to"] == [15, 14, 15]
+    assert model["elements"][2]["from"] == [7, 8, 16]
+    assert model["elements"][2]["to"] == [9, 12, 17]
     assert all("#chest" == e["faces"][face]["texture"]
                for e in model["elements"] for face in FACE_NAMES)
 
@@ -116,7 +129,7 @@ def region_metrics(texture: Image.Image, region: tuple[int, int, int, int]) -> d
 
 def rotate_lid(point: tuple[float, float, float], angle: float) -> tuple[float, float, float]:
     """World transform inverse to the shader's ray-to-closed-lid transform."""
-    px, py, pz = 1.0, 10.0, 0.0
+    px, py, pz = 1.0, 10.0, 1.0
     x, y, z = point[0] - px, point[1] - py, point[2] - pz
     c, s = math.cos(angle), math.sin(angle)
     return (x + px, c * y - s * z + py, s * y + c * z + pz)
@@ -191,8 +204,10 @@ def render_preview(texture: Image.Image, open_lid: bool) -> Image.Image:
     draw.rectangle((0, 470, 640, 560), fill=(42, 48, 58, 255))
     angle = HINGE_ANGLE if open_lid else 0.0
     faces = []
-    for element, box in (("body", (BODY_MIN, BODY_MAX)), ("lid", (LID_MIN, LID_MAX))):
-        for face, poly in box_faces(box, angle if element == "lid" else 0.0):
+    for element, box in (("body", (BODY_MIN, BODY_MAX)),
+                         ("lid", (LID_MIN, LID_MAX)),
+                         ("latch", (LATCH_MIN, LATCH_MAX))):
+        for face, poly in box_faces(box, angle if element in ("lid", "latch") else 0.0):
             depth = sum(camera_project(p, image.width, image.height)[2] for p in poly) / 4.0
             faces.append((depth, element, face, poly))
     # Painter's order: farther faces first.
@@ -231,11 +246,17 @@ def main() -> None:
     orientations = assert_orientation_contract(shader)
     texture = Image.open(TEXTURE_PATH).convert("RGBA")
     assert texture.size == (64, 64), f"vanilla chest atlas must be 64x64, got {texture.size}"
+    latch_crop = texture.crop(REGIONS["latch"]["north"])
+    latch_pixels = list(latch_crop.getdata())
+    gray_latch = sum(1 for r, g, b, a in latch_pixels
+                     if a > 200 and abs(r - g) < 12 and abs(g - b) < 12 and r > 90)
+    assert gray_latch >= 12, "vanilla grey latch/tab region is missing or too dark"
 
     report = {
         "model": str(MODEL_PATH.relative_to(ROOT)),
         "texture": str(TEXTURE_PATH.relative_to(ROOT)),
         "texture_size": list(texture.size),
+        "latch_gray_pixels": gray_latch,
         "shader_chest_uniforms": {location: shader_locations[location]
                                   for location in ("49", "50", "51", "52")},
         "orientations": orientations,
