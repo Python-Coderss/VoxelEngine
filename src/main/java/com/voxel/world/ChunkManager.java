@@ -667,6 +667,22 @@ public class ChunkManager {
         mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
         dirtySlots.add(slot);
 
+        // SDF air-certificate maintenance: if this edit left the section with
+        // zero solid bits (e.g. the last block of a floating structure was
+        // just broken), re-certify it so the raytracer's empty-space fast path
+        // keeps covering it. Bitmasks are already up to date — setVoxelInPool
+        // maintains them on every write. A stale-false certificate only costs
+        // DDA perf, never correctness, so other edit paths are left alone.
+        {
+            int bmBase = slot << 7;
+            boolean anySolidAfterEdit = false;
+            int[] masksForSdf = world.getBitmaskPool();
+            for (int w = 0; w < 128; w++) {
+                if (masksForSdf[bmBase + w] != 0) { anySolidAfterEdit = true; break; }
+            }
+            if (!anySolidAfterEdit) computeChunkDirSDF(slot, cx, cy, cz);
+        }
+
         // ── Immediate light pool seed on block break ──
         // When a block is broken, the shader samples the lightmap at the now-empty position
         // for adjacent faces (using hp + n * 0.5). If we don't update the light pool here,
@@ -1407,54 +1423,35 @@ public class ChunkManager {
 
 
     /**
-     * Computes 6 directional SDF distances (±X, ±Y, ±Z) for an empty-loaded
-     * chunk section (caller must verify zero solids via bitmask scan).
-     * Each direction's value says how many voxels the ray can travel along
-     * that axis before hitting a non-empty neighbor chunk boundary.
-     * (Entities handled analytically by traceAll; we don't bake them in to
-     * avoid stale data after entity movement.)
+     * Certifies an empty-loaded chunk section (caller has verified zero solid
+     * bits in the bitmask pool) for the raytracer's empty-space fast path.
+     * Runs on the gen thread only.
      *
-     * Encoded: byte = round(distance_in_voxels * 8), capped at 255.
-     * Full chunk run (16 voxels, no obstacle) → byte = 128.
+     * Encoding consumed by raytracer.comp (getChunkDirSDF / traceWorld leap):
+     *   byte 0 = 255 ({@link World#DIR_SDF_AIR_CHUNK}) — CPU-certified all-air.
+     *   World.setVoxelInPool revokes byte 0 whenever a solid is written into
+     *   this slot afterwards, so the certificate can never go stale and let a
+     *   ray tunnel through a player-placed block. ChunkManager re-certifies on
+     *   the next load/generation pass of that section.
+     *
+     * Replaces the previous per-direction clearance encoding (neighbor-slot
+     * bitmask scans producing voxels*8 values), which was both expensive to
+     * keep honest across edits and unsound under staleness.
      *
      * Layout written to world.dirSdfPool:
-     *   byte 0 = +X, byte 1 = -X, byte 2 = +Y, byte 3 = -Y,
-     *   byte 4 = +Z, byte 5 = -Z. Bytes 6-7 unused (zero).
+     *   byte 0 = air certificate flag, bytes 1-7 zeroed (legacy lanes/padding).
      *
-     * Cost: 6 directions × 256 face cells × ≤16 voxel walks. Sub-ms per chunk.
+     * Cost: O(1). Kept name/signature so the five !anySolid call sites in
+     * ensure3x3x3Loaded / loadOneSection paths stay untouched.
+     *
+     * @param slot   allocated pool slot of the certified all-air section
+     * @param absCx  absolute chunk x (retained for signature compatibility)
+     * @param absCy  absolute chunk y (retained for signature compatibility)
+     * @param absCz  absolute chunk z (retained for signature compatibility)
      */
     private void computeChunkDirSDF(int slot, int absCx, int absCy, int absCz) {
-        // For each of 6 directions: lookup the neighbor chunk's slot, then
-        // check whether that neighbor has any solids via bitmask-pool OR.
-        // "Free" neighbor = world's EMPTY sentinel OR a loaded-but-air chunk
-        // (zero solids). Occupied neighbor = loaded chunk with at least one
-        // solid → directional SDF = 8 (1 voxel). Otherwise = 128 (16 voxels).
-        int[] neighborSlots = new int[6];
-        neighborSlots[0] = world.getChunkSlot((absCx + 1) << 4, absCy << 4, absCz << 4);
-        neighborSlots[1] = world.getChunkSlot((absCx - 1) << 4, absCy << 4, absCz << 4);
-        neighborSlots[2] = world.getChunkSlot(absCx << 4, (absCy + 1) << 4, absCz << 4);
-        neighborSlots[3] = world.getChunkSlot(absCx << 4, (absCy - 1) << 4, absCz << 4);
-        neighborSlots[4] = world.getChunkSlot(absCx << 4, absCy << 4, (absCz + 1) << 4);
-        neighborSlots[5] = world.getChunkSlot(absCx << 4, absCy << 4, (absCz - 1) << 4);
-
-        int[] masks = world.getBitmaskPool();
-        byte[] enc = new byte[6];
-        for (int i = 0; i < 6; i++) {
-            int nSlot = neighborSlots[i];
-            boolean neighborFree;
-            if (nSlot == World.EMPTY) {
-                neighborFree = true;
-            } else {
-                // Check 128 bitmask-pool words; any bit set = chunk has solids.
-                neighborFree = true;
-                int bmBase = nSlot << 7;
-                for (int w = 0; w < 128; w++) {
-                    if (masks[bmBase + w] != 0) { neighborFree = false; break; }
-                }
-            }
-            enc[i] = (byte) (neighborFree ? 128 : 8);
-        }
-        world.setDirSdfSlot(slot, enc[0], enc[1], enc[2], enc[3], enc[4], enc[5]);
+        world.setDirSdfSlot(slot, World.DIR_SDF_AIR_CHUNK,
+                (byte) 0, (byte) 0, (byte) 0, (byte) 0, (byte) 0);
     }
 
 

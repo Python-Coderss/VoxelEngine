@@ -539,9 +539,10 @@ bool isBitSolid(uint slot, ivec3 p) {
 // Layout: 2 packed uints per slot (8 bytes).
 //   uint 0 low 8 = +X, next 8 = -X, next 8 = +Y, top 8 = -Y
 //   uint 1 low 8 = +Z, next 8 = -Z (top 16 unused)
-// Only valid for empty-loaded chunks (slot != EMPTY and chunk has zero solids).
-// Returns 0 (= no directional SDF available) for chunks with any solid; the
-// caller falls back to per-voxel DDA for those.
+// Encoding (see ChunkManager.computeChunkDirSDF): byte 255 = the whole section is
+// CPU-certified all-air — every solid write through World.setVoxelInPool revokes it,
+// so it can never go stale. Any other value = legacy per-direction clearance in
+// voxels*8; 0 = no SDF available (per-voxel DDA fallback).
 float getChunkDirSDF(uint slot, uint dirIdx) {
     uint pack0 = sdfPool[slot << 1u];
     uint pack1 = sdfPool[(slot << 1u) | 1u];
@@ -1185,40 +1186,43 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                 }
             }
         } else {
-            // ── Chunk-level directional SDF sphere-trace acceleration ──
-            // Per-direction chunk SDF says how many voxels the ray can travel
-            // along that axis before crossing into a non-empty chunk or
-            // chunk boundary. For empty-loaded chunks (zero solids), this
-            // allows leaping up to ~16 voxels in the dominant axis direction
-            // in a single iteration — collapsing ~125 outer iters of pure-sky
-            // traversal into ~1.
-            // (Unit note: sd.x/y/z are t-space; convert to voxels via /dd since
-            // dd = 1/|rd|, so sd*/dd = sd*|rd| = voxel distance along that axis.)
-            float absX = abs(rd.x), absY = abs(rd.y), absZ = abs(rd.z);
-            uint domAxis;
-            float domVal;
-            if      (absX >= absY && absX >= absZ) { domAxis = 0u; domVal = rd.x; }
-            else if (absY >= absZ)                { domAxis = 1u; domVal = rd.y; }
-            else                                   { domAxis = 2u; domVal = rd.z; }
-            float maxAbsRd = (domAxis == 0u) ? absX : ((domAxis == 1u) ? absY : absZ);
-            uint dirIdx = domAxis * 2u + (domVal > 0.0 ? 0u : 1u);
-            float chunkSdf = getChunkDirSDF(slot, dirIdx);
-            if (chunkSdf > 1.5) {
-                // Convert t-space dist-to-boundary to voxel units along dom axis:
-                // sd.dom * |rd.dom| = sd.dom / dd.dom (since dd = 1/|rd|).
-                float distToBndDomVox = (domAxis == 0u) ? sd.x / dd.x :
-                                       (domAxis == 1u) ? sd.y / dd.y :
-                                                          sd.z / dd.z;
-                float stepVox = min(chunkSdf * 0.95, distToBndDomVox - 1.0);
-                if (stepVox > 1.0) {
-                    float tStep = stepVox / maxAbsRd;
-                    st += tStep;
+            // ── Certified-all-air chunk fast path ──
+            // Byte 255 (in the +X lane) means the CPU proved this section
+            // holds zero solids; World.setVoxelInPool revokes the marker the
+            // moment any solid is written into the slot, so it cannot go
+            // stale and tunnel a placed block. A sky ray inside such a chunk
+            // needs no voxel probes at all: leap exactly to where the ray
+            // EXITS the chunk along its dominant axis. That exit point lies
+            // in the next cell on the dominant axis while staying inside the
+            // current chunk on the other two axes (exit time is the minimum
+            // of all three next-boundary times, so no lateral boundary is
+            // crossed earlier) — no diagonal corner overshoot, and every
+            // following cell is re-derived from the real position. Replaces
+            // the old neighbor-dependent directional encoding, whose values
+            // went stale after block edits and whose dominant-axis-only
+            // clamp could overshoot a diagonal corner into unsampled space.
+            uint sdfRaw = sdfPool[slot << 1u] & 0xFFu;
+            if (sdfRaw >= 252u) {
+                float absX = abs(rd.x), absY = abs(rd.y), absZ = abs(rd.z);
+                int exitSide = (absX >= absY && absX >= absZ) ? 0
+                             : ((absY >= absZ) ? 1 : 2);
+                float tExit = (exitSide == 0) ? sd.x
+                            : ((exitSide == 1) ? sd.y : sd.z);
+                if (tExit < tf - st) {
+                    st += tExit + 1e-3;   // land just past the exit plane
                     vec3 newP = ro + rd * st;
                     mp = ivec3(floor(newP));
                     sd = (s * (vec3(mp) - newP) + (s * 0.5) + 0.5) * dd;
-                    side = int(domAxis);
+                    side = exitSide;
                     continue;
                 }
+                // Section is air all the way to the buffer exit: hop out of
+                // the buffer so the bounds check ends the trace next pass.
+                mp.y += WORLD_SIZE;
+                vec3 newP2 = ro + rd * st;
+                sd = (s * (vec3(mp) - newP2) + (s * 0.5) + 0.5) * dd;
+                side = 1;
+                continue;
             }
             // ── Per-voxel DDA fallback (surface hit or small SDF) ──
             ivec3 cc = mp >> 4; uint maskBase = slot << 7;

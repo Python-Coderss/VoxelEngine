@@ -40,6 +40,17 @@ public class EntityManager {
     /** Number of entities actually uploaded last frame (after dimension filter + culling). */
     private int uploadedEntityCount = 0;
 
+    // ── Persistent CPU staging memory ─────────────────────────────
+    // uploadToGPU() runs every rendered frame; allocating + freeing direct
+    // ByteBuffers and an ArrayList each call showed up as steady GC pressure.
+    // These are sized once for the worst case (full SSBO contents) and reused;
+    // safe because all uploadToGPU calls happen on the single GL thread.
+    private final java.nio.ByteBuffer entityStage =
+            MemoryUtil.memAlloc(MAX_ENTITIES * ENTITY_STRIDE * 4);
+    private final java.nio.ByteBuffer partStage =
+            MemoryUtil.memAlloc(MAX_PARTS * PART_STRIDE * 4);
+    private final List<ModelPart> partScratch = new ArrayList<>(MAX_PARTS);
+
     public EntityManager() {
         this.entities = new ArrayList<>();
         setupBuffers();
@@ -152,8 +163,10 @@ public class EntityManager {
 
         // ── Single pass: cull, collect, and upload in one iteration ──
         // (avoids the two-pass race where entity positions change between count and write)
-        java.nio.ByteBuffer entityBuffer = MemoryUtil.memAlloc(entities.size() * ENTITY_STRIDE * 4);
-        List<ModelPart> allParts = new ArrayList<>();
+        java.nio.ByteBuffer entityBuffer = entityStage;
+        List<ModelPart> allParts = partScratch;
+        allParts.clear();
+        entityBuffer.clear();  // reset position AND stale limit from the previous frame
         int writtenCount = 0;
 
         for (Entity entity : entities) {
@@ -256,12 +269,12 @@ public class EntityManager {
             entityBuffer.position(0);
             glNamedBufferSubData(entitySSBO, 0, entityBuffer);
         }
-        MemoryUtil.memFree(entityBuffer);
         uploadedEntityCount = writtenCount;
 
-        if (!allParts.isEmpty()) {
-            int partUploadCount = Math.min(allParts.size(), MAX_PARTS);
-            java.nio.ByteBuffer partBuffer = MemoryUtil.memAlloc(partUploadCount * PART_STRIDE * 4);
+        int partUploadCount = Math.min(allParts.size(), MAX_PARTS);
+        if (partUploadCount > 0) {
+            java.nio.ByteBuffer partBuffer = partStage;
+            partBuffer.clear();
             for (int i = 0; i < partUploadCount; i++) {
                 ModelPart part = allParts.get(i);
                 partBuffer.putFloat(part.offset.x).putFloat(part.offset.y).putFloat(part.offset.z);
@@ -284,7 +297,6 @@ public class EntityManager {
             }
             partBuffer.flip();
             glNamedBufferSubData(partSSBO, 0, partBuffer);
-            MemoryUtil.memFree(partBuffer);
         }
     }
 
