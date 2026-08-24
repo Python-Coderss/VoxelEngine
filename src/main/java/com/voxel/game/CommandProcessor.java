@@ -294,6 +294,13 @@ public class CommandProcessor {
         ctx.worldSaveManager.saveCommandBlockData(ctx.activeDimension, ctx.commandBlockManager);
         ctx.worldSaveManager.saveFurnaceData(ctx.activeDimension, ctx.furnaceManager);
         ctx.worldSaveManager.saveChestData(ctx.activeDimension, ctx.chestManager);
+        if (ctx.chunkManager != null) {
+            ctx.chunkManager.savePendingChanges();
+            ctx.chunkManager.saveAllModifiedChunks();
+        }
+        if (ctx.machineManager != null) {
+            ctx.worldSaveManager.saveMachineData(ctx.activeDimension, ctx.machineManager);
+        }
         ctx.setStatus("Saved to \"" + ctx.saveName + "\" (seed " + ctx.worldSeed + ")");
     }
 

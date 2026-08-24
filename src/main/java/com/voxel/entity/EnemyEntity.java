@@ -17,8 +17,10 @@ public class EnemyEntity extends Entity {
     private ModelPart head, leftArm, rightArm, leftLeg, rightLeg;
 
     protected float animTime = 0.0f;
-    private float health = 20.0f;
-    private float maxHealth = 20.0f;
+    protected float health = 20.0f;
+    protected float maxHealth = 20.0f;
+    /** Set by combat code before takeDamage so bosses can react to the weapon type. */
+    public static boolean lastHitWasPickaxe = false;
     private boolean isDead = false;
     private boolean xpDropped = false;
     public float hitFlashTime = 0.0f;
@@ -41,7 +43,7 @@ public class EnemyEntity extends Entity {
     private Vector3f predictedPlayerPos = new Vector3f();
 
     private long lastSawPlayerTime = 0;
-    private float attackCooldown = 0.0f;
+    protected float attackCooldown = 0.0f;
     private float frustration = 0.0f;
 
     private Vector3f prevPosition = new Vector3f();
@@ -49,11 +51,15 @@ public class EnemyEntity extends Entity {
 
     public Player player;
 
+    /** The texture manager this entity was constructed with (for model swaps). */
+    protected com.voxel.utils.TextureManager modelTextureManager;
+
     // ==================== DEBUG ====================
     private static final boolean DEBUG_AI = false;
 
     protected EnemyEntity(int id, Vector3f position, com.voxel.utils.TextureManager textureManager, Player p) {
         super(id, position);
+        this.modelTextureManager = textureManager;
 
         loadModel("src/main/resources/assets/minecraft/models/entity/zombie.json", textureManager);
 
@@ -481,6 +487,8 @@ public class EnemyEntity extends Entity {
     }
 
     public boolean isDead() { return isDead; }
+    /** Persistence hook: restore saved health on load. */
+    public void restoreHealth(float h) { health = Math.max(1.0f, Math.min(h, maxHealth)); }
     public boolean markedXpDropped() { return xpDropped; }
     public void markXpDropped() { xpDropped = true; }
 

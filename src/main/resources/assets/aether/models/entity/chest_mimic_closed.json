@@ -1,0 +1,7 @@
+{
+  "parts": [
+    { "name": "knob", "from": [-1.0, 22.0, -25.0], "size": [2.0, 4.0, 1.0], "rotation": [180.0, 0.0, 0.0], "absolute_offset": [8.0, 24.0, -8.0], "texture": "mimic/normal", "uv": [0, 0], "uv_size": [2, 4, 1], "texture_mapping": "cuboid_atlas" },
+    { "name": "lid", "from": [-8.0, 24.0, -8.0], "size": [16.0, 6.0, 16.0], "absolute_offset": [8.0, 30.0, 8.0], "texture": "mimic/normal", "uv": [0, 10], "uv_size": [16, 6, 16], "texture_mapping": "cuboid_atlas" },
+    { "name": "lower_body", "from": [-8.0, 14.0, -8.0], "size": [16.0, 10.0, 16.0], "absolute_offset": [8.0, 24.0, 8.0], "texture": "mimic/normal", "uv": [0, 38], "uv_size": [16, 10, 16], "texture_mapping": "cuboid_atlas" }
+  ]
+}

@@ -160,7 +160,7 @@ public class Entity {
                 // Resolve relative path if necessary
                 if (!parentPath.startsWith("src/")) {
                     java.nio.file.Path currentPath = Paths.get(path);
-                    parentPath = currentPath.getParent().resolve(parentPath).toString();
+                    parentPath = currentPath.getParent().resolve(parentPath).normalize().toString();
                 }
                 loadModelRecursive(parentPath, textureManager, loadedParts);
             }

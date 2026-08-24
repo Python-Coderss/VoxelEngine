@@ -121,7 +121,6 @@ public class Main {
     public int locDestroyStages; // cached u_DestroyStages (was a per-frame glGetUniformLocation)
     public int locMapMode, locMapPreview, locMapPreviewOrigin, locMapPreviewScale, locMapWorldOrigin, locMapBorder, locMapGroundY;
     public int craftingItemSSBO;
-    public java.util.Iterator<Integer> dirtyUploadIterator;
     public static final int MAX_DIRTY_UPLOADS_PER_FRAME = 48;
     public int locQuadPass; // Cached quad shader inputTexture uniform
     public int locQuadFlipY; // Cached fullscreen texture orientation uniform
@@ -247,6 +246,9 @@ public class Main {
     public int lastMeasuredFps = 0;
 
     public boolean leftMouseHeld = false;
+    /** Right-mouse hold state for MC-style repeat placement. */
+    public boolean rightMouseHeld = false;
+    private float rightPlaceTimer = 0.0f;
     public boolean leftMousePressedThisFrame = false;
     public int breakTargetX = Integer.MIN_VALUE;
     public int breakTargetY = Integer.MIN_VALUE;
@@ -262,10 +264,10 @@ public class Main {
     public CameraMode cameraMode = CameraMode.FIRST_PERSON;
 
     // MCSM (Story Mode) point-and-click: the OS cursor is captured (can't
-    // leave the window) but never shown. A virtual cursor that tracks mouse
-    // movement is drawn instead and acts as the click target for mining,
-    // placing and entity attacks. Pushing it against a screen edge pans the
-    // camera (RTS/MCSM-style) instead of dead-ending.
+    // leave the window) but never shown. The click target is fixed at the
+    // screen centre (where the reticle sits), so mining, placing and entity
+    // attacks all go through the centre ray exactly like FPS mouselook —
+    // while billboards/hover affordances stay driven by point-and-click.
     public boolean pointAndClickMode = true;
     private static final float PAC_EDGE_MARGIN = 40.0f;   // dead zone before edge-pan kicks in
     private static final float PAC_EDGE_PAN_RATE = 120.0f; // deg/sec at full edge push
@@ -279,13 +281,13 @@ public class Main {
     // the reticle (the MCSM "hover" affordance).
     public volatile boolean pacHoveringInteractable = false;
 
-    /** Raw virtual cursor position (pre-smoothing) for point-and-click mode. */
-    public float getVirtualCursorX() { return pacVirtInit ? pacVirtX : width / 2f; }
-    public float getVirtualCursorY() { return pacVirtInit ? pacVirtY : height / 2f; }
+    /** Virtual cursor position — pinned to the screen centre. */
+    public float getVirtualCursorX() { return width / 2f; }
+    public float getVirtualCursorY() { return height / 2f; }
 
-    /** Smoothed virtual cursor position — the reticle tracks this. */
-    public float getSmoothedCursorX() { return pacVirtInit ? pacSmoothX : width / 2f; }
-    public float getSmoothedCursorY() { return pacVirtInit ? pacSmoothY : height / 2f; }
+    /** Smoothed virtual cursor position — pinned to the screen centre. */
+    public float getSmoothedCursorX() { return width / 2f; }
+    public float getSmoothedCursorY() { return height / 2f; }
 
     /** Signed edge-pan deltas (deg) for this frame, from the virtual cursor. */
     private void computeEdgePan(float[] out) {
@@ -331,8 +333,18 @@ public class Main {
             e.printStackTrace();
         }
 
-        // Save data on shutdown (including the level.dat player state)
+        // Save data on shutdown (including the level.dat player state).
+        // Note: chunkManager.shutdown() itself flushes pending structure writes
+        // AND all edited resident chunks after its threads join.
         if (ctx.worldSaveManager != null) {
+            if (ctx.droppedItemManager != null && player != null) {
+                ctx.worldSaveManager.saveDroppedItems(ctx.activeDimension, ctx.droppedItemManager.getSnapshot());
+            }
+            ctx.worldSaveManager.saveAetherDungeonState();
+            if (entityManager != null) {
+                ctx.worldSaveManager.saveEntities(
+                        com.voxel.entity.EntityPersistence.export(entityManager));
+            }
             if (ctx.chunkManager != null) ctx.chunkManager.savePendingChanges();
             ctx.worldSaveManager.saveCraftingData(ctx.activeDimension, ctx.craftingTableManager);
             ctx.worldSaveManager.saveSurfaceCraftingData(ctx.activeDimension, ctx.surfaceCraftingManager);
@@ -1394,6 +1406,120 @@ public class Main {
         setStatus("Entered the Nether... hostile mobs near!");
     }
 
+    /** Ambient Aether roster: passive sky mobs near the player on first entry. */
+    public void spawnAetherMobs(Player p) {
+        Vector3f pos = p.getPosition();
+        com.voxel.utils.TextureManager tm = textureManager;
+        int id = 72000;
+        // Passive wildlife scattered around
+        addAetherEntity(new com.voxel.entity.PhygEntity(id++, new Vector3f(pos.x + 6, pos.y, pos.z + 4), tm));
+        addAetherEntity(new com.voxel.entity.FlyingCowEntity(id++, new Vector3f(pos.x - 7, pos.y, pos.z + 5), tm));
+        addAetherEntity(new com.voxel.entity.SheepuffEntity(id++, new Vector3f(pos.x + 3, pos.y, pos.z - 8), tm));
+        addAetherEntity(new com.voxel.entity.AerbunnyEntity(id++, new Vector3f(pos.x - 4, pos.y + 1, pos.z - 5), tm));
+        com.voxel.entity.MoaEntity moa = new com.voxel.entity.MoaEntity(id++, new Vector3f(pos.x + 2, pos.y, pos.z + 9), tm);
+        addAetherEntity(moa);   // the rideable one stays close to spawn
+        // Flyers up high
+        com.voxel.entity.AerwhaleEntity whale = new com.voxel.entity.AerwhaleEntity(id++, new Vector3f(pos.x + 30, pos.y + 25, pos.z - 20), tm);
+        addAetherEntity(whale);
+        com.voxel.entity.ZephyrEntity zephyr = new com.voxel.entity.ZephyrEntity(id++, new Vector3f(pos.x - 20, pos.y + 14, pos.z + 15), tm, player);
+        zephyr.mainPlayer = player;
+        addAetherEntity(zephyr);
+        com.voxel.entity.WhirlwindEntity whirl = new com.voxel.entity.WhirlwindEntity(id++, new Vector3f(pos.x + 15, pos.y, pos.z - 12), tm, player);
+        addAetherEntity(whirl);
+        setStatus("Welcome to the Aether... look out for Zephyrs!");
+    }
+
+    private void addAetherEntity(com.voxel.entity.Entity e) {
+        e.dimension = activeDimension;
+        if (e instanceof com.voxel.entity.EnemyEntity) ((com.voxel.entity.EnemyEntity) e).setWorld(world);
+        else if (e instanceof com.voxel.entity.AetherPassiveEntity) ((com.voxel.entity.AetherPassiveEntity) e).setWorld(world);
+        entityManager.addEntity(e);
+    }
+
+    // ── Aether: aerbunny boost + moa riding ──
+    private com.voxel.entity.MoaEntity mountedMoa = null;
+
+    private void updateAetherMobHooks(float dt) {
+        if (activeDimension != DimensionType.AETHER) return;
+        Vector3f pPos = player.getPosition();
+
+        for (int i = 0; i < entityManager.getEntityCount(); i++) {
+            com.voxel.entity.Entity e = entityManager.getEntity(i);
+            if (e.dimension != activeDimension) continue;
+            if (e instanceof com.voxel.entity.AerbunnyEntity) {
+                ((com.voxel.entity.AerbunnyEntity) e).playerNear =
+                        e.getPosition().distance(pPos) < 1.3f;
+            }
+        }
+
+        // Mount: stand next to a moa and press Space
+        if (mountedMoa == null) {
+            for (int i = 0; i < entityManager.getEntityCount(); i++) {
+                com.voxel.entity.Entity e = entityManager.getEntity(i);
+                if (e instanceof com.voxel.entity.MoaEntity && e.dimension == activeDimension
+                        && e.getPosition().distance(pPos) < 1.8f
+                        && glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS
+                        && !player.isSneaking()) {
+                    mountedMoa = (com.voxel.entity.MoaEntity) e;
+                    mountedMoa.mounted = true;
+                    setStatus("Mounted Moa! Hold W to run, Space to flap (" + mountedMoa.jumpCharges + " jumps), Shift to dismount");
+                    break;
+                }
+            }
+            return;
+        }
+
+        // While mounted
+        com.voxel.entity.MoaEntity moa = mountedMoa;
+        boolean dismount = player.isSneaking() || player.isDead()
+                || moa.getPosition().distance(pPos) > 8.0f;
+        if (dismount) {
+            moa.mounted = false;
+            mountedMoa = null;
+            setStatus("Dismounted");
+            return;
+        }
+
+        // Steering with WASD relative to player yaw
+        float yawRad = (float) Math.toRadians(player.getYaw());
+        float mx = 0, mz = 0;
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { mx += -Math.sin(yawRad); mz += Math.cos(yawRad); }
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) { mx += Math.sin(yawRad); mz -= Math.cos(yawRad); }
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) { mx += -Math.cos(yawRad); mz += -Math.sin(yawRad); }
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) { mx += Math.cos(yawRad); mz += Math.sin(yawRad); }
+        float mlen = (float) Math.sqrt(mx * mx + mz * mz);
+        float speed = 5.0f;
+        float nx = moa.getPosX(), ny = moa.getPosY(), nz = moa.getPosZ();
+        if (mlen > 0.01f) {
+            nx += mx / mlen * speed * dt;
+            nz += mz / mlen * speed * dt;
+        }
+        // Vertical: flap jumps with limited charges; slow glide descent otherwise
+        boolean grounded = world.getVoxel((int) Math.floor(nx), (int) Math.floor(ny - 0.1f), (int) Math.floor(nz)) != 0;
+        if (grounded) {
+            if (moa.jumpCharges < 3) moa.jumpCharges++;
+            if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+                ny += 1.2f;
+                moa.jumpCharges--;
+            } else {
+                ny = (float) Math.floor(ny);
+            }
+        } else {
+            ny -= 1.6f * dt;   // glide down slowly instead of falling
+            if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS
+                    && moa.jumpCharges > 0) {
+                ny += 3.0f * dt;   // mid-air flap
+                moa.jumpCharges--;
+            }
+        }
+        // Collision check on horizontal move
+        if (world.getVoxel((int) Math.floor(nx), (int) Math.floor(ny), (int) Math.floor(nz)) == 0) {
+            moa.setPositionD(nx, ny, nz);
+        }
+        // Keep the player seated on the moa
+        player.setPosition(moa.getPosX(), moa.getPosY() + 1.4f, moa.getPosZ());
+    }
+
     /**
      * Places a themed mob roster in a showcase zone the first time the player
      * enters it. The tutorial world is handcrafted and block-explosions would
@@ -1679,8 +1805,44 @@ public class Main {
         player.setHealth(Math.max(1, Math.min(maxHp, ctx.loadHealth)));
         // Restore spawn point so death respawns in the saved world.
         player.setSpawnPoint(new org.joml.Vector3f(player.getPosition()));
+        // Restore persisted entities: this dimension's immediately; the rest
+        // stay queued until their dimension is first entered.
+        pendingEntitySpawns = ctx.worldSaveManager.loadEntities();
+        restoreEntitiesForDimension(activeDimension);
         hud.inventoryUiDirty = true;
         setStatus("Welcome back to \"" + ctx.saveName + "\"!");
+    }
+
+    // ── Entity persistence restore ──
+    private org.json.JSONArray pendingEntitySpawns = null;
+    private DimensionType entityDimWatcher = null;
+
+    /** Spawns all queued persisted entities belonging to the given dimension. */
+    private void restoreEntitiesForDimension(DimensionType dim) {
+        if (pendingEntitySpawns == null || pendingEntitySpawns.length() == 0 || entityManager == null) return;
+        org.json.JSONArray remaining = new org.json.JSONArray();
+        for (int i = 0; i < pendingEntitySpawns.length(); i++) {
+            org.json.JSONObject o = pendingEntitySpawns.getJSONObject(i);
+            if (!dim.name().equals(o.optString("dim"))) { remaining.put(o); continue; }
+            java.util.List<com.voxel.entity.Entity> spawned = com.voxel.entity.EntityPersistence
+                    .createForDimension(new org.json.JSONArray().put(o), dim, entityTmh());
+            World dimWorld = dimensionManager.peekWorld(dim);
+            for (com.voxel.entity.Entity e : spawned) {
+                if (dimWorld != null && e instanceof com.voxel.entity.EnemyEntity) ((com.voxel.entity.EnemyEntity) e).setWorld(dimWorld);
+                else if (dimWorld != null && e instanceof com.voxel.entity.AetherPassiveEntity)
+                    ((com.voxel.entity.AetherPassiveEntity) e).setWorld(dimWorld);
+                entityManager.addEntity(e);
+            }
+        }
+        pendingEntitySpawns = remaining;
+    }
+
+    /** Context bridge for EntityPersistence construction. */
+    private com.voxel.entity.EntityPersistence.TextureManagerHolder entityTmh() {
+        return new com.voxel.entity.EntityPersistence.TextureManagerHolder() {
+            @Override public com.voxel.utils.TextureManager getTextureManager() { return textureManager; }
+            @Override public Player getPlayer() { return player; }
+        };
     }
 
     public void setupUi() { hud.setupUi(); }
@@ -1978,11 +2140,9 @@ public class Main {
                             copyPointClickTemplate();
                             loadSaveIntoContext("pointclick");
                             ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
-                            // Demo world is built for point-and-click — force it on.
-                            pointAndClickMode = true;
                             ctx.cursorRayOverride = null;
                             updateCursorMode();
-                            setStatus("Point & Click Demo — move the cursor, hover the prompts, click to act.");
+                            setStatus("Point & Click Demo loaded.");
                             break;
                         case 3: // Load Save
                             ctx.saveList = com.voxel.world.WorldSaveManager.listSaves();
@@ -2183,6 +2343,9 @@ public class Main {
     private void loadSaveIntoContext(String name) {
         ctx.saveName = name;
         ctx.worldSaveManager = com.voxel.world.WorldSaveManager.forSave(name);
+        // Restore Aether dungeon progress (defeated bosses / unlocked doors)
+        // before worldgen can re-register the dungeons.
+        ctx.worldSaveManager.loadAetherDungeonState();
         com.voxel.world.WorldSaveManager.PlayerState ps = ctx.worldSaveManager.loadLevelData(ctx);
         if (ps != null) {
             ctx.loadPending = true;
@@ -2414,9 +2577,32 @@ public class Main {
 
             handleInput(dt);
 
+            // On first entry into a dimension, spawn its persisted entities.
+            if (entityDimWatcher != activeDimension) {
+                entityDimWatcher = activeDimension;
+                restoreEntitiesForDimension(activeDimension);
+            }
+
+            // Hold-right-click placement: press places instantly (input handler);
+            // after a 0.5s delay, repeat at 10 blocks/second.
+            if (rightMouseHeld && !inventoryOpen && !commandMode && !ctx.mapOpen && !ctx.pauseMenuOpen
+                    && !ctx.craftingCutsceneActive && !ctx.furnaceCutsceneActive && !ctx.tvCutsceneActive
+                    && !(ctx.cinematic != null && ctx.cinematic.cameraActive())) {
+                rightPlaceTimer -= dt;
+                if (rightPlaceTimer <= 0.0f) {
+                    rightPlaceTimer = 0.1f; // 10 blocks per second
+                    blockInteraction.attemptPlaceBlock();
+                }
+            }
+
             // Spawn initial nether mobs on first nether entry
             if (activeDimension == DimensionType.NETHER && entityManager.getEntityCount(DimensionType.NETHER) < 2) {
                 spawnNetherMobs(player);
+            }
+
+            // Ambient Aether wildlife on entry
+            if (activeDimension == DimensionType.AETHER && entityManager.getEntityCount(DimensionType.AETHER) < 4) {
+                spawnAetherMobs(player);
             }
 
             // Parachute deploy: auto-activate when falling fast in the Aether
@@ -2545,6 +2731,10 @@ public class Main {
             // ── Mob spawner: emit blazes from any active spawner. ──
             com.voxel.world.MobSpawnerLogic.tick(world, blockDataManager,
                     entityManager, player);
+
+            // ── Aether dungeons: spawn guards/bosses near the player, unlock on boss death ──
+            com.voxel.world.aether.AetherDungeonRegistry.tick(world, entityManager,
+                    textureManager, player, activeDimension, DimensionType.AETHER, dt);
 
             // ── Beacon buffs: scan all known beacons, find the best one near the
             // player, and apply its tier buffs (jump, speed, regen at tier 4).
@@ -2925,10 +3115,19 @@ public class Main {
                     skull.expire();
                     ctx.setStatus("Hit by a wither skull!");
                 }
+            } else if (e instanceof com.voxel.entity.AetherProjectileEntity) {
+                // Aether projectiles (zephyr snowballs, aechor darts, sunfire):
+                // damage + knockback handled inside update() on proximity hit.
+                com.voxel.entity.AetherProjectileEntity proj =
+                        (com.voxel.entity.AetherProjectileEntity) e;
+                if (!proj.isExpired()) proj.tickWorld(world, dt);
             }
         }
         // Remove dead enemies and expired fireballs from the list
         entityManager.pruneExpired();
+
+        // Aether mob hooks: aerbunny boosts, moa riding
+        updateAetherMobHooks(dt);
 
         // Tick furnaces (smelting logic)
         if (ctx.furnaceManager != null && ctx.chunkManager != null) {
@@ -3056,15 +3255,26 @@ public class Main {
         chunkManager.requestLookAheadFixed(
             player.getFixedX(), player.getFixedY(), player.getFixedZ(), yaw, pitch);
 
-        // ── Map: also load chunks around the map's top-down camera ──
+        // ── Map: stream real chunks ONLY for a map view near the player ──
         if (ctx.mapOpen) {
-            // Mirror the render-loop camera height so chunks stream in around
-            // whatever zoom level the player is viewing.
             float mapCamY = mapCameraHeight(ctx.mapDisplayZoom);
-            chunkManager.updateMapFixedPosition(
-                FixedPoint.fromFloat(ctx.mapPanX),
-                FixedPoint.fromFloat(mapCamY),
-                FixedPoint.fromFloat(ctx.mapPanY), 0f);
+            // Jumping the streaming center far from / high above the player on
+            // open forces a full buffer recenter + a burst of chunk generation
+            // + GPU re-upload in one tick = multi-second freeze. Unloaded areas
+            // are already covered by the shader's biome-preview sampling, so we
+            // only relocate the loader when the map camera stays close to the
+            // player; zoomed-out views run purely on loaded chunks + preview.
+            Vector3f pl = player.getPosition();
+            float mdx = ctx.mapPanX - pl.x;
+            float mdz = ctx.mapPanY - pl.z;
+            float mdy = mapCamY - pl.y;
+            boolean nearPlayer = mdx * mdx + mdz * mdz < 96f * 96f && Math.abs(mdy) < 96f;
+            if (nearPlayer) {
+                chunkManager.updateMapFixedPosition(
+                    FixedPoint.fromFloat(ctx.mapPanX),
+                    FixedPoint.fromFloat(mapCamY),
+                    FixedPoint.fromFloat(ctx.mapPanY), 0f);
+            }
 
             // Simplified biome view for unloaded chunks (sampled by the shader
             // where rays fall through EMPTY columns). Void past the world border
@@ -3075,15 +3285,42 @@ public class Main {
                     (float) ctx.borderManager.getBorderRadius());
         }
 
-        // Periodic auto-save: write level.dat (player state + metadata) every
-        // 10 seconds so crashes lose at most a few moments of progress.
-        if (++autosaveCounter >= 200) {
+        // Periodic auto-save every 30 seconds: flushes everything that can be
+        // dirty — edited resident chunks, deferred structure writes, container
+        // datasets, dropped items, dungeon progress, machines, and level.dat.
+        if (++autosaveCounter >= 600) {
             autosaveCounter = 0;
             if (ctx.worldSaveManager != null && player != null && playerInventory != null) {
-                if (ctx.chunkManager != null) ctx.chunkManager.savePendingChanges();
+                boolean chunkDirty = ctx.chunkManager != null && ctx.chunkManager.hasModifiedChunks();
+                if (ctx.chunkManager != null) {
+                    ctx.chunkManager.savePendingChanges();
+                    // Flush edited resident chunks (near-player columns are
+                    // never evicted, so without this their edits never reach
+                    // disk until quit).
+                    ctx.chunkManager.saveAllModifiedChunks();
+                }
                 ctx.worldSaveManager.saveLevelData(ctx, player, playerInventory);
+                // Container datasets: previously only written on shutdown /
+                // dimension switch / /save — a crash lost chest/furnace/
+                // crafting contents for the whole session.
+                ctx.worldSaveManager.saveCraftingData(activeDimension, ctx.craftingTableManager);
+                ctx.worldSaveManager.saveSurfaceCraftingData(activeDimension, ctx.surfaceCraftingManager);
+                ctx.worldSaveManager.saveCommandBlockData(activeDimension, ctx.commandBlockManager);
+                ctx.worldSaveManager.saveFurnaceData(activeDimension, ctx.furnaceManager);
+                ctx.worldSaveManager.saveChestData(activeDimension, ctx.chestManager);
                 if (ctx.machineManager != null) {
                     ctx.worldSaveManager.saveMachineData(ctx.activeDimension, ctx.machineManager);
+                }
+                // In-world dropped items + Aether dungeon progress
+                if (ctx.droppedItemManager != null) {
+                    ctx.worldSaveManager.saveDroppedItems(activeDimension, ctx.droppedItemManager.getSnapshot());
+                }
+                ctx.worldSaveManager.saveAetherDungeonState();
+                // Persistent entities (all dimensions)
+                ctx.worldSaveManager.saveEntities(
+                        com.voxel.entity.EntityPersistence.export(entityManager));
+                if (chunkDirty) {
+                    ctx.setStatus("Autosaved");
                 }
             }
         }
@@ -3620,7 +3857,8 @@ public class Main {
             // matches after the sliding window recenters (offset != 0).
             if (ctx.breakTargetX != Integer.MIN_VALUE) {
                 glProgramUniform3i(computeProgram, 19, ctx.breakTargetX - wox, ctx.breakTargetY - woy, ctx.breakTargetZ - woz);
-                glProgramUniform1f(computeProgram, 20, ctx.breakProgress / Math.max(1.0f, ctx.blockDataManager.getHardness(ctx.world.getVoxel(ctx.breakTargetX, ctx.breakTargetY, ctx.breakTargetZ))));
+                // breakProgress is now the vanilla 0..1 break damage fraction
+                glProgramUniform1f(computeProgram, 20, Math.max(0.0f, Math.min(1.0f, ctx.breakProgress)));
             } else {
                 glProgramUniform3i(computeProgram, 19, 0, 0, 0);
                 glProgramUniform1f(computeProgram, 20, 0.0f);
@@ -3890,13 +4128,8 @@ public class Main {
             }
 
             if (key == GLFW_KEY_F6) {
-                pointAndClickMode = !pointAndClickMode;
-                ctx.cursorRayOverride = null;
-                pacHoveringInteractable = false;
-                setStatus(pointAndClickMode
-                    ? "Controls: MCSM point & click (virtual cursor + edge-pan)"
-                    : "Controls: FPS mouselook");
-                updateCursorMode();
+                // Point & click mode removed: mouse now always drives the camera directly.
+                setStatus("Controls: FPS mouselook");
                 return;
             }
 
@@ -4168,6 +4401,17 @@ public class Main {
             return;
         }
 
+        // Free-cursor screens (map, pause menu): the OS cursor is visible, so
+        // mouse motion must NOT turn the camera — just track the position.
+        if (glfwGetInputMode(win, GLFW_CURSOR) != GLFW_CURSOR_DISABLED
+                || ctx.mapOpen || ctx.pauseMenuOpen) {
+            lastMouseX = (float) xpos;
+            lastMouseY = (float) ypos;
+            ctx.lastMouseX = lastMouseX;
+            ctx.lastMouseY = lastMouseY;
+            return;
+        }
+
         float xoffset = (float) xpos - lastMouseX;
         float yoffset = lastMouseY - (float) ypos;
         ctx.lastMouseX = (float) xpos;
@@ -4175,23 +4419,7 @@ public class Main {
         lastMouseX = (float) xpos;
         lastMouseY = (float) ypos;
 
-        if (pointAndClickMode) {
-            // MCSM point-and-click: the OS cursor is captured but hidden; a
-            // virtual cursor accumulates mouse deltas and is the click target.
-            // Mouse movement moves the cursor (not the camera) — the camera is
-            // panned only when the cursor pushes against a window edge (handled
-            // per-frame in updatePointAndClick, so edge-pan keeps working even
-            // when the mouse is held still against the edge).
-            if (!pacVirtInit) {
-                pacVirtX = width / 2f;
-                pacVirtY = height / 2f;
-                pacVirtInit = true;
-            }
-            pacVirtX = Math.max(0f, Math.min(width - 1f, pacVirtX + xoffset));
-            pacVirtY = Math.max(0f, Math.min(height - 1f, pacVirtY - yoffset));
-            return; // camera turn is driven by edge-pan, not raw mouse delta
-        }
-
+        // Direct FPS mouselook: raw mouse deltas drive the camera.
         float sensitivity = 0.1f;
         yaw += xoffset * sensitivity;
         pitch += yoffset * sensitivity;
@@ -4284,24 +4512,17 @@ public class Main {
                 ctx.leftMouseHeld = true;
                 leftMousePressedThisFrame = true;
                 ctx.leftMousePressedThisFrame = true;
-
-                // Point-and-click: a plain click USES whatever is under the
-                // cursor (open chest/furnace/table/TV, talk to villagers...)
-                // instead of only starting to mine. Holding still mines.
-                boolean pureGameplay = !inventoryOpen && !commandMode && !ctx.craftingTableOpen
-                        && !ctx.surfaceCraftingOpen && !ctx.chestOpen && !ctx.furnaceOpen
-                        && !ctx.craftingCutsceneActive && !ctx.furnaceCutsceneActive && !ctx.tvCutsceneActive;
-                if (pointAndClickMode && pureGameplay && blockInteraction.attemptClickInteract()) {
-                    // Consumed by a use-interaction: don't also mine/punch it.
-                    leftMousePressedThisFrame = false;
-                    ctx.leftMousePressedThisFrame = false;
-                    blockInteraction.resetMining();
-                }
             } else if (action == GLFW_RELEASE) {
                 leftMouseHeld = false;
                 ctx.leftMouseHeld = false;
                 blockInteraction.resetMining();
             }
+        }
+
+        // Track right-button hold state (press itself places below, after the
+        // gameplay guards; holding repeats at 10 blocks/second after 0.5s).
+        if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) {
+            rightMouseHeld = false;
         }
 
         if (action != GLFW_PRESS) return;
@@ -4357,6 +4578,9 @@ public class Main {
             } else if ((mods & GLFW_MOD_SHIFT) != 0) {
                 portalSystem.attemptActivate();
             } else {
+                // Plain right-press: place instantly, then start the 0.5s hold delay.
+                rightMouseHeld = true;
+                rightPlaceTimer = 0.5f;
                 blockInteraction.attemptPlaceBlock();
                 // A command-block editor is opened by BlockInteraction, but the
                 // keyboard callback is owned by Main. Mirror the modal state
@@ -4859,6 +5083,7 @@ public class Main {
             "src/main/resources/assets/aether/textures/block/miscellaneous"
         );
         textureManager.loadEntityTextures("src/main/resources/assets/minecraft/textures/entity");
+        textureManager.loadEntityTextures("src/main/resources/assets/aether/textures/entity/mobs");
         // Snow Golem pumpkin layer uses the existing block textures on the entity array.
         textureManager.loadItemAsEntityTexture(
             "src/main/resources/assets/minecraft/textures/blocks/pumpkin_face_off.png",
@@ -4940,6 +5165,12 @@ public class Main {
         shaderBlockRegistry.register(19, 19);
         blockDataManager.registerBlock(19, "nether_portal", textureManager, "src/main/resources/assets/minecraft/models/block", 60, 0, 255, 180);
         blockDataManager.setLightColor(19, 150, 50, 220);
+        // East-west twin of the nether portal: PortalSystem picks 19 for
+        // X-spanning frames (north/south faces) and 128 for Z-spanning ones.
+        blockRegistry.register("nether_portal_ew", 128);
+        shaderBlockRegistry.register(128, 128);
+        blockDataManager.registerBlock(128, "nether_portal_ew", textureManager, "src/main/resources/assets/minecraft/models/block", 60, 0, 255, 180);
+        blockDataManager.setLightColor(128, 150, 50, 220);
         // --- Nether Dimension Blocks ---
         blockRegistry.register("netherrack", 20);
         shaderBlockRegistry.register(20, 20);
@@ -5063,10 +5294,14 @@ public class Main {
         blockDataManager.registerBlock(105, "aerogel", textureManager, aetherModels, 120, 30, 255);
         blockRegistry.register("aether_portal_ns", 106);
         shaderBlockRegistry.register(106, 106);
-        blockDataManager.registerBlock(106, "aether_portal_ns", textureManager, aetherModels, 0, 0, 255, 0);
+        // The mod lights the portal at lightLevel(11) -> emissive 180 like the
+        // nether portal; transparency 60 keeps the swirl see-through.
+        blockDataManager.registerBlock(106, "aether_portal_ns", textureManager, aetherModels, 60, 0, 255, 180);
+        blockDataManager.setLightColor(106, 80, 140, 255);
         blockRegistry.register("aether_portal_ew", 127);
         shaderBlockRegistry.register(127, 127);
-        blockDataManager.registerBlock(127, "aether_portal_ew", textureManager, aetherModels, 0, 0, 255, 0);
+        blockDataManager.registerBlock(127, "aether_portal_ew", textureManager, aetherModels, 60, 0, 255, 180);
+        blockDataManager.setLightColor(127, 80, 140, 255);
         
         blockRegistry.register("ambrosium_ore", 107);
         shaderBlockRegistry.register(107, 107);
@@ -6234,14 +6469,17 @@ public class Main {
     public void uploadDirtyChunks() {
         java.util.Set<Integer> dirty = chunkManager.getDirtySlots();
 
-        // Capped upload: persist an iterator across frames to avoid per-frame spikes
-        if (dirtyUploadIterator == null) {
-            dirtyUploadIterator = dirty.iterator();
-        }
+        // IMPORTANT: take a FRESH iterator every frame. A long-lived iterator
+        // over a ConcurrentHashMap-backed set is only guaranteed to see the
+        // table state at (or since) its creation — entries added by the gen
+        // thread after the iterator passed their bucket could be skipped
+        // forever, leaving those slots un-uploaded: CPU-solid "ghost blocks"
+        // that never reach the GPU (invisible, and stale terrain rendered at
+        // recycled slot addresses after eviction/recenter).
+        java.util.Iterator<Integer> it = dirty.iterator();
 
         boolean tableDirty = chunkManager.isTableDirty();
-        if (!dirtyUploadIterator.hasNext() && !tableDirty) {
-            dirtyUploadIterator = null;
+        if (!it.hasNext() && !tableDirty) {
             // A pending light upload is complete once the dirty set drains empty:
             // every producer pairs lightsNeedUpload=true with dirtySlots.add(...), so
             // no slots left to drain means every changed slot's light reached the GPU.
@@ -6291,15 +6529,15 @@ public class Main {
         int[] lightPool = world.getLightPool();
 
         int uploaded = 0;
-        while (dirtyUploadIterator.hasNext() && uploaded < MAX_DIRTY_UPLOADS_PER_FRAME) {
-            int s = dirtyUploadIterator.next();
+        while (it.hasNext() && uploaded < MAX_DIRTY_UPLOADS_PER_FRAME) {
+            int s = it.next();
             // Black-frame guard: while the light thread is rebuilding this slot's light
             // (CPU pool cleared to zeros), hold the light-slice upload. Geometry still
             // uploads immediately, but the slot stays dirty so the FINAL converged light
             // is pushed once the rebuild task completes.
             boolean lightPending = chunkManager.isLightRebuildPending(s);
             if (!lightPending) {
-                dirtyUploadIterator.remove();
+                it.remove();
             }
 
             reusableVoxelBuf.clear();
@@ -6344,10 +6582,9 @@ public class Main {
             uploaded++;
         }
 
-        // Iterator exhausted: reset for next cycle. If the dirty set drained to empty,
-        // any pending light upload is complete too (see the early return above).
-        if (!dirtyUploadIterator.hasNext()) {
-            dirtyUploadIterator = null;
+        // Frame's budget exhausted or set drained. If drained to empty, any
+        // pending light upload is complete too (see the early return above).
+        if (!it.hasNext()) {
             if (chunkManager.needsLightUpload() && dirty.isEmpty()) {
                 chunkManager.clearLightUpload();
             }
@@ -6529,18 +6766,10 @@ public class Main {
     }
 
     public int[] raycastBlock(float maxDist) {
-        // Honor the point-and-click cursor ray so targeting is consistent
-        // with BlockInteraction.raycastBlock in PAC mode.
-        Vector3f dir;
-        Vector3f pos;
-        float[] cursorRay = ctx != null ? ctx.cursorRayOverride : null;
-        if (cursorRay != null) {
-            pos = new Vector3f(cursorRay[0], cursorRay[1], cursorRay[2]);
-            dir = new Vector3f(cursorRay[3], cursorRay[4], cursorRay[5]);
-        } else {
-            dir = getLookDirection();
-            pos = getActiveCameraPosition();
-        }
+        // Minecraft-style interaction ray: from the PLAYER'S EYE along the
+        // yaw/pitch look vector (center pixel). No virtual-cursor override.
+        Vector3f dir = getLookDirection();
+        Vector3f pos = new Vector3f(player.getPosition()).add(0, 1.6f, 0);
         float step = 0.05f;
         int lastX = (int) Math.floor(pos.x);
         int lastY = (int) Math.floor(pos.y);

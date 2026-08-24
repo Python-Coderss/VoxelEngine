@@ -27,7 +27,11 @@ Main.java (god-object) sorry I meant god.
 │   └── RedstoneManager
 ├── CommandProcessor — slash commands (handled from GameContext)
 ├── BlockInteraction — block place/break logic
-├── PortalSystem — dimension portal teleport
+├── PortalSystem — dimension portal teleport; orientation-aware lighting:
+│   X-spanning frames place the *_ns portal block (nether 19 / aether 106),
+│   Z-spanning frames the *_ew twin (128 / 127) — matches the vanilla-Aether
+│   blockstate (axis=x → ns model, axis=z → ew model). checkTeleport accepts
+│   both variants of each portal type.
 ├── LightingEngine (in lighting/ package)
 │   ├── EnumSkyBlock — SKY(15) vs BLOCK(0) channels
 │   └── LIGHTENGINE:
@@ -109,6 +113,11 @@ where is the canonical registry mentioned.
 - **ui.vert/.frag:** UI element rendering with rotation, texture arrays
 - **test.vert/.frag:** Testing shaders
 
+## Portals
+
+- **Orientation-aware lighting (`PortalSystem`):** lighting a frame scans both axes; a frame spanning **X** fills with the `*_ns` portal block (faces point north/south — vanilla blockstate `axis=x`), a frame spanning **Z** with the `*_ew` twin (`axis=z`). Nether = flint & steel → 19 (ns) / 128 (ew, model `nether_portal_ew.json`); Aether = water bucket → 106 (ns) / 127 (ew). `checkTeleport` accepts either variant of each type, and the interaction billboards name/scan all four IDs. Both portal blocks use transparency 60 + emissive 180 (the mod lights the Aether portal at lightLevel(11)) with the blue `setLightColor` tint.
+- **Animated strips & mcmeta frametime:** vertical-strip textures (h = n·16) get one atlas layer per frame; `TextureManager.detectFrameTicks` now parses the sibling `.png.mcmeta` `animation.frametime` (default 1). `BlockDataManager` packs it into block data word 3 bits 24-31 and the raytracer steps frames at `20 / frametime` fps in BOTH animated paths, so the Aether portal strip ("frametime": 2) plays at MC's 10 fps instead of double speed. Water/lava/fire (`{}` mcmeta) are unaffected.
+
 ## Railways & Minecarts
 
 - **Rails:** straight IDs 391 (`rail_ns`, along Z) and 392 (`rail_ew`, along X, horizontal `rail_normal_ew.png` texture) + curved corners 450-453 (`rail_curve_se/sw/nw/ne`, `rail_normal_turned.png` L-texture with flip UVs); all are 1/16-tall slab models. Placement requires a full block below; `BlockInteraction.chooseRailShape` picks straights from the look direction or rail neighbours, and exactly one N-S + one E-W neighbour auto-creates a curve; `refreshRailShapes` converts neighbours after place/break (Beta RailLogic behaviour). Item `rail` (6 iron ingots → 16). All six IDs drop the rail item.
@@ -186,10 +195,10 @@ drop their base log item.
 | 31-33 | pistons | 34-91 | biome decoration |
 | 100-114 | aether blocks | 115-118 | functional blocks |
 | 119-126 | vegetation/decorative | 127 | aether_portal_ew |
-| 130-141 | staple blocks | 200-205 | stairs |
-| 206-210 | slabs | 211 | torch |
-| 259 | sticky piston head | 260-261 | horizontal oak logs |
-| 262 | andesite_casing | 263 | encased_fan |
+| 128 | nether_portal_ew | 130-141 | staple blocks |
+| 200-205 | stairs | 206-210 | slabs |
+| 211 | torch | 259 | sticky piston head |
+| 260-261 | horizontal oak logs | 262-263 | andesite_casing, encased_fan |
 | 274 | villager_tv | 291-296 | kinetic blocks (see below) |
 | 297-328 | colored redstone lamps (16 × off/on) | 329-336 | repeaters (4 dirs × off/on) |
 | 337-352 | comparators (4 dirs × off/on × compare/subtract) | 353-356 | clutch, clutch_on, gearshift, gearshift_on |

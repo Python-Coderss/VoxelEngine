@@ -6,8 +6,9 @@
     },
     "elements": [
         {
-            "from": [1, 0, 1],
-            "to": [15, 10, 15],
+            "comment": "chestBelow: body, MC ModelChest.addBox(0,0,0, 14,10,14) at rotationPoint(1,6,1)",
+            "from": [1, 6, 1],
+            "to": [15, 16, 15],
             "faces": {
                 "down":  { "texture": "#chest" },
                 "up":    { "texture": "#chest" },
@@ -18,8 +19,9 @@
             }
         },
         {
-            "from": [1, 10, 1],
-            "to": [15, 14, 15],
+            "comment": "chestLid: lid, MC ModelChest.addBox(0,-5,-14, 14,5,14) at rotationPoint(1,7,15)",
+            "from": [1, 2, 1],
+            "to": [15, 7, 15],
             "faces": {
                 "down":  { "texture": "#chest" },
                 "up":    { "texture": "#chest" },
@@ -30,8 +32,9 @@
             }
         },
         {
-            "from": [7, 8, 16],
-            "to": [9, 12, 17],
+            "comment": "chestKnob: latch, MC ModelChest.addBox(-1,-2,-15, 2,4,1) at rotationPoint(8,7,15)",
+            "from": [7, 5, 0],
+            "to": [9, 9, 1],
             "faces": {
                 "down":  { "texture": "#chest" },
                 "up":    { "texture": "#chest" },

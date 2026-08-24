@@ -92,6 +92,51 @@ public class DroppedItemManager {
         items.clear();
     }
 
+    /** Immutable snapshot of one dropped item for persistence. */
+    public static final class DropSnapshot {
+        public final String itemId; public final int count;
+        public final float x, y, z;
+        public DropSnapshot(String itemId, int count, float x, float y, float z) {
+            this.itemId = itemId; this.count = count; this.x = x; this.y = y; this.z = z;
+        }
+    }
+
+    /** Snapshot for persistence (autosave / dimension switch / shutdown). */
+    public java.util.List<DropSnapshot> getSnapshot() {
+        synchronized (items) {
+            java.util.List<DropSnapshot> out = new java.util.ArrayList<>(items.size());
+            for (DroppedItem di : items) {
+                if (di.alive && di.count > 0) {
+                    out.add(new DropSnapshot(di.itemId, di.count, di.baseX, di.baseY, di.baseZ));
+                }
+            }
+            return out;
+        }
+    }
+
+    /**
+     * Restore a persisted drop at an absolute world position. Unlike {@link #spawn}
+     * this does not require a registered item drop model and re-runs the ground
+     * search so the item settles correctly after load.
+     */
+    public void restore(String itemId, int count, float x, float y, float z) {
+        if (itemId == null || count <= 0 || ctx.world == null) return;
+        ItemDefinition def = ctx.itemDefinitions != null ? ctx.itemDefinitions.getDefinition(itemId) : null;
+        int blockId = def != null ? def.dropBlockId : -1;
+        int colX = (int) Math.floor(x), colZ = (int) Math.floor(z);
+        float phase = (float)(rng.nextDouble() * Math.PI * 2.0);
+        GroundResult ground = findGroundBelow(colX, colZ, y + 1.0f);
+        float hover = MIN_HOVER_ABOVE_GROUND;
+        float restY = ground.groundTopY + hover + 0.5f * DROPPED_ITEM_SCALE;
+        DroppedItem di = new DroppedItem(itemId, blockId, count, x, y, z, phase,
+                System.nanoTime(), restY, ground.groundTopY, hover,
+                colX, ground.supportBlockY, colZ, ground.found);
+        synchronized (items) {
+            if (items.size() >= MAX_ITEMS) return;
+            items.add(di);
+        }
+    }
+
     /**
      * Spawn a dropped item at the broken block's center; gravity will then carry it down to
      * settle in a small hover window above the ground beneath. The item's restY / groundTopY

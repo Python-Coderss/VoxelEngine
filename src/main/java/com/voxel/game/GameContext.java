@@ -358,6 +358,10 @@ public class GameContext {
 
     // --- Spawn resolution (deferred until spawn chunks are generated) ---
     public int pendingSpawnX = Integer.MIN_VALUE;
+    /** Set when a dimension switch should build a landing island + return portal. */
+    private boolean arrivalPortalPending = false;
+    /** Dimension whose persisted drops should restore after spawn chunks load. */
+    private DimensionType pendingDropRestoreDim = null;
     public int pendingSpawnZ = Integer.MIN_VALUE;
     private int pendingSpawnY = Integer.MIN_VALUE;
     public volatile boolean spawnLoading = true;
@@ -464,10 +468,15 @@ public class GameContext {
             }
         }
 
-        // Drop in-world drops from the previous dimension — they're per-dimension and would
-        // otherwise continue rendering against the new dimension's chunks.
+        // Drops are per-dimension: persist the outgoing dimension's items, then
+        // clear. The target dimension's drops restore once its chunks generate
+        // (see resolveSpawnAfterChunksGenerated).
         if (previous != null && droppedItemManager != null) {
+            if (worldSaveManager != null) {
+                worldSaveManager.saveDroppedItems(previous, droppedItemManager.getSnapshot());
+            }
             droppedItemManager.clearAll();
+            pendingDropRestoreDim = target;
         }
 
         dimensionManager.ensureDimension(target, renderDistance);
@@ -505,7 +514,10 @@ public class GameContext {
             ((com.voxel.world.BetaWorldGenerator) gen).setWorldSize(worldSize);
         }
 
-        if (previous != target) dimensionManager.unloadDimension(previous);
+        if (previous != target) {
+            dimensionManager.unloadDimension(previous);
+            arrivalPortalPending = true;
+        }
 
         // --- Determine spawn position with coordinate translation ---
         float tx = translateCoordinate(sourcePosition.x, previous, target);
@@ -583,7 +595,9 @@ public class GameContext {
                     int sx = cx + ox, sz = cz + oz;
                     for (int sy = yMax - 1; sy >= yMin; sy--) {
                         int block = world.getVoxel(sx, sy, sz);
-                        if (block != 0 && block != 106 && !blockDataManager.isLiquid(block)) {
+                        if (block != 0 && block != PORTAL_AETHER_BLOCK
+                                && block != PORTAL_AETHER_EW_BLOCK
+                                && !blockDataManager.isLiquid(block)) {
                             return sy + 2;
                         }
                     }
@@ -593,6 +607,85 @@ public class GameContext {
         // Fallback
         if (activeDimension == DimensionType.NETHER) return 32;
         return activeDimension.baseHeight + 3;
+    }
+
+    /**
+     * Builds a small landing island with a return portal at the dimension
+     * arrival point. Materials follow the vanilla-Aether convention:
+     * netherrack in the Nether, grass in the Overworld, holystone topped with
+     * aether grass in the Aether. The portal is framed so stepping back in
+     * returns to the dimension the player came from.
+     */
+    private void buildArrivalPlatformAndPortal(int x, int z, int surfaceY) {
+        if (world == null || chunkManager == null) return;
+        if (activeDimension == DimensionType.PORTAL_HALL) return;
+
+        int fillId = -1, topId = -1;
+        if (activeDimension == DimensionType.NETHER) {
+            fillId = safeBlockId("netherrack");
+        } else if (activeDimension == DimensionType.AETHER) {
+            fillId = safeBlockId("holystone");
+            topId = safeBlockId("aether_grass_block");
+            if (topId <= 0) topId = fillId;
+        } else if (activeDimension == DimensionType.END) {
+            fillId = safeBlockId("end_stone");
+        } else {
+            fillId = safeBlockId("dirt");
+            topId = safeBlockId("grass_block");
+            if (topId <= 0) topId = fillId;
+        }
+        if (fillId <= 0) return;
+
+        int groundY = surfaceY - 1;
+        // 7x7 landing island (two layers deep so it floats safely in the Aether)
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dz = -3; dz <= 3; dz++) {
+                chunkManager.setVoxel(x + dx, groundY, z + dz,
+                        topId > 0 ? topId : fillId);
+                if (groundY - 1 >= 0) chunkManager.setVoxel(x + dx, groundY - 1, z + dz, fillId);
+                // Clear an air pocket above so the portal and player fit
+                for (int h = 0; h < 6; h++) {
+                    int by = surfaceY + h;
+                    if (world.getVoxel(x + dx, by, z + dz) != 0) {
+                        chunkManager.setVoxel(x + dx, by, z + dz, 0);
+                    }
+                }
+            }
+        }
+
+        // Return portal: nether-style portals link Nether<->Overworld,
+        // aether-style portals link Aether<->Overworld.
+        int frameId, portalId;
+        if (activeDimension == DimensionType.AETHER) {
+            frameId = 17; portalId = PORTAL_AETHER_BLOCK;
+        } else {
+            frameId = 16; portalId = PORTAL_NETHER_BLOCK;
+        }
+
+        int y0 = groundY; // frame bottom sits flush on the island surface
+        for (int i = 0; i < 4; i++) {
+            chunkManager.setVoxel(x + i, y0, z, frameId);
+            chunkManager.setVoxel(x + i, y0 + 4, z, frameId);
+        }
+        for (int h = 1; h <= 3; h++) {
+            chunkManager.setVoxel(x, y0 + h, z, frameId);
+            chunkManager.setVoxel(x + 3, y0 + h, z, frameId);
+        }
+        for (int px = 1; px <= 2; px++) {
+            for (int py = 1; py <= 3; py++) {
+                chunkManager.setVoxel(x + px, y0 + py, z, portalId);
+            }
+        }
+    }
+
+    private static final int PORTAL_NETHER_BLOCK = 19;
+    private static final int PORTAL_AETHER_BLOCK = 106;
+    private static final int PORTAL_AETHER_EW_BLOCK = 127;
+
+    /** Null-safe block-name lookup that never throws. */
+    private int safeBlockId(String name) {
+        Integer v = blockDataManager != null ? blockDataManager.findBlockId(name) : null;
+        return v != null ? v : -1;
     }
 
     /**
@@ -622,6 +715,21 @@ public class GameContext {
         player.setPosition(pendingSpawnX + 0.5, surfaceY, pendingSpawnZ + 0.5);
         player.resetVelocity();
         player.setSpawnPoint(new Vector3f(player.getPosition()));
+        // Portal arrivals: build a small landing island with a return portal
+        // once the destination chunks actually exist (writing earlier would be
+        // lost when the chunks generate over them).
+        if (arrivalPortalPending) {
+            arrivalPortalPending = false;
+            buildArrivalPlatformAndPortal(pendingSpawnX, pendingSpawnZ, surfaceY);
+        }
+        // Restore this dimension's persisted dropped items once terrain exists
+        // (the ground search needs real voxels).
+        if (pendingDropRestoreDim == activeDimension && worldSaveManager != null && droppedItemManager != null) {
+            pendingDropRestoreDim = null;
+            for (com.voxel.game.DroppedItemManager.DropSnapshot d : worldSaveManager.loadDroppedItems(activeDimension)) {
+                droppedItemManager.restore(d.itemId, d.count, d.x, d.y, d.z);
+            }
+        }
         pendingSpawnX = Integer.MIN_VALUE;
         pendingSpawnZ = Integer.MIN_VALUE;
         spawnLoading = false;

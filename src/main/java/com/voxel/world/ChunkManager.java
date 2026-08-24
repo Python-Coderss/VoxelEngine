@@ -167,6 +167,10 @@ public class ChunkManager {
         this.blockDataManager = blockDataManager;
         this.dimension = dimension;
         this.renderDistance = renderDistance;
+        // Any low-level pool write (villager builders, dragon eggs, portal
+        // fills, deferred structure writes) now auto-marks its slot dirty so
+        // the GPU never misses an edit — fixes CPU-solid "ghost blocks".
+        world.setSlotDirtyListener(dirtySlots::add);
         // Y load range: match the XZ render distance in section units
         this.yLoadRadius = renderDistance * 2;
 
@@ -630,6 +634,7 @@ public class ChunkManager {
     public boolean setVoxel(int x, int y, int z, int type) {
         int slot = world.getChunkSlot(x, y, z);
         if (slot == World.EMPTY) return false;
+        modifiedColumns.add(chunkKey(x >> 4, z >> 4));
 
         int oldBlockId = world.getVoxel(x, y, z);
         world.setVoxel(x, y, z, type);// Beacon tracking: when a beacon block is placed, register its
@@ -727,6 +732,7 @@ public class ChunkManager {
     public boolean setVoxelWithData(int x, int y, int z, int type, int extra) {
         int slot = world.getChunkSlot(x, y, z);
         if (slot == World.EMPTY) return false;
+        modifiedColumns.add(chunkKey(x >> 4, z >> 4));
 
         int oldBlockId = world.getVoxel(x, y, z);
         world.setVoxelWithData(x, y, z, type, extra);
@@ -774,6 +780,7 @@ public class ChunkManager {
     public boolean setVoxelWithFlags(int x, int y, int z, int type, int extra, int flags) {
         int slot = world.getChunkSlot(x, y, z);
         if (slot == World.EMPTY) return false;
+        modifiedColumns.add(chunkKey(x >> 4, z >> 4));
 
         world.setVoxelWithFlags(x, y, z, type, extra, flags);
         dirtySlots.add(slot);
@@ -787,6 +794,7 @@ public class ChunkManager {
         int slot = world.getChunkSlot(cx << 4, cy << 4, cz << 4);
         if (slot != World.EMPTY) dirtySlots.add(slot);
         tableDirty.set(true);
+        modifiedColumns.add(chunkKey(cx, cz));
         if (saveManager != null) saveManager.acknowledgePendingVoxels(dimension, applied);
     }
 
@@ -843,6 +851,43 @@ public class ChunkManager {
     private final AtomicInteger lightingActiveCount = new AtomicInteger(0);
     public boolean isLightingActive() { return lightingActiveCount.get() > 0; }
 
+    /** Columns edited since the last save sweep (disk-dirty tracking). */
+    private final Set<Long> modifiedColumns = ConcurrentHashMap.newKeySet();
+
+    /** True when any loaded column has unsaved edits (autosave gate). */
+    public boolean hasModifiedChunks() { return !modifiedColumns.isEmpty(); }
+
+    /**
+     * Saves every still-loaded chunk column that was edited since the last
+     * sweep. The unload path saves chunks on eviction, but chunks near the
+     * player (KEEP_RADIUS) may never be evicted before quit / dimension switch —
+     * without this sweep those edits were lost even on clean shutdowns.
+     * Safe to call from any thread after the gen/light threads have stopped,
+     * or from the logic thread while they run (saveChunk snapshots the pool).
+     */
+    public void saveAllModifiedChunks() {
+        if (saveManager == null || modifiedColumns.isEmpty()) return;
+        for (Long key : modifiedColumns.toArray(new Long[0])) {
+            NavigableMap<Integer, Integer> slots = loadedChunks.get(key);
+            if (slots == null) { modifiedColumns.remove(key); continue; }
+            int cx = unpackX(key);
+            int cz = unpackZ(key);
+            // Same registration guard as unloadChunk: never write an all-air
+            // column over a valid file when the indirection entry is gone.
+            boolean registered = false;
+            for (Map.Entry<Integer, Integer> se : slots.entrySet()) {
+                if (world.getChunkSlot((cx << 4) + 8, (se.getKey() << 4) + 8, (cz << 4) + 8) == se.getValue()) {
+                    registered = true;
+                    break;
+                }
+            }
+            if (registered) {
+                saveManager.saveChunk(dimension, cx, cz, world);
+            }
+            modifiedColumns.remove(key);
+        }
+    }
+
     public void shutdown() {
         // Publish cancellation before taking the lifecycle lock so an already
         // running deferred pass can stop between columns instead of making
@@ -857,6 +902,8 @@ public class ChunkManager {
         try { genThread.join(5000); } catch (InterruptedException ignored) {}
         // Preserve any structure writes produced by the final generation task.
         savePendingChanges();
+        // Flush resident edited chunks (near-player columns are never evicted).
+        saveAllModifiedChunks();
 
         // Shut down light thread
         lightRunning = false;

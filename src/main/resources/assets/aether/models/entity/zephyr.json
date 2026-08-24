@@ -1,0 +1,16 @@
+{
+  "parts": [
+    { "name": "right_face", "from": [3.0, 11.0, 7.0], "size": [4.0, 6.0, 2.0], "absolute_offset": [0.0, 16.0, 0.0], "texture": "zephyr/zephyr", "uv": [33.5, 22], "uv_size": [4, 6, 2], "texture_mapping": "cuboid_atlas" },
+    { "name": "left_face", "from": [-7.0, 11.0, 7.0], "size": [4.0, 6.0, 2.0], "absolute_offset": [0.0, 16.0, 0.0], "texture": "zephyr/zephyr", "uv": [33.5, 22], "uv_size": [4, 6, 2], "texture_mapping": "cuboid_atlas" },
+    { "name": "mouth", "from": [-3.0, 12.0, 7.0], "size": [6.0, 3.0, 1.0], "absolute_offset": [0.0, 16.0, 0.0], "texture": "zephyr/zephyr", "uv": [33, 38], "uv_size": [6, 3, 1], "texture_mapping": "cuboid_atlas", "emissive": true },
+    { "name": "body", "from": [-6.0, 11.0, -7.0], "size": [12.0, 9.0, 14.0], "absolute_offset": [0.0, 16.0, 0.0], "texture": "zephyr/zephyr", "uv": [13.5, 18], "uv_size": [12, 9, 14], "texture_mapping": "cuboid_atlas" },
+    { "name": "body_right_side_front", "from": [6.0, 13.0, 1.0], "size": [2.0, 6.0, 6.0], "absolute_offset": [6.0, 16.0, 4.0], "texture": "zephyr/zephyr", "uv": [0, 40], "uv_size": [2, 6, 6], "texture_mapping": "cuboid_atlas" },
+    { "name": "body_right_side_back", "from": [5.5, 12.3333, -5.5], "size": [2.0, 6.0, 6.0], "absolute_offset": [5.5, 15.0, -2.0], "texture": "zephyr/zephyr", "uv": [12.5, 22], "uv_size": [2, 6, 6], "texture_mapping": "cuboid_atlas" },
+    { "name": "body_left_side_front", "from": [-8.0, 13.0, 1.0], "size": [2.0, 6.0, 6.0], "absolute_offset": [-6.0, 16.0, 4.0], "texture": "zephyr/zephyr", "uv": [0, 40], "uv_size": [2, 6, 6], "texture_mapping": "cuboid_atlas" },
+    { "name": "body_left_side_back", "from": [-7.5, 12.3333, -5.5], "size": [2.0, 6.0, 6.0], "absolute_offset": [-5.5, 15.0, -2.0], "texture": "zephyr/zephyr", "uv": [12.5, 22], "uv_size": [2, 6, 6], "texture_mapping": "cuboid_atlas" },
+    { "name": "cloud_butt", "from": [-4.0, 13.0, -9.0], "size": [8.0, 6.0, 2.0], "absolute_offset": [-2.0, 16.0, -7.0], "texture": "zephyr/zephyr", "uv": [0, 0], "uv_size": [8, 6, 2], "texture_mapping": "cuboid_atlas" },
+    { "name": "tail_base", "from": [-2.5, 21.5, -14.9], "size": [5.0, 5.0, 5.0], "absolute_offset": [0.0, 24.0, -12.4], "texture": "zephyr/zephyr", "uv": [48, 44], "uv_size": [5, 5, 5], "texture_mapping": "cuboid_atlas" },
+    { "name": "tail_middle", "from": [-2.0, 22.0, -20.4333], "size": [4.0, 4.0, 4.0], "absolute_offset": [0.0, 24.0, -18.4], "texture": "zephyr/zephyr", "uv": [40, 48], "uv_size": [4, 4, 4], "texture_mapping": "cuboid_atlas" },
+    { "name": "tail_end", "from": [-1.5, 22.5, -24.9], "size": [3.0, 3.0, 3.0], "absolute_offset": [0.0, 24.0, -23.4], "texture": "zephyr/zephyr", "uv": [42, 36], "uv_size": [3, 3, 3], "texture_mapping": "cuboid_atlas" }
+  ]
+}

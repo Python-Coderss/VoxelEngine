@@ -22,7 +22,7 @@ import com.voxel.entity.VillagerEntity;
  *
  * Interactable set:
  *  - Functional blocks: crafting table (115), furnace (116/117), chest (118),
- *    nether portal (19), aether portal (106). Scanned by a small raycast
+ *    nether portal (19/128), aether portal (106/127). Scanned by a small raycast
  *    grid around the player rather than a full world walk.
  *  - Villager entities within range (the MCSM "talk to" targets).
  */
@@ -56,7 +56,9 @@ public class InteractionBillboardSystem {
     private static final int B_FURNACE_ON = 117;
     private static final int B_CHEST = 118;
     private static final int B_PORTAL_NETHER = 19;
+    private static final int B_PORTAL_NETHER_EW = 128;
     private static final int B_PORTAL_AETHER = 106;
+    private static final int B_PORTAL_AETHER_EW = 127;
 
     public InteractionBillboardSystem(GameContext ctx, Main main) {
         this.ctx = ctx;
@@ -191,7 +193,8 @@ public class InteractionBillboardSystem {
 
     private static boolean isInteractableBlock(int id) {
         return id == B_CRAFTING_TABLE || id == B_FURNACE || id == B_FURNACE_ON
-            || id == B_CHEST || id == B_PORTAL_NETHER || id == B_PORTAL_AETHER;
+            || id == B_CHEST || id == B_PORTAL_NETHER || id == B_PORTAL_AETHER
+            || id == B_PORTAL_NETHER_EW || id == B_PORTAL_AETHER_EW;
     }
 
     /** Display name of an interactable block (shown in the MCSM prompt). */
@@ -201,8 +204,10 @@ public class InteractionBillboardSystem {
             case 116:
             case 117: return "Furnace";
             case 118: return "Chest";
-            case 19:  return "Nether Portal";
-            case 106: return "Aether Portal";
+            case 19:
+            case 128: return "Nether Portal";
+            case 106:
+            case 127: return "Aether Portal";
             default: return "";
         }
     }
@@ -215,7 +220,9 @@ public class InteractionBillboardSystem {
             case 117: return "Smelt";
             case 118: return "Open";
             case 19:
-            case 106: return "Enter";
+            case 106:
+            case 127:
+            case 128: return "Enter";
             default: return "";
         }
     }

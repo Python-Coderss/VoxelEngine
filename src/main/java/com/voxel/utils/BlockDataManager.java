@@ -111,6 +111,8 @@ public class BlockDataManager {
         // Animated texture properties
         public boolean isAnimated;
         public int frameCount = 1;
+        /** Game ticks each animation frame is held (mcmeta frametime, 1 = 20 fps). */
+        public int frameTicks = 1;
 
         // Per-face animation mask: bit i (0-5) set if face i uses a texture with
         // more than one frame. The shader only applies the animation frame offset
@@ -286,6 +288,7 @@ public class BlockDataManager {
         // blocks keep their static faces intact.
         data.faceAnimMask = 0;
         data.frameCount = 1;
+        data.frameTicks = 1;
         for (int i = 0; i < 6; i++) {
             int faceTex = data.tex[i];
             if (faceTex >= 0) {
@@ -296,6 +299,8 @@ public class BlockDataManager {
                         data.faceAnimMask |= (1 << i);
                         data.isAnimated = true;
                         if (fc > data.frameCount) data.frameCount = fc;
+                        data.frameTicks = Math.max(data.frameTicks,
+                                textureManager.getFrameTicks(texName));
                     }
                 }
             }
@@ -627,6 +632,9 @@ public class BlockDataManager {
                 //   bit 7:     hasHinge (part index 1 is a hinge-animated lid,
                 //              rotated by u_HingeAngle around its bMin.y/z edge)
                 //   bits 8-23: rotationSpeed as fixed-point (rev/sec * 256)
+                //   bits 24-31: animation frametime in ticks (1 = 20 fps strips;
+                //              the shader steps frames at 20/tickRate fps so
+                //              mcmeta "frametime": N strips play at MC speed)
                 // The shader uses the speed to scroll/rotate the gear UVs smoothly
                 // instead of stepping through discrete animation frames.
                 buffer.put((data.tintColor >> 16) & 0xFF);
@@ -634,7 +642,8 @@ public class BlockDataManager {
                 buffer.put(data.tintColor & 0xFF);
                 int fixedSpeed = Math.max(0, Math.min(0xFFFF, Math.round(data.rotationSpeed * 256.0f)));
                 int packed3w = (data.faceAnimMask & 0x3F) | ((data.isRotating ? 1 : 0) << 6)
-                        | ((data.hasHinge ? 1 : 0) << 7) | (fixedSpeed << 8);
+                        | ((data.hasHinge ? 1 : 0) << 7) | (fixedSpeed << 8)
+                        | ((Math.max(1, Math.min(255, data.frameTicks))) << 24);
                 buffer.put(packed3w);
             } else {
                 // Fill with -1 for unused IDs.

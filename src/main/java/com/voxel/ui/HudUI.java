@@ -248,12 +248,12 @@ public class HudUI {
         staticLayer.addElement(inventoryPanelElement);
 
         // --- Dynamic layer: virtual cursor, cinematic overlays, billboards ---
-        // The virtual cursor: a textured reticle (ui/cursor.png). Falls back to
-        // a solid white quad if the asset fails to load.
+        // The crosshair: a white 8x8 plus (ui/cursor.png) drawn 1:1 at the
+        // screen centre — the point-and-click click point lives there too.
         cursorTextureId = loadCursorTexture();
         crosshairElement = new UILayer.UIElement(
-            new Vector2f(width / 2f - 12, height / 2f - 12),
-            new Vector2f(24, 24),
+            new Vector2f(width / 2f - 4, height / 2f - 4),
+            new Vector2f(8, 8),
             new Vector4f(1, 1, 1, 1)
         );
         crosshairElement.textureId = cursorTextureId;
@@ -350,11 +350,11 @@ public class HudUI {
     }
 
     /**
-     * Load the virtual-cursor asset (ui/cursor.png). If the PNG is missing it
-     * is generated once on disk (an MCSM-style pointer: a glowing arrow tip
-     * inside a broken ring reticle) so the asset is real, editable, and
-     * reloadable. Returns a GL texture id, or 0 if loading fails (the
-     * crosshair then falls back to a solid quad).
+     * Load the virtual-cursor asset (ui/cursor.png): a pure-white 8x8 plus
+     * rendered 1:1 at the screen centre. If the PNG is missing it is generated
+     * once on disk so the asset is real, editable, and reloadable. Returns a
+     * GL texture id, or 0 if loading fails (the crosshair then falls back to
+     * a solid quad).
      */
     public int loadCursorTexture() {
         java.io.File cursorFile = new java.io.File("src/main/resources/ui/cursor.png");
@@ -372,29 +372,21 @@ public class HudUI {
     }
 
     /**
-     * Procedurally write a 24x24 cursor PNG: a bold black square center with
-     * a thick bright white outline — a high-contrast crosshair that reads
-     * against any background. The drawn content is an 8x8 black core framed
-     * by a 2px white ring, centered in the 24x24 canvas.
+     * Procedurally write the 8x8 crosshair PNG: a pure-white plus (arms 2px
+     * thick, transparent corners) rendered 1:1 at the screen centre.
      */
     private void generateCursorAsset(java.io.File out) {
         try {
-            int size = 24;
+            int size = 8;
             java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(
                 size, size, java.awt.image.BufferedImage.TYPE_INT_ARGB);
-            java.awt.Graphics2D g = img.createGraphics();
-            // 8x8 black core at pixels 8..15, framed by a 2px white ring
-            // (pixels 6..17 = 12x12 outline square).
-            int coreMin = 8, coreMax = 15;             // 8px black core
-            int outlineMin = coreMin - 2, outlineMax = coreMax + 2; // 2px white ring
-            // White outline (filled square, then overdrawn by black core).
-            g.setColor(new java.awt.Color(255, 255, 255, 255));
-            g.fillRect(outlineMin, outlineMin,
-                outlineMax - outlineMin + 1, outlineMax - outlineMin + 1);
-            // Black center core.
-            g.setColor(new java.awt.Color(0, 0, 0, 255));
-            g.fillRect(coreMin, coreMin, coreMax - coreMin + 1, coreMax - coreMin + 1);
-            g.dispose();
+            // Plus shape: columns/rows 3..4 form the two arms.
+            for (int y = 0; y < size; y++) {
+                for (int x = 0; x < size; x++) {
+                    boolean on = (x >= 3 && x <= 4) || (y >= 3 && y <= 4);
+                    img.setRGB(x, y, on ? 0xFFFFFFFF : 0x00000000);
+                }
+            }
             out.getParentFile().mkdirs();
             javax.imageio.ImageIO.write(img, "PNG", out);
             System.out.println("[UI] Generated virtual cursor asset: " + out.getPath());
@@ -2289,23 +2281,10 @@ public class HudUI {
         // inventory state changed.
         if (crosshairElement != null) {
             crosshairElement.visible = !main.inventoryOpen && !main.commandMode;
-            if (crosshairElement.visible && main.pointAndClickMode
-                    && ctx.menuScreen == GameContext.MenuScreen.IN_GAME) {
-                // Small black-core/white-outline cursor (4x4 content in a 16x16
-                // texture). Rendered ~16px so the outline is crisp; grows to 20px
-                // + green tint when an interactable is under the cursor.
-                float sz = main.pacHoveringInteractable ? 20f : 16f;
-                float half = sz / 2f;
-                crosshairElement.pos.set(main.getSmoothedCursorX() - half, main.getSmoothedCursorY() - half);
-                crosshairElement.size.set(sz, sz);
-                crosshairElement.color.set(
-                    main.pacHoveringInteractable ? 0.4f : 1f,
-                    main.pacHoveringInteractable ? 1f : 1f,
-                    main.pacHoveringInteractable ? 0.4f : 1f,
-                    1f);
-            } else {
-                // FPS mouselook or menus: tiny centered crosshair.
-                float sz = 4f;
+            if (crosshairElement.visible) {
+                // Fixed white 8x8 reticle at the screen centre: the point-and-
+                // click cursor is pinned there, so both modes share one look.
+                float sz = 8f;
                 crosshairElement.pos.set(main.width / 2f - sz / 2f, main.height / 2f - sz / 2f);
                 crosshairElement.size.set(sz, sz);
                 crosshairElement.color.set(1, 1, 1, 1);

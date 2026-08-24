@@ -106,6 +106,106 @@ public class WorldSaveManager {
         return new File(basePath, dim.name);
     }
 
+    // ── Dropped-item persistence (per dimension) ──
+
+    private File getDropsFile(DimensionType dim) {
+        return new File(getDimensionDir(dim), "drops.dat");
+    }
+
+    public void saveDroppedItems(DimensionType dim, java.util.List<com.voxel.game.DroppedItemManager.DropSnapshot> drops) {
+        try {
+            File file = getDropsFile(dim);
+            file.getParentFile().mkdirs();
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (com.voxel.game.DroppedItemManager.DropSnapshot d : drops) {
+                org.json.JSONObject o = new org.json.JSONObject();
+                o.put("item", d.itemId);
+                o.put("count", d.count);
+                o.put("x", d.x);
+                o.put("y", d.y);
+                o.put("z", d.z);
+                arr.put(o);
+            }
+            java.nio.file.Files.write(file.toPath(), arr.toString().getBytes("UTF-8"));
+        } catch (Exception e) {
+            System.err.println("Failed to save dropped items for " + dim.name + ": " + e.getMessage());
+        }
+    }
+
+    public java.util.List<com.voxel.game.DroppedItemManager.DropSnapshot> loadDroppedItems(DimensionType dim) {
+        java.util.List<com.voxel.game.DroppedItemManager.DropSnapshot> out = new java.util.ArrayList<>();
+        try {
+            File file = getDropsFile(dim);
+            if (!file.exists()) return out;
+            org.json.JSONArray arr = new org.json.JSONArray(new String(java.nio.file.Files.readAllBytes(file.toPath()), "UTF-8"));
+            for (int i = 0; i < arr.length(); i++) {
+                org.json.JSONObject o = arr.getJSONObject(i);
+                out.add(new com.voxel.game.DroppedItemManager.DropSnapshot(
+                        o.getString("item"), o.getInt("count"),
+                        (float) o.getDouble("x"), (float) o.getDouble("y"), (float) o.getDouble("z")));
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to load dropped items for " + dim.name + ": " + e.getMessage());
+        }
+        return out;
+    }
+
+    // ── Aether dungeon progress persistence ──
+
+    private File getDungeonsFile() {
+        return new File(basePath, "aether_dungeons.dat");
+    }
+
+    public void saveAetherDungeonState() {
+        try {
+            File file = getDungeonsFile();
+            file.getParentFile().mkdirs();
+            byte[] bytes = com.voxel.world.aether.AetherDungeonRegistry.exportState().toString().getBytes("UTF-8");
+            java.nio.file.Files.write(file.toPath(), bytes);
+        } catch (Exception e) {
+            System.err.println("Failed to save dungeon state: " + e.getMessage());
+        }
+    }
+
+    public void loadAetherDungeonState() {
+        try {
+            File file = getDungeonsFile();
+            if (!file.exists()) return;
+            org.json.JSONArray arr = new org.json.JSONArray(
+                    new String(java.nio.file.Files.readAllBytes(file.toPath()), "UTF-8"));
+            com.voxel.world.aether.AetherDungeonRegistry.importState(arr);
+        } catch (Exception e) {
+            System.err.println("Failed to load dungeon state: " + e.getMessage());
+        }
+    }
+
+    // ── Entity persistence (all dimensions in one file) ──
+
+    private File getEntitiesFile() {
+        return new File(basePath, "entities.dat");
+    }
+
+    public void saveEntities(org.json.JSONArray entities) {
+        try {
+            File file = getEntitiesFile();
+            file.getParentFile().mkdirs();
+            java.nio.file.Files.write(file.toPath(), entities.toString().getBytes("UTF-8"));
+        } catch (Exception e) {
+            System.err.println("Failed to save entities: " + e.getMessage());
+        }
+    }
+
+    public org.json.JSONArray loadEntities() {
+        try {
+            File file = getEntitiesFile();
+            if (!file.exists()) return new org.json.JSONArray();
+            return new org.json.JSONArray(new String(java.nio.file.Files.readAllBytes(file.toPath()), "UTF-8"));
+        } catch (Exception e) {
+            System.err.println("Failed to load entities: " + e.getMessage());
+            return new org.json.JSONArray();
+        }
+    }
+
     /** Returns the chunk file path for absolute chunk coordinates. */
     private File getChunkFile(DimensionType dim, int cx, int cz) {
         File dimDir = getDimensionDir(dim);

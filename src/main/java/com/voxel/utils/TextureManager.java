@@ -35,6 +35,8 @@ public class TextureManager {
     private int textureArrayId;
     private final Map<String, Integer> textureToIndex = new HashMap<>();
     private final Map<String, Integer> textureToFrameCount = new HashMap<>();
+    /** Ticks each animation frame is held (mcmeta "frametime", default 1). */
+    private final Map<String, Integer> textureToFrameTicks = new HashMap<>();
     private final List<String> texturePaths = new ArrayList<>();
     /** Extra layers allocated above the measured texture count so the array never overflows. */
     private static final int LAYER_HEADROOM = 64;
@@ -85,6 +87,7 @@ public class TextureManager {
         for (java.util.Map.Entry<String, String> entry : nameToPath.entrySet()) {
             int fc = detectFrameCount(entry.getValue());
             frameCounts.put(entry.getKey(), fc);
+            textureToFrameTicks.put(entry.getKey(), detectFrameTicks(entry.getValue()));
         }
 
         // Second pass: assign layer offsets = cumulative sum of frame counts
@@ -143,6 +146,26 @@ public class TextureManager {
             // ignore
         }
         return 1;
+    }
+
+    /**
+     * Reads the sibling "&lt;name&gt;.png.mcmeta" (if any) and returns its
+     * animation frametime in game ticks, so mods can slow animations down
+     * (e.g. the Aether portal strip ships "frametime": 2). Defaults to 1.
+     */
+    private int detectFrameTicks(String path) {
+        try {
+            File meta = new File(path + ".mcmeta");
+            if (!meta.exists()) return 1;
+            String content = new String(Files.readAllBytes(meta.toPath()));
+            org.json.JSONObject json = new org.json.JSONObject(content);
+            if (!json.has("animation")) return 1;
+            org.json.JSONObject anim = json.getJSONObject("animation");
+            int ft = anim.optInt("frametime", 1);
+            return Math.max(1, Math.min(255, ft));
+        } catch (Exception e) {
+            return 1;
+        }
     }
 
     /**
@@ -365,6 +388,14 @@ public class TextureManager {
      */
     public int getFrameCount(String name) {
         return textureToFrameCount.getOrDefault(name, 1);
+    }
+
+    /**
+     * Returns how many game ticks each animation frame is held (mcmeta
+     * "frametime"). 1 = the default 20 frames-per-second strip playback.
+     */
+    public int getFrameTicks(String name) {
+        return textureToFrameTicks.getOrDefault(name, 1);
     }
 
     /**

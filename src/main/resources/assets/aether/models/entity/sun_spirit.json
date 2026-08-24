@@ -1,0 +1,15 @@
+{
+  "parts": [
+    { "name": "torso_upper", "from": [-5.0, 23.75, -2.5], "size": [10.0, 6.0, 5.0], "absolute_offset": [0.0, 24.0, 0.0], "texture": "sun_spirit/sun_spirit", "uv": [34, 0], "uv_size": [10, 6, 5], "texture_mapping": "cuboid_atlas", "emissive": true },
+    { "name": "torso_middle", "from": [-4.5, 18.75, -2.0], "size": [9.0, 5.0, 4.0], "absolute_offset": [0.0, 24.0, 0.0], "texture": "sun_spirit/sun_spirit", "uv": [34, 11], "uv_size": [9, 5, 4], "texture_mapping": "cuboid_atlas", "emissive": true },
+    { "name": "torso_lower", "from": [-4.75, 17.5, -2.75], "size": [9.5, 1.5, 5.5], "absolute_offset": [0.0, 24.0, 0.0], "texture": "sun_spirit/sun_spirit", "uv": [0, 54], "uv_size": [9, 1, 5], "texture_mapping": "cuboid_atlas", "emissive": true },
+    { "name": "head", "from": [-4.0, 32.75, -3.5], "size": [8.0, 5.0, 7.0], "absolute_offset": [0.0, 29.75, -0.5], "texture": "sun_spirit/sun_spirit", "uv": [0, 0], "uv_size": [8, 5, 7], "texture_mapping": "cuboid_atlas", "emissive": true },
+    { "name": "head_mouth", "from": [-4.0, 29.75, -3.5], "size": [8.0, 3.0, 8.0], "absolute_offset": [0.0, 29.75, -0.5], "texture": "sun_spirit/sun_spirit", "uv": [0, 12], "uv_size": [8, 3, 8], "texture_mapping": "cuboid_atlas", "emissive": true },
+    { "name": "left_arm_upper", "from": [-11.0, 24.75, -3.0], "size": [6.0, 6.0, 6.0], "absolute_offset": [-5.0, 27.75, 0.0], "texture": "sun_spirit/sun_spirit", "uv": [20, 23], "uv_size": [5, 5, 5], "texture_mapping": "cuboid_atlas", "emissive": true },
+    { "name": "left_arm_lower", "from": [-10.5, 15.25, -2.5], "size": [5.0, 10.0, 5.0], "absolute_offset": [-5.0, 27.75, 0.0], "texture": "sun_spirit/sun_spirit", "uv": [20, 33], "uv_size": [5, 10, 5], "texture_mapping": "cuboid_atlas", "emissive": true },
+    { "name": "left_arm_tip", "from": [-10.75, 19.0, -2.75], "size": [5.5, 1.5, 5.5], "absolute_offset": [-5.0, 27.75, 0.0], "texture": "sun_spirit/sun_spirit", "uv": [20, 48], "uv_size": [5.5, 1.5, 5.5], "texture_mapping": "cuboid_atlas" },
+    { "name": "right_arm_upper", "from": [5.0, 24.75, -3.0], "size": [6.0, 6.0, 6.0], "absolute_offset": [5.0, 27.75, 0.0], "texture": "sun_spirit/sun_spirit", "uv": [0, 23], "uv_size": [5, 5, 5], "texture_mapping": "cuboid_atlas", "emissive": true },
+    { "name": "right_arm_lower", "from": [5.5, 15.25, -2.5], "size": [5.0, 10.0, 5.0], "absolute_offset": [5.0, 27.75, 0.0], "texture": "sun_spirit/sun_spirit", "uv": [0, 33], "uv_size": [5, 10, 5], "texture_mapping": "cuboid_atlas", "emissive": true },
+    { "name": "right_arm_tip", "from": [5.25, 19.0, -2.75], "size": [5.5, 1.5, 5.5], "absolute_offset": [5.0, 27.75, 0.0], "texture": "sun_spirit/sun_spirit", "uv": [0, 48], "uv_size": [5.5, 1.5, 5.5], "texture_mapping": "cuboid_atlas" }
+  ]
+}

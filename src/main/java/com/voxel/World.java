@@ -336,6 +336,20 @@ public class World {
         } else {
             bitmaskPool[wordIdx] &= ~bit;
         }
+
+        // Notify the GPU-upload layer so even low-level writes made without
+        // going through ChunkManager (villager builders, dragon eggs, portal
+        // fills, ...) mark their slot dirty. Without this, such blocks exist
+        // for CPU targeting/saving but never reach the GPU — "ghost blocks".
+        // The set dedupes, so hot generation loops only pay a hash lookup.
+        java.util.function.IntConsumer listener = slotDirtyListener;
+        if (listener != null) listener.accept(slot);
+    }
+
+    /** Listener invoked whenever a pool voxel changes; used by ChunkManager to dirty GPU uploads. */
+    private volatile java.util.function.IntConsumer slotDirtyListener;
+    public void setSlotDirtyListener(java.util.function.IntConsumer listener) {
+        this.slotDirtyListener = listener;
     }
 
 /**

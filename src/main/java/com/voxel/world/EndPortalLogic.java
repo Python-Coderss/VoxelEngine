@@ -113,7 +113,7 @@ public final class EndPortalLogic {
             {x - 3, y - 4, z} // clicked frame is top-right corner
         };
         for (int[] o : candidateOrigins) {
-            tryFillPortal(world, bdm, o[0], o[1], o[2]);
+            tryFillPortal(chunkManager, world, bdm, o[0], o[1], o[2]);
         }
         return true;
     }
@@ -123,9 +123,14 @@ public final class EndPortalLogic {
      * {@code end_portal} block id. Idempotent — the portal is a non-solid
      * block that does not block chunks, so re-calling is cheap.
      *
+     * <p>Writes go through the chunk manager so the affected slots are marked
+     * dirty and reach the GPU — a raw {@code world.setVoxelWithFlags} here
+     * produced ghost blocks (present for targeting/saving, invisible).</p>
+     *
      * <p>Returns true if the portal is open (or was already open).</p>
      */
-    public static boolean tryFillPortal(World world, BlockDataManager bdm, int minX, int y, int minZ) {
+    public static boolean tryFillPortal(ChunkManager chunkManager, World world,
+                                        BlockDataManager bdm, int minX, int y, int minZ) {
         if (countEyesAround(world, bdm, minX, y, minZ) < 12) return false;
         int portalId = bdm.findBlockId("end_portal");
         if (portalId <= 0) return false;
@@ -135,7 +140,11 @@ public final class EndPortalLogic {
                 int z = minZ;
                 int target = world.getVoxel(x, y + dy, z);
                 if (target == 0) {
-                    world.setVoxelWithFlags(x, y + dy, z, portalId, 0, 0);
+                    if (chunkManager != null) {
+                        chunkManager.setVoxelWithFlags(x, y + dy, z, portalId, 0, 0);
+                    } else {
+                        world.setVoxelWithFlags(x, y + dy, z, portalId, 0, 0);
+                    }
                 }
             }
         }
