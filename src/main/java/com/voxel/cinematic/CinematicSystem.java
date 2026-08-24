@@ -291,12 +291,14 @@ public class CinematicSystem {
                     orbitCenter.x + (float) Math.cos(ang) * orbitRadius,
                     orbitCenter.y + orbitHeight,
                     orbitCenter.z + (float) Math.sin(ang) * orbitRadius);
-                // Look at the player
+                // Look at the player. Yaw follows Main.getLookDirection's
+                // convention (forward = [cos yaw, ., sin yaw]), so aiming the
+                // camera at the center means yaw = atan2(dz, dx).
                 float dx = orbitCenter.x - camPos.x;
                 float dy = (orbitCenter.y + 1.2f) - camPos.y;
                 float dz = orbitCenter.z - camPos.z;
                 float horiz = (float) Math.sqrt(dx * dx + dz * dz);
-                ctx.yaw = (float) Math.toDegrees(Math.atan2(dz, dx)) - 90.0f;
+                ctx.yaw = (float) Math.toDegrees(Math.atan2(dz, dx));
                 ctx.pitch = (float) Math.toDegrees(Math.atan2(dy, horiz));
             } else {
                 camPos.set(

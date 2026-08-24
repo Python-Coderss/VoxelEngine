@@ -13,6 +13,17 @@ public class AtmosphereRenderer {
     private final int locSkyZenith, locSkyHorizon, locAmbient;
     private final int locDimensionID;
     private final float[] sdTmp = new float[3]; // reusable sun-dir scratch (no per-frame alloc)
+    // Cached r+g+b sums of the last-uploaded sun/moon colors — the same
+    // "lit" measure the raytracer's god-ray march gates on. Lets Main skip
+    // regenerating light pools whose source is currently invisible (day =>
+    // moon unused, night => sun unused).
+    private float sunLum, moonLum;
+
+    /** r+g+b of the active sun color (0 at night). */
+    public float sunLuminance() { return sunLum; }
+
+    /** r+g+b of the active moon color (0 at day). */
+    public float moonLuminance() { return moonLum; }
 
     public AtmosphereRenderer(int computeProgram) {
         locSunDir = glGetUniformLocation(computeProgram, "u_SunDir");
@@ -29,6 +40,7 @@ public class AtmosphereRenderer {
 
     public void upload(float worldTime, DimensionType activeDimension) {
         if (activeDimension == DimensionType.NETHER) {
+            sunLum = 0.6f + 0.2f + 0.05f; moonLum = 0f;
             glUniform3f(locSunDir, 0f, -0.5f, 0f);
             glUniform3f(locSunColor, 0.6f, 0.2f, 0.05f);
             glUniform3f(locMoonDir, 0f, 0.5f, 0f);
@@ -37,6 +49,7 @@ public class AtmosphereRenderer {
             glUniform3f(locSkyHorizon, 0.5f, 0.15f, 0.05f);
             glUniform3f(locAmbient, 0.08f, 0.03f, 0.01f);
         } else if (activeDimension == DimensionType.END) {
+            sunLum = 0.1f + 0.05f + 0.15f; moonLum = 0f;
             glUniform3f(locSunDir, 0f, 1f, 0f);
             glUniform3f(locSunColor, 0.1f, 0.05f, 0.15f);
             glUniform3f(locMoonDir, 0f, -1f, 0f);
@@ -45,6 +58,7 @@ public class AtmosphereRenderer {
             glUniform3f(locSkyHorizon, 0.05f, 0.02f, 0.1f);
             glUniform3f(locAmbient, 0.02f, 0.01f, 0.04f);
         } else if (activeDimension == DimensionType.AETHER) {
+            sunLum = 1f + 0.98f + 0.9f; moonLum = 0f;
             glUniform3f(locSunDir, 0f, 1f, 0.3f);
             glUniform3f(locSunColor, 1f, 0.98f, 0.9f);
             glUniform3f(locMoonDir, 0f, -1f, -0.3f);
@@ -74,9 +88,14 @@ public class AtmosphereRenderer {
             float scR = mix(0.7f, 0.7f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
             float scG = mix(0.35f, 0.68f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
             float scB = mix(0.14f, 0.63f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
+            sunLum = scR + scG + scB;
             glUniform3f(locSunColor, scR, scG, scB);
 
-            glUniform3f(locMoonColor, 0.2f * smoothstep(-0.1f, 0.1f, -h), 0.25f * smoothstep(-0.1f, 0.1f, -h), 0.4f * smoothstep(-0.1f, 0.1f, -h));
+            float mcR = 0.2f * smoothstep(-0.1f, 0.1f, -h);
+            float mcG = 0.25f * smoothstep(-0.1f, 0.1f, -h);
+            float mcB = 0.4f * smoothstep(-0.1f, 0.1f, -h);
+            moonLum = mcR + mcG + mcB;
+            glUniform3f(locMoonColor, mcR, mcG, mcB);
 
             float ambR = mix(0.02f, skyZenR * 0.4f, smoothstep(-0.2f, 0.2f, h));
             float ambG = mix(0.03f, skyZenG * 0.4f, smoothstep(-0.2f, 0.2f, h));

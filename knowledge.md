@@ -57,6 +57,9 @@ Main.java (god-object) sorry I meant god.
 - **Directional SDF Pool:** 8 bytes per slot (6 directional distances, 2 padding)
 - **Temp Light Pool:** byte[] for per-type BFS scalar intensity during propagation
 - **Lighting scale:** internal 0-15, stored as ×17 (0-255), ÷17 when reading back
+- **Brightness balance (rebalanced):** the emissive byte is a brightness FRACTION — `LightEngine.seedLevel` maps it to the grid level (byte×15/255), so sub-maximum emitters spread less (torch 238→14, lit furnace 220→13, portals 180→11) instead of everything flooding at 15. In raytracer.comp a full lamp is **0.25 suns**: `sceneN = max(skyNorm, blockNorm)` picks the dominant source and the lamp branch paints its own tinted colour (`clamp(sunLum×0.25, 0.20, 0.95)`) over a 0.045 cave floor — lamps are distinguishable outdoors and plainly visible in caves.
+- **Sky light model:** straight-down sweep only — opaque opacity subtracts, leaves/foliage transmit ×0.8 per block (horizontal cost −3), the old "8 clear blocks = sun" clause is gone. Sunlight **branches sideways every 4 blocks of descent** (`BRANCH_EVERY`): branch nodes flood 6-directionally at −1/step so openings form soft cones; photons at unloaded sections still park/resume.
+- **Variable exposure:** every 8 frames a 64×64 centre crop of the output is mip-pooled to 1×1 for average luminance; `currentExposure` chases photographic-grey (key 0.18, clamped 0.65–2.4) exponentially and multiplies the scene before ACES (`u_Exposure`, location 6). UI pixels bypass it.
 
 Recenters do happen to the buffer. in all axises.
 

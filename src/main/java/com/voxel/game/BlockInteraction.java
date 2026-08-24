@@ -818,7 +818,7 @@ public class BlockInteraction {
     }
 
     /** Show villager interaction when right-clicked. */
-    private void interactWithEntity(com.voxel.entity.Entity e) {
+    public void interactWithEntity(com.voxel.entity.Entity e) {
         if (e instanceof com.voxel.entity.VillagerEntity) {
             com.voxel.entity.VillagerEntity v = (com.voxel.entity.VillagerEntity) e;
             String prof = v.getProfession().name().toLowerCase().replace('_', ' ');
@@ -1606,6 +1606,23 @@ public class BlockInteraction {
         if (hit == null) return false;
         int hitBlock = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
         return tryUseTarget(hit, hitBlock);
+    }
+
+    /**
+     * Point-and-click billboard action: run the use action for a specific
+     * known block cell (the one a highlighted prompt points at) instead of
+     * re-raycasting — the marker anchor can float off the exact ray.
+     * The synthetic "clicked face" is the side of the block facing the player
+     * so face-sensitive handlers (crafting-table walk-up) behave like an
+     * ordinary right-click.
+     */
+    public boolean useBlockAt(int bx, int by, int bz, int blockId) {
+        Vector3f p = ctx.player.getPosition();
+        int fx = Math.abs(p.x - (bx + 0.5f)) >= Math.abs(p.z - (bz + 0.5f))
+                ? (p.x >= bx + 0.5f ? 1 : -1) : 0;
+        int fz = fx == 0 ? (p.z >= bz + 0.5f ? 1 : -1) : 0;
+        int[] hit = new int[]{bx, by, bz, bx + fx, by, bz + fz};
+        return tryUseTarget(hit, blockId);
     }
 
     /**

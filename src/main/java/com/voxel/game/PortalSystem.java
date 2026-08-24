@@ -68,6 +68,36 @@ public class PortalSystem {
         ctx.setStatus("Teleported to " + target.name);
     }
 
+    /** True while teleport is on cooldown (shared with walk-in detection). */
+    private boolean onCooldown(double now) {
+        return now - ctx.lastPortalTeleportTime < 1.0;
+    }
+
+    /**
+     * Click-to-enter: switch dimensions as if the player had walked into the
+     * portal block they just clicked. Used by the point-and-click billboard
+     * action; hall portals are position-keyed and are ignored here.
+     */
+    public void enterPortal(int portalBlockId) {
+        if (!(isNetherPortal(portalBlockId) || isAetherPortal(portalBlockId))) return;
+        if (ctx.activeDimension == DimensionType.PORTAL_HALL) return;
+        double now = System.currentTimeMillis() / 1000.0;
+        if (onCooldown(now)) return;
+
+        DimensionType target;
+        if (isNetherPortal(portalBlockId)) {
+            target = ctx.activeDimension == DimensionType.NETHER ? DimensionType.OVERWORLD : DimensionType.NETHER;
+        } else {
+            target = ctx.activeDimension == DimensionType.AETHER ? DimensionType.OVERWORLD : DimensionType.AETHER;
+        }
+        if (target == ctx.activeDimension) return;
+
+        ctx.switchToDimension(target);
+        ctx.lastPortalTeleportTime = now;
+        if (ctx.cinematic != null) ctx.cinematic.playPortalTravel();
+        ctx.setStatus("Teleported to " + target.name);
+    }
+
     public void attemptActivate() {
         if (ctx.player.isDead()) return;
         int[] hit = blockInteraction.raycastBlock(blockInteraction.blockReachDistance());

@@ -40,6 +40,7 @@ public class BlockDataManager {
     private int[] emissiveById;
     private int[] lightColorById;
     private byte[] fullBlockById;
+    private boolean[] foliageById;
     private volatile boolean propertyArraysDirty = true;
 
     // OpenGL IDs for the Buffer and the Texture Buffer Object (TBO).
@@ -950,6 +951,7 @@ public class BlockDataManager {
             int[] em = new int[maxId + 1];
             int[] lc = new int[maxId + 1];
             byte[] fb = new byte[maxId + 1];
+            boolean[] fol = new boolean[maxId + 1];
             for (java.util.Map.Entry<Integer, BlockData> e : blockRegistry.entrySet()) {
                 int id = e.getKey();
                 BlockData d = e.getValue();
@@ -957,11 +959,13 @@ public class BlockDataManager {
                 em[id] = Math.min(d.emissive, 255);
                 lc[id] = d.lightColor & 0xFFFFFF;
                 fb[id] = (byte) (d.isFullBlock ? 1 : 0);
+                fol[id] = d.name != null && d.name.contains("leaves");
             }
             opacityById = op;
             emissiveById = em;
             lightColorById = lc;
             fullBlockById = fb;
+            foliageById = fol;
             propertyArraysDirty = false;
         }
     }
@@ -994,12 +998,21 @@ public class BlockDataManager {
         return blockId > 0 && blockId < arr.length && arr[blockId] != 0;
     }
 
+    /** Foliage (leaves) flag in a flat array, built lazily. Unknown IDs read false. */
+    public boolean isFoliageFast(int blockId) {
+        ensurePropertyArrays();
+        boolean[] arr = foliageById;
+        return blockId > 0 && blockId < arr.length && arr[blockId];
+    }
+
     /** Direct reference to the opacity array (caller bounds-checks). Ensures the cache is built. */
     public int[] getOpacityArray() { ensurePropertyArrays(); return opacityById; }
     /** Direct reference to the emissive array. */
     public int[] getEmissiveArray() { ensurePropertyArrays(); return emissiveById; }
     /** Direct reference to the light-color array. */
     public int[] getLightColorArray() { ensurePropertyArrays(); return lightColorById; }
+    /** Direct reference to the foliage (leaves) flag array. */
+    public boolean[] getFoliageFastArray() { ensurePropertyArrays(); return foliageById; }
 
     public java.awt.Color getAlbedo(int blockId) {
         BlockData data = blockRegistry.get(blockId);

@@ -120,7 +120,23 @@ public class World {
         this.offsetY = newOffsetY;
         this.offsetZ = newOffsetZ;
         java.util.Arrays.fill(indirectionTable, EMPTY);
+        java.util.Arrays.fill(columnTopTable, 0);
+        columnTopDirty = true;
     }
+
+    // ---- Per-column loaded-section tops ----
+    // columnTopTable[cx + cz*128] = (highest loaded section's cy) + 1, or 0 when
+    // the column has no loaded sections. Maintained incrementally at
+    // setChunkSlot/clearChunkSlot; uploaded to the raytracer so upward rays get
+    // an O(1) "nothing above" early-out instead of scanning long empty column
+    // tails chunk by chunk.
+    private final int[] columnTopTable = new int[REGION_SIZE * REGION_SIZE];
+    private volatile boolean columnTopDirty = true;
+
+    public int[] getColumnTopTable() { return columnTopTable; }
+    public boolean isColumnTopDirty() { return columnTopDirty; }
+    public void clearColumnTopDirty() { columnTopDirty = false; }
+    public void markColumnTopDirty() { columnTopDirty = true; }
 
     // ---- Coordinate conversion ----
     // Pre-allocated reusable arrays for relative coordinate results.
@@ -284,6 +300,12 @@ public class World {
         if (!isChunkInBuffer(rx, ry, rz)) return;
         int tableIdx = rx + ry * REGION_SIZE + rz * REGION_SIZE * REGION_SIZE;
         indirectionTable[tableIdx] = slot;
+        int c = rx + rz * REGION_SIZE;
+        int enc = ry + 1;
+        if (columnTopTable[c] < enc) {
+            columnTopTable[c] = enc;
+            columnTopDirty = true;
+        }
     }
 
     /**
@@ -296,6 +318,15 @@ public class World {
         if (!isChunkInBuffer(rx, ry, rz)) return;
         int tableIdx = rx + ry * REGION_SIZE + rz * REGION_SIZE * REGION_SIZE;
         indirectionTable[tableIdx] = EMPTY;
+        // Removing the current top section: rescan this column downward for
+        // the next loaded section. Rare and bounded by 128 table reads.
+        int c = rx + rz * REGION_SIZE;
+        if (columnTopTable[c] == ry + 1) {
+            int cy = ry - 1;
+            while (cy >= 0 && indirectionTable[rx + cy * REGION_SIZE + rz * REGION_SIZE * REGION_SIZE] == EMPTY) cy--;
+            columnTopTable[c] = cy + 1; // 0 when the column is fully empty
+            columnTopDirty = true;
+        }
     }
 
     /**

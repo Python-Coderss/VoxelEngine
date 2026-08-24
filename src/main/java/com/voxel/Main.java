@@ -109,6 +109,7 @@ public class Main {
     public int quadVAO, quadVBO, renderTexture;
     public int indirectionSSBO, chunkPoolSSBO, bitmaskSSBO, occlusionSSBO, pointLightSSBO, lightSSBO;
     public int sdfSSBO;  // chunk-level SDF for sphere-trace acceleration (binding=10)
+    public int columnTopSSBO; // per-column highest loaded section (binding=11)
 
     // Cached compute shader uniform locations (avoid glGetUniformLocation per frame)
     public int locBlockTextures, locEntityTextures, locBlockData, locBlockAABBs, locBlockAABBInfo, locBlockAABBUVs;
@@ -124,6 +125,8 @@ public class Main {
     public static final int MAX_DIRTY_UPLOADS_PER_FRAME = 48;
     public int locQuadPass; // Cached quad shader inputTexture uniform
     public int locQuadFlipY; // Cached fullscreen texture orientation uniform
+    public int locQuadUITex; // Cached quad shader uiTexture sampler
+    public int locQuadCompositeUI; // Cached quad shader u_CompositeUI flag
 
     // Reusable direct buffer for SDF SSBO sub-uploads (avoid per-frame alloc).
     private java.nio.ByteBuffer reusableSdfBuf;
@@ -137,7 +140,9 @@ public class Main {
     // for volumetric god rays. Block light comes from the LightPool SSBO (unchanged).
     public int[] lightPoolTex;                       // [0..7] sun pools, [8..15] moon pools
     public volatile boolean lightPoolDirty = true;
-    private final int shadowMapRes = 512;
+    // 320² pool depth maps: god-ray shafts are soft volumetric samples, so the
+    // reduced dispatch cost is invisible in practice (was 512 originally).
+    private final int shadowMapRes = 320;
     private final float shadowHalfExtent = 48.0f;
     private final float shadowDepth = 192.0f;
     private int shadowFrameCount = 0;
@@ -184,6 +189,20 @@ public class Main {
     private static final int LOC_MOON_POOL_DIR = 36;
     private static final int LOC_UNDER_WATER = 37; // 1 when the camera eye is inside a water block
     private static final int LOC_LARGE_COG = 38;   // 1 when any large cogwheel (295) is loaded
+    private static final int LOC_EXPOSURE = 6;     // variable-exposure multiplier (eye adaptation)
+
+    // ── Variable exposure (eye adaptation) ──
+    // Every EXPOSURE_PROBE_INTERVAL frames a 64×64 centre crop of the raytracer
+    // output is copied to a mipmapped probe texture; its 1×1 top mip gives the
+    // frame's average luminance. A log-average + exponential chase keeps the
+    // multiplier smooth, so walking out of a cave lets highlights settle
+    // instead of clipping.
+    private static final int EXPOSURE_PROBE_SIZE = 64;
+    private static final int EXPOSURE_PROBE_INTERVAL = 24; // glGetTexImage stalls the pipeline — keep it rare
+    private int exposureProbeTex;
+    private float currentExposure = 1.0f;
+    private double lastExposureProbeTime = -1.0;
+    private long frameCounter = 0;
 
     /** Base spin rate (revolutions/second) for kinetic gears/shafts when powered. */
     private static final float KINETIC_RPS = 0.75f;
@@ -223,6 +242,20 @@ public class Main {
 
     public int width = 1280, height = 720;
     public final int CHUNK_SIZE = 16, REGION_SIZE = 128;
+
+    // ── Internal render scale (optional) ──
+    // Native resolution is the DEFAULT. F7 cycles: 100% → 85% → 70% → 60% →
+    // 50% → Auto (frame-time driven) → back to 100%. Auto mode targets ~120 FPS
+    // by stepping internal scale; fixed modes never downscale.
+    private static final String[] SCALE_MODE_NAMES = {"Auto", "100%", "85%", "70%", "60%", "50%"};
+    private static final float[] SCALE_MODE_VALUES = {-1f, 1.0f, 0.85f, 0.70f, 0.60f, 0.50f};
+    private static final float[] DRS_SCALE_STEPS = {0.50f, 0.60f, 0.70f, 0.85f, 1.0f};
+    private static final float DRS_TARGET_MS = 1000.0f / 120.0f; // auto mode targets ~120 FPS
+    private int renderScaleMode = 1;          // index into SCALE_MODE_* tables (default: 100%)
+    private int drsStep = DRS_SCALE_STEPS.length - 1; // auto mode's current step (starts native)
+    private float emaFrameMs = DRS_TARGET_MS; // exponential moving average of frame cost
+    private int drsCooldown = 90;             // frames between auto scale changes
+    public int renderW = width, renderH = height;
 
     public float lastMouseX = width / 2f, lastMouseY = height / 2f;
     public boolean firstMouse = true;
@@ -373,6 +406,7 @@ public class Main {
         glDeleteBuffers(lightSSBO);
         glDeleteBuffers(craftingItemSSBO);
         glDeleteBuffers(sdfSSBO);
+        glDeleteBuffers(columnTopSSBO);
         if (persistentPlBuf != null) MemoryUtil.memFree(persistentPlBuf);
         if (villagerAudioManager != null) {
             villagerAudioManager.close();
@@ -424,6 +458,8 @@ public class Main {
         );
         locQuadPass = glGetUniformLocation(quadProgram, "inputTexture");
         locQuadFlipY = glGetUniformLocation(quadProgram, "u_FlipY");
+        locQuadUITex = glGetUniformLocation(quadProgram, "uiTexture");
+        locQuadCompositeUI = glGetUniformLocation(quadProgram, "u_CompositeUI");
         setupQuad();
         int earlyLoadingTexture = 0;
         File earlyLoadingFile = new File("src/main/resources/ui/loading.png");
@@ -948,6 +984,16 @@ public class Main {
             java.nio.ByteBuffer zeroSdf = java.nio.ByteBuffer.allocate(poolSize * 8);
             glNamedBufferSubData(sdfSSBO, 0, zeroSdf);
 
+            // Column tops so the panorama's upward rays get the same O(1) sky
+            // early-out as in-game traversal.
+            IntBuffer colTopBuf = MemoryUtil.memAllocInt(REGION_SIZE * REGION_SIZE);
+            try {
+                colTopBuf.put(panoramaWorld.getColumnTopTable()).flip();
+                glNamedBufferSubData(columnTopSSBO, 0, colTopBuf);
+            } finally {
+                MemoryUtil.memFree(colTopBuf);
+            }
+
             // Zero the 16 light-pool textures so the panorama's god-ray sampling
             // sees clean zeros (no shafts) instead of undefined storage content.
             java.nio.ByteBuffer zeroPool = java.nio.ByteBuffer.allocate(shadowMapRes * shadowMapRes * 4);
@@ -1078,6 +1124,7 @@ public class Main {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, craftingItemSSBO);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, lightSSBO);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, sdfSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, columnTopSSBO);
         glProgramUniform1i(computeProgram, locCraftingItemCount, 0);
 
         // God-ray state: real uniforms, but the pools are zeroed so no shafts
@@ -1101,7 +1148,8 @@ public class Main {
         glProgramUniform1f(computeProgram, LOC_SHADOW_MAP_SIZE, 1.0f / shadowMapRes);
 
         glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
-        glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
+        glProgramUniform1f(computeProgram, LOC_EXPOSURE, currentExposure);
+        glDispatchCompute((renderW + 15) / 16, (renderH + 15) / 16, 1);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1109,6 +1157,13 @@ public class Main {
         glClear(GL_COLOR_BUFFER_BIT);
         glUseProgram(quadProgram);
         glBindTextureUnit(0, renderTexture);
+        // Menu UI canvas composited at full window resolution (same as in-game).
+        if (locQuadUITex >= 0) {
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, hud.uiManager.getUITexture());
+            glUniform1i(locQuadUITex, 1);
+        }
+        if (locQuadCompositeUI >= 0) glUniform1i(locQuadCompositeUI, 1);
         glUniform1i(locQuadPass, 0);
         if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 0);
         glBindVertexArray(quadVAO);
@@ -2272,7 +2327,8 @@ public class Main {
                     }
                     setStatus("Deleted save \"" + doomed + "\"");
                 }
-                if (menuKeyPressed(GLFW_KEY_ENTER) && n > 0) {
+                // ENTER or the mouse-clicked LOAD button both commit the selection.
+                if ((menuKeyPressed(GLFW_KEY_ENTER) || confirmRequested) && n > 0) {
                     String name = ctx.saveList.get(ctx.saveListSelection);
                     loadSaveIntoContext(name);
                 }
@@ -3611,7 +3667,11 @@ public class Main {
                 lastMeasuredFps = frames;
                 frames = 0;
                 fpsTime = 0;
+                if (perfQueries != null) perfLogAndReset();
             }
+
+            // Dynamic resolution: feed this frame's cost to the auto scaler.
+            updateRenderScale(Math.min(dt, 0.1f) * 1000.0f);
 
             if (player.isDead()) {
                 statusMessage = "YOU DIED! Press R to respawn.";
@@ -3673,9 +3733,11 @@ public class Main {
                 if (needsWorldUpload) {
                     uploadWorldToGpu();
                     needsWorldUpload = false;
+                    world.markColumnTopDirty();
                 }
 
                 uploadDirtyChunks();
+                uploadColumnTopIfDirty();
 
                 // Upload biome map to GPU when the gen thread has slid it
                 if (chunkManager.isBiomeMapDirty()) {
@@ -3764,8 +3826,14 @@ public class Main {
             persistentPlBuf.flip();
             glNamedBufferSubData(pointLightSSBO, 0, persistentPlBuf);
 
-            // Compute camera vectors early (used by prepass and compute dispatch)
-            double ry = Math.toRadians(yaw), rp = Math.toRadians(pitch);
+            // Compute camera vectors early (used by prepass and compute dispatch).
+            // While a cinematic scene owns the camera, the director writes its
+            // orientation into ctx.yaw/pitch — render from those so the shot
+            // actually points where the scene intends instead of following the
+            // (frozen) mouse yaw.
+            boolean cinematicCam = ctx.cinematic != null && ctx.cinematic.cameraActive();
+            double ry = Math.toRadians(cinematicCam ? ctx.yaw : yaw);
+            double rp = Math.toRadians(cinematicCam ? ctx.pitch : pitch);
             float fx = (float) (Math.cos(ry) * Math.cos(rp)), fy = (float) Math.sin(rp), fz = (float) (Math.sin(ry) * Math.cos(rp));
             float rx = -fz, rz = fx;
             float rl = (float) Math.sqrt(rx * rx + rz * rz);
@@ -3923,6 +3991,7 @@ public class Main {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, craftingItemSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, lightSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, sdfSSBO);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, columnTopSSBO);
 
 
             uploadCraftingItems();
@@ -3962,21 +4031,38 @@ public class Main {
             // were deliberately skipped while covered).
             if (wasUiCovered && !uiCovered) lightPoolDirty = true;
             wasUiCovered = uiCovered;
-            boolean poolTick = !uiCovered && (shadowFrameCount % 5 == 0); // ~12Hz background refresh (was 20Hz)
             boolean activeChanged = (activeSunPool != prevActiveSunPool) || (activeMoonPool != prevActiveMoonPool);
             boolean activeDirty = !uiCovered && (lightPoolDirty || (camDX * camDX + camDY * camDY + camDZ * camDZ) > 4.0f || activeChanged);
             int r32f = org.lwjgl.opengl.GL30.GL_R32F;
+            perfBegin(0);
             if (activeDirty) {
-                regenLightPool(activeSunPool, camBX, camBY, camBZ, r32f);
-                regenLightPool(activeMoonPool, camBX, camBY, camBZ, r32f);
+                // Regenerate ONLY sources that are currently visible (the god-ray
+                // march never samples a zero-color source's pool), and cap the
+                // steady-state cadence at one regen per 6 frames (staggered
+                // across sources at twilight). Dirty/pool-switch frames force
+                // every visible pool immediately so shafts never go stale
+                // exactly when the active source changes.
+                float sunLum = atmosphereRenderer.sunLuminance();
+                float moonLum = atmosphereRenderer.moonLuminance();
+                boolean sunVisible = sunLum > 0.01f;
+                boolean moonVisible = moonLum > 0.01f;
+                int phase = shadowFrameCount % 6;
+                boolean sunTurn = false, moonTurn = false;
+                if (lightPoolDirty || activeChanged) {
+                    sunTurn = sunVisible; moonTurn = moonVisible;
+                } else if (sunVisible && moonVisible) {
+                    sunTurn = phase == 0; moonTurn = phase == 3;
+                } else {
+                    sunTurn = sunVisible && phase == 0;
+                    moonTurn = moonVisible && phase == 0;
+                }
+                if (sunTurn) regenLightPool(activeSunPool, camBX, camBY, camBZ, r32f);
+                if (moonTurn) regenLightPool(activeMoonPool, camBX, camBY, camBZ, r32f);
                 lightPoolDirty = false;
                 shadowCamPosPrev[0] = camBX; shadowCamPosPrev[1] = camBY; shadowCamPosPrev[2] = camBZ;
                 prevActiveSunPool = activeSunPool; prevActiveMoonPool = activeMoonPool;
             }
-            if (poolTick) {
-                int rr = (shadowFrameCount / 5) % 16; // round-robin 1 pool per tick (all fresh ~1.3s)
-                regenLightPool(rr, camBX, camBY, camBZ, r32f);
-            }
+            perfEnd(0);
             glProgramUniform1i(computeProgram, LOC_SHADOW_PASS, 0);
             // Bind ACTIVE pools + upload their ortho bases for the god-ray march.
             uploadPoolBasis(LOC_SHADOW_ORIGIN, LOC_SHADOW_RIGHT, LOC_SHADOW_UP, LOC_SHADOW_SUN_DIR,
@@ -3993,8 +4079,13 @@ public class Main {
             glProgramUniform1f(computeProgram, LOC_SHADOW_MAP_SIZE, 1.0f / shadowMapRes);
 
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
-            glDispatchCompute((width + 15) / 16, (height + 15) / 16, 1);
+            glProgramUniform1f(computeProgram, LOC_EXPOSURE, currentExposure);
+            perfBegin(1);
+            glDispatchCompute((renderW + 15) / 16, (renderH + 15) / 16, 1);
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+            perfEnd(1);
+
+            updateVariableExposure();
 
             if (ctx.screenshotRequested) {
                 takeScreenshot();
@@ -4005,11 +4096,23 @@ public class Main {
             glViewport(0, 0, width, height);
             glClear(GL_COLOR_BUFFER_BIT);
             glUseProgram(quadProgram);
+            perfBegin(2);
             glBindTextureUnit(0, renderTexture);
+            // Dynamic HUD/menu canvas on unit 1 (the same texture the raytracer
+            // samples as u_UITexture): composited here at full window resolution
+            // so the UI stays sharp when the scene renders scaled.
+            if (locQuadUITex >= 0) {
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, hud.uiManager.getUITexture());
+                glUniform1i(locQuadUITex, 1);
+            }
+            if (locQuadCompositeUI >= 0) glUniform1i(locQuadCompositeUI, 1);
             glUniform1i(locQuadPass, 0);
             if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 0);
             glBindVertexArray(quadVAO);
             glDrawArrays(GL_TRIANGLES, 0, 6);
+            perfEnd(2);
+            perfSlot = (perfSlot + 1) % PERF_RING;
             } else {
                 // Loading-screen-only frame: the UI texture already holds the
                 // current full-screen overlay (main-menu panorama + title, or the
@@ -4022,6 +4125,8 @@ public class Main {
                 glClear(GL_COLOR_BUFFER_BIT);
                 glUseProgram(quadProgram);
                 glBindTextureUnit(0, hud.uiManager.getUITexture());
+                // The loading frame's input IS the UI canvas — no second blend.
+                if (locQuadCompositeUI >= 0) glUniform1i(locQuadCompositeUI, 0);
                 glUniform1i(locQuadPass, 0);
                 if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 0);
                 glBindVertexArray(quadVAO);
@@ -4124,6 +4229,11 @@ public class Main {
 
             if (key == GLFW_KEY_F5) {
                 toggleCameraMode();
+                return;
+            }
+
+            if (key == GLFW_KEY_F7) {
+                cycleRenderScale();
                 return;
             }
 
@@ -4412,6 +4522,17 @@ public class Main {
             return;
         }
 
+        // Cinematic scenes own the camera: mouse deltas must not fight the
+        // director (they would snap the view back to the player's look every
+        // frame, making directed shots jitter between two orientations).
+        if (ctx.cinematic != null && ctx.cinematic.cameraActive()) {
+            ctx.lastMouseX = (float) xpos;
+            ctx.lastMouseY = (float) ypos;
+            lastMouseX = (float) xpos;
+            lastMouseY = (float) ypos;
+            return;
+        }
+
         float xoffset = (float) xpos - lastMouseX;
         float yoffset = lastMouseY - (float) ypos;
         ctx.lastMouseX = (float) xpos;
@@ -4572,6 +4693,19 @@ public class Main {
         if (ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive || ctx.tvCutsceneActive) return;
         if (ctx.cinematic != null && ctx.cinematic.cameraActive()) return;
 
+        // MCSM point-and-click: clicking while a prompt is highlighted under
+        // the centre cursor performs its action — walk-up cutscene + UI for
+        // tables/furnaces, chest UI, TV cutscene, villager dialogue, portal
+        // travel — instead of swinging at whatever is behind the marker.
+        if (button == GLFW_MOUSE_BUTTON_LEFT && hud.billboards != null
+                && hud.billboards.hasHighlightedMarker()
+                && performBillboardAction(hud.billboards.getHighlightedMarker())) {
+            // Consume the click so the logic thread doesn't also mine/attack.
+            leftMousePressedThisFrame = false;
+            ctx.leftMousePressedThisFrame = false;
+            return;
+        }
+
         if (button == GLFW_MOUSE_BUTTON_RIGHT) {
             if ((mods & GLFW_MOD_ALT) != 0) {
                 blockInteraction.attemptSurfaceCrafting();
@@ -4593,8 +4727,41 @@ public class Main {
         }
     }
 
-    public void openCommandMode() {
-        if (inventoryOpen) setInventoryOpen(false);
+    /**
+     * Performs the action of a highlighted point-and-click prompt: walk-up
+     * cutscene + UI for functional blocks, dialogue for villagers, portal
+     * travel for portals. Returns false when the marker's target is gone and
+     * the click should fall through to normal gameplay handling.
+     */
+    private boolean performBillboardAction(int idx) {
+        if (idx < 0) return false;
+        com.voxel.game.InteractionBillboardSystem bb = hud.billboards;
+        int bx = bb.getMarkerBlockX(idx), by = bb.getMarkerBlockY(idx), bz = bb.getMarkerBlockZ(idx);
+        if (bx < 0) {
+            // Entity marker: talk to the villager / interact with the cart.
+            if (ctx.entityManager == null) return false;
+            com.voxel.entity.Entity e = ctx.entityManager.getEntity(bb.getMarkerEntityId(idx));
+            if (e == null) return false;
+            blockInteraction.interactWithEntity(e);
+            return true;
+        }
+        int id = ctx.world.getVoxel(bx, by, bz);
+        if (id <= 0) return false;
+        switch (id) {
+            case 19:  // nether portal (ns)
+            case 106: // aether portal (ns)
+            case 127: // aether portal (ew)
+            case 128: // nether portal (ew)
+                portalSystem.enterPortal(id);
+                return true;
+            default:
+                // Crafting table / furnace / chest / TV and anything else with
+                // a use handler — runs the walk-up cutscene where applicable.
+                return blockInteraction.useBlockAt(bx, by, bz, id);
+        }
+    }
+
+    public void openCommandMode() {        if (inventoryOpen) setInventoryOpen(false);
         hud.inventoryUiDirty = true;
         commandMode = true;
         ctx.commandMode = true;
@@ -4742,6 +4909,59 @@ public class Main {
     }
     private final float[] edgePanTmp = new float[2];
     private long pacLastUpdateNanos;
+
+    /**
+     * Variable exposure (eye adaptation): every EXPOSURE_PROBE_INTERVAL frames
+     * a small centre crop of last frame's raytracer output is copied into a
+     * mipmapped probe texture whose 1×1 top mip gives the frame's average
+     * luminance. The exposure multiplier chases a photographic grey target
+     * exponentially, so stepping out of a cave lets highlights settle instead
+     * of clipping, and dark interiors gain gentle lift without pumping.
+     */
+    private void updateVariableExposure() {
+        if (exposureProbeTex == 0) {
+            exposureProbeTex = glGenTextures();
+            glBindTexture(GL_TEXTURE_2D, exposureProbeTex);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, EXPOSURE_PROBE_SIZE, EXPOSURE_PROBE_SIZE, 0,
+                    GL_RGBA, GL_UNSIGNED_BYTE, (java.nio.ByteBuffer) null);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        }
+
+        long frame = ++frameCounter;
+        double now = glfwGetTime();
+        float dt = lastExposureProbeTime < 0 ? 0.016f
+                : (float) Math.min(0.1, now - lastExposureProbeTime);
+        lastExposureProbeTime = now;
+
+        if (frame % EXPOSURE_PROBE_INTERVAL != 0) return;
+
+        int probeW = Math.min(EXPOSURE_PROBE_SIZE, renderW);
+        int probeH = Math.min(EXPOSURE_PROBE_SIZE, renderH);
+        int sx = Math.max(0, (renderW - probeW) / 2);
+        int sy = Math.max(0, (renderH - probeH) / 2);
+        glCopyImageSubData(renderTexture, GL_TEXTURE_2D, 0, sx, sy, 0,
+                exposureProbeTex, GL_TEXTURE_2D, 0, 0, 0, 0,
+                probeW, probeH, 1);
+        glBindTexture(GL_TEXTURE_2D, exposureProbeTex);
+        glGenerateMipmap(GL_TEXTURE_2D);
+
+        // Top mip of a POT-probe chain: 64→32→16→8→4→2→1 = level 6.
+        java.nio.FloatBuffer px = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
+        glGetTexImage(GL_TEXTURE_2D, 6, GL_RGBA, GL_FLOAT, px);
+        float lum = 0.2126f * Math.max(px.get(0), 0f)
+                  + 0.7152f * Math.max(px.get(1), 0f)
+                  + 0.0722f * Math.max(px.get(2), 0f);
+        org.lwjgl.system.MemoryUtil.memFree(px);
+
+        // Photographic-grey target with sane clamps; exponential chase keeps
+        // the adaptation smooth and one-frame flashes (muzzle fire, etc.) from
+        // yanking the multiplier around.
+        float targetExposure = 0.18f / Math.max(0.02f, lum);
+        targetExposure = Math.max(0.65f, Math.min(2.4f, targetExposure));
+        float k = 1.0f - (float) Math.exp(-dt * 2.0);
+        currentExposure += (targetExposure - currentExposure) * k;
+    }
 
     public void toggleCameraMode() {
         CameraMode[] modes = CameraMode.values();
@@ -5177,7 +5397,7 @@ public class Main {
         blockDataManager.registerBlock(20, "netherrack", textureManager, "src/main/resources/assets/minecraft/models/block");
         blockRegistry.register("lava", 21);
         shaderBlockRegistry.register(21, 21);
-        blockDataManager.registerBlock(21, "lava", textureManager, "src/main/resources/assets/minecraft/models/block", 0, 50, 255, 200);
+        blockDataManager.registerBlock(21, "lava", textureManager, "src/main/resources/assets/minecraft/models/block", 0, 50, 255, 255);
         blockDataManager.setLightColor(21, 255, 150, 50);
         blockRegistry.register("soul_sand", 22);
         shaderBlockRegistry.register(22, 22);
@@ -5198,7 +5418,7 @@ public class Main {
         blockDataManager.setLightColor(26, 255, 30, 30);
         blockRegistry.register("redstone_torch", 27);
         shaderBlockRegistry.register(27, 27);
-        blockDataManager.registerBlock(27, "redstone_torch", textureManager, "src/main/resources/assets/minecraft/models/block", 0, 0, 255, 200);
+        blockDataManager.registerBlock(27, "redstone_torch", textureManager, "src/main/resources/assets/minecraft/models/block", 0, 0, 255, 119);
         blockDataManager.setLightColor(27, 255, 50, 50);
         blockRegistry.register("redstone_lamp", 28);
         shaderBlockRegistry.register(28, 28);
@@ -5729,7 +5949,7 @@ public class Main {
         // --- Torch ---
         blockRegistry.register("torch", 211);
         shaderBlockRegistry.register(211, 211);
-        blockDataManager.registerBlock(211, "normal_torch", textureManager, mcModels, 0, 0, 255, 12);
+        blockDataManager.registerBlock(211, "normal_torch", textureManager, mcModels, 0, 0, 255, 238);
         blockDataManager.setLightColor(211, 255, 220, 140);
 
         // --- Flat item models (for crafting-table item rendering) ---
@@ -6171,7 +6391,7 @@ public class Main {
 
         blockRegistry.register("beacon", 457);
         shaderBlockRegistry.register(457, 457);
-        blockDataManager.registerBlock(457, "beacon", textureManager, mcModels, 80, 20, 255, 80);
+        blockDataManager.registerBlock(457, "beacon", textureManager, mcModels, 80, 20, 255, 255);
         blockDataManager.setLightColor(457, 120, 220, 255);
 
         blockRegistry.register("enchanting_table", 458);
@@ -6207,7 +6427,7 @@ public class Main {
 
         blockRegistry.register("end_rod", 465);
         shaderBlockRegistry.register(465, 465);
-        blockDataManager.registerBlock(465, "end_rod", textureManager, mcModels, 0, 0, 255, 180);
+        blockDataManager.registerBlock(465, "end_rod", textureManager, mcModels, 0, 0, 255, 238);
         blockDataManager.setLightColor(465, 220, 180, 255);
         blockDataManager.setFullBlock(465, false);
 
@@ -6230,7 +6450,7 @@ public class Main {
 
         blockRegistry.register("sea_lantern", 470);
         shaderBlockRegistry.register(470, 470);
-        blockDataManager.registerBlock(470, "sea_lantern", textureManager, mcModels, 0, 0, 255, 220);
+        blockDataManager.registerBlock(470, "sea_lantern", textureManager, mcModels, 0, 0, 255, 255);
         blockDataManager.setLightColor(470, 150, 240, 255);
 
         blockRegistry.register("iron_bars", 471);
@@ -6289,8 +6509,128 @@ public class Main {
         }
     }
 
-    public void setupQuad() {
-        float[] vertices = {-1, -1, 1, -1, -1, 1, 1, -1, 1, 1, -1, 1};
+    /**
+     * Recreates the raytracer target at the given internal resolution. LINEAR
+     * filtering smooths the upscale below native; NEAREST keeps native 1:1
+     * pixels untouched.
+     */
+    private void resizeRenderTexture(int w, int h) {
+        if (w == renderW && h == renderH && renderTexture != 0) return;
+        renderW = Math.max(16, w);
+        renderH = Math.max(16, h);
+        if (renderTexture != 0) glDeleteTextures(renderTexture);
+        renderTexture = glCreateTextures(GL_TEXTURE_2D);
+        glTextureStorage2D(renderTexture, 1, GL_RGBA8, renderW, renderH);
+        applyRenderTextureFilters();
+    }
+
+    private void applyRenderTextureFilters() {
+        int filter = (renderW < width || renderH < height) ? GL_LINEAR : GL_NEAREST;
+        glTextureParameteri(renderTexture, GL_TEXTURE_MIN_FILTER, filter);
+        glTextureParameteri(renderTexture, GL_TEXTURE_MAG_FILTER, filter);
+    }
+
+    /**
+     * Dynamic resolution: in Auto mode step the internal scale toward a frame-
+     * time target using an EMA of GPU frame cost, with hysteresis so the image
+     * doesn't pump while hovering near the threshold. Fixed modes bypass this.
+     */
+    private void updateRenderScale(float rawDtMs) {
+        emaFrameMs = emaFrameMs * 0.9f + rawDtMs * 0.1f;
+        if (SCALE_MODE_VALUES[renderScaleMode] >= 0f) {
+            setRenderScale(SCALE_MODE_VALUES[renderScaleMode]);
+            return;
+        }
+        if (--drsCooldown > 0) return;
+        drsCooldown = 45;
+        // Fullscreen UI (inventory/commands/TV) makes most pixels early-out, so
+        // frame cost drops artificially — don't "recover" resolution mid-menu
+        // only to drop again after closing (visible resolution pumping).
+        boolean uiCoveredNow = ctx != null && (inventoryOpen || commandMode || ctx.tvWatching);
+        if (uiCoveredNow) {
+            drsCooldown = 30;
+            return;
+        }
+        if (emaFrameMs > DRS_TARGET_MS * 1.2f && drsStep > 0) {
+            drsStep--;
+            setRenderScale(DRS_SCALE_STEPS[drsStep]);
+        } else if (emaFrameMs < DRS_TARGET_MS * 0.8f && drsStep < DRS_SCALE_STEPS.length - 1) {
+            drsStep++;
+            setRenderScale(DRS_SCALE_STEPS[drsStep]);
+        }
+    }
+
+    /** Applies a scale fraction to the window size (16px floor per axis). */
+    private void setRenderScale(float scale) {
+        int w = Math.max(16, (int) (width * scale));
+        int h = Math.max(16, (int) (height * scale));
+        if (w == renderW && h == renderH) return;
+        // Must run on the GL thread — called from loop() and key handler paths only.
+        resizeRenderTexture(w, h);
+    }
+
+    /** F7: cycle Auto → 100% → 85% → 70% → 60% → 50% → Auto. */
+    private void cycleRenderScale() {
+        renderScaleMode = (renderScaleMode + 1) % SCALE_MODE_NAMES.length;
+        float v = SCALE_MODE_VALUES[renderScaleMode];
+        if (v >= 0f) {
+            setRenderScale(v);
+        } else {
+            drsCooldown = 45; // give the EMA time to settle before re-stepping
+            setRenderScale(DRS_SCALE_STEPS[drsStep]);
+        }
+        String label = SCALE_MODE_NAMES[renderScaleMode];
+        if (v < 0f) label += String.format(" (%.0f%%)", DRS_SCALE_STEPS[drsStep] * 100);
+        setStatus("Render Scale: " + label);
+    }
+
+    // ── GPU timing (GL_TIME_ELAPSED ring; results harvested 32 frames late so
+    //    reads never stall the pipeline). Sections: 0=light-pool gen, 1=raytrace
+    //    dispatch, 2=present blit. Averages print once per second next to FPS. ──
+    private static final int PERF_SECTION_COUNT = 3;
+    private static final int PERF_RING = 32;
+    private static final String[] PERF_NAMES = {"pools", "raytrace", "present"};
+    private int[] perfQueries;
+    private int perfSlot = 0;
+    private final long[] perfSumNs = new long[PERF_SECTION_COUNT];
+    private final int[] perfSamples = new int[PERF_SECTION_COUNT];
+
+    private void perfBegin(int section) {
+        if (perfQueries == null) {
+            perfQueries = new int[PERF_SECTION_COUNT * PERF_RING];
+            for (int i = 0; i < perfQueries.length; i++) perfQueries[i] = glGenQueries();
+        }
+        glBeginQuery(GL_TIME_ELAPSED, perfQueries[section * PERF_RING + perfSlot]);
+    }
+
+    private void perfEnd(int section) {
+        glEndQuery(GL_TIME_ELAPSED);
+        // The query written LAST cycle at this slot is now ~32 frames old —
+        // its result is virtually always available, so the read never blocks.
+        java.nio.LongBuffer res = org.lwjgl.system.MemoryUtil.memAllocLong(1);
+        try {
+            int q = perfQueries[section * PERF_RING + ((perfSlot + PERF_RING - 1) % PERF_RING)];
+            org.lwjgl.opengl.GL33.glGetQueryObjectui64v(q, org.lwjgl.opengl.GL15.GL_QUERY_RESULT, res);
+            perfSumNs[section] += res.get(0);
+            perfSamples[section]++;
+        } finally {
+            org.lwjgl.system.MemoryUtil.memFree(res);
+        }
+    }
+
+    /** One-per-second GPU breakdown log (called from the FPS accounting block). */
+    private void perfLogAndReset() {
+        StringBuilder sb = new StringBuilder("[GPU/ms]");
+        for (int s = 0; s < PERF_SECTION_COUNT; s++) {
+            double ms = perfSamples[s] > 0 ? (perfSumNs[s] / (double) perfSamples[s]) / 1e6 : 0.0;
+            sb.append(String.format(" %s=%.2f(%d)", PERF_NAMES[s], ms, perfSamples[s]));
+            perfSumNs[s] = 0;
+            perfSamples[s] = 0;
+        }
+        System.out.println(sb);
+    }
+
+    public void setupQuad() {        float[] vertices = {-1, -1, 1, -1, -1, 1, 1, -1, 1, 1, -1, 1};
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer buffer = stack.mallocFloat(vertices.length).put(vertices);
             buffer.flip();
@@ -6350,9 +6690,8 @@ public class Main {
 
     public void setupTexture() {
         renderTexture = glCreateTextures(GL_TEXTURE_2D);
-        glTextureStorage2D(renderTexture, 1, GL_RGBA8, width, height);
-        glTextureParameteri(renderTexture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTextureParameteri(renderTexture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTextureStorage2D(renderTexture, 1, GL_RGBA8, renderW, renderH);
+        applyRenderTextureFilters();
 
         // 16 baked light pools (8 sun-trajectory + 8 moon-trajectory). Written by
         // pool-gen dispatches via image unit 1; ACTIVE pools sampled on units 18/19.
@@ -6367,28 +6706,50 @@ public class Main {
             glTextureParameteri(lightPoolTex[i], GL_TEXTURE_WRAP_S, clampE);
             glTextureParameteri(lightPoolTex[i], GL_TEXTURE_WRAP_T, clampE);
         }
+
+        // Per-column loaded-section tops (128x128 uints = 64 KB) — O(1) sky
+        // early-out for the raytracer's upward traversal (raytracer.comp).
+        columnTopSSBO = glCreateBuffers();
+        glNamedBufferStorage(columnTopSSBO, (long) REGION_SIZE * REGION_SIZE * 4, GL_DYNAMIC_STORAGE_BIT);
     }
+
+    /** Uploads the column-top table when the gen thread changed chunk slots. */
+    private void uploadColumnTopIfDirty() {
+        if (!world.isColumnTopDirty()) return;
+        if (reusableColTopBuf == null) {
+            reusableColTopBuf = org.lwjgl.system.MemoryUtil.memAllocInt(REGION_SIZE * REGION_SIZE);
+        }
+        int[] ct = world.getColumnTopTable();
+        reusableColTopBuf.clear();
+        reusableColTopBuf.put(ct);
+        reusableColTopBuf.flip();
+        glNamedBufferSubData(columnTopSSBO, 0, reusableColTopBuf);
+        world.clearColumnTopDirty();
+    }
+
+    private java.nio.IntBuffer reusableColTopBuf;
 
     /**
      * Reads the current compute shader output (renderTexture) back from the GPU
      * and saves it as a timestamped PNG in the screenshots/ folder.
      */
     public void takeScreenshot() {
-        int numPixels = width * height;
+        // Captured at the internal render resolution (renderTexture's size).
+        int numPixels = renderW * renderH;
         java.nio.ByteBuffer pixels = MemoryUtil.memAlloc(numPixels * 4);
         try {
             glGetTextureImage(renderTexture, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 
-            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x++) {
-                    int idx = (y * width + x) * 4;
+            BufferedImage image = new BufferedImage(renderW, renderH, BufferedImage.TYPE_INT_ARGB);
+            for (int y = 0; y < renderH; y++) {
+                for (int x = 0; x < renderW; x++) {
+                    int idx = (y * renderW + x) * 4;
                     int r = pixels.get(idx) & 0xFF;
                     int g = pixels.get(idx + 1) & 0xFF;
                     int b = pixels.get(idx + 2) & 0xFF;
                     int a = pixels.get(idx + 3) & 0xFF;
                     // OpenGL origin is bottom-left; flip to top-left for image
-                    image.setRGB(x, height - 1 - y, (a << 24) | (r << 16) | (g << 8) | b);
+                    image.setRGB(x, renderH - 1 - y, (a << 24) | (r << 16) | (g << 8) | b);
                 }
             }
 
