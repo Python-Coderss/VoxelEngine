@@ -204,6 +204,16 @@ public class Main {
     private double lastExposureProbeTime = -1.0;
     private long frameCounter = 0;
 
+    // ── Async exposure readback ──
+    // A blocking glGetTexImage here used to run immediately after the raytrace
+    // dispatch, draining the whole GPU pipeline every EXPOSURE_PROBE_INTERVAL
+    // frames (a multi-ms hitch). Instead the probe copy+mipmap lands in this
+    // PBO and its 4 bytes are consumed one interval LATER, once the transfer
+    // has long completed — turning the stall into a plain memcpy.
+    private int exposurePbo;
+    private boolean exposurePboPending = false;
+    private final java.nio.FloatBuffer exposureReadback = MemoryUtil.memAllocFloat(4);
+
     /** Base spin rate (revolutions/second) for kinetic gears/shafts when powered. */
     private static final float KINETIC_RPS = 0.75f;
 
@@ -243,18 +253,19 @@ public class Main {
     public int width = 1280, height = 720;
     public final int CHUNK_SIZE = 16, REGION_SIZE = 128;
 
-    // ── Internal render scale (optional) ──
-    // Native resolution is the DEFAULT. F7 cycles: 100% → 85% → 70% → 60% →
-    // 50% → Auto (frame-time driven) → back to 100%. Auto mode targets ~120 FPS
-    // by stepping internal scale; fixed modes never downscale.
+    // ── Internal render scale ──
+    // AUTO DYNAMIC RESOLUTION IS THE DEFAULT: the internal scale continuously
+    // adapts so sky views hold ≥60 FPS and open ground views push toward 120
+    // FPS (the EMA target is 1000/120 ms). F7 cycles: Auto → 100% → 85% → 70%
+    // → 60% → 50% → back to Auto. Fixed modes never downscale.
     private static final String[] SCALE_MODE_NAMES = {"Auto", "100%", "85%", "70%", "60%", "50%"};
     private static final float[] SCALE_MODE_VALUES = {-1f, 1.0f, 0.85f, 0.70f, 0.60f, 0.50f};
     private static final float[] DRS_SCALE_STEPS = {0.50f, 0.60f, 0.70f, 0.85f, 1.0f};
     private static final float DRS_TARGET_MS = 1000.0f / 120.0f; // auto mode targets ~120 FPS
-    private int renderScaleMode = 1;          // index into SCALE_MODE_* tables (default: 100%)
+    private int renderScaleMode = 0;          // index into SCALE_MODE_* tables (default: Auto)
     private int drsStep = DRS_SCALE_STEPS.length - 1; // auto mode's current step (starts native)
     private float emaFrameMs = DRS_TARGET_MS; // exponential moving average of frame cost
-    private int drsCooldown = 90;             // frames between auto scale changes
+    private int drsCooldown = 30;             // frames between auto scale changes
     public int renderW = width, renderH = height;
 
     public float lastMouseX = width / 2f, lastMouseY = height / 2f;
@@ -2510,6 +2521,8 @@ public class Main {
     private int aiUpdateOffset = 0;
     private int staleCleanupCounter = 0;
     private int autosaveCounter = 0;
+    /** [c1 TEMP PERF PROBE] one-shot latch for the VOXEL_AUTO_TUTORIAL auto-entry. */
+    private volatile boolean perfProbeAutoEntered = false;
 
     public void tick(float dt) {
         if (!running) return;
@@ -2519,6 +2532,30 @@ public class Main {
         // slot can be baked into dimension generation. While any menu screen is
         // active the world does not exist yet — only menu input + rendering run.
         if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME) {
+            // [c1 TEMP PERF PROBE] Automated world entry for unattended perf A/B:
+            // with VOXEL_AUTO_TUTORIAL=1 the game enters the Tutorial World ~3s
+            // after boot — byte-identical to a human pressing DOWN+ENTER on the
+            // main menu (reuses copyTutorialTemplate + loadSaveIntoContext).
+            // Inert unless the env var is set; remove once perf tuning concludes.
+            if (System.getenv("VOXEL_AUTO_TUTORIAL") != null
+                    && !perfProbeAutoEntered && glfwGetTime() > 3.0) {
+                perfProbeAutoEntered = true;
+                ctx.tutorialWorld = true;
+                ctx.pointClickWorld = false;
+                ctx.saveName = "tutorial";
+                copyTutorialTemplate();
+                loadSaveIntoContext("tutorial");
+                ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
+                // Optional fixed upward gaze for sky-view A/B (VOXEL_PROBE_SKY=1):
+                // pins the camera pitch so unattended runs measure the pure-sky
+                // ray path (the worst case for empty-space traversal).
+                if (System.getenv("VOXEL_PROBE_SKY") != null) {
+                    this.yaw = 45.0f;
+                    this.pitch = 89.9f;
+                    System.out.println("[c1 PROBE] sky-view pitch lock engaged");
+                }
+                System.out.println("[c1 PROBE] auto-entered Tutorial World for perf capture");
+            }
             handleMainMenuInput();
             ctx.spawnLoadingMessage = buildMenuMessage();
             return;
@@ -4936,6 +4973,29 @@ public class Main {
 
         if (frame % EXPOSURE_PROBE_INTERVAL != 0) return;
 
+        float k = 1.0f - (float) Math.exp(-dt * 2.0);
+
+        // Consume the PREVIOUS probe first (one-interval-old luminance is fine
+        // for eye adaptation) so the transfer has definitely finished and the
+        // glGetTexImage below never blocks.
+        if (exposurePboPending) {
+            exposurePboPending = false;
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, exposurePbo);
+            exposureReadback.clear();
+            glGetBufferSubData(GL_PIXEL_PACK_BUFFER, 0, exposureReadback);
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+            float lum = 0.2126f * Math.max(exposureReadback.get(0), 0f)
+                      + 0.7152f * Math.max(exposureReadback.get(1), 0f)
+                      + 0.0722f * Math.max(exposureReadback.get(2), 0f);
+
+            // Photographic-grey target with sane clamps; exponential chase keeps
+            // the adaptation smooth and one-frame flashes (muzzle fire, etc.) from
+            // yanking the multiplier around.
+            float targetExposure = 0.18f / Math.max(0.02f, lum);
+            targetExposure = Math.max(0.65f, Math.min(2.4f, targetExposure));
+            currentExposure += (targetExposure - currentExposure) * k;
+        }
+
         int probeW = Math.min(EXPOSURE_PROBE_SIZE, renderW);
         int probeH = Math.min(EXPOSURE_PROBE_SIZE, renderH);
         int sx = Math.max(0, (renderW - probeW) / 2);
@@ -4946,21 +5006,18 @@ public class Main {
         glBindTexture(GL_TEXTURE_2D, exposureProbeTex);
         glGenerateMipmap(GL_TEXTURE_2D);
 
-        // Top mip of a POT-probe chain: 64→32→16→8→4→2→1 = level 6.
-        java.nio.FloatBuffer px = org.lwjgl.system.MemoryUtil.memAllocFloat(4);
-        glGetTexImage(GL_TEXTURE_2D, 6, GL_RGBA, GL_FLOAT, px);
-        float lum = 0.2126f * Math.max(px.get(0), 0f)
-                  + 0.7152f * Math.max(px.get(1), 0f)
-                  + 0.0722f * Math.max(px.get(2), 0f);
-        org.lwjgl.system.MemoryUtil.memFree(px);
-
-        // Photographic-grey target with sane clamps; exponential chase keeps
-        // the adaptation smooth and one-frame flashes (muzzle fire, etc.) from
-        // yanking the multiplier around.
-        float targetExposure = 0.18f / Math.max(0.02f, lum);
-        targetExposure = Math.max(0.65f, Math.min(2.4f, targetExposure));
-        float k = 1.0f - (float) Math.exp(-dt * 2.0);
-        currentExposure += (targetExposure - currentExposure) * k;
+        // Top mip of a POT-probe chain: 64→32→16→8→4→2→1 = level 6. Read into
+        // the PBO (non-blocking); consumed on a later probe frame above.
+        if (exposurePbo == 0) {
+            exposurePbo = glGenBuffers();
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, exposurePbo);
+            glBufferData(GL_PIXEL_PACK_BUFFER, 16L, GL_STREAM_READ);
+        } else {
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, exposurePbo);
+        }
+        glGetTexImage(GL_TEXTURE_2D, 6, GL_RGBA, GL_FLOAT, 0);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        exposurePboPending = true;
     }
 
     public void toggleCameraMode() {
@@ -6531,9 +6588,11 @@ public class Main {
     }
 
     /**
-     * Dynamic resolution: in Auto mode step the internal scale toward a frame-
-     * time target using an EMA of GPU frame cost, with hysteresis so the image
-     * doesn't pump while hovering near the threshold. Fixed modes bypass this.
+     * Dynamic resolution: in Auto mode (the default) step the internal scale
+     * toward the frame-time target using an EMA of frame cost, with hysteresis
+     * so the image doesn't pump while hovering near the threshold. Fixed modes
+     * bypass this. The EMA warms up fast after boot/teleports so the scale
+     * settles within ~a second instead of crawling down over several seconds.
      */
     private void updateRenderScale(float rawDtMs) {
         emaFrameMs = emaFrameMs * 0.9f + rawDtMs * 0.1f;
@@ -6542,22 +6601,62 @@ public class Main {
             return;
         }
         if (--drsCooldown > 0) return;
-        drsCooldown = 45;
         // Fullscreen UI (inventory/commands/TV) makes most pixels early-out, so
         // frame cost drops artificially — don't "recover" resolution mid-menu
         // only to drop again after closing (visible resolution pumping).
         boolean uiCoveredNow = ctx != null && (inventoryOpen || commandMode || ctx.tvWatching);
         if (uiCoveredNow) {
-            drsCooldown = 30;
+            drsCooldown = 20;
             return;
         }
         if (emaFrameMs > DRS_TARGET_MS * 1.2f && drsStep > 0) {
             drsStep--;
+            drsUpStreak = 0;
             setRenderScale(DRS_SCALE_STEPS[drsStep]);
+            logDrs(rawDtMs, "down");
+            // Re-measure quickly: a wrong guess should correct in ~0.25s,
+            // not hang around for a full second at a bad scale.
+            drsCooldown = emaFrameMs > DRS_TARGET_MS * 2f ? 8 : 15;
         } else if (emaFrameMs < DRS_TARGET_MS * 0.8f && drsStep < DRS_SCALE_STEPS.length - 1) {
+            // Upgrades demand TWO consecutive cheap windows: a single quiet gap
+            // between world-streaming hitches would otherwise raise the scale
+            // just to drop it again at the next hitch (resolution pumping).
+            if (++drsUpStreak < 2) {
+                drsCooldown = 15;
+                return;
+            }
+            drsUpStreak = 0;
             drsStep++;
             setRenderScale(DRS_SCALE_STEPS[drsStep]);
+            logDrs(rawDtMs, "up");
+            // And once raised, commit for ~0.75s before re-evaluating.
+            drsCooldown = 90;
+        } else {
+            // Settled inside the target band — keep a heartbeat line but slow
+            // it right down (~every 4 s at 120 fps) so game.log stays readable.
+            drsUpStreak = 0;
+            if (++drsHoldLogCounter >= 480) {
+                drsHoldLogCounter = 0;
+                logDrs(rawDtMs, "hold");
+            }
+            drsCooldown = 30;
         }
+    }
+
+    private int drsHoldLogCounter;
+
+    /** Consecutive cheap-frame windows seen while a scale upgrade is pending. */
+    private int drsUpStreak;
+
+    /**
+     * One status line per adaptation decision, so runs are diagnosable from
+     * game.log: "[DRS] scale=70% (900x506) ema=9.4ms fps=111 (down)".
+     */
+    private void logDrs(float dtMs, String dir) {
+        System.out.println(String.format(
+            "[DRS] scale=%.0f%% (%dx%d) ema=%.1fms fps=%d %s",
+            DRS_SCALE_STEPS[drsStep] * 100f, renderW, renderH, emaFrameMs,
+            lastMeasuredFps, dir));
     }
 
     /** Applies a scale fraction to the window size (16px floor per axis). */

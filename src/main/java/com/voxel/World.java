@@ -267,9 +267,19 @@ public class World {
     }
 
     /**
-     * Writes 6 directional distance bytes for a chunk slot. Each byte is the
-     * pre-encoded distance in voxels * 8 (e.g. a full chunk run of 16 voxels
-     * → 128). Padding bytes 6-7 are zeroed.
+     * Sentinel in a dir-SDF byte meaning "CPU certified: this whole section
+     * holds zero solid voxels". The shader uses it to leap rays across the
+     * section without any voxel probes. INVARIANT: the moment any solid is
+     * written into the slot (setVoxelInPool below), byte 0 is revoked back to
+     * 0, so the marker can never outlive real geometry. ChunkManager
+     * re-certifies after generation / occlusion bakes.
+     */
+    public static final byte DIR_SDF_AIR_CHUNK = (byte) 255;
+
+    /**
+     * Writes 6 directional distance bytes for a chunk slot. Each byte is either
+     * {@link #DIR_SDF_AIR_CHUNK} (whole-section all-air certificate) or a legacy
+     * per-direction clearance encoded as voxels*8. Padding bytes 6-7 are zeroed.
      */
     public void setDirSdfSlot(int slot, byte b0, byte b1, byte b2, byte b3, byte b4, byte b5) {
         int offset = slot * 8;
@@ -358,6 +368,17 @@ public class World {
         int bitIdx = lx | (ly << 4) | (lz << 8);
         int poolIdx = (slot << 12) | bitIdx;
         chunkPool[poolIdx] = packed;
+
+        // SDF air-certificate invariant: a solid write into a slot whose
+        // dir-SDF marker says "all-air" would make that certificate false.
+        // Revoke it immediately (the shader falls back to per-voxel DDA for
+        // un-certified sections); ChunkManager re-certifies after its next
+        // occlusion bake / generation pass. Byte 0 is the +X lane, the lane
+        // the shader samples as the section's air flag. One compare on the
+        // write path — negligible vs. the ray-tunneling hazard it removes.
+        if (type > 0 && dirSdfPool[slot * 8] == DIR_SDF_AIR_CHUNK) {
+            dirSdfPool[slot * 8] = 0;
+        }
 
         // Update Bitmask (kept for CPU-side queries; GPU uses bit 31)
         int wordIdx = (slot << 7) | (bitIdx >> 5);
