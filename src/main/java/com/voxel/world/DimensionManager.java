@@ -200,6 +200,12 @@ public class DimensionManager {
         return inst != null ? inst.world : null;
     }
 
+    /** Returns the World for an ALREADY-CREATED dimension, or null (no creation). */
+    public World peekWorld(DimensionType type) {
+        DimensionInstance inst = dimensions.get(type);
+        return inst != null ? inst.world : null;
+    }
+
     /**
      * Gets the ChunkManager for a specific dimension, creating it if needed.
      */

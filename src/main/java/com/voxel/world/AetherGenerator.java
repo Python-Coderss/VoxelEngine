@@ -33,8 +33,14 @@ public class AetherGenerator extends WorldGenerator {
     private final int goldenCloudId;
     private final int aetherFluidId;
 
+    /** Bronze/Silver/Gold dungeon placement (ported from the Aether mod). */
+    private final com.voxel.world.aether.AetherDungeonGenerator dungeons;
+
+    public com.voxel.world.aether.AetherDungeonGenerator getDungeonGenerator() { return dungeons; }
+
     public AetherGenerator(long seed, com.voxel.utils.BlockDataManager blockDataManager) {
         super(seed, blockDataManager);
+        this.dungeons = new com.voxel.world.aether.AetherDungeonGenerator(seed, blockDataManager);
         this.continentalNoise = new PerlinNoise(seed + 42);
         this.erosionNoise = new PerlinNoise(seed + 123);
         this.detailNoise = new PerlinNoise(seed + 456);
@@ -162,6 +168,9 @@ public class AetherGenerator extends WorldGenerator {
         int worldX = cx << 4;
         int worldZ = cz << 4;
         int treeCount = 0, shelfCount = 0, cloudCount = 0, lakeCount = 0;
+
+        // --- Dungeons (Bronze / Silver / Gold) ---
+        dungeons.decorate(cx, cy, cz, world);
 
         // --- Spawn Portals ---
         if (cx == 64 && cz == 64 && cy == 6) {
@@ -452,8 +461,9 @@ public class AetherGenerator extends WorldGenerator {
     private boolean hasSkyLight(World world, int wx, int wy, int wz) {
         // Simple sky light check - if block above is air and y is high enough, assume sky light
         if (wy >= 120) return true; // Above cloud layer = full sky light
-        // Check if there's a clear path to sky (simplified) — cubic chunks: no upper bound
-        for (int checkY = wy; checkY <= wy + 128; checkY++) {
+        // Check a bounded window above (terrain layers repeat every 128 blocks,
+        // so a short window gives the same answer without an O(depth) scan).
+        for (int checkY = wy; checkY <= wy + 48; checkY++) {
             int blockAtY = world.getVoxel(wx, checkY, wz);
             if (blockAtY != 0 && blockAtY != coldCloudId && blockAtY != blueCloudId && blockAtY != goldenCloudId) {
                 return false;

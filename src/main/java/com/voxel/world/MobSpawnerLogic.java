@@ -51,30 +51,49 @@ public final class MobSpawnerLogic {
         timers.clear();
     }
 
-    /** Register a spawner position so subsequent ticks will run its spawn timer. */
-    public static void track(int x, int y, int z) {
-        knownSpawners.add(key(x, y, z));
-    }
+    /** Hard cap on tracked spawners — prevents unbounded growth while streaming. */
+    private static final int MAX_TRACKED_SPAWNERS = 4096;
+    /** Only spawners within this range of the player are ticked/tracked live. */
+    private static final float ACTIVE_RADIUS = 64.0f;
 
     public static Set<Long> getKnownSpawners() { return knownSpawners; }
 
     /**
-     * Per-tick scan: for every tracked spawner, increment its timer; if
-     * the timer crosses SPAWN_INTERVAL_SECONDS and the local mob count is
-     * below MAX_NEARBY_MOBS, emit a fresh BlazeEntity.
+     * Per-tick scan: for every tracked spawner near the player, increment its
+     * timer; if the timer crosses SPAWN_INTERVAL_SECONDS and the local mob count
+     * is below MAX_NEARBY_MOBS, emit a fresh BlazeEntity. Spawners far from the
+     * player are skipped entirely so streaming thousands of chunks cannot pile
+     * up timers or entities (the old behavior caused runaway entity/memory
+     * growth, e.g. the Aether-entry OOM).
      */
     public static void tick(com.voxel.World world,
                             BlockDataManager bdm,
                             EntityManager entityManager,
                             Player nearestPlayer) {
-        for (Long spawnerKey : knownSpawners) {
+        if (knownSpawners.isEmpty()) return;
+
+        float px = Float.NaN, py = Float.NaN, pz = Float.NaN;
+        if (nearestPlayer != null) {
+            px = nearestPlayer.getPosition().x;
+            py = nearestPlayer.getPosition().y;
+            pz = nearestPlayer.getPosition().z;
+        }
+
+        Long[] keys = knownSpawners.toArray(new Long[0]);
+        for (Long spawnerKey : keys) {
             int[] xyz = decodeKey(spawnerKey);
             int sx = xyz[0], sy = xyz[1], sz = xyz[2];
+            // Skip spawners far from the player (no timers, no spawns).
+            if (!Float.isNaN(px)) {
+                float dx = sx - px, dy = sy - py, dz = sz - pz;
+                if (dx * dx + dy * dy + dz * dz > ACTIVE_RADIUS * ACTIVE_RADIUS) continue;
+            }
             // Confirm the spawner block is still there. Players can break
             // them, so we prune silently.
             int blockId = world.getVoxel(sx, sy, sz);
             if (bdm.getName(blockId) == null
                     || !bdm.getName(blockId).contains("spawner")) {
+                knownSpawners.remove(spawnerKey);
                 timers.remove(spawnerKey);
                 continue;
             }
@@ -85,11 +104,12 @@ public final class MobSpawnerLogic {
                 timers.put(spawnerKey, timer);
                 continue;
             }
-            // Try to spawn. We don't iterate the entity list here — at
-            // worst the spawner spawns extra blazes the player can ignore.
-            // Mojang caps nearby count at MAX_NEARBY_MOBS; we rely on the
-            // player's natural kill rate to keep things in check.
-            // Emit one blaze; reset the timer.
+            // Enforce MAX_NEARBY_MOBS by actually counting live blazes around
+            // the spawner — otherwise entities accumulate without limit.
+            if (countNearbyBlazes(entityManager, sx, sy, sz) >= MAX_NEARBY_MOBS) {
+                timers.put(spawnerKey, SPAWN_INTERVAL_SECONDS / 2f);
+                continue;
+            }
             timers.put(spawnerKey, 0.0f);
             BlazeEntity blaze = new BlazeEntity(
                     50_000 + entityManager.getEntityCount(),
@@ -99,6 +119,32 @@ public final class MobSpawnerLogic {
             blaze.setWorld(world);
             entityManager.addEntity(blaze);
         }
+    }
+
+    private static int countNearbyBlazes(EntityManager em, int x, int y, int z) {
+        if (em == null) return 0;
+        int count = 0;
+        for (int i = 0; i < em.getEntityCount(); i++) {
+            Entity e = em.getEntity(i);
+            if (!(e instanceof BlazeEntity)) continue;
+            float dx = e.getPosX() - x, dy = e.getPosY() - y, dz = e.getPosZ() - z;
+            if (dx * dx + dy * dy + dz * dz <= SPAWN_RADIUS * SPAWN_RADIUS) count++;
+        }
+        return count;
+    }
+
+    public static void track(int x, int y, int z) {
+        if (knownSpawners.size() >= MAX_TRACKED_SPAWNERS) {
+            // Evict an arbitrary old entry (deterministic iteration order of a
+            // HashSet is not guaranteed, but any eviction bounds memory).
+            java.util.Iterator<Long> it = knownSpawners.iterator();
+            if (it.hasNext()) {
+                Long evicted = it.next();
+                it.remove();
+                timers.remove(evicted);
+            }
+        }
+        knownSpawners.add(key(x, y, z));
     }
 
     private static long key(int x, int y, int z) {

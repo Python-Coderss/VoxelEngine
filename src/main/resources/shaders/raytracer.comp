@@ -1277,9 +1277,10 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                         if (chestFacing < 2 || chestFacing > 5) chestFacing = 2;
                         // The canonical model's front is +Z and its hinge is at
                         // z=0. Rotate that front onto the stored player-facing side.
-                        float chestYaw = chestFacing == 2 ? 3.14159265
-                                : (chestFacing == 4 ? -1.57079633
-                                : (chestFacing == 5 ? 1.57079633 : 0.0));
+                        float chestYaw = chestFacing == 2 ? 3.14159265   // north
+                                : (chestFacing == 4 ? 1.57079633         // west
+                                : (chestFacing == 5 ? -1.57079633        // east
+                                : 0.0));                                 // south
                         mat3 chestRotation = rotateY(chestYaw);
                         vec3 chestCenter = blockOrigin + 0.5;
                         vec3 chestRo = chestBlock
@@ -1302,18 +1303,35 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                         for (int k = 0; k < min(aabbCount, 6); k++) {
                             vec3 bMin = texelFetch(u_BlockAABBs, aabbOffset + k * 2).xyz + blockOrigin;
                             vec3 bMax = texelFetch(u_BlockAABBs, aabbOffset + k * 2 + 1).xyz + blockOrigin;
+                            // Apply MC scale(1,-1,-1) flip: model Y and Z axes
+                            // are inverted relative to the engine's world frame.
+                            // ModelChest coords (y up, -z front) -> engine coords.
+                            if (chestBlock) {
+                                float rMinY = bMin.y - blockOrigin.y;
+                                float rMaxY = bMax.y - blockOrigin.y;
+                                float rMinZ = bMin.z - blockOrigin.z;
+                                float rMaxZ = bMax.z - blockOrigin.z;
+                                bMin.y = blockOrigin.y + 1.0 - rMaxY;
+                                bMax.y = blockOrigin.y + 1.0 - rMinY;
+                                bMin.z = blockOrigin.z + 1.0 - rMaxZ;
+                                bMax.z = blockOrigin.z + 1.0 - rMinZ;
+                            }
                             float aTn, aTf;
                             bool hit;
                             vec3 roL = chestRo, rdL = chestRd;
+                            // MC chest hinge: rotationPoint at (1,7,15) in 0-16
+                            // model coords. After Y/Z flip: (9/16, 1/16) local.
+                            const float HINGE_Y = 9.0 / 16.0;
+                            const float HINGE_Z = 1.0 / 16.0;
                             if (animLid && (k == 1 || k == 2)) {
                                 // The closed lid and its front latch rotate together
                                 // upward around the shared rear hinge.
                                 // (-Z) around the rear/top edge at max-Z. World
                                 // geometry = R_x(+angle) * closed geometry, so
                                 // transform the ray by R_x(-angle).
-                                vec3 P = (k == 1)
-                                        ? vec3(blockOrigin.x, bMin.y, bMin.z)
-                                        : vec3(blockOrigin.x, blockOrigin.y + 10.0, blockOrigin.z + 1.0);
+                                vec3 P = vec3(blockOrigin.x,
+                                        blockOrigin.y + HINGE_Y,
+                                        blockOrigin.z + HINGE_Z);
                                 vec3 d0v = chestRo - P;
                                 roL = P + vec3(d0v.x,
                                                hca * d0v.y + hsa * d0v.z,
@@ -1330,12 +1348,6 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                             // another way for a hidden quad to win depth selection.
                             float candidateT = aTn > 0.0 ? aTn : aTf;
                             float partExitT = exitT;
-                            if (chestBlock && k == 2) {
-                                // The latch extends one pixel beyond the voxel's
-                                // front face; allow that exact extension without
-                                // allowing arbitrary neighboring geometry to win.
-                                partExitT += 0.0625 / max(abs(chestRd.z), 0.0001);
-                            }
                             if (hit && candidateT > 0.0 && candidateT < partExitT && candidateT < bestAT) {
                                 bestAT = candidateT;
                                 bestK = k;
@@ -1835,8 +1847,11 @@ void main() {
                 final += gtexel.rgb * gbeam * GA;
                 throu *= (1.0 - GA);
             }
-            ro = camPos + rd * (gFar + 0.004);
-            skip = true;
+            // Leave ro/skip untouched: the preview cell is EMPTY in the voxel
+            // pool, so the main DDA passes through it naturally and hits the
+            // real surface behind at its true distance. Advancing ro to the
+            // ghost's far face used to start the next trace INSIDE the block
+            // behind it (shared boundary), making that block render invisible.
         }
     }
 
@@ -1916,7 +1931,10 @@ void main() {
             bool isAnimated = (animPacked & 1) == 1;
             int frameCount = (animPacked >> 1) & 0x3F;
             if (isAnimated && frameCount > 1 && ((d3.w >> face) & 1) == 1) {
-                int frame = int(floor(u_Time * 20.0)) % frameCount;
+                // d3.w bits 24-31 carry the mcmeta frametime in ticks
+                // (1 = vanilla 20 fps strip playback).
+                int tickRate = max(1, (d3.w >> 24) & 0xFF);
+                int frame = int(floor(u_Time * (20.0 / float(tickRate)))) % frameCount;
                 tex = tex + frame;
             }
 
@@ -2072,8 +2090,11 @@ void main() {
                     // local element index so this works for blocks after earlier
                     // models in the packed AABB buffer.
                     if (aabbIdx - hinfo.x / 2 == 1) {
-                        vec3 lbMin = texelFetch(u_BlockAABBs, aabbIdx * 2).xyz;
-                        vec3 hingeP = vec3(gTraceBlockOrigin) + vec3(lbMin.x, lbMin.y, lbMin.z);
+                        // MC chest hinge: rotationPoint (1,7,15) in 0-16 model coords.
+                        // After scale(1,-1,-1) Y/Z flip: (9/16, 1/16) local.
+                        const float HINGE_Y = 9.0 / 16.0;
+                        const float HINGE_Z = 1.0 / 16.0;
+                        vec3 hingeP = vec3(gTraceBlockOrigin) + vec3(0.0, HINGE_Y, HINGE_Z);
                         vec3 cellC = vec3(gTraceBlockOrigin) + 0.5;
                         bool onAnim = abs(hp.x - cellC.x) < 1.0 && abs(hp.z - cellC.z) < 1.6
                                    && hp.y > float(u_HingePos.y) - 0.5 && hp.y < float(u_HingePos.y) + 2.5;
@@ -2153,8 +2174,11 @@ void main() {
             // Rotating kinetic parts (isRotating, d3.w bit 6) spin via smooth UV
             // rotation instead of discrete frame stepping, so skip their frame strip.
             if (gearShaft == 0 && ((d3.w >> 6) & 1) == 0 && isAnimated && frameCount > 1 && ((d3.w >> texFace) & 1) == 1) {
-                // Cycle through frames based on time (at ~20 fps)
-                int frame = int(floor(u_Time * 20.0)) % frameCount;
+                // Cycle through frames based on time. d3.w bits 24-31 carry the
+                // mcmeta frametime in ticks (1 = vanilla ~20 fps playback), so
+                // strips like the Aether portal ("frametime": 2) play at MC speed.
+                int tickRate = max(1, (d3.w >> 24) & 0xFF);
+                int frame = int(floor(u_Time * (20.0 / float(tickRate)))) % frameCount;
                 // Kinetic blocks (shafts/cogs/wheel) spin only when their network is
                 // active; a powered gearshift reverses the cycle. Non-kinetic animated
                 // textures (water, lava, portals) are unaffected.
@@ -2202,21 +2226,33 @@ void main() {
                     vec3 chestOrigin = vec3(gTraceBlockOrigin);
                     int chestFacing = int(facing);
                     if (chestFacing < 2 || chestFacing > 5) chestFacing = 2;
-                    float chestYaw = chestFacing == 3 ? 3.14159265
-                            : (chestFacing == 4 ? -1.57079633
-                            : (chestFacing == 5 ? 1.57079633 : 0.0));
+                    float chestYaw = chestFacing == 2 ? 3.14159265   // north
+                            : (chestFacing == 4 ? 1.57079633         // west
+                            : (chestFacing == 5 ? -1.57079633        // east
+                            : 0.0));                                 // south
                     mat3 chestRotation = rotateY(chestYaw);
                     vec3 chestCenter = chestOrigin + 0.5;
                     vec3 chestPoint = chestCenter + transpose(chestRotation) * (hp - chestCenter);
                     vec3 chestNormal = normalize(transpose(chestRotation) * n);
+                    // MC scale(1,-1,-1) flips model Y and Z: apply the same
+                    // flip to the de-rotated point so atlas lookup matches
+                    // the MC-authored texture regions.
+                    {
+                        vec3 localPt = chestPoint - chestOrigin;
+                        localPt.y = 1.0 - localPt.y;
+                        localPt.z = 1.0 - localPt.z;
+                        chestPoint = chestOrigin + localPt;
+                        chestNormal = normalize(vec3(chestNormal.x, -chestNormal.y, -chestNormal.z));
+                    }
                     bool selectedChest = u_HingeOn == 1
                             && all(equal(gTraceBlockOrigin, u_HingePos));
                     if ((chestElement == 1 || chestElement == 2) && selectedChest) {
                         float chestCos = cos(u_HingeAngle), chestSin = sin(u_HingeAngle);
                         // Convert the posed lid/latch point and normal back to the
-                        // closed canonical cuboid for atlas lookup. Both parts use
-                        // the same rear hinge at block-local (0, 10, 1).
-                        vec3 chestPivot = chestOrigin + vec3(0.0, 10.0, 1.0);
+                        // closed canonical cuboid for atlas lookup. MC chest lid
+                        // rotates around rotationPoint (1,7,15); after Y/Z flip
+                        // that maps to block-local (9/16, 1/16).
+                        vec3 chestPivot = chestOrigin + vec3(0.0, 9.0 / 16.0, 1.0 / 16.0);
                         vec3 chestDelta = chestPoint - chestPivot;
                         chestPoint = chestPivot + vec3(chestDelta.x,
                                 chestCos * chestDelta.y + chestSin * chestDelta.z,
@@ -2245,11 +2281,8 @@ void main() {
                         chestU = chestRel.z;
                         chestV = 1.0 - chestRel.y;
                     }
-                    // Rotate chest UVs 180 degrees in texture space. This only
-                    // changes atlas orientation; the lid hinge animation remains
-                    // driven by the same world-space angle and pivot.
-                    chestU = 1.0 - chestU;
-                    chestV = 1.0 - chestV;
+                    // MC scale(1,-1,-1) Y/Z flip already handled above;
+                    // UV orientation now matches the MC atlas directly.
                     // Vanilla ModelChest atlas layout, in pixels.
                     // Element 2 is the small front latch/grey tab at the
                     // upper-left of normal.png; body and lid use cuboid strips.

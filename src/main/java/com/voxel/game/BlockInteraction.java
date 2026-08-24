@@ -23,6 +23,9 @@ public class BlockInteraction {
         this.ctx = ctx;
     }
 
+    /** Minecraft creative: 5-tick (0.25s) delay between instant breaks. */
+    private float creativeHitDelay = 0.0f;
+
     /** Block ID constants */
     private static final int BLOCK_CRAFTING_TABLE = 115;
     private static final int BLOCK_FURNACE = 116;
@@ -194,9 +197,8 @@ public class BlockInteraction {
         // missing piece that lets bosses like the Ender Dragon / Wither /
         // Magma Cube actually take damage from a player swing.
         if (ctx.leftMousePressedThisFrame && ctx.entityManager != null) {
-            // 6.0f matches the reach used by the PAC hover affordance — if the
-            // reticle highlights an entity, a click must actually connect.
-            int[] entityHit = raycastEntity(6.0f);
+            // Minecraft melee attack reach: 3 blocks (EntityRenderer.getMouseOver).
+            int[] entityHit = raycastEntity(3.0f);
             if (entityHit != null) {
                 com.voxel.entity.Entity target = ctx.entityManager.getEntity(entityHit[0]);
                 if (target != null) {
@@ -216,6 +218,12 @@ public class BlockInteraction {
                     float swingDamage = 1.0f * damageMult;
                     // Generic EnemyEntity path: drain health + apply knockback.
                     if (target instanceof com.voxel.entity.EnemyEntity) {
+                        // Weapon-type hint for bosses (e.g. the Slider is pickaxe-only)
+                        ItemDefinitions.ItemDefinition heldDef = held != null
+                                ? ctx.itemDefinitions.getDefinition(held.itemId) : null;
+                        com.voxel.entity.EnemyEntity.lastHitWasPickaxe =
+                                heldDef != null
+                                && heldDef.toolType == ItemDefinitions.ToolType.PICKAXE;
                         com.voxel.entity.EnemyEntity enemy =
                                 (com.voxel.entity.EnemyEntity) target;
                         enemy.takeDamage(swingDamage,
@@ -240,7 +248,7 @@ public class BlockInteraction {
                 }
             }
         }
-        int[] hit = raycastBlock(6.0f);
+        int[] hit = raycastBlock(blockReachDistance());
         if (hit == null) { resetMining(); return; }
 
         int blockId = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
@@ -253,9 +261,13 @@ public class BlockInteraction {
         }
 
         if (ctx.gameMode == GameMode.CREATIVE) {
-            if (ctx.leftMousePressedThisFrame) {
-                ctx.leftMousePressedThisFrame = false; // consume the flag
+            // Minecraft creative: instant break, then a 5-tick (0.25s) delay
+            // before the next block while the button is held.
+            if (creativeHitDelay > 0.0f) {
+                creativeHitDelay -= dt;
+            } else {
                 breakBlock(hit[0], hit[1], hit[2], blockId, false);
+                creativeHitDelay = 0.25f;
             }
             return;
         }
@@ -263,34 +275,92 @@ public class BlockInteraction {
         if (hit[0] != ctx.breakTargetX || hit[1] != ctx.breakTargetY || hit[2] != ctx.breakTargetZ) {
             ctx.breakTargetX = hit[0]; ctx.breakTargetY = hit[1]; ctx.breakTargetZ = hit[2]; ctx.breakProgress = 0.0f;
         }
-        ctx.breakProgress += dt * getMiningSpeed(blockId);
-        if (ctx.breakProgress >= ctx.blockDataManager.getHardness(blockId)) {
+        // Minecraft survival: breakProgress accumulates the player-relative
+        // block strength each tick and breaks at 1.0 (PlayerControllerMP).
+        ctx.breakProgress += dt * getPlayerRelativeBlockStrength(blockId);
+        if (ctx.breakProgress >= 1.0f) {
             breakBlock(hit[0], hit[1], hit[2], blockId, true);
             resetMining();
         }
     }
 
-    private float getMiningSpeed(int blockId) {
-        String preferredTool = ctx.blockDataManager.getPreferredTool(blockId);
-        int requiredTier = ctx.blockDataManager.getMiningTier(blockId);
+    private static final float CREATIVE_REACH = 5.0f;   // PlayerControllerMP.getBlockReachDistance
+    private static final float SURVIVAL_REACH = 4.5f;
+
+    /** Minecraft block reach: 5 in creative, 4.5 in survival. */
+    public float blockReachDistance() {
+        return ctx.gameMode == GameMode.CREATIVE ? CREATIVE_REACH : SURVIVAL_REACH;
+    }
+
+    /** Held item definition, or null. */
+    private ItemDefinitions.ItemDefinition heldToolDef() {
         ItemDefinitions.ItemStack selected = ctx.playerInventory.getSelected();
-        ItemDefinitions.ItemDefinition selDef = selected != null ? ctx.itemDefinitions.getDefinition(selected.itemId) : null;
-        ItemDefinitions.ToolType activeTool = ItemDefinitions.ToolType.HAND;
-        float toolSpeed = 1.0f;
-        int toolTier = 0;
-        if (selDef != null && selDef.kind == ItemDefinitions.ItemKind.TOOL) {
-            activeTool = selDef.toolType;
-            toolSpeed = selDef.miningSpeed;
-            toolTier = selDef.tier;
+        return selected != null ? ctx.itemDefinitions.getDefinition(selected.itemId) : null;
+    }
+
+    /** Maps an engine ToolType onto Minecraft's tool-class string. */
+    private static String toolClass(ItemDefinitions.ToolType type) {
+        switch (type) {
+            case PICKAXE: return "pickaxe";
+            case SHOVEL:  return "shovel";
+            case AXE:     return "axe";
+            default:      return "hand";
         }
-        // Check tier requirement: if tool tier is insufficient, mining is very slow and no drop
-        if (requiredTier > toolTier) {
-            return 0.03f; // Extremely slow - can't effectively mine
+    }
+
+    /**
+     * Minecraft harvest check (ForgeHooks.canHarvestBlock): blocks that don't
+     * require a tool are always harvestable; otherwise the held tool must be
+     * of the block's preferred class AND meet its tier requirement.
+     */
+    public boolean canHarvestBlock(int blockId) {
+        int requiredTier = ctx.blockDataManager.getMiningTier(blockId);
+        if (requiredTier <= 0) return true;
+        ItemDefinitions.ItemDefinition def = heldToolDef();
+        if (def == null || def.kind != ItemDefinitions.ItemKind.TOOL) return false;
+        if (!toolClass(def.toolType).equals(ctx.blockDataManager.getPreferredTool(blockId))) return false;
+        return def.tier >= requiredTier;
+    }
+
+    /**
+     * Port of EntityPlayer.getDigSpeed + ForgeHooks.blockStrength: the fraction
+     * of the block broken per second. digSpeed / hardness / (canHarvest ? 30 :
+     * 100), with the vanilla x0.2 penalties for swinging mid-air and underwater.
+     */
+    private float getPlayerRelativeBlockStrength(int blockId) {
+        float hardness = ctx.blockDataManager.getHardness(blockId);
+        if (hardness <= 0) return 0.0f; // unbreakable (<0) or instant (handled below)
+
+        boolean harvest = canHarvestBlock(blockId);
+
+        float digSpeed = 1.0f;
+        ItemDefinitions.ItemDefinition def = heldToolDef();
+        if (def != null && def.kind == ItemDefinitions.ItemKind.TOOL
+                && toolClass(def.toolType).equals(ctx.blockDataManager.getPreferredTool(blockId))) {
+            // Vanilla ToolMaterial efficiencies: WOOD 2, STONE 4, IRON 6,
+            // DIAMOND 8, GOLD 12 (engine tiers 1..4 map to wood..diamond).
+            switch (Math.max(0, Math.min(4, def.tier))) {
+                case 1:  digSpeed = 2.0f;  break;
+                case 2:  digSpeed = 4.0f;  break;
+                case 3:  digSpeed = 6.0f;  break;
+                case 4:  digSpeed = 8.0f;  break;
+                default: digSpeed = 12.0f; break; // gold-tier items
+            }
         }
-        if ("pickaxe".equals(preferredTool)) return activeTool == ItemDefinitions.ToolType.PICKAXE ? toolSpeed : 0.55f;
-        if ("shovel".equals(preferredTool))  return activeTool == ItemDefinitions.ToolType.SHOVEL ? toolSpeed : 0.75f;
-        if ("axe".equals(preferredTool))     return activeTool == ItemDefinitions.ToolType.AXE ? toolSpeed : 0.85f;
-        return activeTool == ItemDefinitions.ToolType.HAND ? 1.2f : Math.max(1.0f, toolSpeed * 0.7f);
+
+        if (!ctx.player.isOnGround()) digSpeed /= 5.0f;
+        if (headSubmergedInWater()) digSpeed /= 5.0f;
+
+        return digSpeed / hardness / (harvest ? 30.0f : 100.0f) * 20.0f; // x20: MC ticks -> seconds
+    }
+
+    private boolean headSubmergedInWater() {
+        Vector3f eye = ctx.player.getPosition();
+        int bx = (int) Math.floor(eye.x);
+        int by = (int) Math.floor(eye.y + 1.6f); // PLAYER_EYE_HEIGHT
+        int bz = (int) Math.floor(eye.z);
+        int v = ctx.world.getVoxel(bx, by, bz);
+        return isWaterBlock(v);
     }
 
     public void breakBlock(int x, int y, int z, int blockId, boolean collectDrop) {
@@ -398,19 +468,10 @@ public class BlockInteraction {
         }
 
         if (collectDrop) {
-            // Tier check: if the player's tool tier is insufficient, no drop
-            int requiredTier = ctx.blockDataManager.getMiningTier(blockId);
-            ItemDefinitions.ItemStack selected = ctx.playerInventory.getSelected();
-            int toolTier = 0;
-            if (selected != null) {
-                ItemDefinitions.ItemDefinition selDef = ctx.itemDefinitions.getDefinition(selected.itemId);
-                if (selDef != null && selDef.kind == ItemDefinitions.ItemKind.TOOL) {
-                    toolTier = selDef.tier;
-                }
-            }
-            if (requiredTier > toolTier) {
+            // Minecraft harvest check: wrong tool class or insufficient tier = no drop
+            if (!canHarvestBlock(blockId)) {
                 ctx.setStatus("Need a better tool to mine this");
-                return; // No drop if tool tier is insufficient
+                return; // No drop if the block can't be harvested
             }
 
             String dropItem;
@@ -719,16 +780,9 @@ public class BlockInteraction {
     /** Raycast against entities. Returns {entityIndex, hitDistanceBits} or null. */
     public int[] raycastEntity(float maxDist) {
         if (ctx.entityManager == null) return null;
-        Vector3f dir;
-        Vector3f pos;
-        float[] cursorRay = ctx.cursorRayOverride;
-        if (cursorRay != null) {
-            pos = new Vector3f(cursorRay[0], cursorRay[1], cursorRay[2]);
-            dir = new Vector3f(cursorRay[3], cursorRay[4], cursorRay[5]);
-        } else {
-            dir = getLookDirection();
-            pos = getActiveCameraPosition();
-        }
+        // Same Minecraft center-pixel ray as blocks: eye position + look vector.
+        Vector3f dir = getLookDirection();
+        Vector3f pos = new Vector3f(ctx.player.getPosition()).add(0.0f, 1.6f, 0.0f);
         float closestT = maxDist;
         int closestIdx = -1;
 
@@ -939,11 +993,11 @@ public class BlockInteraction {
         // other interaction treats water/lava as transparent.
         ItemDefinitions.ItemStack preselected = ctx.playerInventory.getSelected();
         boolean scooping = preselected != null && "bucket".equals(preselected.itemId);
-        int[] hit = raycastBlock(6.0f, scooping);
+        int[] hit = raycastBlock(blockReachDistance(), scooping);
 
         // Check for entity interaction — if player looks at a villager (even through no block)
         if (!ctx.inventoryOpen && !ctx.commandMode && !ctx.tvCutsceneActive && !ctx.craftingCutsceneActive && !ctx.furnaceCutsceneActive) {
-            int[] entityHit = raycastEntity(6.0f);
+            int[] entityHit = raycastEntity(3.0f);
             if (entityHit != null) {
                 float entDist = Float.intBitsToFloat(entityHit[1]);
                 float blockDist = hit != null ? getActiveCameraPosition().distance(
@@ -986,6 +1040,10 @@ public class BlockInteraction {
      * Returns true when something consumed the click.
      */
     private boolean tryUseTarget(int[] hit, int hitBlock) {
+        // Minecraft rule: when sneaking, right-click PLACES instead of using
+        // the targeted interactive block (chests, furnaces, tables...).
+        boolean sneakPlace = ctx.player.isSneaking();
+
         // ── End Portal: insert eye of ender into portal frame ──
         if (com.voxel.world.EndPortalLogic.isFrameBlock(ctx.blockDataManager, hitBlock)
                 && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
@@ -1008,7 +1066,7 @@ public class BlockInteraction {
         // Catch the case where the player aims at a generic block (e.g. dirt)
         // while holding an eye of ender. We swallow the standard placement
         // path so the eye fires as a projectile instead.
-        if (!ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive
+        if (!sneakPlace && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive
                 && !ctx.furnaceCutsceneActive && !ctx.furnaceOpen && !ctx.chestOpen
                 && !ctx.craftingTableOpen) {
             ItemDefinitions.ItemStack heldStack = ctx.playerInventory.getSelected();
@@ -1019,6 +1077,10 @@ public class BlockInteraction {
                 return true;
             }
         }
+
+        // Sneaking bypasses all interactive-block "use" handlers below so the
+        // click falls through to placement (vanilla sneak+use behavior).
+        if (sneakPlace) return false;
 
         // Right-click on a command block opens the ancient-builder program editor.
         if (CommandBlockManager.isCommandBlock(hitBlock) && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
@@ -1394,8 +1456,12 @@ public class BlockInteraction {
 
         int px = hit[3], py = hit[4], pz = hit[5];
         int existing = ctx.world.getVoxel(px, py, pz);
-        if (existing != 0) return;
+        // Minecraft: placement replaces "replaceable" blocks (fluids) but
+        // nothing else (ItemBlock.tryPlace / Block.isReplaceable).
+        boolean replaceable = existing == 0 || isWaterBlock(existing) || existing == BLOCK_LAVA;
+        if (!replaceable) return;
         if (intersectsPlayer(px, py, pz)) return;
+        if (intersectsEntity(px, py, pz)) return;
         int placeBlockId = def.blockId;
         // Gear axle facing (bits 16-18): the direction the axle points. Create-style:
         // a cog/appliance clicked onto an existing shaft or gear inherits that
@@ -1520,12 +1586,12 @@ public class BlockInteraction {
                 || ctx.tvCutsceneActive || ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive) return false;
 
         // Friendly entity under the cursor? Interact instead of swinging.
-        int[] ent = raycastEntity(6.0f);
+        int[] ent = raycastEntity(3.0f);
         if (ent != null && ctx.entityManager != null) {
             com.voxel.entity.Entity e = ctx.entityManager.getEntity(ent[0]);
             if (e instanceof com.voxel.entity.VillagerEntity || e instanceof com.voxel.entity.MinecartEntity) {
                 float entDist = Float.intBitsToFloat(ent[1]);
-                int[] hit = raycastBlock(6.0f);
+                int[] hit = raycastBlock(blockReachDistance());
                 float blockDist = hit != null ? getActiveCameraPosition().distance(
                     new Vector3f(hit[0] + 0.5f, hit[1] + 0.5f, hit[2] + 0.5f)) : Float.MAX_VALUE;
                 if (entDist < blockDist) {
@@ -1536,7 +1602,7 @@ public class BlockInteraction {
         }
 
         // Interactive block under the cursor? Run its use action.
-        int[] hit = raycastBlock(6.0f);
+        int[] hit = raycastBlock(blockReachDistance());
         if (hit == null) return false;
         int hitBlock = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
         return tryUseTarget(hit, hitBlock);
@@ -1556,11 +1622,16 @@ public class BlockInteraction {
         if (selected == null) return;
         ItemDefinitions.ItemDefinition def = ctx.itemDefinitions.getDefinition(selected.itemId);
         if (def == null || def.kind != ItemDefinitions.ItemKind.BLOCK) return;
-        int[] hit = raycastBlock(6.0f);
+        int[] hit = raycastBlock(blockReachDistance());
         if (hit == null) return;
         int px = hit[3], py = hit[4], pz = hit[5];
-        if (ctx.world.getVoxel(px, py, pz) != 0) return;
+        // Mirror attemptPlaceBlock's placement rules exactly so the preview
+        // only shows cells a click would actually fill.
+        int existing = ctx.world.getVoxel(px, py, pz);
+        boolean replaceable = existing == 0 || isWaterBlock(existing) || existing == BLOCK_LAVA;
+        if (!replaceable) return;
         if (intersectsPlayer(px, py, pz)) return;
+        if (intersectsEntity(px, py, pz)) return;
         int placeBlockId = def.blockId;
         // Orientable logs + shafts resolve their axis variant from the clicked face
         // (same rule as attemptPlaceBlock; rails/pistons just preview their base id).
@@ -1665,30 +1736,27 @@ public class BlockInteraction {
     }
 
     /**
-     * Exact DDA (Amanatides & Woo) voxel traversal from the camera/cursor ray.
-     * Unlike the old fixed-step march this can never skip through a block
-     * corner or clip a glancing hit, and it touches one voxel per cell crossed
-     * instead of 20 samples per block. Fluids are transparent by default so
+     * Exact DDA (Amanatides & Woo) voxel traversal.
+     * The interaction ray is Minecraft's: it starts at the PLAYER'S EYE and
+     * follows the yaw/pitch look vector — i.e. the center pixel of a
+     * first-person camera. It never originates from the third-person camera
+     * or any virtual-cursor ray (EntityRenderer.getMouseOver →
+     * PlayerControllerMP.rayTraceBlocks). Fluids are transparent by default so
      * blocks behind water/lava stay clickable; pass {@code includeFluids=true}
      * for bucket scooping.
      * Returns {x,y,z, adjX,adjY,adjZ} or null when nothing is hit in range.
      */
     public int[] raycastBlock(float maxDist, boolean includeFluids) {
         if (ctx.world == null) return null;
-        Vector3f dir;
-        Vector3f pos;
-        float[] cursorRay = ctx.cursorRayOverride;
-        if (cursorRay != null) {
-            pos = new Vector3f(cursorRay[0], cursorRay[1], cursorRay[2]);
-            dir = new Vector3f(cursorRay[3], cursorRay[4], cursorRay[5]);
-        } else {
-            dir = getLookDirection();
-            pos = getActiveCameraPosition();
-        }
+        Vector3f pos = new Vector3f(ctx.player.getPosition()).add(0.0f, 1.6f, 0.0f); // PLAYER_EYE_HEIGHT
+        Vector3f dir = getLookDirection();
 
         int x = (int) Math.floor(pos.x);
         int y = (int) Math.floor(pos.y);
         int z = (int) Math.floor(pos.z);
+        // After each step, (lastX,lastY,lastZ) is exactly hit + face-normal of
+        // the crossed boundary — Minecraft's BlockHitResult.direction; the
+        // place position is one step out along that normal.
         int lastX = x, lastY = y, lastZ = z;
 
         int stepX = dir.x > 0 ? 1 : -1;
@@ -1706,18 +1774,22 @@ public class BlockInteraction {
                 : ((dir.z > 0 ? (z + 1 - pos.z) : (pos.z - z)) / Math.abs(dir.z));
 
         while (true) {
-            // Advance to whichever boundary is nearest (the exact DDA order).
+            // Advance across the nearest cell boundary; whichever axis moves
+            // defines the entry-face normal of the next cell.
             if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
                 if (tMaxX > maxDist) return null;
                 lastX = x; x += stepX;
+                lastY = y; lastZ = z;
                 tMaxX += tDeltaX;
             } else if (tMaxY <= tMaxZ) {
                 if (tMaxY > maxDist) return null;
                 lastY = y; y += stepY;
+                lastX = x; lastZ = z;
                 tMaxY += tDeltaY;
             } else {
                 if (tMaxZ > maxDist) return null;
                 lastZ = z; z += stepZ;
+                lastX = x; lastY = y;
                 tMaxZ += tDeltaZ;
             }
             int blockId = ctx.world.getVoxel(x, y, z);
@@ -1773,6 +1845,31 @@ public class BlockInteraction {
         float pMinY = pos.y, pMaxY = pos.y + PLAYER_HEIGHT;
         float pMinZ = pos.z - PLAYER_HALF_WIDTH, pMaxZ = pos.z + PLAYER_HALF_WIDTH;
         return pMaxX > x && pMinX < x + 1 && pMaxY > y && pMinY < y + 1 && pMaxZ > z && pMinZ < z + 1;
+    }
+
+    /**
+     * Minecraft placement rule (World.checkNoEntityCollision in ItemBlock):
+     * a solid block may not be placed inside any entity's bounding box.
+     * Entity boxes are approximated from pickWidth/pickHeight around position.
+     */
+    private boolean intersectsEntity(int x, int y, int z) {
+        if (ctx.entityManager == null) return false;
+        for (int i = 0; i < ctx.entityManager.getEntityCount(); i++) {
+            com.voxel.entity.Entity e = ctx.entityManager.getEntity(i);
+            if (e == null || e.dimension != ctx.activeDimension) continue;
+            if (e instanceof com.voxel.entity.EnemyEntity && ((com.voxel.entity.EnemyEntity) e).isDead()) continue;
+            // Cap the collision box: pickWidth is tuned for click convenience on
+            // big mobs and would otherwise block placement in a huge radius.
+            float hw = Math.min(0.7f, Math.max(0.3f, e.getPickWidth() * 0.5f));
+            float h = Math.max(0.3f, e.getPickHeight());
+            Vector3f p = e.getPosition();
+            if (p.x + hw > x && p.x - hw < x + 1
+                    && p.y + h > y && p.y < y + 1
+                    && p.z + hw > z && p.z - hw < z + 1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

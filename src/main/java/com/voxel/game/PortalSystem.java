@@ -8,8 +8,14 @@ import com.voxel.world.DimensionType;
  * Portal detection, activation (lighting), and teleportation between dimensions.
  */
 public class PortalSystem {
-    private static final int PORTAL_NETHER = 19;
-    private static final int PORTAL_AETHER = 106;
+    // Portals come in two orientations, matching the vanilla blockstate
+    // convention (axis=x walls show their north/south faces, axis=z walls
+    // show east/west): a frame spanning X takes the *_ns block, a frame
+    // spanning Z takes the *_ew block.
+    private static final int PORTAL_NETHER = 19;      // nether portal, ns faces
+    private static final int PORTAL_NETHER_EW = 128;  // nether portal, ew faces
+    private static final int PORTAL_AETHER = 106;     // aether portal, ns faces
+    private static final int PORTAL_AETHER_EW = 127;  // aether portal, ew faces
 
     private final GameContext ctx;
     private final BlockInteraction blockInteraction;
@@ -19,14 +25,22 @@ public class PortalSystem {
         this.blockInteraction = blockInteraction;
     }
 
+    private static boolean isNetherPortal(int id) {
+        return id == PORTAL_NETHER || id == PORTAL_NETHER_EW;
+    }
+
+    private static boolean isAetherPortal(int id) {
+        return id == PORTAL_AETHER || id == PORTAL_AETHER_EW;
+    }
+
     public void checkTeleport() {
         if (ctx.player.isDead()) return;
         Vector3f pos = ctx.player.getPosition();
         int px = (int) Math.floor(pos.x), py = (int) Math.floor(pos.y), pz = (int) Math.floor(pos.z);
         int vFeet = ctx.world.getVoxel(px, py, pz);
         int vBody = ctx.world.getVoxel(px, py + 1, pz);
-        int voxel = (vFeet == PORTAL_NETHER || vFeet == PORTAL_AETHER) ? vFeet :
-                    (vBody == PORTAL_NETHER || vBody == PORTAL_AETHER) ? vBody : 0;
+        int voxel = isNetherPortal(vFeet) || isAetherPortal(vFeet) ? vFeet :
+                    isNetherPortal(vBody) || isAetherPortal(vBody) ? vBody : 0;
         if (voxel == 0) return;
 
         double now = System.currentTimeMillis() / 1000.0;
@@ -41,7 +55,7 @@ public class PortalSystem {
             else if (px < 0) target = DimensionType.AETHER;
             else if (px < 14) target = DimensionType.END;
             else target = DimensionType.OVERWORLD;
-        } else if (voxel == PORTAL_NETHER) {
+        } else if (isNetherPortal(voxel)) {
             target = ctx.activeDimension == DimensionType.NETHER ? DimensionType.OVERWORLD : DimensionType.NETHER;
         } else {
             target = ctx.activeDimension == DimensionType.AETHER ? DimensionType.OVERWORLD : DimensionType.AETHER;
@@ -56,7 +70,7 @@ public class PortalSystem {
 
     public void attemptActivate() {
         if (ctx.player.isDead()) return;
-        int[] hit = blockInteraction.raycastBlock(6.0f);
+        int[] hit = blockInteraction.raycastBlock(blockInteraction.blockReachDistance());
         if (hit == null) return;
 
         int hitX = hit[0], hitY = hit[1], hitZ = hit[2];
@@ -66,29 +80,34 @@ public class PortalSystem {
         if (selected == null) { ctx.setStatus("Select flint & steel, water bucket, or eye of ender"); return; }
 
         String itemId = selected.itemId;
-        int frameBlockId, portalBlockId;
+        int frameBlockId, portalNsId, portalEwId;
         String activationMsg;
 
         if (itemId.equals("flint_and_steel")) {
-            frameBlockId = 16; portalBlockId = PORTAL_NETHER; activationMsg = "Nether Portal";
+            frameBlockId = 16; portalNsId = PORTAL_NETHER; portalEwId = PORTAL_NETHER_EW;
+            activationMsg = "Nether Portal";
         } else if (itemId.equals("water_bucket")) {
-            frameBlockId = 17; portalBlockId = PORTAL_AETHER; activationMsg = "Aether Portal";
+            frameBlockId = 17; portalNsId = PORTAL_AETHER; portalEwId = PORTAL_AETHER_EW;
+            activationMsg = "Aether Portal";
         } else if (itemId.equals("eye_of_ender")) {
-            frameBlockId = 18; portalBlockId = PORTAL_NETHER; activationMsg = "End Portal";
+            frameBlockId = 18; portalNsId = PORTAL_NETHER; portalEwId = PORTAL_NETHER_EW;
+            activationMsg = "End Portal";
         } else {
             ctx.setStatus("Shift+right-click with flint & steel, water bucket, or eye of ender");
             return;
         }
 
         if (hitBlock != frameBlockId) return;
-        if (tryLightPortal(hitX, hitY, hitZ, frameBlockId, portalBlockId)) {
+        if (tryLightPortal(hitX, hitY, hitZ, frameBlockId, portalNsId, portalEwId)) {
             ctx.setStatus("Lit " + activationMsg);
         }
     }
 
-    private boolean tryLightPortal(int hx, int hy, int hz, int frameId, int portalId) {
-        return tryOrientation(hx, hy, hz, 1, 0, frameId, portalId) ||
-               tryOrientation(hx, hy, hz, 0, 1, frameId, portalId);
+    private boolean tryLightPortal(int hx, int hy, int hz, int frameId, int nsId, int ewId) {
+        // A frame spanning X shows its opening to north/south -> *_ns block;
+        // a frame spanning Z opens east/west -> *_ew block.
+        return tryOrientation(hx, hy, hz, 1, 0, frameId, nsId) ||
+               tryOrientation(hx, hy, hz, 0, 1, frameId, ewId);
     }
 
     private boolean tryOrientation(int hx, int hy, int hz, int dx, int dz, int frameId, int portalId) {

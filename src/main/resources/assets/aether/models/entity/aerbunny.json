@@ -1,0 +1,16 @@
+{
+  "parts": [
+    { "name": "head", "from": [-2.0, 6.0, 2.0], "size": [4.0, 4.0, 6.0], "absolute_offset": [0.0, 9.0, 4.0], "texture": "aerbunny/aerbunny", "uv": [0, 0], "uv_size": [4, 4, 6], "texture_mapping": "cuboid_atlas" },
+    { "name": "right_ear", "from": [1.0, 10.0, 5.0], "size": [1.0, 4.0, 2.0], "absolute_offset": [0.0, 9.0, 4.0], "texture": "aerbunny/aerbunny", "uv": [14, 0], "uv_size": [1, 4, 2], "texture_mapping": "cuboid_atlas" },
+    { "name": "left_ear", "from": [-2.0, 10.0, 5.0], "size": [1.0, 4.0, 2.0], "absolute_offset": [0.0, 9.0, 4.0], "texture": "aerbunny/aerbunny", "uv": [14, 0], "uv_size": [1, 4, 2], "texture_mapping": "cuboid_atlas" },
+    { "name": "right_whiskers", "from": [2.0, 6.0, 5.0], "size": [2.0, 3.0, 2.0], "absolute_offset": [0.0, 9.0, 4.0], "texture": "aerbunny/aerbunny", "uv": [20, 0], "uv_size": [2, 3, 2], "texture_mapping": "cuboid_atlas" },
+    { "name": "left_whiskers", "from": [-4.0, 6.0, 5.0], "size": [2.0, 3.0, 2.0], "absolute_offset": [0.0, 9.0, 4.0], "texture": "aerbunny/aerbunny", "uv": [20, 0], "uv_size": [2, 3, 2], "texture_mapping": "cuboid_atlas" },
+    { "name": "body", "from": [-3.0, 4.0, -3.0], "size": [6.0, 8.0, 6.0], "rotation": [90.0, 0.0, 0.0], "absolute_offset": [0.0, 8.0, 0.0], "texture": "aerbunny/aerbunny", "uv": [0, 10], "uv_size": [6, 8, 6], "texture_mapping": "cuboid_atlas" },
+    { "name": "puff_tail", "from": [-3.5, 20.5, -3.5], "size": [7.0, 7.0, 7.0], "rotation": [90.0, 0.0, 0.0], "absolute_offset": [0.0, 24.0, 0.0], "texture": "aerbunny/aerbunny", "uv": [29, 0], "uv_size": [7, 7, 7], "texture_mapping": "cuboid_atlas" },
+    { "name": "tail", "from": [-2.0, 6.0, -7.0], "size": [4.0, 4.0, 3.0], "absolute_offset": [0.0, 8.0, 0.0], "texture": "aerbunny/aerbunny", "uv": [0, 24], "uv_size": [4, 3, 4], "texture_mapping": "cuboid_atlas" },
+    { "name": "right_front_leg", "from": [1.0, 4.0, 1.0], "size": [2.0, 2.0, 2.0], "absolute_offset": [0.0, 8.0, 0.0], "texture": "aerbunny/aerbunny", "uv": [24, 16], "uv_size": [2, 2, 2], "texture_mapping": "cuboid_atlas" },
+    { "name": "left_front_leg", "from": [-3.0, 4.0, 1.0], "size": [2.0, 2.0, 2.0], "absolute_offset": [0.0, 8.0, 0.0], "texture": "aerbunny/aerbunny", "uv": [24, 16], "uv_size": [2, 2, 2], "texture_mapping": "cuboid_atlas" },
+    { "name": "right_back_leg", "from": [1.0, 1.0, -6.0], "size": [2.0, 4.0, 2.0], "absolute_offset": [0.0, 8.0, 0.0], "texture": "aerbunny/aerbunny", "uv": [16, 24], "uv_size": [2, 2, 4], "texture_mapping": "cuboid_atlas" },
+    { "name": "left_back_leg", "from": [-3.0, 1.0, -6.0], "size": [2.0, 4.0, 2.0], "absolute_offset": [0.0, 8.0, 0.0], "texture": "aerbunny/aerbunny", "uv": [16, 24], "uv_size": [2, 2, 4], "texture_mapping": "cuboid_atlas" }
+  ]
+}

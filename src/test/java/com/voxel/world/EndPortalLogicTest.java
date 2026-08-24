@@ -120,7 +120,7 @@ public class EndPortalLogicTest {
             flags.put(key(minX + dx, y + 4, minZ), FILLED_BIT);
         }
         assertFalse("portal should not open with only 8 frames",
-                EndPortalLogic.tryFillPortal(world, bdm, minX, y, minZ));
+                EndPortalLogic.tryFillPortal(null, world, bdm, minX, y, minZ));
         // Now fill the side columns: portal should open and the 3×3 interior set.
         for (int dy = 1; dy < 3; dy++) {
             blockIds.put(key(minX, y + dy, minZ), 100);
@@ -128,7 +128,7 @@ public class EndPortalLogicTest {
             blockIds.put(key(minX + 3, y + dy, minZ), 100);
             flags.put(key(minX + 3, y + dy, minZ), FILLED_BIT);
         }
-        assertTrue(EndPortalLogic.tryFillPortal(world, bdm, minX, y, minZ));
+        assertTrue(EndPortalLogic.tryFillPortal(null, world, bdm, minX, y, minZ));
         // The 3×3 mesh at (x+1..x+2, y+1..y+3, z=minZ) must now be end_portal.
         for (int dx = 1; dx <= 2; dx++) {
             for (int dy = 1; dy <= 3; dy++) {

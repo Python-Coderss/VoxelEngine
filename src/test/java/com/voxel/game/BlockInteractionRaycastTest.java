@@ -50,12 +50,16 @@ public class BlockInteractionRaycastTest {
         }
     }
 
-    /** Builds a BlockInteraction bound to a stub world + a cursor ray. */
+    /** Builds a BlockInteraction bound to a stub world + a player whose eye
+     *  sits at (ox,oy,oz) looking along (dx,dy,dz) via yaw/pitch (center pixel). */
     private static BlockInteraction harness(float ox, float oy, float oz,
                                              float dx, float dy, float dz) {
         GameContext ctx = new GameContext();
         ctx.world = new StubWorld();
-        ctx.cursorRayOverride = new float[]{ox, oy, oz, dx, dy, dz};
+        // raycastBlock starts at the player's eye (+1.6), so compensate.
+        ctx.player = new com.voxel.Player(ox, oy - 1.6f, oz);
+        ctx.pitch = (float) Math.toDegrees(Math.asin(dy));
+        ctx.yaw = (float) Math.toDegrees(Math.atan2(dz, dx));
         return new BlockInteraction(ctx);
     }
 
@@ -119,7 +123,9 @@ public class BlockInteractionRaycastTest {
                 return (x == 9 && y == 0 && z == 0) ? LAVA : AIR;
             }
         };
-        ctx.cursorRayOverride = new float[]{5.5f, 0.5f, 0.5f, 1f, 0f, 0f};
+        ctx.player = new com.voxel.Player(5.5f, 0.5f - 1.6f, 0.5f);
+        ctx.pitch = 0f;
+        ctx.yaw = 0f; // +X look
         BlockInteraction bi = new BlockInteraction(ctx);
         int[] hit = bi.raycastBlock(20.0f, true);
         assertNotNull(hit);

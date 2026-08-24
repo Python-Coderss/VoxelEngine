@@ -189,6 +189,13 @@ public class CombatSystem {
                 toEnemy.normalize();
                 float dot = toEnemy.dot(pDir);
                 if (dot > minDot) {
+                    // Weapon-type hint for bosses (e.g. the Slider is pickaxe-only)
+                    com.voxel.game.ItemDefinitions.ItemStack sel = main.playerInventory != null
+                            ? main.playerInventory.getSelected() : null;
+                    EnemyEntity.lastHitWasPickaxe = sel != null
+                            && main.itemDefinitions.getDefinition(sel.itemId) != null
+                            && main.itemDefinitions.getDefinition(sel.itemId).toolType
+                               == com.voxel.game.ItemDefinitions.ToolType.PICKAXE;
                     Vector3f knockback = new Vector3f(toEnemy).mul(0.8f + damage * 0.05f);
                     enemy.takeDamage(damage, knockback);
                     main.cameraShake = 0.8f + damage * 0.08f;

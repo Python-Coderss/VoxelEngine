@@ -1,0 +1,15 @@
+{
+  "parts": [
+    { "name": "head", "from": [-4.0, 16.0, 8.0], "size": [8.0, 8.0, 6.0], "absolute_offset": [0.0, 20.0, 8.0], "texture": "flying_cow/flying_cow", "texture_mapping": "cuboid_atlas" },
+    { "name": "left_horn", "from": [4.0, 22.0, 11.0], "size": [1.0, 3.0, 1.0], "absolute_offset": [0.0, 20.0, 8.0], "texture": "flying_cow/flying_cow", "texture_mapping": "cuboid_atlas" },
+    { "name": "right_horn", "from": [-5.0, 22.0, 11.0], "size": [1.0, 3.0, 1.0], "absolute_offset": [0.0, 20.0, 8.0], "texture": "flying_cow/flying_cow", "texture_mapping": "cuboid_atlas" },
+    { "name": "body", "from": [-6.0, 11.0, -5.0], "size": [12.0, 18.0, 10.0], "rotation": [90.0, 0.0, 0.0], "absolute_offset": [0.0, 19.0, -2.0], "texture": "flying_cow/flying_cow", "texture_mapping": "cuboid_atlas" },
+    { "name": "udder", "from": [-2.0, 11.0, -10.0], "size": [4.0, 1.0, 6.0], "absolute_offset": [0.0, 19.0, -2.0], "texture": "flying_cow/flying_cow", "texture_mapping": "cuboid_atlas" },
+    { "name": "leg_1", "from": [2.0, 0.0, -9.0], "size": [4.0, 12.0, 4.0], "absolute_offset": [4.0, 12.0, -7.0], "texture": "flying_cow/flying_cow", "texture_mapping": "cuboid_atlas" },
+    { "name": "leg_2", "from": [-6.0, 0.0, -9.0], "size": [4.0, 12.0, 4.0], "absolute_offset": [-4.0, 12.0, -7.0], "texture": "flying_cow/flying_cow", "texture_mapping": "cuboid_atlas" },
+    { "name": "leg_3", "from": [2.0, 0.0, 4.0], "size": [4.0, 12.0, 4.0], "absolute_offset": [4.0, 12.0, 6.0], "texture": "flying_cow/flying_cow", "texture_mapping": "cuboid_atlas" },
+    { "name": "leg_4", "from": [-6.0, 0.0, 4.0], "size": [4.0, 12.0, 4.0], "absolute_offset": [-4.0, 12.0, 6.0], "texture": "flying_cow/flying_cow", "texture_mapping": "cuboid_atlas" },
+    { "name": "left_wing", "from": [3.0, 22.0, -4.0], "size": [2.0, 16.0, 8.0], "absolute_offset": [4.0, 22.0, 4.0], "texture": "flying_cow/flying_cow_wings", "uv": [20, 0], "uv_size": [2, 16, 8], "texture_mapping": "cuboid_atlas" },
+    { "name": "right_wing", "from": [-5.0, 22.0, -4.0], "size": [2.0, 16.0, 8.0], "absolute_offset": [-4.0, 22.0, 4.0], "texture": "flying_cow/flying_cow_wings", "uv": [0, 0], "uv_size": [2, 16, 8], "texture_mapping": "cuboid_atlas" }
+  ]
+}

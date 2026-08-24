@@ -1,0 +1,6 @@
+{
+  "parts": [
+    { "name": "slider", "from": [-16.0, 0.0, -16.0], "size": [32.0, 32.0, 32.0], "texture": "slider/slider_awake", "uv": [0, 0], "uv_size": [32.0, 32.0, 32.0], "texture_mapping": "cuboid_atlas" },
+    { "name": "face", "from": [-16.0, 8.0, 16.0], "size": [32.0, 16.0, 1.0], "absolute_offset": [0.0, 24.0, 0.0], "emissive": true, "texture": "slider/slider_awake_critical", "uv": [32, 16], "uv_size": [32, 16, 1], "texture_mapping": "planar" }
+  ]
+}
