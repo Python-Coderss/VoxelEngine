@@ -71,6 +71,23 @@ public class LightEngine {
     public static final int MAX_LIGHT = 15;
 
     /**
+     * Grid seed level for an emissive block.
+     *
+     * The emissive byte is a brightness FRACTION (it also drives the surface
+     * self-glow as byte/255), so the light-grid level is that fraction of
+     * MAX_LIGHT. This keeps the grid consistent with the registrations:
+     * glowstone 255 → 15, torch 238 → 14, lit furnace 220 → 13, portals
+     * 180 → 11, faintly glowing ores → 1-2, instead of the old
+     * min(byte, 15) rule that maxed out every emitter at level 15 and made
+     * torch walls read brighter than the sun.
+     */
+    public static int seedLevel(int emissive) {
+        if (emissive <= 0) return 0;
+        int level = (int) Math.round(emissive * (MAX_LIGHT / 255.0f));
+        return Math.max(0, Math.min(MAX_LIGHT, level));
+    }
+
+    /**
      * Gamma used to decode the normalized block-light level before it enters
      * the linear scene-lighting calculations. The raytracer mirrors this value
      * in its GLSL helper; output encoding is performed separately with sRGB.
@@ -109,13 +126,15 @@ public class LightEngine {
      */
     public static final int LIGHT_TINT_HEADROOM = 4;
 
-    /**
-     * Vertical run of clear (air / non-full) blocks that counts as direct sun.
-     * Any contiguous run of at least this many transparent voxels relights to
-     * full sky light — even when a block covers the top of the run, so shafts
-     * and 8-tall rooms under thin roofs still read as sunlit.
-     */
-    public static final int SUN_CLEAR_RUN = 8;
+    /** Horizontal light level cost of one leaf/foliage block (~20% of 15). */
+    private static final int FOLIAGE_OPACITY = 3;
+    /** Foliage transmits 80% of the sunlight per block vertically (×4/5). */
+    private static final float FOLIAGE_TRANSMIT = 0.8f;
+    /** Descent distance between two horizontal sunlight branches. */
+    private static final int BRANCH_EVERY = 4;
+
+    /** Branch nodes queued during the vertical sweep, drained by the horizontal spread. */
+    private final LongQueue skyBranchQueue = new LongQueue(4096);
 
     /** Height limit for sky light computation (now dynamic via buffer size). */
     public static final int WORLD_HEIGHT = 2048;
@@ -151,23 +170,22 @@ public class LightEngine {
         int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
         int bufMaxYRel = oy + bufSize;
 
+        skyBranchQueue.clear();
         int changedVoxels = 0;
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
                 int wx = worldBaseX + lx;
                 int wz = worldBaseZ + lz;
 
-                // Propagate sky light downward from world ceiling.
-                // Air above the highest block keeps full sky=15. Any
-                // SUN_CLEAR_RUN block vertical line of air or non-full blocks
-                // (water, slabs, leaves, glass…) counts as THE SUN: once a
-                // contiguous clear run reaches SUN_CLEAR_RUN, the light resets
-                // to full — sunlight flows down shafts, through water columns,
-                // and into rooms under thin roofs instead of dimming through
-                // them. The run keeps counting below a full block, so 8 clear
-                // voxels under a cover still count as the sun.
+                // Sunlight model: straight down from the world ceiling,
+                // opaque blocks subtract their opacity, foliage (leaves) is
+                // translucent with a 20% penalty per block. No "clear-run
+                // relight" — a covered shaft dims honestly with depth.
+                // Every BRANCH_EVERY blocks of descent the light branches
+                // sideways once (see propagateSkyLightHorizontal), so openings
+                // form a soft cone instead of a hard 1-wide beam.
                 int skyLight = MAX_LIGHT;
-                int clearRun = SUN_CLEAR_RUN; // world ceiling counts as a full clear run
+                int sinceBranch = 0;
                 for (int y = bufMaxYRel - 1; y >= 0; y--) {
                     int slot = getSlotForWorldPos(wx, y, wz, ox, oy, oz);
                     if (slot == World.EMPTY) continue;
@@ -183,26 +201,27 @@ public class LightEngine {
                     }
 
                     if (blockId > 0 && blockDataManager.isFullBlockFast(blockId)) {
-                        // Opaque solid: blocks light and restarts the clear run.
-                        // Deliberately NOT followed by a break — air below can
-                        // still accumulate SUN_CLEAR_RUN clear voxels and relight.
-                        clearRun = 0;
                         skyLight = Math.max(0, skyLight - getBlockOpacity(blockId));
-                    } else {
-                        // Air / non-full block: part of a clear vertical line.
-                        // SUN_CLEAR_RUN consecutive = the sun is visible here,
-                        // even when a block covers the top of the run.
-                        clearRun++;
-                        if (clearRun >= SUN_CLEAR_RUN) skyLight = MAX_LIGHT;
+                    } else if (blockId > 0 && blockDataManager.isFoliageFast(blockId)) {
+                        skyLight = (int) (skyLight * FOLIAGE_TRANSMIT);
+                    }
+
+                    if (++sinceBranch >= BRANCH_EVERY && skyLight > 1) {
+                        // Branch point: seed one horizontal spread from here.
+                        // Full-sun branches usually write nothing (neighbours
+                        // are already at MAX), but they keep the flood reaching
+                        // unloaded-chunk boundaries so light resumes correctly.
+                        skyBranchQueue.add(packNodeScalar(wx - ox, y - oy, wz - oz, skyLight));
+                        sinceBranch = 0;
                     }
                 }
             }
         }
 
-        // Phase 2: Horizontal sky light spread
-        // After vertical sweep, propagate sky light outward in a 5×5 grid
-        // (all 24 cells within ±2), skipping blocked cells. Decay: ~13%
-        // brightness reduction per hop (ring-1 = 1 hop, ring-2 = 2 hops).
+        // Phase 2: Horizontal sky light spread.
+        // Branches queued during the vertical sweep (one per BRANCH_EVERY
+        // blocks of descent) flood sideways, so sunlight widens into openings
+        // step by step instead of beaming straight down only.
         int hChanged = propagateSkyLightHorizontal(cx, cz, slots, dirtySlots);
 
         WorldGenLogger.logChunk("LIGHT_SKY", cx, -1, cz,
@@ -212,140 +231,71 @@ public class LightEngine {
     }
 
     /**
-     * Horizontal sky light spread: BFS queue from sky-lit voxels outward in a
-     * full 5×5 grid (all 24 cells within ±2 in X/Z) so sunlight fans into
-     * overhangs, 2-deep pockets, and jagged Far Lands terrain. Brightness
-     * loses ~13% per hop (×28/30 ≈ 0.933): ring-1 cells get one hop, ring-2
-     * cells get two — the total decay stays distance-consistent, but cells up
-     * to 2 blocks away light in a single hop, so light bends around corners.
-     * Blocking rule ("if it's not blocked"): the target cell must not be
-     * opaque, and ring-2 cardinal cells also need their straight intermediate
-     * cell passable — light never punches straight through a 1-block wall,
-     * but it does bend around single pillars and thin corners.
+     * Horizontal sunlight spread: drains the branch nodes queued by the
+     * vertical sweep and floods them outward in all six directions. Each step
+     * costs 1 level plus the target's opacity; foliage costs an extra penalty
+     * so tree shade builds up quickly. Light never enters opaque blocks and
+     * photons aimed at unloaded sections park for later resume.
      */
     private int propagateSkyLightHorizontal(int cx, int cz, java.util.NavigableMap<Integer, Integer> slots,
                                              Set<Integer> dirtySlots) {
         int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
-
-        LongQueue queue = new LongQueue(1024);
-        int worldBaseX = cx << 4;
-        int worldBaseZ = cz << 4;
-
-        // Seed queue with all valid sky light sources in this column
-        for (java.util.Map.Entry<Integer, Integer> entry : slots.entrySet()) {
-            int cy = entry.getKey();
-            int slot = entry.getValue();
-            if (slot == World.EMPTY) continue;
-
-            int worldBaseY = cy << 4;
-            for (int ly = 0; ly < 16; ly++) {
-                for (int lz = 0; lz < 16; lz++) {
-                    for (int lx = 0; lx < 16; lx++) {
-                        int intensity = world.getSkyLight(slot, lx, ly, lz) / 17;
-                        if (intensity > 1) {
-                            int rx = (worldBaseX + lx) - ox;
-                            int ry = (worldBaseY + ly) - oy;
-                            int rz = (worldBaseZ + lz) - oz;
-                            queue.add(packNodeScalar(rx, ry, rz, intensity));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Sky-light fan spreads into the 5×5 neighbourhood; photons that land on
-        // unloaded chunks are parked (heldSkyPhotons) and resumed when those
-        // chunks load.
-        return skyFanBFS(queue, ox, oy, oz, dirtySlots);
+        return skyBranchBFS(skyBranchQueue, ox, oy, oz, dirtySlots);
     }
 
-    /**
-     * Horizontal sky light fan: BFS from sky-lit voxels across a full 5×5 grid
-     * (all 24 cells within ±2 in X/Z) so sunlight bends around overhangs and
-     * thin corners. Brightness loses ~13% per hop (×28/30 ≈ 0.933): ring-1
-     * cells get one hop, ring-2 cells two. Blocking rule: the target cell must
-     * not be opaque, and ring-2 cardinal cells also need their straight
-     * intermediate cell passable — light never punches straight through a
-     * 1-block wall. Photons targeting unloaded chunks are parked and resumed by
-     * {@link #resumeHeldPhotons()} once the chunk loads.
-     */
-    private int skyFanBFS(LongQueue queue, int ox, int oy, int oz, Set<Integer> dirtySlots) {
-        int maxRel = bufSize - 1;
+    /** The six axis directions for the branch flood. */
+    private static final int[][] SKY_BRANCH_DIRS = {
+        {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}
+    };
 
-        // 5×5 fan: all 24 offsets in the ±2 square around a lit voxel.
-        int[][] fan5x5 = new int[24][2];
-        int fi = 0;
-        for (int dx = -2; dx <= 2; dx++) {
-            for (int dz = -2; dz <= 2; dz++) {
-                if (dx == 0 && dz == 0) continue;
-                fan5x5[fi][0] = dx;
-                fan5x5[fi][1] = dz;
-                fi++;
-            }
-        }
+    private int skyBranchBFS(LongQueue queue, int ox, int oy, int oz, Set<Integer> dirtySlots) {
+        int maxRel = bufSize - 1;
+        int[] opacityArr = blockDataManager.getOpacityArray();
+        boolean[] foliageArr = blockDataManager.getFoliageFastArray();
         int totalChanges = 0;
 
-        // Process horizontal spread via BFS
         while (!queue.isEmpty()) {
             long node = queue.poll();
             int rx = nodeX(node), ry = nodeY(node), rz = nodeZ(node);
             int cur = nodeIntensityScalar(node);
 
-            // Decay: ~13% per hop (×28/30 ≈ 0.933). Ring-1 cells take one hop,
-            // ring-2 cells two — same total decay as before, just wider reach.
-            int next1 = (cur * 28) / 30;
-            if (next1 <= 0) continue;
-            int next2 = (next1 * 28) / 30;
+            for (int[] dir : SKY_BRANCH_DIRS) {
+                int nx = rx + dir[0], ny = ry + dir[1], nz = rz + dir[2];
+                if (nx < 0 || ny < 0 || nz < 0 || nx > maxRel || ny > maxRel || nz > maxRel) continue;
 
-            for (int[] off : fan5x5) {
-                int dx = off[0], dz = off[1];
-                int nx = rx + dx;
-                int nz = rz + dz;
-
-                if (nx < 0 || nz < 0 || ry < 0 || nx > maxRel || nz > maxRel || ry > maxRel) continue;
-
-                int cheb = Math.max(Math.abs(dx), Math.abs(dz)); // 1 = ring-1, 2 = ring-2
-                int next = (cheb == 1) ? next1 : next2;
-
-                // Blocking: a straight 2-hop run can't pass through an opaque wall.
-                if (cheb == 2 && (dx == 0 || dz == 0)) {
-                    int midX = rx + dx / 2, midZ = rz + dz / 2;
-                    int midOpacity = getBlockOpacity(world.getVoxel(midX + ox, ry + oy, midZ + oz));
-                    if (midOpacity >= MAX_LIGHT) continue;
-                }
-
-                int nSlot = world.getIndirectionTable()[(nx >> 4) + (ry >> 4) * World.REGION_SIZE + (nz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
+                int nSlot = world.getIndirectionTable()[(nx >> 4) + (ny >> 4) * World.REGION_SIZE + (nz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
+                int next = cur - 1; // base horizontal falloff
                 if (nSlot == World.EMPTY) {
-                    // Unloaded chunk: park the sky photon; it resumes when the
-                    // target chunk loads (resumeHeldPhotons re-runs the fan).
+                    // Unloaded section: park the photon; resumeHeldPhotons
+                    // re-seeds the branch flood when the chunk loads.
                     if (next > 1) {
-                        parkSkyPhoton(nx + ox, ry + oy, nz + oz, rx + ox, ry + oy, rz + oz,
-                                next, cheb, dx, dz);
+                        parkSkyPhoton(nx + ox, ny + oy, nz + oz,
+                                rx + ox, ry + oy, rz + oz, next, 1, 0, 0);
                     }
                     continue;
                 }
 
-                int absX = nx + ox, absY = ry + oy, absZ = nz + oz;
-                int opacity = getBlockOpacity(world.getVoxel(absX, absY, absZ));
-                int actNext = Math.max(0, next - opacity);
-                if (actNext <= 0) continue;
+                int tgtBlockId = world.getChunkPool()[(nSlot << 12) | ((nx & 15) | ((ny & 15) << 4) | ((nz & 15) << 8))] & 0xFFFF;
+                int opacity = (tgtBlockId > 0 && tgtBlockId < opacityArr.length) ? opacityArr[tgtBlockId] : 0;
+                boolean foliage = tgtBlockId > 0 && tgtBlockId < foliageArr.length && foliageArr[tgtBlockId];
+                next -= foliage ? FOLIAGE_OPACITY : opacity;
 
-                int lx = nx & 15, ly = ry & 15, lz = nz & 15;
+                if (next <= 0) continue;
+
+                int lx = nx & 15, ly = ny & 15, lz = nz & 15;
                 int existing = world.getSkyLight(nSlot, lx, ly, lz) / 17;
 
-                if (actNext > existing) {
-                    world.setSkyLight(nSlot, lx, ly, lz, actNext * 17);
+                if (next > existing) {
+                    world.setSkyLight(nSlot, lx, ly, lz, next * 17);
                     dirtySlots.add(nSlot);
                     totalChanges++;
-                    if (actNext > 1) {
-                        queue.add(packNodeScalar(nx, ry, nz, actNext));
-                    }
+                    if (next > 1) queue.add(packNodeScalar(nx, ny, nz, next));
                 }
             }
         }
-
         return totalChanges;
     }
+
 
     // ══════════════════════════════════════════════════════════════════
     //  BLOCK LIGHT — optimized with primitive LongQueue + inlined bounds
@@ -385,6 +335,8 @@ public class LightEngine {
         }
 
         boolean isEmpty() { return size == 0; }
+
+        void clear() { head = tail = size = 0; }
     }
 
     /**
@@ -680,7 +632,7 @@ public class LightEngine {
         }
     }
 
-    /** A sky-light photon parked at an unloaded chunk boundary (see skyFanBFS). */
+    /** A sky-light photon parked at an unloaded chunk boundary (see skyBranchBFS). */
     private static final class HeldSkyPhoton {
         final int tx, ty, tz;        // target cell (world coords)
         final int px, py, pz;        // parent cell (world coords) — for the ring-2 mid-cell check
@@ -869,7 +821,7 @@ public class LightEngine {
             }
         }
         if (!skyDirty.isEmpty()) {
-            skyFanBFS(skyQueue, ox, oy, oz, skyDirty);
+            skyBranchBFS(skyQueue, ox, oy, oz, skyDirty);
             dirty.addAll(skyDirty);
         }
 
@@ -964,7 +916,7 @@ public class LightEngine {
 
                     int lightColor = (blockId < lightColorArr.length) ? lightColorArr[blockId] : 0xFFFFFF;
                     int typeKey = (emissive << 24) | (lightColor & 0xFFFFFF);
-                    int intensity = Math.min(emissive, 15);
+                    int intensity = seedLevel(emissive);
 
                     sourcesByType.computeIfAbsent(typeKey, k -> new java.util.ArrayList<>())
                         .add(new int[]{wx, wy, wz, intensity, blockId});
@@ -1066,7 +1018,7 @@ public class LightEngine {
                             if (emissive <= 0) continue;
                             int lightColor = (blockId < lightColorArr.length) ? lightColorArr[blockId] : 0xFFFFFF;
                             int typeKey = (emissive << 24) | (lightColor & 0xFFFFFF);
-                            int intensity = Math.min(emissive, 15);
+                            int intensity = seedLevel(emissive);
                             sourcesByType.computeIfAbsent(typeKey, k -> new java.util.ArrayList<>())
                                 .add(new int[]{wx, wy, wz, intensity, blockId});
                         }
@@ -1146,14 +1098,14 @@ public class LightEngine {
         if (oldEmissive > 0 || newEmissive > 0) {
             // ── Light source changed: single-source add/subtract ──
             if (oldEmissive > 0) {
-                int intensity = Math.min(oldEmissive, 15);
+                int intensity = seedLevel(oldEmissive);
                 Set<Integer> contrib = computeSingleSourceContribution(x, y, z, intensity, oldBlockId, true);
                 lightPending.addAll(contrib);
                 applyTintToMain(oldBlockId, false, contrib);
                 dirtySlots.addAll(contrib);
             }
             if (newEmissive > 0) {
-                int intensity = Math.min(newEmissive, 15);
+                int intensity = seedLevel(newEmissive);
                 Set<Integer> contrib = computeSingleSourceContribution(x, y, z, intensity, newBlockId, false);
                 lightPending.addAll(contrib);
                 applyTintToMain(newBlockId, true, contrib);

@@ -76,6 +76,26 @@ public class InteractionBillboardSystem {
     public String getMarkerAction(int i, int j) { return actions[i][j]; }
     public boolean isMarkerHighlighted(int i) { return highlighted[i]; }
 
+    /** Index of the marker currently under the centre cursor, or -1. */
+    public int getHighlightedMarker() {
+        for (int i = 0; i < markerCount; i++) if (highlighted[i]) return i;
+        return -1;
+    }
+    public boolean hasHighlightedMarker() { return getHighlightedMarker() >= 0; }
+
+    // Per-marker source: block cell for functional-block markers (the
+    // interactable itself, not the floating anchor), or an entity id with
+    // blockX < 0 for entity markers ("Talk").
+    private final int[] markerBlockX = new int[MAX_MARKERS];
+    private final int[] markerBlockY = new int[MAX_MARKERS];
+    private final int[] markerBlockZ = new int[MAX_MARKERS];
+    private final int[] markerEntityId = new int[MAX_MARKERS];
+
+    public int getMarkerBlockX(int i) { return markerBlockX[i]; }
+    public int getMarkerBlockY(int i) { return markerBlockY[i]; }
+    public int getMarkerBlockZ(int i) { return markerBlockZ[i]; }
+    public int getMarkerEntityId(int i) { return markerEntityId[i]; }
+
     /**
      * Per-frame update. Re-scans at most SCAN_INTERVAL seconds; otherwise
      * re-projects the last scan's world positions (cheap) so markers track
@@ -156,7 +176,7 @@ public class InteractionBillboardSystem {
                     float wx = sumX / n + 0.5f, wy = sumY / n + 0.5f, wz = sumZ / n + 0.5f;
                     float distSq = distanceSquared(p.x, p.y + 1.6f, p.z, wx, wy, wz);
                     if (distSq > REACH * REACH) continue;
-                    addMarker(wx, wy + 0.8f, wz, blockName(id), blockAction(id)); // hover slightly above
+                    addMarker(wx, wy + 0.8f, wz, blockName(id), blockAction(id), bx, by, bz, -1); // hover slightly above
                 }
             }
         }
@@ -171,11 +191,12 @@ public class InteractionBillboardSystem {
             Vector3f ep = e.getPosition();
             float distSq = distanceSquared(p.x, p.y + 1.6f, p.z, ep.x, ep.y, ep.z);
             if (distSq > REACH * REACH) continue;
-            addMarker(ep.x, ep.y + 2.0f, ep.z, "Villager", "Talk"); // above villager head
+            addMarker(ep.x, ep.y + 2.0f, ep.z, "Villager", "Talk", -1, -1, -1, e.id); // above villager head
         }
     }
 
-    private void addMarker(float wx, float wy, float wz, String name, String action) {
+    private void addMarker(float wx, float wy, float wz, String name, String action,
+                           int bx, int by, int bz, int entityId) {
         int i = markerCount;
         if (i >= MAX_MARKERS) return;
         markers[i * 4] = 0f;       // filled by projectMarkers (screen space)
@@ -188,6 +209,10 @@ public class InteractionBillboardSystem {
         actions[i] = new String[]{action};
         labels[i] = action;
         highlighted[i] = false;
+        markerBlockX[i] = bx;
+        markerBlockY[i] = by;
+        markerBlockZ[i] = bz;
+        markerEntityId[i] = entityId;
         markerCount++;
     }
 

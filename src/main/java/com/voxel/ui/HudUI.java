@@ -2016,6 +2016,24 @@ public class HudUI {
             if (!visible) continue;
             boolean hover = menuButtonBackgrounds[i].isPointInside(ctx.lastMouseX, ctx.lastMouseY);
             boolean selected = i == ctx.menuSelection;
+            // Mouse-driven selection: hovering a row moves the selection so the
+            // keyboard highlight and ENTER always agree with what the mouse is
+            // pointing at (and per-screen state follows too).
+            if (hover && !selected) {
+                ctx.menuSelection = i;
+                selected = true;
+            }
+            if (hover) {
+                if (ctx.menuScreen == GameContext.MenuScreen.LOAD_SAVE
+                        && i < Math.min(ctx.saveList.size(), 5)) {
+                    ctx.saveListSelection = i;
+                } else if (ctx.menuScreen == GameContext.MenuScreen.NEW_WORLD_SIZE
+                        && i < com.voxel.world.WorldSize.values().length) {
+                    ctx.worldSizeSelection = i;
+                } else if (ctx.menuScreen == GameContext.MenuScreen.NEW_WORLD_MODE && i < 2) {
+                    ctx.gameMode = i == 1 ? GameContext.GameMode.CREATIVE : GameContext.GameMode.SURVIVAL;
+                }
+            }
             if (ctx.menuScreen == GameContext.MenuScreen.LOAD_SAVE && i < Math.min(ctx.saveList.size(), 5)) {
                 selected = i == ctx.saveListSelection;
             } else if (ctx.menuScreen == GameContext.MenuScreen.NEW_WORLD_SIZE
@@ -2050,6 +2068,8 @@ public class HudUI {
             pauseButtonLabels[i].text = pauseLabels[i];
             if (paused) {
                 boolean hover = pauseButtonBackgrounds[i].isPointInside(ctx.lastMouseX, ctx.lastMouseY);
+                // Hovering a pause row moves the keyboard selection with it.
+                if (hover) ctx.pauseSelection = i;
                 boolean selected = i == ctx.pauseSelection;
                 pauseButtonBackgrounds[i].color.set(hover || selected ? 0.18f : 0.10f,
                     hover || selected ? 0.38f : 0.15f,

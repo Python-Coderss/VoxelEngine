@@ -242,7 +242,12 @@ public class EntityManager {
             entityBuffer.putFloat(entity.tintColor.y);
             entityBuffer.putFloat(entity.tintColor.z);
             entityBuffer.putFloat(entity.tintAmount);
-            entityBuffer.putFloat(0.0f); // Padding for 64-byte alignment
+            // Conservative bounding radius (blocks) — consumed by the shader's
+            // per-entity sphere pre-reject so rays that can't hit any part skip
+            // the whole OBB loop. Rotations preserve lengths, so the exact
+            // reach bound needs no trig: |pivot| + |geomCenter - pivot| +
+            // |halfSize| covers every rotated pose of the part.
+            entityBuffer.putFloat(computeBoundingRadius(entity));
             if (entity.parts != null) allParts.addAll(entity.parts);
             writtenCount++;
         }
@@ -286,6 +291,29 @@ public class EntityManager {
     public void bind(int entityBinding, int partBinding) {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, entityBinding, entitySSBO);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, partBinding, partSSBO);
+    }
+
+    /**
+     * Conservative bounding-sphere radius around the entity origin that is
+     * guaranteed to contain every rendered part (in any rotated pose) plus the
+     * billboarded health bar. Uploaded in EntityData.padding; the raytracer
+     * rejects entities whose sphere the ray misses or that sit fully behind a
+     * closer hit without touching their per-part buffers.
+     */
+    private static float computeBoundingRadius(Entity entity) {
+        // Health bar reach: center at y+2.3 plus its half diagonal (~0.503) ≈ 2.81.
+        float r = 3.0f;
+        if (entity.parts != null) {
+            for (ModelPart p : entity.parts) {
+                Vector3f geomCenter = new Vector3f(p.offset).div(16f).add(new Vector3f(p.size).div(32f));
+                Vector3f pivot = new Vector3f(p.absoluteOffset).div(16f);
+                float reach = pivot.length()
+                        + new Vector3f(geomCenter).sub(pivot).length()
+                        + p.size.length() / 32f;
+                if (reach > r) r = reach;
+            }
+        }
+        return Math.min(r + 0.25f, 64f);
     }
     
     public int getEntityCount() {

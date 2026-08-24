@@ -13,6 +13,9 @@ layout(location = 1) uniform vec3 camForward;
 layout(location = 2) uniform vec3 camRight;
 layout(location = 3) uniform vec3 camUp;
 layout(location = 4) uniform float u_Time;
+// Variable exposure: CPU eye-adaptation from last frame's average brightness.
+// Multiplied into the scene color before tonemapping (UI passes bypass it).
+layout(location = 6) uniform float u_Exposure;
 layout(location = 10) uniform int u_DimensionID;
 layout(location = 11) uniform int u_CraftingItemCount;
 
@@ -55,6 +58,10 @@ bool camClipped = false;
 // the nearest SOLID voxel within the same chunk section — for empty chunks
 // (slot == EMPTY in chunkSlots), the skipChunk() path handles traversal.
 layout(std430, binding = 10) buffer readonly restrict SdfPool { uint sdfPool[]; };
+
+// Per-column highest loaded section (128x128 uints; value = cy+1, 0 = none).
+// CPU-maintained in World.setChunkSlot/clearChunkSlot — O(1) sky early-out.
+layout(std430, binding = 11) buffer readonly restrict ColumnTopPool { uint columnTopPool[]; };
 
 // Block break overlay uniforms
 layout(location = 19) uniform ivec3 u_BreakTargetPos;
@@ -129,7 +136,7 @@ bool gMapPreviewValid = false;
 ivec3 gTraceBlockOrigin = ivec3(0);
 
 // Entities
-struct EntityData { vec3 position; float health; vec3 rotation; float maxHealth; int partCount; int partOffset; float hitFlash; float tintR; float tintG; float tintB; float tintAmount; float padding; };
+struct EntityData { vec3 position; float health; vec3 rotation; float maxHealth; int partCount; int partOffset; float hitFlash; float tintR; float tintG; float tintB; float tintAmount; float padding; /* conservative bounding radius (blocks) written by EntityManager */ };
 struct PartData {
     vec3 offset; float uvU;
     vec3 absoluteOffset; float uvV;
@@ -576,21 +583,31 @@ bool isWaterVoxel(vec3 p) {
 }
 
 // ── Ambient Occlusion ──
-// Checks if a world-space voxel contains any solid geometry (contributes to occlusion).
-bool isBlockSolidAO(ivec3 p) {
-    ivec3 rel = p;
-    if (any(lessThan(min(rel, ivec3(WORLD_SIZE) - 1 - rel), ivec3(0)))) return false;
-    uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
-    if (slot == EMPTY) return false;
-    return isBitSolid(slot, rel);
-}
-
 // Vertex-based ambient occlusion (cartoon).
 // The classic 12-sample vertex pattern shares side/corner blocks between the 4
 // vertices, so the UNIQUE set is 8 blocks (4 side + 4 corner) — sampling those
 // directly removes 4 redundant SSBO indirections per AO. Vertex values stay
 // identical to the classic formula, then the result is quantized to 3 cel tones
 // for the flat, chunky toon shadow look.
+// Cached solidity probe for AO neighborhoods. Semantics are IDENTICAL to the
+// old per-probe path (voxelPool bit 31); the memoized chunk-slot lookup saves
+// up to 7 redundant chunkSlots SSBO loads out of 8 probes.
+bool aoSolidCached(ivec3 p, inout uint cKey, inout uint cSlot) {
+    if (any(lessThan(min(p, ivec3(WORLD_SIZE) - 1 - p), ivec3(0)))) return false;
+    int ci = (p.x >> 4) | ((p.y >> 4) << 7) | ((p.z >> 4) << 14);
+    uint slot;
+    if (uint(ci) == cKey) {
+        slot = cSlot;
+    } else {
+        cKey = uint(ci);
+        slot = chunkSlots[ci];
+        cSlot = slot;
+    }
+    if (slot == EMPTY) return false;
+    int bi = (p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8);
+    return (voxelPool[(slot << 12) | bi] >> 31) != 0u;
+}
+
 float computeAmbientOcclusion(vec3 hp, vec3 n) {
     ivec3 blockPos = ivec3(floor(hp - n * 0.5));
     vec3 fracPos = hp - vec3(blockPos);
@@ -624,10 +641,16 @@ float computeAmbientOcclusion(vec3 hp, vec3 n) {
         c3 = blockPos + ivec3(-1, 1, ns.z);  c4 = blockPos + ivec3(1, 1, ns.z);
     }
 
-    float s1f = float(isBlockSolidAO(s1)), s2f = float(isBlockSolidAO(s2));
-    float s3f = float(isBlockSolidAO(s3)), s4f = float(isBlockSolidAO(s4));
-    float c1f = float(isBlockSolidAO(c1)), c2f = float(isBlockSolidAO(c2));
-    float c3f = float(isBlockSolidAO(c3)), c4f = float(isBlockSolidAO(c4));
+    // Probe order groups neighbors that share chunks so the slot cache hits.
+    uint cKey = 0xFFFFFFFFu; uint cSlot = 0xFFFFFFFFu;
+    float s1f = float(aoSolidCached(s1, cKey, cSlot));
+    float s3f = float(aoSolidCached(s3, cKey, cSlot));
+    float c1f = float(aoSolidCached(c1, cKey, cSlot));
+    float s2f = float(aoSolidCached(s2, cKey, cSlot));
+    float c2f = float(aoSolidCached(c2, cKey, cSlot));
+    float s4f = float(aoSolidCached(s4, cKey, cSlot));
+    float c3f = float(aoSolidCached(c3, cKey, cSlot));
+    float c4f = float(aoSolidCached(c4, cKey, cSlot));
 
     // Per-vertex occlusion (identical math to the classic 12-sample pattern:
     // each vertex sums its 2 side + 1 corner neighbor, 1/3 reduction per solid)
@@ -670,7 +693,7 @@ float fastShadow(vec3 ro, vec3 rd, float maxDist) {
     vec3 p = ro + rd * (max(0.0, tn) + 0.05); ivec3 mp = ivec3(floor(p));
     vec3 dd = abs(1.0 / rd); ivec3 s = ivec3(sign(rd));
     vec3 sd = (s * (vec3(mp) - p) + (s * 0.5) + 0.5) * dd;
-    for (int i = 0; i < 16; i++) {  // reduced from 32 → 16
+    for (int i = 0; i < 12; i++) {  // reduced from 32 → 16 → 12
         if (any(lessThan(mp, ivec3(0))) || any(greaterThanEqual(mp, ivec3(WORLD_SIZE)))) break;
         if (min(sd.x, min(sd.y, sd.z)) > maxDist) break;
         ivec3 rel = mp;
@@ -1079,19 +1102,30 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                     }
                 }
             }
-            // Empty chunk: skip whole 16³ section in one DDA step (peer over chunks)
-            // ── Tall-skip optimization (ray points up only): collapse many consecutive
-            //    EMPTY chunks in a single traceWorld iteration. Without this, a sky-look
-            //    ray at ground level iterates ~125 times (one per chunk), each calling
-            //    skipChunk. With this, it iterates only when reaching the first non-EMPTY
-            //    chunk above (or buffer end). Cost when rd.y<=0: none. Cost when rd.y>0
-            //    but immediate next chunk above is non-EMPTY: ~5 ops (single slot read)
-            //    — strictly better than skipChunk's ~30 ops for the no-skip case still.
+            // ── Tall-skip optimization (ray points up only), driven by the CPU-
+            //    maintained per-column loaded-section tops (binding 11, value =
+            //    highest loaded cy + 1; 0 = nothing loaded in this column).
+            //    The old per-column chunk scans cost up to ~128 dependent SSBO
+            //    loads EVERY time an upward ray entered an EMPTY chunk — sky
+            //    views crossing dozens of columns paid thousands of loads per
+            //    pixel. Now:
+            //      • nothing loaded above → jump straight out of the buffer;
+            //      • otherwise bounded scan to the first loaded section.
             if (rd.y > 0.0) {
+                int topEnc = int(columnTopPool[(rel.x >> 4) | ((rel.z >> 4) << 7)]);
                 int curChunkY = rel.y >> 4;
+                if (topEnc == 0 || curChunkY >= topEnc) {
+                    // Entire rest of this column is unloaded/empty: teleport to
+                    // the buffer ceiling so the bounds check exits next pass.
+                    mp.y += WORLD_SIZE;
+                    vec3 newP = ro + rd * st;
+                    sd = (s * (vec3(mp) - newP) + (s * 0.5) + 0.5) * dd;
+                    side = 1; // Y-axis crossing — last axis we leapt through
+                    continue;
+                }
                 int advance = 0;
-                for (int k = 1; k < 128; k++) {
-                    if (curChunkY + k >= 128) break;
+                int kMax = min(127 - curChunkY, min(topEnc - curChunkY - 1, 24));
+                for (int k = 1; k <= kMax; k++) {
                     uint futureSlot = chunkSlots[(rel.x >> 4) | ((curChunkY + k) << 7) | ((rel.z >> 4) << 14)];
                     if (futureSlot != EMPTY) break;
                     advance = k;
@@ -1105,6 +1139,51 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                 }
             }
             side = skipChunk(mp, sd, dd, s);
+            // ── Horizontal multi-chunk skip: collapse consecutive EMPTY chunks
+            //    along the dominant XZ axis in one iteration. Horizon-sky rays
+            //    otherwise pay one slot load + skipChunk per 16 blocks across
+            //    the whole buffer. The leap only extends while the ray is
+            //    guaranteed to stay inside the CURRENT cell column on BOTH
+            //    other axes for the entire span (their next-boundary times
+            //    sd.other bound how far anything unprobed can be reached) —
+            //    steeper rays fall back to the vertical pass / plain stepping.
+            {
+                float absX2 = abs(rd.x), absZ2 = abs(rd.z);
+                int da = (absX2 >= absZ2) ? 0 : 2;
+                float domLen = (da == 0) ? absX2 : absZ2;
+                if (domLen > 1e-4) {
+                    int sDom = (da == 0) ? s.x : s.z;
+                    int c0 = (da == 0) ? (rel.x >> 4) : (rel.z >> 4);
+                    int cOther = (da == 0) ? (rel.z >> 4) : (rel.x >> 4);
+                    float ddDom = (da == 0) ? dd.x : dd.z;
+                    int advanceH = 0;
+                    int kMaxH = min(16, (sDom > 0 ? 127 - c0 : c0));
+                    for (int k = 1; k <= kMaxH; k++) {
+                        uint fs = (da == 0)
+                            ? chunkSlots[(c0 + k * sDom) | ((rel.y >> 4) << 7) | (cOther << 14)]
+                            : chunkSlots[cOther | ((rel.y >> 4) << 7) | ((c0 + k * sDom) << 14)];
+                        if (fs != EMPTY) break;
+                        // Conservative span: t needed to reach the FAR side of
+                        // chunk k along the dominant axis.
+                        float tSpan = float(k + 1) * 16.0 * ddDom + ((da == 0) ? sd.x : sd.z);
+                        // Ray must still be inside the current cell of BOTH
+                        // other axes across that span, or we'd cross unprobed
+                        // chunks. (Voxel-level bounds ⇒ strictly safe.)
+                        if (abs(rd.y) * tSpan >= sd.y) break;
+                        if (da == 0) { if (abs(rd.z) * tSpan >= sd.z) break; }
+                        else         { if (abs(rd.x) * tSpan >= sd.x) break; }
+                        advanceH = k;
+                    }
+                    if (advanceH > 0) {
+                        if (da == 0) mp.x += advanceH * 16 * sDom;
+                        else mp.z += advanceH * 16 * sDom;
+                        vec3 newPH = ro + rd * st;
+                        sd = (s * (vec3(mp) - newPH) + (s * 0.5) + 0.5) * dd;
+                        side = da;
+                        continue;
+                    }
+                }
+            }
         } else {
             // ── Chunk-level directional SDF sphere-trace acceleration ──
             // Per-direction chunk SDF says how many voxels the ray can travel
@@ -1143,8 +1222,14 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
             }
             // ── Per-voxel DDA fallback (surface hit or small SDF) ──
             ivec3 cc = mp >> 4; uint maskBase = slot << 7;
+            // Memoized bitmask word: consecutive DDA steps share the same
+            // 32-voxel word, so the inner loop issues ~1 SSBO load per word
+            // instead of one per voxel.
+            int cwIdx = -1; uint cw = 0u;
             for (int j = 0; j < 32; j++) {
                 int bi = (mp.x&15)|((mp.y&15)<<4)|((mp.z&15)<<8);
+                int bwi = bi >> 5;
+                if (bwi != cwIdx) { cwIdx = bwi; cw = bitmasks[maskBase | uint(bwi)]; }
                 // Camera-clipped voxel (eye stuck inside a solid block): treat that
                 // voxel as air until the first real hit — the ray passes through it
                 // and hits the next surface at its true distance, so its interior
@@ -1154,7 +1239,7 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                 // Gated on camClipped (warp-coherent) so the compare costs
                 // nothing on the non-clipped hot path.
                 bool camAirCell = camClipped && all(equal(mp, airVoxel));
-                if (!camAirCell && (bitmasks[maskBase | (bi >> 5)] & (1u << (bi & 31))) != 0) {
+                if (!camAirCell && (cw & (1u << (bi & 31))) != 0) {
                     uint rawVoxel = voxelPool[(slot << 12) | bi];
                     uint voxelType = rawVoxel & 0xFFFFu;
                     // Preserve the owning cell before any partial-model or lid
@@ -1169,13 +1254,14 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                     uint kinReverse = (rawVoxel >> 25) & 1u;
                     // Compute medium tag for same-medium face culling (water=1, lava=2, others=voxelType)
                     ivec4 d1 = texelFetch(u_BlockData, int(voxelType) * 4 + 1);
-                    // d3 fetched once per voxel: hinge flag (bit 7) gates the
-                    // chest-lid animation in the AABB loop below.
-                    ivec4 d3h = texelFetch(u_BlockData, int(voxelType) * 4 + 3);
                     uint thisMediumTag = voxelType;
                     int thisEff = (d1.w >> 10) & 0xF;
                     if (thisEff == 2) { thisMediumTag = (voxelType == 21u) ? 2u : 1u; }
                     if (thisMediumTag != lastMediumTag) {
+                        // d3 fetched only when the face is actually shaded: rays
+                        // stepping through stacked same-medium translucent cells
+                        // (water columns, glass panes) skip this fetch entirely.
+                        ivec4 d3h = texelFetch(u_BlockData, int(voxelType) * 4 + 3);
                         // Non-AABB gear blocks (shafts/cogs/wheel) and multiblock
                         // gear parts. Each block renders its own slice of the gear:
                         // the prism is clipped to the owning cell (gT < cell exit),
@@ -1432,19 +1518,26 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumT
             ? normalV
             : (sideV == 0) ? vec3(-sign(rd.x), 0, 0) : ((sideV == 1) ? vec3(0, -sign(rd.y), 0) : vec3(0, 0, -sign(rd.z)));
     }
-    // Early cull: skip entities far from the ray origin or behind the camera
-    vec3 roToEnt;
-    float entDistSq;
+    // Early cull: bounding-sphere test per entity BEFORE any part iteration.
+    // The CPU packs each entity's conservative reach (max part extent + health
+    // bar) into EntityData.padding. A ray that misses the sphere, starts past
+    // it, or already hit something closer than it can skip every OBB test for
+    // this entity — in mob-dense scenes most entities fail one of these.
     for(int i=0; i<u_EntityCount; i++) {
-        // Read only the position first: culled entities (most of them at >32
-        // blocks) never pay for the rest of the struct's SSBO traffic.
+        float entR = entities[i].padding;
+        if (entR <= 0.0) entR = 8.0; // safety net if CPU left the radius unset
         vec3 entPos = entities[i].position;
-        roToEnt = entPos - ro;
-        entDistSq = dot(roToEnt, roToEnt);
-        // Skip entities > 32 blocks away (tight cull; CPU pre-filters <= 64 blocks)
+        vec3 roToEnt = entPos - ro;
+        float entDistSq = dot(roToEnt, roToEnt);
+        // Keep the absolute range cap: the CPU may upload entities up to ~64
+        // blocks out, and without this a sky ray would sphere-test them all.
         if (entDistSq > 1024.0) continue;
-        // Skip entities behind the camera and more than 16 blocks away
-        if (dot(roToEnt, rd) < 0.0 && entDistSq > 256.0) continue;
+        float projT = dot(roToEnt, rd);
+        // Entire sphere behind the ray origin, or fully occluded by a closer hit
+        if (projT < -entR || projT - entR > resT) continue;
+        // Ray misses the bounding sphere: perpendicular distance² vs r²
+        float perpSq = entDistSq - projT * projT;
+        if (perpSq > entR * entR) continue;
 
         EntityData ent = entities[i];
         mat3 entRotation = rotationMatrix(ent.rotation);
@@ -1714,31 +1807,67 @@ vec3 marchLightShafts(vec3 ro, vec3 rd, float tMax, Atmosphere at) {
     float sunLit = (at.sunColor.x + at.sunColor.y + at.sunColor.z);
     float moonLit = (at.moonColor.x + at.moonColor.y + at.moonColor.z);
     if ((sunDot <= 0.05 || sunLit <= 0.001) && (moonDot <= 0.05 || moonLit <= 0.001)) return acc;
+    // A first hit within a couple of blocks leaves almost no lit air to sample
+    // (max contribution < 1% of a full shaft) — skip the march entirely. This
+    // covers the very common case of facing a nearby wall or looking down.
+    if (tMax < 3.0) return acc;
     bool sunActive = sunDot > 0.05 && sunLit > 0.001;
     bool moonActive = moonDot > 0.05 && moonLit > 0.001;
-    const int STEPS = 14;
-    float step = tMax / float(STEPS);
-    float t = step * 0.5;
-    for (int i = 0; i < STEPS; i++) {
-        vec3 p = ro + rd * t;
+    // Distance-proportional sampling (~1 sample per 9.6 blocks — the same
+    // spatial density as the old fixed 10-over-96): close hits pay far less,
+    // full-distance sky rays keep the original quality.
+    int nSteps = int(clamp(tMax * (10.0 / 96.0), 2.0, 10.0));
+    float step = tMax / float(nSteps);
+    float jit = hash12(ro.xz * 3.71 + rd.xz * 91.7);
+    float t = step * (0.35 + 0.3 * jit);
+    float decayMul = exp(-step * 0.012);
+    float decay = exp(-t * 0.012);
+
+    // The projection of a point p=t*rd+ro into each pool's ortho space is
+    // AFFINE in t, so marching needs one vec2 add + one float add per step
+    // instead of re-doing three dot products and two divides per pool.
+    const float INV_EXT_X = 1.0 / (2.0 * u_ShadowExtent.x);
+    const float INV_EXT_Y = 1.0 / u_ShadowExtent.y;
+    vec3 relS = ro - u_ShadowOrigin;
+    vec2 uvS = vec2(dot(relS, u_ShadowRight), dot(relS, u_ShadowUp)) * INV_EXT_X + 0.5;
+    vec2 uvStepS = vec2(dot(rd, u_ShadowRight), dot(rd, u_ShadowUp)) * INV_EXT_X;
+    float depthS = -dot(relS, u_ShadowSunDir) * INV_EXT_Y;
+    float depthStepS = -dot(rd, u_ShadowSunDir) * INV_EXT_Y;
+
+    vec3 relM = ro - u_MoonPoolOrigin;
+    vec2 uvM = vec2(dot(relM, u_MoonPoolRight), dot(relM, u_MoonPoolUp)) * INV_EXT_X + 0.5;
+    vec2 uvStepM = vec2(dot(rd, u_MoonPoolRight), dot(rd, u_MoonPoolUp)) * INV_EXT_X;
+    float depthM = -dot(relM, u_MoonPoolDir) * INV_EXT_Y;
+    float depthStepM = -dot(rd, u_MoonPoolDir) * INV_EXT_Y;
+
+    for (int i = 0; i < nSteps; i++) {
         // Inactive sources count as out-of-bounds so the break below also fires
         // when only ONE pool is active (e.g. daytime sun-only shafts).
         bool sunOob = !sunActive, moonOob = !moonActive;
         if (sunActive) {
-            float vis = poolVis(p, u_ShadowOrigin, u_ShadowRight, u_ShadowUp, u_ShadowSunDir, u_SunPoolTex, sunOob);
-            // Deterministic world-space density + distance decay: shafts read as
-            // soft glowing air instead of uniform slices (cartoon volumetric).
-            float density = 0.6 + 0.4 * hash12(p.xz * 0.25);
-            acc += at.sunColor * vis * sunDot * step * 0.010 * density * exp(-t * 0.012);
+            if (uvS.x < 0.0 || uvS.y < 0.0 || uvS.x > 1.0 || uvS.y > 1.0) {
+                sunOob = true;
+            } else if (depthS <= texture(u_SunPoolTex, uvS).r + 0.004) {
+                // Deterministic world-space density: shafts read as soft glowing
+                // air instead of uniform slices (cartoon volumetric).
+                float density = 0.6 + 0.4 * hash12((ro + rd * t).xz * 0.25);
+                acc += at.sunColor * (sunDot * step * 0.010 * density * decay);
+            }
         }
         if (moonActive) {
-            float vis = poolVis(p, u_MoonPoolOrigin, u_MoonPoolRight, u_MoonPoolUp, u_MoonPoolDir, u_MoonPoolTex, moonOob);
-            acc += at.moonColor * vis * moonDot * step * 0.008;
+            if (uvM.x < 0.0 || uvM.y < 0.0 || uvM.x > 1.0 || uvM.y > 1.0) {
+                moonOob = true;
+            } else if (depthM <= texture(u_MoonPoolTex, uvM).r + 0.004) {
+                acc += at.moonColor * (moonDot * step * 0.008);
+            }
         }
         // Beyond both pools' ortho coverage every remaining sample is 0 — stop
         // marching instead of burning the tail steps on guaranteed misses.
         if (sunOob && moonOob) break;
+        decay *= decayMul;
         t += step;
+        uvS += uvStepS; depthS += depthStepS;
+        uvM += uvStepM; depthM += depthStepM;
     }
     return acc;
 }
@@ -2393,7 +2522,9 @@ void main() {
             }
 
             if (emissive > 0.0) {
-                final += throu * alb * emissive * 2.0;
+                // Self-glow of the lamp face itself: bright enough to read as
+                // an emitter after tonemapping, but no longer a white sun spot.
+                final += throu * alb * emissive * 1.6;
             }
 
             // Sample the baked RGB lightmap (block light from the LightPool SSBO).
@@ -2404,7 +2535,7 @@ void main() {
                 lightMap = sampleLightmap(lightSamplePos);
             }
             if (lightMap.x < 0.0) lightMap = vec4(0.0);
-            float skyContrib = (lightMap.x / 255.0) * 1.12; // brighter sunlight
+            float skyNorm = clamp(lightMap.x / 255.0, 0.0, 1.0);
             // Block light: RGB channels with intensity + color tint.
             // The CPU writes each source's tint scaled by 1/LIGHT_TINT_HEADROOM
             // (see LightEngine) so overlapping lights sum without colour-clamping;
@@ -2418,8 +2549,14 @@ void main() {
             // tint separate: gamma-correcting each channel independently would
             // shift amber/red lights toward white or black.
             float linearBlockLevel = decodeBlockLight(blockIntensity);
-            float blockContrib = (linearBlockLevel / 255.0) * 5.0;
-            float totalLightContrib = max(skyContrib, blockContrib);
+            // Lamp rebalance: a full-strength lamp is 0.25 suns — clearly
+            // dimmer than daylight outdoors (you can tell a lit patch apart),
+            // while still reading plainly against the near-black cave floor.
+            // sceneN picks whichever source dominates; the lamp branch paints
+            // its own warm colour instead of multiplying the sun term.
+            float blockNorm = clamp(linearBlockLevel / 255.0, 0.0, 1.0);
+            float sceneN = max(skyNorm, blockNorm);
+
             // Apply block light tint: color the beam with the RGB light source color
             vec3 blockTint = vec3(1.0);
             if (blockIntensity > 0.001) {
@@ -2429,18 +2566,14 @@ void main() {
             // Direct+ambient lighting for the block (no sun shadow ray — pools only
             // feed god rays; baked sky light already darkens caves/overhangs).
             float sunVis = max(0.0, dot(n, at.sunDir));
-            beam = at.ambient * 1.0;
-            if (sunVis > 0.0 && skyContrib > 0.03) {
-                beam += at.sunColor * celRamp(sunVis);
-            }
-            // Clamp the mix factor: blockContrib reaches ~20 near a bright source
-            // (byte*HEADROOM*5/255), so an unclamped mix extrapolates linearly — the
-            // green/blue channels of an amber tint go negative, and ACESFilm's
-            // rational curve maps large negatives back to ~1.0, producing the old
-            // magenta/white halos. Saturating the tint at the source color gives
-            // the intended soft amber glow.
-            beam *= totalLightContrib * mix(vec3(1.0), blockTint, min(blockContrib * 0.8, 1.0));
-            beam += at.ambient * 0.3;
+            vec3 sunLit = at.ambient + at.sunColor * celRamp(sunVis) * skyNorm;
+            float sunLum = max(dot(at.sunColor, vec3(0.333)) + dot(at.ambient, vec3(0.333)), 0.05);
+            // 0.25-sun lamp colour with a visibility floor so lamps read even
+            // in pitch-dark caves; tinted by the source hue.
+            vec3 lampCol = blockTint * clamp(sunLum * 0.25, 0.20, 0.95);
+            vec3 sceneCol = (blockNorm > skyNorm) ? lampCol : sunLit;
+            // Cave/night floor: unlit rock stays barely-visible, never pure black.
+            beam = mix(vec3(0.045), sceneCol, sceneN);
             beam += pointLightContrib(hp, n);
 
             // Emissive entity parts, such as Enderman eyes, retain a vivid purple
@@ -2457,7 +2590,7 @@ void main() {
             // animated light patterns (seafloor and underwater terrain shimmer).
             // +0.5 (not +1.0) so 1-block-deep water still triggers: hp sits on the
             // face plane, and +0.5 lands inside the voxel directly above it.
-            if (n.y > 0.5 && skyContrib > 0.5 && isWaterVoxel(hp + vec3(0.0, 0.5, 0.0))) {
+            if (n.y > 0.5 && skyNorm > 0.45 && isWaterVoxel(hp + vec3(0.0, 0.5, 0.0))) {
                 beam *= 1.0 + causticAt(hp) * 0.35;
             }
 
@@ -2569,7 +2702,10 @@ void main() {
         final = mix(final, waterFog, clamp(0.12 + vis * 0.85, 0.0, 0.94));
     }
     
-    vec3 result = ACESFilm(final);
+    // Variable exposure: adapt the scene (not the UI) to the frame's average
+    // brightness — walking out of a cave lets highlights settle instead of
+    // clipping, and torch-lit interiors gain a little lift.
+    vec3 result = ACESFilm(final * u_Exposure);
     // Cartoon grade on the scene only (UI alpha-blended afterwards, fullscreen
     // UI early-outs before this): saturation boost + 12-level posterize.
     // Band edges use a narrow smoothstep blend instead of a hash dither — the
@@ -2584,6 +2720,9 @@ void main() {
         vec3 hi = min(lo + 1.0, 11.0);
         result = mix(lo, hi, smoothstep(0.38, 0.62, frac)) / 12.0;
     }
-    if (uiCol.a > 0.0) result = mix(result, uiCol.rgb, uiCol.a);
+    // NOTE: partial-alpha UI blending moved to the quad blit (quad.frag), which
+    // composites the HUD at full window resolution — this keeps text sharp when
+    // the raytracer runs at a reduced render scale. Fully-opaque UI pixels still
+    // early-out above (they skip the whole trace and store sRGB UI directly).
     imageStore(imgOutput, px, vec4(linearToSrgb(result), 1.0));
 }
