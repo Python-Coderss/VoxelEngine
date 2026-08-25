@@ -21,7 +21,12 @@ public class VillagerVillageManager {
         public boolean needsRepairs = false;
         public boolean hasWalls = false;
         public long lastRaidTime = 0;
-        
+
+        /** Villager News studio anchor stand position (feet cell); null for legacy villages. */
+        public Vector3i newsAnchorPos;
+        /** Studio camera/TV block position; null for legacy villages. */
+        public Vector3i newsTvPos;
+
         public Village(Vector3i center, int radius) {
             this.center = new Vector3i(center);
             this.radius = radius;

@@ -94,6 +94,7 @@ public class EnderDragonEntity extends Entity {
                              com.voxel.entity.EntityManager entityManager) {
         super(id, position);
         this.entityManager = entityManager;
+        this.textureManager = textureManager;
         this.dimension = com.voxel.world.DimensionType.END;
         // Huge flying boss: generous pick box so clicks/punches connect.
         this.pickWidth = 4.0f;
@@ -102,6 +103,9 @@ public class EnderDragonEntity extends Entity {
     }
 
     private com.voxel.entity.EntityManager entityManager;
+    /** Kept so spawned projectiles (fireballs) can resolve their textures. */
+    private final com.voxel.utils.TextureManager textureManager;
+
 
     public void setEntityManager(com.voxel.entity.EntityManager em) { this.entityManager = em; }
 
@@ -155,7 +159,7 @@ public class EnderDragonEntity extends Entity {
             Vector3f heading = new Vector3f((float) Math.cos(yawRad), -0.15f,
                     (float) Math.sin(yawRad));
             FireballEntity fire = new FireballEntity(70000 + entityManager.getEntityCount(),
-                    mouth, heading, null);
+                    mouth, heading, this.textureManager);
             fire.world = this.world;
             entityManager.addEntity(fire);
         }

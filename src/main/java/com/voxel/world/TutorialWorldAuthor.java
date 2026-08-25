@@ -49,7 +49,11 @@ public final class TutorialWorldAuthor {
             RAIL_CURVE_SE = 450, RAIL_CURVE_SW = 451, RAIL_CURVE_NW = 452, RAIL_CURVE_NE = 453,
             BURNER = 394, BURNER_LIT = 395, ENGINE_COLD = 396, ENGINE = 397, TANK = 398,
             CRANK = 404, BEARING = 405, SAIL = 406, PRESS = 407, MILL = 408, CRUSHER = 409,
-            DRILL = 410, SAW = 411, BELT = 413, VAULT = 414, CLUTCH = 353, GEARSHIFT = 355;
+            DRILL = 410, SAW = 411, BELT = 413, VAULT = 414, CLUTCH = 353, GEARSHIFT = 355,
+            // ── End Update blocks (fixed IDs registered in Main) ──
+            PURPUR = 900, PURPUR_PILLAR = 901, CHORUS = 902, CHORUS_FLOWER = 903,
+            END_GLASS = 904, VOID_STEEL = 905,
+            BEACON = 457, ENCHANT_TABLE = 458, END_BRICKS = 464, END_ROD = 465, DRAGON_EGG = 466;
 
     private static final int RS_PISTON = com.voxel.world.RedstoneManager.BLOCK_PISTON;
     private static final int RS_STICKY = com.voxel.world.RedstoneManager.BLOCK_STICKY_PISTON;
@@ -88,6 +92,7 @@ public final class TutorialWorldAuthor {
         new Zone("Storage Vault", "Item vaults and treasure chests full of every resource.", -320, 0, 22),
         new Zone("Smelting Works", "Furnaces, blaze burners and steam engines — the heat of industry.", 320, -320, 22),
         new Zone("Grand Throne Castle", "A towering stone-brick keep with turrets, banners and a gold throne.", -320, -320, 24),
+        new Zone("The Barren Isles", "An End update exhibit: drifting end-stone isles, obsidian monoliths, dead purpur ruins and the last chorus grove.", -320, 160, 22),
     };
 
     public static Zone[] zones() { return ZONES; }
@@ -189,6 +194,7 @@ public final class TutorialWorldAuthor {
                 case 11: buildStorageVault(z); break;
                 case 12: buildSmeltingWorks(z); break;
                 case 13: buildThroneCastle(z); break;
+                case 14: buildBarrenIsles(z); break;
             }
         }
 
@@ -271,6 +277,25 @@ public final class TutorialWorldAuthor {
             place(x + 11, G + 1, zz + 4, CHEST);
             chestAt(x + 11, G + 1, zz + 4, new String[]{"stone_brick","cobblestone","oak_planks","glass","torch","bread","gold_block","glowstone","iron_ingot","coal"}, new int[]{64,64,64,16,32,16,4,8,16,32});
 
+            // Library & enchanting wing along the west wall: bookshelf rows
+            // with two enchanting tables so progression has a home.
+            for (int lz = zz - 5; lz <= zz + 3; lz += 2) {
+                place(x - 11, G + 1, lz, BOOKSHELF);
+                place(x - 11, G + 2, lz, BOOKSHELF);
+            }
+            place(x - 10, G + 1, zz - 2, ENCHANT_TABLE);
+            place(x - 10, G + 1, zz + 2, ENCHANT_TABLE);
+            place(x - 10, G + 3, zz, TORCH);
+
+            // Beacon pyramid in the south courtyard: iron/gold/diamond tiers
+            // crowned with a beacon — a visible landmark from every gate.
+            for (int px = -2; px <= 2; px++)
+                for (int pz = -2; pz <= 2; pz++) place(x + px, G + 1, zz + 8 + pz, IRON_BLOCK);
+            for (int px = -1; px <= 1; px++)
+                for (int pz = -1; pz <= 1; pz++) place(x + px, G + 2, zz + 8 + pz, GOLD_BLOCK);
+            place(x, G + 3, zz + 8, DIAMOND_BLOCK);
+            place(x, G + 4, zz + 8, BEACON);
+
             // Torches ringing the courtyard.
             for (int t = -8; t <= 8; t += 4) {
                 place(x + t, G + 1, zz - 12, TORCH); place(x + t, G + 1, zz + 12, TORCH);
@@ -337,29 +362,66 @@ public final class TutorialWorldAuthor {
             set(x, G + 1, zz - 10, 0); set(x, G + 2, zz - 10, 0);
             for (int w = 0; w < 4; w++) { set(x - 12 + w * 4, G + 2, zz - 10, GLASS); set(x - 12 + w * 4, G + 3, zz - 10, GLASS); }
             for (int w = 0; w < 4; w++) { set(x - 12 + w * 4, G + 2, zz + 10, GLASS); set(x - 12 + w * 4, G + 3, zz + 10, GLASS); }
-            place(x - 8, G + 1, zz - 4, RS_STICKY, 1); place(x - 8, G + 2, zz - 4, RS_STICKY, 1);
-            place(x - 7, G + 1, zz - 4, PLANKS); place(x - 7, G + 2, zz - 4, PLANKS);
+
+            // ── Display wall: all 16 lamp colors, each sitting on a redstone
+            //    block so the whole spectrum stays lit.
             for (int c = 0; c < 16; c++) {
                 int lampId = com.voxel.world.RedstoneManager.BLOCK_LAMP_BASE + c * 2;
                 place(x - 10 + c, G + 1, zz - 8, lampId);
                 place(x - 10 + c, G, zz - 8, REDSTONE_BLOCK);
             }
-            place(x - 10, G + 1, zz + 2, RS_REPEATER, 2);
-            place(x - 8, G + 1, zz + 2, RS_REPEATER, 2);
-            place(x - 6, G + 1, zz + 2, RS_REPEATER, 2);
+
+            // Facing note: repeater/comparator facing comes from the BLOCK ID,
+            // not the extra byte. BASE+2=north, +3=south, +4=west, +5=east.
+            // Extra byte low nibble = repeater delay (1-4).
+            final int REP_EAST = com.voxel.world.RedstoneManager.BLOCK_REPEATER_BASE + 3;
+            final int CMP_EAST = com.voxel.world.RedstoneManager.BLOCK_COMPARATOR_BASE + 3;
+            final int STICKY_EAST = 273; // sticky piston facing east
+
+            // ── Demo 1: repeater delay chain. Redstone block feeds a wire,
+            //    three east-facing repeaters pass it on with rising delays,
+            //    and the lamp pops on ~0.7s after the source.
+            place(x - 13, G + 1, zz + 2, REDSTONE_BLOCK);
+            place(x - 12, G + 1, zz + 2, WIRE);
+            place(x - 11, G + 1, zz + 2, WIRE); // feeds the first repeater's back face
+            place(x - 10, G + 1, zz + 2, REP_EAST, 1);
+            place(x - 8, G + 1, zz + 2, REP_EAST, 2);
+            place(x - 6, G + 1, zz + 2, REP_EAST, 4);
+            place(x - 5, G + 1, zz + 2, WIRE);
             place(x - 4, G + 1, zz + 2, LAMP);
-            place(x - 10, G + 1, zz + 4, WIRE); place(x - 8, G + 1, zz + 4, WIRE); place(x - 6, G + 1, zz + 4, WIRE);
-            place(x - 10, G + 1, zz + 6, CHEST);
-            chestAt(x - 10, G + 1, zz + 6, new String[]{"redstone_torch","redstone_block","redstone_lamp","redstone_ore"}, new int[]{16,8,4,8});
-            place(x - 8, G + 1, zz + 6, RS_COMPARATOR, 2);
+
+            // ── Demo 2: signal decay. Two wire runs fed from the same source:
+            //    the short row stays fully bright; the long row fades and dies
+            //    after 15 blocks (its far lamp never lights).
+            place(x + 12, G + 1, zz + 4, REDSTONE_BLOCK);
+            for (int d = 1; d <= 10; d++) place(x + 12 - d, G + 1, zz + 4, WIRE); // x+11 .. x+2
+            place(x + 1, G + 1, zz + 4, LAMP);
+            place(x + 12, G + 1, zz + 6, REDSTONE_BLOCK);
+            for (int d = 1; d <= 19; d++) place(x + 12 - d, G + 1, zz + 6, WIRE); // x+11 .. x-7
+            place(x - 8, G + 1, zz + 6, LAMP); // beyond the signal: stays dark
+
+            // ── Demo 3: comparator measures chest fullness and drives a lamp.
+            place(x + 6, G + 1, zz + 8, CHEST);
+            chestAt(x + 6, G + 1, zz + 8, new String[]{"iron_ingot", "gold_ingot"}, new int[]{10, 5});
+            place(x + 7, G + 1, zz + 8, CMP_EAST, 0);
+            place(x + 8, G + 1, zz + 8, WIRE);
+            place(x + 9, G + 1, zz + 8, LAMP);
+
+            // ── Demo 4: torch powers an adjacent lamp; sticky piston (east)
+            //    held extended by a redstone block behind it pushes its payload.
             place(x + 2, G + 1, zz, R_TORCH);
-            place(x + 4, G + 1, zz, LAMP);
-            place(x + 6, G + 1, zz, RS_PISTON, 2); place(x + 6, G + 2, zz, RS_PISTON, 2);
-            place(x + 8, G + 1, zz, REDSTONE_BLOCK);
-            place(x + 10, G + 1, zz, REDSTONE_ORE);
+            place(x + 3, G + 1, zz, LAMP);
+            place(x + 6, G + 1, zz, REDSTONE_BLOCK); // power source behind
+            place(x + 7, G + 1, zz, STICKY_EAST, 0);
+            place(x + 8, G + 1, zz, PLANKS);         // payload being pushed east
+
             for (int w = -4; w <= 4; w++) place(x + w, G, zz + 8, WOOL);
             for (int t = x - 14; t <= x + 14; t += 7) { place(t, G + 3, zz - 10, TORCH); place(t, G + 3, zz + 10, TORCH); }
             for (int b = 0; b < 5; b++) place(x - 10 + b * 3, G + 1, zz - 6, BOOKSHELF);
+
+            // Reference chest with components to experiment with.
+            place(x - 12, G + 1, zz + 8, CHEST);
+            chestAt(x - 12, G + 1, zz + 8, new String[]{"redstone_torch", "redstone_block", "redstone_lamp", "redstone", "repeater", "comparator"}, new int[]{16, 8, 8, 32, 4, 4});
         }
 
         private void buildMinecartCoaster(Zone z) {
@@ -632,6 +694,113 @@ public final class TutorialWorldAuthor {
             for (int b = 0; b < 5; b++) { place(x + 4 + b, G + 1, kz0 + 4, BOOKSHELF); place(x + 4 + b, G + 2, kz0 + 4, BOOKSHELF); }
             place(x + 8, G + 1, kz1 - 3, FURNACE); place(x + 8, G + 1, kz1 - 4, CRAFT_TABLE);
             for (int t = kx0 + 2; t <= kx1 - 2; t += 4) { place(t, G + 3, kz0 + 1, TORCH); place(t, G + 3, kz1 - 1, TORCH); }
+        }
+
+        /**
+         * Zone 14 — The Barren Isles.
+         *
+         * The End update exhibit, kept deliberately lifeless: drifting end-stone
+         * islands over an empty plain, a ring of obsidian monoliths, a dead purpur
+         * pavilion around the dragon egg, one last chorus grove under glass, and a
+         * void-steel altar. No cities, no mobs — just cold geometry.
+         */
+        private void buildBarrenIsles(Zone z) {
+            int x = z.cx, zz = z.cz;
+
+            // ── Main isle: a thick tapered disc floating above the plain ──
+            final int ISLE_Y = G + 13;
+            for (int dx = -12; dx <= 12; dx++) {
+                for (int dz = -12; dz <= 12; dz++) {
+                    float d = (float) Math.sqrt(dx * dx + dz * dz);
+                    if (d > 12f) continue;
+                    int depth = d > 10f ? 1 : d > 7f ? 2 : 4; // tapering underside
+                    for (int dy = 0; dy < depth; dy++) place(x + dx, ISLE_Y - dy, zz + dz, END_STONE);
+                }
+            }
+
+            // ── Obsidian monolith ring: cold beacons with glowstone caps ──
+            for (int i = 0; i < 6; i++) {
+                double ang = i * Math.PI / 3.0;
+                int px = x + (int) Math.round(Math.cos(ang) * 9);
+                int pz = zz + (int) Math.round(Math.sin(ang) * 9);
+                int top = ISLE_Y + 6 + (i % 3) * 2;
+                for (int py = ISLE_Y + 1; py <= top; py++) place(px, py, pz, OBSIDIAN);
+                place(px, top + 1, pz, GLOWSTONE);
+            }
+
+            // ── Dead purpur pavilion at the isle's heart ──
+            for (int px = -3; px <= 3; px++)
+                for (int pz = -3; pz <= 3; pz++)
+                    place(x + px, ISLE_Y + 1, zz + pz, PURPUR);
+            for (int[] c : new int[][]{{-3,-3},{3,-3},{-3,3},{3,3}}) {
+                for (int py = 2; py <= 4; py++) place(x + c[0], ISLE_Y + py, zz + c[1], PURPUR_PILLAR);
+                place(x + c[0], ISLE_Y + 5, zz + c[1], PURPUR); // corner finials
+            }
+            // Roof ring with an end-glass oculus over the pedestal.
+            for (int px = -3; px <= 3; px++)
+                for (int pz = -3; pz <= 3; pz++) {
+                    boolean edge = Math.max(Math.abs(px), Math.abs(pz)) == 3;
+                    boolean oculus = Math.abs(px) == 1 && Math.abs(pz) == 1;
+                    if (edge) place(x + px, ISLE_Y + 5, zz + pz, PURPUR);
+                    else if (oculus) place(x + px, ISLE_Y + 5, zz + pz, END_GLASS);
+                }
+            // Dragon egg pedestal: two end-brick tiers + the egg itself.
+            for (int px = -1; px <= 1; px++)
+                for (int pz = -1; pz <= 1; pz++)
+                    place(x + px, ISLE_Y + 2, zz + pz, END_BRICKS);
+            place(x, ISLE_Y + 3, zz, END_BRICKS);
+            place(x, ISLE_Y + 4, zz, DRAGON_EGG);
+            // End rods flanking the pavilion entrance (south side).
+            place(x - 2, ISLE_Y + 2, zz + 4, END_ROD);
+            place(x + 2, ISLE_Y + 2, zz + 4, END_ROD);
+
+            // Exhibit chest tucked beside the pedestal.
+            place(x - 3, ISLE_Y + 2, zz, CHEST);
+            chestAt(x - 3, ISLE_Y + 2, zz, new String[]{
+                    "end_stone", "end_bricks", "purpur_block", "purpur_pillar",
+                    "end_rod", "chorus_fruit", "chorus_fruit_popped", "end_glass", "void_steel"},
+                    new int[]{32, 32, 16, 8, 8, 8, 8, 8, 4});
+
+            // ── Rising end-brick causeway from the plain up to the isle ──
+            for (int s = 0; s <= 11; s++) {
+                int sx = x, sz = zz + 21 - s;
+                int sy = G + 1 + s; // climbs one block per step
+                place(sx, sy, sz, END_BRICKS);
+                for (int fy = G; fy < sy; fy++) place(sx, fy, sz, END_BRICKS); // solid footing
+                if (s % 3 == 2 && s < 10) place(sx, sy + 1, sz, END_ROD); // lampposts
+            }
+
+            // ── The last chorus grove: its own drifting isle ──
+            final int GROVE_Y = G + 17;
+            for (int dx = -5; dx <= 5; dx++)
+                for (int dz = -5; dz <= 5; dz++) {
+                    float d = (float) Math.sqrt(dx * dx + dz * dz);
+                    if (d > 5f) continue;
+                    place(x + 19 + dx, GROVE_Y, zz - 9 + dz, END_STONE);
+                    if (d <= 3.5f) place(x + 19 + dx, GROVE_Y - 1, zz - 9 + dz, END_STONE);
+                }
+            int[][] grove = {{-3,-2},{-1,-3},{0,0},{2,-2},{3,1},{-2,2},{1,3},{3,-3}};
+            for (int gi = 0; gi < grove.length; gi++) {
+                int stem = 2 + (gi % 3);
+                for (int s = 1; s <= stem; s++)
+                    place(x + 19 + grove[gi][0], GROVE_Y + s, zz - 9 + grove[gi][1], CHORUS);
+                place(x + 19 + grove[gi][0], GROVE_Y + stem + 1, zz - 9 + grove[gi][1], CHORUS_FLOWER);
+            }
+
+            // ── Void-steel altar islet ──
+            final int ALTAR_Y = G + 10;
+            for (int dx = -1; dx <= 1; dx++)
+                for (int dz = -1; dz <= 1; dz++)
+                    place(x - 17 + dx, ALTAR_Y, zz + 7 + dz, VOID_STEEL);
+            place(x - 17, ALTAR_Y + 1, zz + 6, VOID_STEEL);
+            place(x - 17, ALTAR_Y + 2, zz + 6, END_ROD);
+
+            // Drifting shards: small broken fragments hovering between isles.
+            int[][] shards = {{7, 4, G + 15}, {-8, -6, G + 18}, {12, -4, G + 12}, {-14, 2, G + 14}};
+            for (int[] s : shards) {
+                place(x + s[0], s[2], zz + s[1], END_STONE);
+                place(x + s[0] + 1, s[2], zz + s[1], END_STONE);
+            }
         }
 
         // ── Fill pass: roads + a building in every cell (no empty areas) ──

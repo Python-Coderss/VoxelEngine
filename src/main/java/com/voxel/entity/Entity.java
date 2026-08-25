@@ -1,5 +1,6 @@
 package com.voxel.entity;
 
+import com.voxel.ai.MobBrain;
 import com.voxel.utils.FixedPoint;
 import com.voxel.world.DimensionType;
 import org.joml.Vector3f;
@@ -31,6 +32,10 @@ public class Entity {
     public List<ModelPart> parts;
     /** The dimension this entity currently belongs to. */
     public DimensionType dimension = DimensionType.OVERWORLD;
+
+    /** Optional AI brain; when set it receives perception and may claim the
+     *  tick's decisions before legacy FSM code runs (null = legacy only). */
+    public MobBrain brain;
 
     // Tint color (RGB multiplier, 1,1,1 = no tint) and amount (0-1)
     public Vector3f tintColor = new Vector3f(1.0f, 1.0f, 1.0f);
@@ -146,7 +151,18 @@ public class Entity {
     }
 
     private int resolveTextureIndex(String texName, com.voxel.utils.TextureManager textureManager) {
-        return textureManager.getEntityTextureIndex(texName);
+        // Defensive: some entities (e.g. projectiles) may be constructed without
+        // an explicit texture manager; fall back to the shared one.
+        com.voxel.utils.TextureManager tm = textureManager != null ? textureManager : sharedTextureManager;
+        return tm != null ? tm.getEntityTextureIndex(texName) : -1;
+    }
+
+    /** Shared fallback texture manager for entities built without an explicit one. */
+    private static volatile com.voxel.utils.TextureManager sharedTextureManager;
+
+    /** Called once by Main after creating its TextureManager. */
+    public static void setSharedTextureManager(com.voxel.utils.TextureManager tm) {
+        sharedTextureManager = tm;
     }
 
     private void loadModelRecursive(String path, com.voxel.utils.TextureManager textureManager, java.util.Map<String, ModelPart> loadedParts) {
