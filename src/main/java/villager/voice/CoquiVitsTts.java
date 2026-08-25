@@ -24,9 +24,11 @@ import java.util.regex.Pattern;
  * (cmudict G2P, no eSpeak), then run through the exported
  * {@code coqui-vctk-vits.onnx} graph via ONNX Runtime with speaker
  * {@code p226} and the Coqui inference scales {@code [0.667, 1.0, 0.8]}.
- * Sentences are synthesized separately and joined with the Coqui
- * {@code PAD_SILENCE_SAMPLES} (10000) tail plus 100 ms gaps, matching the
- * Python villager_line.py assembly. Output is 22050 Hz.
+ * Sentences are synthesized separately and joined with a 0.1 s silence gap
+ * (2205 samples), exactly the validated {@code villager_line.py} recipe:
+ * "parts are joined with a 0.1 s silence gap at the base sample rate
+ * (22.05 kHz)". The old 10000-sample (0.45 s) Coqui pad made multi-sentence
+ * lines plodding and did not match the reference. Output is 22050 Hz.
  *
  * The graph is the same one Python's reference pipeline uses
  * ({@code tts_models/en/vctk/vits}), so the natural, non-robotic prosody of
@@ -35,8 +37,8 @@ import java.util.regex.Pattern;
  */
 public final class CoquiVitsTts implements NeuralBaseTts {
     public static final int OUTPUT_RATE = 22050;
-    /** Coqui PAD_SILENCE_SAMPLES: zeros appended after every synthesized sentence. */
-    public static final int PAD_SILENCE_SAMPLES = 10000;
+    /** 0.1 s silence at 22050 Hz, per the validated reference recipe. */
+    public static final int PAD_SILENCE_SAMPLES = 2205;
     private static final long SPEAKER_P226 = 2L;
     private static final Pattern SENTENCE_SPLIT =
             Pattern.compile("(?<=[.!?\\u2026])\\s+");
@@ -65,6 +67,11 @@ public final class CoquiVitsTts implements NeuralBaseTts {
 
     @Override
     public synchronized WavAudio synthesize(String text, double speed) {
+        return synthesize(text, speed, "neutral");
+    }
+
+    @Override
+    public WavAudio synthesize(String text, double speed, String emotion) {
         if (text == null || text.trim().isEmpty()) {
             throw new IllegalArgumentException("Text must not be empty");
         }
@@ -75,7 +82,7 @@ public final class CoquiVitsTts implements NeuralBaseTts {
             if (sentence.trim().isEmpty()) {
                 continue;
             }
-            float[] audio = synthesizeSentence(sentence.trim(), speed);
+            float[] audio = synthesizeSentence(sentence.trim(), speed, emotion);
             if (audio.length > 0) {
                 pieces.add(audio);
             }
@@ -97,7 +104,7 @@ public final class CoquiVitsTts implements NeuralBaseTts {
         return new WavAudio(OUTPUT_RATE, output);
     }
 
-    private float[] synthesizeSentence(String sentence, double speed) {
+    private float[] synthesizeSentence(String sentence, double speed, String emotion) {
         int[] ids = frontend.textToIds(sentence);
         if (ids.length == 0) {
             return new float[0];
@@ -109,8 +116,13 @@ public final class CoquiVitsTts implements NeuralBaseTts {
         inputBuffer.flip();
         LongBuffer lengthBuffer = directLongBuffer(1);
         lengthBuffer.put(ids.length).flip();
+        // Emotion shifts how the base *sounds* before RVC ever sees it: angry
+        // turns the noise scales down (crisper), sad/scared up (breathier),
+        // like the reference's emotional delivery.
+        float[] emotionScales = scalesForEmotion(emotion);
         FloatBuffer scalesBuffer = directFloatBuffer(3);
-        scalesBuffer.put(new float[]{0.667f, (float) Math.max(0.1, speed), 0.8f}).flip();
+        scalesBuffer.put(new float[]{emotionScales[0], (float) Math.max(0.1, speed),
+                emotionScales[1]}).flip();
         LongBuffer sidBuffer = directLongBuffer(1);
         sidBuffer.put(sid).flip();
 
@@ -138,6 +150,28 @@ public final class CoquiVitsTts implements NeuralBaseTts {
         } catch (Exception error) {
             throw new IllegalStateException("Coqui VITS inference failed: " + error, error);
         }
+    }
+
+    /**
+     * @return {noiseScale, noiseScaleW} for the base synthesis. The Coqui
+     *         defaults (0.667, 0.8) stay neutral; anger cuts both for a crisp
+     *         delivery, fear and sadness raise them for a breathier one, and
+     *         happy brightens the voicing slightly.
+     */
+    private static float[] scalesForEmotion(String emotion) {
+        if ("angry".equalsIgnoreCase(emotion)) {
+            return new float[]{0.62f, 0.75f};
+        }
+        if ("happy".equalsIgnoreCase(emotion)) {
+            return new float[]{0.72f, 0.85f};
+        }
+        if ("sad".equalsIgnoreCase(emotion)) {
+            return new float[]{0.75f, 0.90f};
+        }
+        if ("scared".equalsIgnoreCase(emotion)) {
+            return new float[]{0.74f, 0.88f};
+        }
+        return new float[]{0.667f, 0.8f};
     }
 
     /** Map the required roles to the actual graph input names. */

@@ -10,6 +10,9 @@ public interface NeuralBaseTts extends AutoCloseable {
     /** Synthesize text to raw mono audio; speed &gt; 1 makes speech slower. */
     WavAudio synthesize(String text, double speed);
 
+    /** Synthesize with an emotional delivery (neutral, happy, sad, angry, scared). */
+    WavAudio synthesize(String text, double speed, String emotion);
+
     @Override
     void close() throws Exception;
 }

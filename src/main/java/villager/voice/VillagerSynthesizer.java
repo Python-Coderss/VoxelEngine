@@ -88,7 +88,8 @@ public final class VillagerSynthesizer implements AutoCloseable {
             return referenceVoice.render(text, effectiveOptions);
         }
 
-        WavAudio base = baseTts.synthesize(text, effectiveOptions.getEffectiveSpeed());
+        WavAudio base = baseTts.synthesize(text, effectiveOptions.getEffectiveSpeed(),
+                effectiveOptions.getEmotion());
         WavAudio converted = customVoice.convert(base, effectiveOptions.getEffectivePitchSemitones(),
                 effectiveOptions.getSinging(), effectiveOptions.getEmotion(),
                 effectiveOptions.getSarcasm(), effectiveOptions.isQuestion());
