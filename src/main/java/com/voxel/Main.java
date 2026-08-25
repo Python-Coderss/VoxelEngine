@@ -562,6 +562,7 @@ public class Main {
         ctx.spawnMobCommand = this::spawnMobAtLook;
         ctx.uiDirtyMarker = () -> { hud.inventoryUiDirty = true; };
         ctx.villagerAudioManager = villagerAudioManager;
+        com.voxel.ai.speech.VillagerSpeech.bind(villagerAudioManager);
 
         // Create extracted subsystems
         itemDefinitions = new ItemDefinitions();
@@ -5350,6 +5351,7 @@ public class Main {
 
     public void setupResources() {
         textureManager = new TextureManager();
+        com.voxel.entity.Entity.setSharedTextureManager(textureManager);
         textureManager.loadTextures(
             "src/main/resources/assets/minecraft/textures/blocks",
             "src/main/resources/assets/minecraft/textures/items",
@@ -6514,6 +6516,38 @@ public class Main {
         shaderBlockRegistry.register(471, 471);
         blockDataManager.registerBlock(471, "iron_bars_post", textureManager, mcModels, 120, 0, 255);
         blockDataManager.setFullBlock(471, false);
+
+        // ── End Update blocks (fixed IDs above the auto-loader's range so
+        // existing auto-assigned IDs never shift). Barren-void content only:
+        // purpur masonry + chorus (the End's one signature plant) + two new
+        // custom-textured blocks.
+        blockRegistry.register("purpur_block", 900);
+        shaderBlockRegistry.register(900, 900);
+        blockDataManager.registerBlock(900, "purpur_block", textureManager, mcModels);
+
+        blockRegistry.register("purpur_pillar", 901);
+        shaderBlockRegistry.register(901, 901);
+        blockDataManager.registerBlock(901, "purpur_pillar", textureManager, mcModels);
+
+        blockRegistry.register("chorus_plant", 902);
+        shaderBlockRegistry.register(902, 902);
+        blockDataManager.registerBlock(902, "chorus_plant", textureManager, mcModels);
+        blockDataManager.setFullBlock(902, false);
+
+        blockRegistry.register("chorus_flower", 903);
+        shaderBlockRegistry.register(903, 903);
+        blockDataManager.registerBlock(903, "chorus_flower", textureManager, mcModels);
+        blockDataManager.setFullBlock(903, false);
+
+        // end_glass: pale translucent violet glass (same surface params as glass).
+        blockRegistry.register("end_glass", 904);
+        shaderBlockRegistry.register(904, 904);
+        blockDataManager.registerBlock(904, "end_glass", textureManager, mcModels, 150, 50, 255);
+
+        // void_steel: dark End-metal plate used for high-tier Create crafting.
+        blockRegistry.register("void_steel", 905);
+        shaderBlockRegistry.register(905, 905);
+        blockDataManager.registerBlock(905, "void_steel", textureManager, mcModels);
 
         // Auto-register every remaining vanilla 1.12.2 blockstate from the resource pack.
         // Hand-authored IDs above remain authoritative; new content gets stable IDs

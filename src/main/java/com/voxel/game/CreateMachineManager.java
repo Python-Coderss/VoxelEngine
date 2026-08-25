@@ -57,26 +57,49 @@ public class CreateMachineManager {
     /** Belt speed in voxels/sec. */
     public static final float BELT_SPEED = 1.6f;
 
-    /** {input, output} pairs, ground one at a time. */
-    private static final String[][] MILLSTONE_RECIPES = {
-        {"cobblestone", "gravel"},
-        {"gravel", "flint"},
-        {"andesite", "sand"},
-        {"sand", "clay"},
-        {"netherrack", "soul_sand"},
+    /** {input, output, outputCount} triplets, ground one at a time. */
+    private static final Object[][] MILLSTONE_RECIPES = {
+        {"cobblestone", "gravel", 1},
+        {"gravel", "flint", 1},
+        {"andesite", "sand", 1},
+        {"sand", "clay", 1},
+        {"netherrack", "soul_sand", 1},
+        // End Update + quality-of-life additions.
+        {"glowstone", "glowstone_dust", 4},
+        {"blaze_rod", "blaze_powder", 2},
+        {"sandstone", "sand", 2},
+        {"clay", "clay_ball", 4},
     };
     /** {input, count, output, outputCount}. */
     private static final Object[][] PRESS_RECIPES = {
         {"sand", 4, "sandstone", 1},
         {"oak_planks", 2, "oak_slab", 1},
+        // Compacting raw materials into masonry.
+        {"clay_ball", 4, "brick", 4},
+        {"glowstone_dust", 4, "glowstone", 1},
     };
-    private static final String[][] CRUSHING_RECIPES = {
+    /** Dual-input press alloying: {inputA, inputB, output, count}. */
+    private static final Object[][] ALLOY_RECIPES = {
+        {"copper_ingot", "zinc_ingot", "brass_ingot", 2},
+        // Void steel: iron folded over end stone under pressure.
+        {"iron_ingot", "end_stone", "void_steel", 1},
+    };
+    /** {input, count, output, outputCount}. */
+    private static final Object[][] CRUSHING_RECIPES = {
         {"iron_ore", "iron_ingot", "2"},
         {"gold_ore", "gold_ingot", "2"},
         {"copper_ore", "copper_ingot", "2"},
         {"zinc_ore", "zinc_ingot", "2"},
         {"quartz_ore", "nether_quartz", "2"},
         {"redstone_ore", "redstone_wire", "4"},
+        // Stone recycling chain + gem ores.
+        {"stone", "cobblestone", "1"},
+        {"cobblestone", "gravel", "1"},
+        {"coal_ore", "coal", "2"},
+        {"diamond_ore", "diamond", "2"},
+        {"lapis_ore", "blue_dye", "6"},
+        {"emerald_ore", "emerald", "2"},
+        {"glowstone", "glowstone_dust", "8"},
     };
 
     // Direction order matches pistons/fans: down, up, north, south, west, east
@@ -375,9 +398,12 @@ public class CreateMachineManager {
     }
 
     private boolean tickMillstone(int x, int y, int z) {
-        for (String[] recipe : MILLSTONE_RECIPES) {
-            if (droppedItemManager.consumeFromCell(x, y + 1, z, recipe[0], 1)) {
-                droppedItemManager.spawn(recipe[1], 1, x, y + 1, z);
+        for (Object[] recipe : MILLSTONE_RECIPES) {
+            String input = (String) recipe[0];
+            String output = (String) recipe[1];
+            int outCount = (Integer) recipe[2];
+            if (droppedItemManager.consumeFromCell(x, y + 1, z, input, 1)) {
+                droppedItemManager.spawn(output, outCount, x, y + 1, z);
                 return true;
             }
         }
@@ -385,14 +411,18 @@ public class CreateMachineManager {
     }
 
     private boolean tickPress(int x, int y, int z) {
-        // Alloy: copper + zinc -> 2 brass (items below or on top of the press).
+        // Alloying: two ingredients fused under the press head (items below or
+        // on top of the press). Copper+zinc → brass; iron+end stone → void steel.
         for (int cy : new int[]{y - 1, y + 1}) {
-            if (droppedItemManager.hasItemInCell(x, cy, z, "copper_ingot")
-                    && droppedItemManager.hasItemInCell(x, cy, z, "zinc_ingot")) {
-                droppedItemManager.consumeFromCell(x, cy, z, "copper_ingot", 1);
-                droppedItemManager.consumeFromCell(x, cy, z, "zinc_ingot", 1);
-                droppedItemManager.spawn("brass_ingot", 2, x, cy, z);
-                return true;
+            for (Object[] alloy : ALLOY_RECIPES) {
+                String a = (String) alloy[0], b = (String) alloy[1];
+                if (droppedItemManager.hasItemInCell(x, cy, z, a)
+                        && droppedItemManager.hasItemInCell(x, cy, z, b)) {
+                    droppedItemManager.consumeFromCell(x, cy, z, a, 1);
+                    droppedItemManager.consumeFromCell(x, cy, z, b, 1);
+                    droppedItemManager.spawn((String) alloy[2], (Integer) alloy[3], x, cy, z);
+                    return true;
+                }
             }
         }
         for (Object[] recipe : PRESS_RECIPES) {
@@ -415,15 +445,17 @@ public class CreateMachineManager {
         if (dir > 5) dir = 1;
         int[] off = DIR_OFFSETS[dir];
         int cx = x + off[0], cy = y + off[1], cz = z + off[2];
-        for (String[] recipe : CRUSHING_RECIPES) {
-            if (droppedItemManager.consumeFromCell(cx, cy, cz, recipe[0], 1)) {
-                int outCount;
-                try {
-                    outCount = Integer.parseInt(recipe[2]);
-                } catch (NumberFormatException nfe) {
-                    outCount = 2;
-                }
-                droppedItemManager.spawn(recipe[1], outCount, cx, cy, cz);
+        for (Object[] recipe : CRUSHING_RECIPES) {
+            String input = (String) recipe[0];
+            String output = (String) recipe[1];
+            int outCount;
+            try {
+                outCount = Integer.parseInt((String) recipe[2]);
+            } catch (NumberFormatException nfe) {
+                outCount = 2;
+            }
+            if (droppedItemManager.consumeFromCell(cx, cy, cz, input, 1)) {
+                droppedItemManager.spawn(output, outCount, cx, cy, cz);
                 return true;
             }
         }
@@ -447,17 +479,62 @@ public class CreateMachineManager {
         return true;
     }
 
+    /** Log block id -> planks item id (the saw cuts matching planks). */
+    private static final java.util.Map<Integer, String> LOG_TO_PLANKS = createLogMap();
+
+    private static java.util.Map<Integer, String> createLogMap() {
+        java.util.Map<Integer, String> m = new java.util.HashMap<>();
+        m.put(5, "oak_planks");
+        m.put(46, "birch_planks");
+        m.put(47, "spruce_planks");
+        m.put(49, "jungle_planks");
+        m.put(51, "acacia_planks");
+        m.put(52, "dark_oak_planks");
+        m.put(103, "skyroot_planks");
+        return m;
+    }
+
+    /** Planks block id -> slab item id (sawing planks yields 2 slabs each). */
+    private static final java.util.Map<Integer, String> PLANKS_TO_SLAB = createSlabMap();
+
+    private static java.util.Map<Integer, String> createSlabMap() {
+        java.util.Map<Integer, String> m = new java.util.HashMap<>();
+        m.put(72, "oak_slab");
+        m.put(73, "spruce_slab");
+        m.put(74, "birch_slab");
+        m.put(75, "jungle_slab");
+        m.put(76, "acacia_slab");
+        m.put(77, "dark_oak_slab");
+        m.put(131, "stone_brick_slab"); // stone bricks cut to slabs too
+        return m;
+    }
+
     private boolean tickSaw(int x, int y, int z) {
         int dir = facingOf(x, y, z);
         if (dir > 5) dir = 1;
         int[] off = DIR_OFFSETS[dir];
         int bx = x + off[0], by = y + off[1], bz = z + off[2];
         int block = world.getVoxel(bx, by, bz);
-        if (!isLogBlock(block)) return false;
-        if (!chunkManager.setVoxel(bx, by, bz, 0)) return false;
-        afterWorldChange(bx, by, bz);
-        droppedItemManager.spawn("oak_planks", 4, bx, by, bz);
-        return true;
+
+        // Logs are sawn into their MATCHING planks — a birch log no longer
+        // magically becomes oak. The blade's extra kerf yields 6 per log.
+        String planks = LOG_TO_PLANKS.get(block);
+        if (planks != null) {
+            if (!chunkManager.setVoxel(bx, by, bz, 0)) return false;
+            afterWorldChange(bx, by, bz);
+            droppedItemManager.spawn(planks, 6, bx, by, bz);
+            return true;
+        }
+
+        // Planks and stone bricks are cut into slabs (2 per block).
+        String slab = PLANKS_TO_SLAB.get(block);
+        if (slab != null) {
+            if (!chunkManager.setVoxel(bx, by, bz, 0)) return false;
+            afterWorldChange(bx, by, bz);
+            droppedItemManager.spawn(slab, 2, bx, by, bz);
+            return true;
+        }
+        return false;
     }
 
     private boolean tickDeployer(int x, int y, int z) {

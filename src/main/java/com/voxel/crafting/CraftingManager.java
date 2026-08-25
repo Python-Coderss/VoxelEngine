@@ -629,6 +629,83 @@ public class CraftingManager {
             {"brass_casing", "brass_casing"},
             {"brass_casing", "brass_casing"}
         }, "item_vault", 1);
+
+        // ===== End Update =====
+
+        // End stone bricks: four end stone in a square.
+        addRecipe2x2(new String[][]{
+            {"end_stone", "end_stone"},
+            {"end_stone", "end_stone"}
+        }, "end_bricks", 4);
+
+        // Purpur block: the vanilla way (popped chorus fruit)...
+        addRecipe2x2(new String[][]{
+            {"chorus_fruit_popped", "chorus_fruit_popped"},
+            {"chorus_fruit_popped", "chorus_fruit_popped"}
+        }, "purpur_block", 1);
+        // ...or a barren-void alternative: end stone fused with nether quartz.
+        addRecipe2x2(new String[][]{
+            {"end_stone", "nether_quartz"},
+            {"nether_quartz", "end_stone"}
+        }, "purpur_block", 2);
+
+        // Purpur pillar: two purpur blocks stacked.
+        addRecipe3x3(new String[][]{
+            {null, "purpur_block", null},
+            {null, "purpur_block", null},
+            {null, null, null}
+        }, "purpur_pillar", 2);
+
+        // End rod: a blaze rod atop popped chorus fruit.
+        addRecipe3x3(new String[][]{
+            {null, "blaze_rod", null},
+            {null, "chorus_fruit_popped", null},
+            {null, null, null}
+        }, "end_rod", 4);
+
+        // Chorus: fruit pops in the furnace; a fresh fruit + a popped one
+        // grows a plant; four popped berries bud into a flower.
+        addShapeless2x2("chorus_plant", 3, "chorus_fruit", "chorus_fruit_popped");
+        addRecipe2x2(new String[][]{
+            {"chorus_fruit_popped", "chorus_fruit_popped"},
+            {"chorus_fruit_popped", "chorus_fruit_popped"}
+        }, "chorus_flower", 1);
+
+        // End glass: mundane glass infused with end stone.
+        addShapeless2x2("end_glass", 2, "glass", "end_stone");
+
+        // Void steel: iron folded over end stone under a coal-bed fire. The
+        // mechanical press can alloy it too (see CreateMachineManager).
+        addShapeless2x2("void_steel", 1, "iron_ingot", "end_stone", "coal");
+
+        // ===== Recipe fixes & gaps =====
+
+        // Bread: three wheat in a row (was missing entirely).
+        addRecipe3x3(new String[][]{
+            {"wheat", "wheat", "wheat"},
+            {null, null, null},
+            {null, null, null}
+        }, "bread", 1);
+
+        // Wool from string (vanilla ratio).
+        addRecipe2x2(new String[][]{
+            {"string", "string"},
+            {"string", "string"}
+        }, "wool", 1);
+
+        // Emerald blocks compact/decompact from the gem itself, not raw ore.
+        addShapeless3x3("emerald_block", 1,
+            "emerald", "emerald", "emerald",
+            "emerald", "emerald", "emerald",
+            "emerald", "emerald", "emerald");
+        addShapeless2x2("emerald", 9, "emerald_block");
+
+        // Lapis blocks work the same way via its dye form.
+        addShapeless3x3("lapis_block", 1,
+            "blue_dye", "blue_dye", "blue_dye",
+            "blue_dye", "blue_dye", "blue_dye",
+            "blue_dye", "blue_dye", "blue_dye");
+        addShapeless2x2("blue_dye", 9, "lapis_block");
     }
 
     private void registerWoodToolRecipes(String plankItemId) {

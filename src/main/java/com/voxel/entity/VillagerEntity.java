@@ -1,6 +1,10 @@
 package com.voxel.entity;
 
 import com.voxel.World;
+import com.voxel.ai.body.Emote;
+import com.voxel.ai.body.EmotePlayer;
+import com.voxel.ai.body.GazeController;
+import com.voxel.ai.brain.Brains;
 import com.voxel.utils.FixedPoint;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
@@ -77,6 +81,8 @@ public class VillagerEntity extends Entity {
     // ── World time provider (set by Main or GameContext) ──
     private static float globalWorldTime = 720.0f; // default: noon
     public static void setGlobalWorldTime(float time) { globalWorldTime = time; }
+    /** Current world time in minutes (0-1440); exposed for AI perception. */
+    public static float getGlobalWorldTime() { return globalWorldTime; }
 
     // ── Mating ──
     private boolean isWillingToMate = false;
@@ -106,6 +112,10 @@ public class VillagerEntity extends Entity {
         }
     }
 
+    // ── Body language layer (driven by the brain, layered over base anims) ──
+    private final EmotePlayer emotePlayer = new EmotePlayer();
+    private final GazeController gaze = new GazeController();
+
     // Static mirror for collision avoidance
     public static com.voxel.entity.EntityManager entityManager;
     public static void setEntityManager(com.voxel.entity.EntityManager em) { entityManager = em; }
@@ -132,14 +142,18 @@ public class VillagerEntity extends Entity {
         Profession[] profs = Profession.values();
         profession = profs[new Random().nextInt(profs.length)];
 
-        // Crossed-arms: connector + both arms tilt forward 43° as one unit
-        if (armConnector != null) { armConnector.rotation.set(43, 0, 0); }
-        if (leftArm != null) { leftArm.rotation.set(43, 0, 0); }
-        if (rightArm != null) { rightArm.rotation.set(43, 0, 0); }
+        // Crossed-arms rest pose from ModelVillager.setRotationAngles (-0.75 rad
+        // ≈ 43° forward about the shared pivot (0,21,1)); negative X tilts
+        // forward in this engine's convention.
+        if (armConnector != null) { armConnector.rotation.set(-43, 0, 0); }
+        if (leftArm != null) { leftArm.rotation.set(-43, 0, 0); }
+        if (rightArm != null) { rightArm.rotation.set(-43, 0, 0); }
 
         wanderTarget.set(position);
         prevPosition.set(position);
         randomTickDivider = 60 + new Random().nextInt(50);
+
+        this.brain = Brains.newVillagerBrain(this);
     }
 
     public void setVillage(Vector3i center, int radius) {
@@ -284,7 +298,13 @@ public class VillagerEntity extends Entity {
         }
 
         // ── Priority-based task execution ──
-        if (trySwim(dt))          { /* fall through to post-AI animation */ }
+        boolean brainDrove = false;
+        if (brain != null && world != null) {
+            brain.perceive(com.voxel.ai.Senses.scan(this, world, entityManager, 24f, globalWorldTime));
+            brainDrove = brain.update(dt);
+        }
+        if (brainDrove)          { /* fall through to post-AI animation */ }
+        else if (trySwim(dt))          { /* fall through to post-AI animation */ }
         else if (tryFlee(dt))          { /* fall through */ }
         else if (watchingTV && tryWatchTV(dt)) { /* fall through */ }
         else if (tryMoveIndoors(dt))   { /* fall through */ }
@@ -354,7 +374,7 @@ public class VillagerEntity extends Entity {
             }
             Vector3f away = new Vector3f(getPosition()).sub(fearedEntity.getPosition()).normalize();
             tryMove(away.x * fleeSpeed * dt, 0, away.z * fleeSpeed * dt);
-            rotation.y = (float)Math.toDegrees(Math.atan2(-away.x, -away.z));
+            rotation.y = (float)Math.toDegrees(Math.atan2(away.x, away.z));
             updateWalkAnimation(dt);
             return true;
         }
@@ -596,7 +616,7 @@ public class VillagerEntity extends Entity {
     private boolean tryLookAround(float dt) {
         if (lookTimer > 0) {
             if (head != null) {
-                head.rotation.set((float)Math.sin(animTime * 0.7f) * 3, 180, 0);
+                head.rotation.set((float)Math.sin(animTime * 0.7f) * 3, 0, 0);
             }
             updateIdleAnimation(dt);
             return true;
@@ -766,16 +786,16 @@ public class VillagerEntity extends Entity {
         bobAccum = breathe;
 
         // Connector + arms tilt forward together as one unit
-        if (armConnector != null) armConnector.rotation.set(43, 0, 0);
-        if (leftArm != null) { leftArm.rotation.set(43, 0, 0); }
-        if (rightArm != null) { rightArm.rotation.set(43, 0, 0); }
+        if (armConnector != null) armConnector.rotation.set(-43, 0, 0);
+        if (leftArm != null) { leftArm.rotation.set(-43, 0, 0); }
+        if (rightArm != null) { rightArm.rotation.set(-43, 0, 0); }
         if (leftLeg != null) leftLeg.rotation.x *= 0.8f;
         if (rightLeg != null) rightLeg.rotation.x *= 0.8f;
 
         if (head != null && lookTimer <= 0 && socialTimer <= 0) {
             head.rotation.set(
                 (float)Math.sin(animTime * 0.7f) * 2,
-                180 + (float)Math.sin(animTime * 0.5f + 1.0f) * 3,
+                (float)Math.sin(animTime * 0.5f + 1.0f) * 3,
                 0
             );
         }
@@ -793,11 +813,11 @@ public class VillagerEntity extends Entity {
         if (rightLeg != null) rightLeg.rotation.x = swing;
 
         // Arms + connector stay attached as one unit while walking
-        if (armConnector != null) armConnector.rotation.set(43, 0, 0);
-        if (leftArm != null) { leftArm.rotation.set(43, 0, 0); }
-        if (rightArm != null) { rightArm.rotation.set(43, 0, 0); }
+        if (armConnector != null) armConnector.rotation.set(-43, 0, 0);
+        if (leftArm != null) { leftArm.rotation.set(-43, 0, 0); }
+        if (rightArm != null) { rightArm.rotation.set(-43, 0, 0); }
         rotation.z = (float)Math.sin(animTime * walkSpeed) * 3.0f;
-        if (head != null) head.rotation.set(0, 180, 0);
+        if (head != null) head.rotation.set(0, 0, 0);
     }
 
     private void updateSwimAnimation(float dt) {
@@ -808,17 +828,17 @@ public class VillagerEntity extends Entity {
         if (rightArm != null) { rightArm.rotation.set(-swimWave - 80, 0, -10); }
         if (leftLeg != null) leftLeg.rotation.x = swimWave * 0.3f;
         if (rightLeg != null) rightLeg.rotation.x = -swimWave * 0.3f;
-        if (head != null) head.rotation.set(0, 180, 0);
+        if (head != null) head.rotation.set(0, 0, 0);
     }
 
     private void updateBuildingAnimation(float dt) {
         float buildSwing = (float)Math.sin(animTime * 4.0f) * 45.0f;
         // Partially uncross for building: connector + left arm tilt less, right arm reaches out
-        if (armConnector != null) armConnector.rotation.set(20, 0, 0);
+        if (armConnector != null) armConnector.rotation.set(-20, 0, 0);
         if (rightArm != null) {
             rightArm.rotation.set(buildSwing - 60, 0, 0);
         }
-        if (leftArm != null) { leftArm.rotation.set(20, 0, 0); }
+        if (leftArm != null) { leftArm.rotation.set(-20, 0, 0); }
         if (leftLeg != null) leftLeg.rotation.x = 0;
         if (rightLeg != null) rightLeg.rotation.x = 0;
 
@@ -828,9 +848,10 @@ public class VillagerEntity extends Entity {
                 float dx = next.position.x + 0.5f - getPosX();
                 float dy = next.position.y + 0.5f - (getPosY() + 1.5f);
                 float dz = next.position.z + 0.5f - getPosZ();
+                // Elevation is negated: engine +X pitch lowers the chin.
                 head.rotation.set(
-                    (float)Math.toDegrees(Math.atan2(dy, Math.sqrt(dx*dx+dz*dz))) * 0.5f,
-                    180 + (float)Math.toDegrees(Math.atan2(dx, dz)), 0);
+                    -(float)Math.toDegrees(Math.atan2(dy, Math.sqrt(dx*dx+dz*dz))) * 0.5f,
+                    0, 0);
             }
         }
     }
@@ -844,18 +865,140 @@ public class VillagerEntity extends Entity {
             float dx = tvPosition.x + 0.5f - getPosX();
             float dy = tvPosition.y + 0.5f - (getPosY() + 1.5f);
             float dz = tvPosition.z + 0.5f - getPosZ();
+            // Elevation is negated: engine +X pitch lowers the chin.
             head.rotation.set(
-                (float)Math.toDegrees(Math.atan2(dy, Math.sqrt(dx*dx+dz*dz))) * 0.7f,
-                180 + (float)Math.toDegrees(Math.atan2(dx, dz)), 0);
+                -(float)Math.toDegrees(Math.atan2(dy, Math.sqrt(dx*dx+dz*dz))) * 0.7f,
+                0, 0);
         }
 
         // Arms + connector stay attached while watching TV
-        if (armConnector != null) armConnector.rotation.set(43, 0, 0);
-        if (leftArm != null) { leftArm.rotation.set(43, 0, 0); }
-        if (rightArm != null) { rightArm.rotation.set(43, 0, 0); }
+        if (armConnector != null) armConnector.rotation.set(-43, 0, 0);
+        if (leftArm != null) { leftArm.rotation.set(-43, 0, 0); }
+        if (rightArm != null) { rightArm.rotation.set(-43, 0, 0); }
         if (leftLeg != null) leftLeg.rotation.x = 0;
         if (rightLeg != null) rightLeg.rotation.x = 0;
         rotation.z = 0;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  AI-BRAIN API — used by com.voxel.ai brains; wraps the same private
+    //  movement/animation helpers so brain-driven motion looks identical.
+    // ════════════════════════════════════════════════════════════════
+
+    public float aiWalkSpeed() { return moveSpeed; }
+    public float aiFleeSpeed() { return fleeSpeed; }
+
+    public Vector3f eyePosition() {
+        return new Vector3f(getPosX(), getPosY() + 1.5f, getPosZ());
+    }
+
+    public boolean aiInWater() {
+        int fx = (int) Math.floor(getPosX());
+        int fy = (int) Math.floor(getPosY() + 0.5f);
+        int fz = (int) Math.floor(getPosZ());
+        return world != null && world.getVoxel(fx, fy, fz) == 15;
+    }
+
+    public void aiSwimUp(float dt) {
+        if (!aiInWater()) return;
+        tryMove(0, 1.5f * dt, 0);
+        updateSwimAnimation(dt);
+        applyEmoteOverlay();
+    }
+
+    public void aiMoveToward(Vector3f target, float speed, float dt) {
+        moveToward(target, dt, speed);
+        updateWalkAnimation(dt);
+        applyEmoteOverlay();
+    }
+
+    /** Absolute world yaw in degrees — the direction the villager should face.
+     *  The model is authored facing +Z like every other entity (nose at +Z),
+     *  so atan2(dx,dz) faces it straight at the target with no offset. */
+    public void aiFaceYaw(float yawDeg) {
+        rotation.y = yawDeg;
+        applyEmoteOverlay();
+    }
+
+    public void aiStandAnim(float dt) {
+        updateIdleAnimation(dt);
+        applyEmoteOverlay();
+    }
+
+    /**
+     * Applies resolved gaze angles {pitchDeg, yawOffsetDeg} to the head.
+     * GazeController returns math-convention pitch (+ = target above the eyes),
+     * but this engine's part.rotation.x is a screen-style pitch: positive X
+     * rotates the +Z nose DOWN (see raytracer rotateX). Negate here so both
+     * aim-at-target and idle saccades look the right way, matching the
+     * negated elevations in updateBuilding/updateWatchingAnimation.
+     */
+    public void aiAimHead(float[] gazeAngles) {
+        if (head == null || gazeAngles == null || gazeAngles.length < 2) return;
+        head.rotation.set(-gazeAngles[0], gazeAngles[1], 0);
+    }
+
+    public boolean aiPlayEmote(Emote emote, Vector3f pointAt) {
+        return emotePlayer.play(emote, pointAt);
+    }
+
+    public boolean aiSpeak(String line) {
+        return com.voxel.ai.speech.VillagerSpeech.say(id, line);
+    }
+
+    public boolean aiHasBuildWork() {
+        return !buildQueue.isEmpty();
+    }
+
+    public Vector3i aiNextBuildTarget() {
+        BuildTask next = buildQueue.peek();
+        return next == null ? null : new Vector3i(next.position);
+    }
+
+    private void applyEmoteOverlay() {
+        if (!emotePlayer.isActive()) return;
+
+        float raise = emotePlayer.armRaise();
+        if (raise > 0f) {
+            if (armConnector != null) armConnector.rotation.set(0, 0, 0);
+            if (leftArm != null) leftArm.rotation.set(-110f * raise, 0, 18f * raise);
+            if (rightArm != null) rightArm.rotation.set(-110f * raise, 0, -18f * raise);
+        }
+
+        float cower = emotePlayer.cowerAmount();
+        if (cower > 0f && head != null) {
+            head.rotation.x += cower * 22f;
+        }
+
+        float nod = emotePlayer.nodPhase();
+        if (nod != 0f && head != null) {
+            head.rotation.x += nod * 12f;
+        }
+        float shake = emotePlayer.shakePhase();
+        if (shake != 0f && head != null) {
+            head.rotation.y += shake * 14f;
+        }
+
+        float reach = emotePlayer.armReachSwing();
+        if (reach > 0f && rightArm != null) {
+            if (emotePlayer.isPlaying(Emote.POINT)) {
+                rightArm.rotation.set(-85f, 0, 0);
+                if (emotePlayer.hasPointTarget()) {
+                    Vector3f t = emotePlayer.pointTarget();
+                    float relYaw = GazeController.wrap180(
+                            (float) Math.toDegrees(Math.atan2(t.x - getPosX(), t.z - getPosZ()))
+                                    - rotation.y);
+                    relYaw = Math.max(-60f, Math.min(60f, relYaw));
+                    rightArm.rotation.y = relYaw;
+                }
+            } else {
+                rightArm.rotation.set(-40f - reach * 55f, 0, 0);
+            }
+        }
+
+        if (emotePlayer.consumeHop()) {
+            addPosition(0, 0.22f, 0);
+        }
     }
 
     // ════════════════════════════════════════════════════════════════

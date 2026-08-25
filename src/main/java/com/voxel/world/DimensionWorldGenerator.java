@@ -36,6 +36,15 @@ public class DimensionWorldGenerator extends WorldGenerator {
     private final int netherBrickId;
     private final int endStoneId;
     private final int obsidianId;
+    // ── End Update content (resolved dynamically; 0 = not registered, skip) ──
+    private final int endBrickId;
+    private final int purpurBlockId;
+    private final int purpurPillarId;
+    private final int chorusPlantId;
+    private final int chorusFlowerId;
+    private final int endRodId;
+    private final int endGlassId;
+    private final int voidSteelId;
     private final int aetherPortalId;
     private final int dandelionId;
     private final int poppyId;
@@ -96,6 +105,14 @@ public class DimensionWorldGenerator extends WorldGenerator {
         this.netherBrickId = blockDataManager.findBlockId("nether_bricks");
         this.endStoneId = blockDataManager.findBlockId("end_stone");
         this.obsidianId = blockDataManager.findBlockId("obsidian");
+        this.endBrickId = orZero(blockDataManager.findBlockId("end_bricks"));
+        this.purpurBlockId = orZero(blockDataManager.findBlockId("purpur_block"));
+        this.purpurPillarId = orZero(blockDataManager.findBlockId("purpur_pillar"));
+        this.chorusPlantId = orZero(blockDataManager.findBlockId("chorus_plant"));
+        this.chorusFlowerId = orZero(blockDataManager.findBlockId("chorus_flower"));
+        this.endRodId = orZero(blockDataManager.findBlockId("end_rod"));
+        this.endGlassId = orZero(blockDataManager.findBlockId("end_glass"));
+        this.voidSteelId = orZero(blockDataManager.findBlockId("void_steel"));
         this.aetherPortalId = blockDataManager.findBlockId("aether_portal_ns");
         this.dandelionId = blockDataManager.findBlockId("dandelion");
         this.poppyId = blockDataManager.findBlockId("rose");
@@ -499,45 +516,156 @@ public class DimensionWorldGenerator extends WorldGenerator {
     private static final int END_CENTER_RADIUS = 55;
     private static final int END_VOID_RADIUS = 220;
 
+    private static int orZero(Integer id) {
+        return id != null ? id : 0;
+    }
+
+    /** Deterministic 0..65535 hash for per-column decoration decisions. */
+    private static int columnHash(int x, int z, int salt) {
+        int h = x * 374761393 + z * 668265263 + salt * 1274126177;
+        h = (h ^ (h >>> 13)) * 1274126177;
+        return (h ^ (h >>> 16)) & 0xFFFF;
+    }
+
     private int generateEnd(int x, int y, int z, int height) {
         float dx = x - END_SPAWN_X;
         float dz = z - END_SPAWN_Z;
         float distSq = dx * dx + dz * dz;
         float dist = (float) Math.sqrt(distSq);
 
+        // ── Central island: the dragon arena. Flat pale plain with a deep,
+        // tapering, noise-jagged underside hanging into the void. ──
         if (dist < END_CENTER_RADIUS) {
             float undulation = continentalNoise.noise(x, z, 0.006f) * 3.0f;
             int surfaceY = height + (int)((END_CENTER_RADIUS - dist) * 0.15f) + (int)undulation;
             if (dist < 35) surfaceY = height + (int)undulation;
             if (y == surfaceY) return endStoneId;
-            if (y < surfaceY && y > surfaceY - 7) return endStoneId;
+            // Body thickens toward the middle of the island and erodes into
+            // spikes near its lower boundary.
+            float t = dist / END_CENTER_RADIUS;
+            int depth = Math.round((1.0f - t * t) * 24.0f) + 5;
+            int bottom = surfaceY - depth + (int)(detailNoise.noise(x, z, 0.07f) * 3.0f);
+            if (y < surfaceY && y > bottom) return endStoneId;
             return 0;
         }
 
+        // ── Obsidian pillar ring around the arena's rim (barren monoliths,
+        // glowstone-capped so they read as cold beacons in the void). ──
+        if (dist >= END_CENTER_RADIUS - 2 && dist <= END_CENTER_RADIUS + 14) {
+            double angle = Math.atan2(dz, dx);
+            final int PILLARS = 8;
+            double sector = Math.round(angle / (Math.PI * 2 / PILLARS));
+            double err = Math.abs(angle - sector * (Math.PI * 2 / PILLARS));
+            double arcErr = err * dist; // arc-distance to the pillar axis
+            if (arcErr < 1.6f) {
+                int idx = (int) Math.floorMod((long) sector, PILLARS);
+                int pillarTop = height + 12 + (idx % 4) * 3 + (int)(detailNoise.noise(x, z, 0.05f) * 2.0f);
+                if (y == pillarTop) return glowstoneId;
+                if (y < pillarTop && y > pillarTop - 3 && arcErr < 1.1f) return glowstoneId;
+                if (y < pillarTop) return obsidianId;
+            }
+        }
+
+        // ── Inner void: rare floating shards of end stone drifting between
+        // the arena and the outer islands. Keeps the emptiness readable. ──
         if (dist < END_VOID_RADIUS) {
             float rockNoise = continentalNoise.noise(x, z, 0.04f);
-            if (rockNoise > 0.6f) {
-                int rockY = height + (int)(rockNoise * 6.0f) - 3;
+            if (rockNoise > 0.72f) {
+                int rockY = height + (int)(rockNoise * 5.0f) - 2;
                 if (y == rockY) return endStoneId;
+                if (y == rockY - 1 && rockNoise > 0.82f) return endStoneId;
             }
             return 0;
         }
 
+        // ── Outer islands: larger, flatter, thicker landmasses. Barren except
+        // for sparse chorus groves and dead purpur ruins. No cities. ──
+        float[] island = OUTER_ISLAND_PARAMS.get();
+        if (!outerIslandParams(x, z, height, island)) return 0;
+        int islandSurface = (int) island[0];
+        float edgeDist = island[1];
+
+        if (y <= islandSurface) {
+            if (y == islandSurface) return decorateEndSurfaceBase(x, z, edgeDist);
+            // Tapered underside: deep cores, thin crumbling rims.
+            int depth = 4 + (int)(edgeDist * 0.8f);
+            int bottom = islandSurface - depth + (int)(detailNoise.noise(x, z, 0.09f) * 2.0f);
+            if (y < islandSurface && y > bottom) return endStoneId;
+            return 0;
+        }
+        // Above-surface barren dressing: chorus groves + ruin stumps.
+        return endAboveSurface(x, z, edgeDist, y - islandSurface);
+    }
+
+    /** Thread-local scratch to avoid allocating per voxel call. */
+    private static final ThreadLocal<float[]> OUTER_ISLAND_PARAMS =
+            ThreadLocal.withInitial(() -> new float[2]);
+
+    /** Computes the outer-island surface height + edge distance, or false if void. */
+    private boolean outerIslandParams(int x, int z, int height, float[] out) {
         float islandNoise = continentalNoise.noise(x, z, 0.005f);
-        float rawHeight = height + islandNoise * 12.0f;
+        float rawHeight = height + islandNoise * 10.0f;
         int islandCenterY = Math.round(rawHeight + (continentalNoise.noise(x, z, 0.02f)) * 4.0f);
         float erosion = Math.abs(erosionNoise.noise(x, z, 0.01f)) * 10.0f;
-        float radius = 8.0f + erosion;
+        float radius = 11.0f + erosion;
 
         int cx = x % 64; if (cx < 0) cx += 64;
         int cz = z % 64; if (cz < 0) cz += 64;
         cx -= 32; cz -= 32;
         float periodicDist = (float) Math.sqrt(cx * cx + cz * cz);
+        if (periodicDist >= radius) return false;
 
-        if (periodicDist < radius) {
-            int islandSurface = islandCenterY + Math.round((radius - periodicDist) * 0.3f);
-            if (y == islandSurface) return endStoneId;
-            if (y < islandSurface && y > islandSurface - 5) return endStoneId;
+        out[0] = islandCenterY + Math.round((radius - periodicDist) * 0.25f);
+        out[1] = radius - periodicDist;
+        return true;
+    }
+
+    /** Base block for an outer-island surface column (mostly bare end stone). */
+    private int decorateEndSurfaceBase(int x, int z, float edgeDist) {
+        int h = columnHash(x, z, 0xE2D);
+        // Dead purpur flagstone + shattered end-brick tiles near the core.
+        if (purpurBlockId > 0 && edgeDist > 4.0f && h % 97 < 3) return purpurBlockId;
+        if (endBrickId > 0 && h % 53 == 1 && edgeDist > 6.0f) return endBrickId;
+        return endStoneId;
+    }
+
+    /**
+     * Above-surface dressing for outer islands. Deterministic per column:
+     * sparse chorus groves (the End's one signature plant) and broken purpur
+     * pillar stumps. Everything else stays empty void.
+     *
+     * @param above 1..N blocks above the island surface
+     */
+    private int endAboveSurface(int x, int z, float edgeDist, int above) {
+        if (above > 10) return 0;
+        int h = columnHash(x, z, 0xE2D);
+
+        // Broken purpur pillar stumps (2-4 tall), kept off the island rims.
+        // A few carry an end-rod lantern on top — the only warm light left.
+        if (purpurPillarId > 0 && edgeDist > 3.0f && h % 211 < 5) {
+            int stump = 2 + ((h >> 4) & 3);
+            if (above == stump + 1 && endRodId > 0 && ((h >> 9) & 3) == 0) return endRodId;
+            return above <= stump ? purpurPillarId : 0;
+        }
+
+        // Void-steel obelisk stumps: dead black-metal monoliths, rarer than
+        // the purpur ruins and slightly taller. Purely architectural.
+        if (voidSteelId > 0 && edgeDist > 5.0f && h % 401 < 4) {
+            int obelisk = 3 + ((h >> 6) & 3);
+            if (above == obelisk + 1 && endGlassId > 0 && ((h >> 11) & 1) == 1) return endGlassId; // shattered oculus cap
+            return above <= obelisk ? voidSteelId : 0;
+        }
+
+        // Chorus grove: stem rises 2-5 blocks, capped by a flower. Rare
+        // "elder" chorus grows far taller (the void's oldest plants).
+        if (chorusPlantId > 0) {
+            boolean elder = h % 523 < 6;
+            int base = h % 131 < 7 ? 2 + ((h >> 5) & 3) : 0;
+            int stem = elder && base == 0 ? 6 + ((h >> 7) & 3) : base;
+            if (stem > 0) {
+                if (above <= stem) return chorusPlantId;
+                if (above == stem + 1 && chorusFlowerId > 0) return chorusFlowerId;
+            }
         }
         return 0;
     }

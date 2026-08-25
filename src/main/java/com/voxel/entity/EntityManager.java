@@ -8,6 +8,7 @@ import java.nio.FloatBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import static org.lwjgl.opengl.GL15.*;
 import static org.lwjgl.opengl.GL30.glBindBufferBase;
 import static org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER;
@@ -17,7 +18,11 @@ import static org.lwjgl.opengl.GL45.glNamedBufferStorage;
 import static org.lwjgl.opengl.GL45.glNamedBufferSubData;
 
 public class EntityManager {
-    private List<Entity> entities;
+    // CopyOnWriteArrayList: entity add/remove happens on the logic thread
+    // (spawns, pruneExpired) while the render thread iterates in uploadToGPU()
+    // and update(). Iterators see a stable snapshot, so a concurrent spawn
+    // (e.g. village gen, mob fireballs) can't throw ConcurrentModificationException.
+    private final List<Entity> entities = new CopyOnWriteArrayList<>();
     private int entitySSBO;
     private int partSSBO;
     
@@ -52,7 +57,6 @@ public class EntityManager {
     private final List<ModelPart> partScratch = new ArrayList<>(MAX_PARTS);
 
     public EntityManager() {
-        this.entities = new ArrayList<>();
         setupBuffers();
     }
 
@@ -69,6 +73,7 @@ public class EntityManager {
     }
 
     public void update(float dt) {
+        com.voxel.ai.StimulusBus.GLOBAL.dispatch();
         for (Entity entity : entities) {
             entity.update(dt);
         }

@@ -103,6 +103,12 @@ public class EnemyEntity extends Entity {
     public void updateAI(Vector3f playerPos, Vector3f playerVelocity, float dt) {
         if (isDead || world == null) return;
 
+        if (brain != null) {
+            brain.perceive(com.voxel.ai.Senses.scan(this, world, entityManager, 24f,
+                    VillagerEntity.getGlobalWorldTime()));
+            if (brain.update(dt)) return;
+        }
+
         float distance = getPosition().distance(playerPos);
 
         if (DEBUG_AI) {
@@ -371,98 +377,16 @@ public class EnemyEntity extends Entity {
     // ====================== PATHFINDING ======================
 
     private List<Vector3i> findPath(Vector3f start, Vector3f goal) {
-        if (world == null) {
-            if (DEBUG_AI) System.out.println("[PATHFIND] ERROR: World is null");
-            return Collections.emptyList();
-        }
-
-        // Apply epsilon to Y coordinates to ensure we are checking the correct block level
-        int sx = (int) Math.floor(start.x), sy = (int) Math.floor(start.y + 0.1f), sz = (int) Math.floor(start.z);
-        int gx = (int) Math.floor(goal.x), gy = (int) Math.floor(goal.y + 0.1f), gz = (int) Math.floor(goal.z);
-
-        if (DEBUG_AI) {
-            System.out.printf("[PATHFIND] Start(%d,%d,%d) → Goal(%d,%d,%d)%n", sx, sy, sz, gx, gy, gz);
-        }
-
-        PriorityQueue<Node> open = new PriorityQueue<>(new Comparator<Node>() {
-            public int compare(Node n1, Node n2) {
-                return Double.compare(n1.f, n2.f);
-            }
-        });
-
-        Set<Vector3i> closed = new HashSet<>();
-        Map<Vector3i, Vector3i> cameFrom = new HashMap<>();
-
-        Node startNode = new Node(sx, sy, sz, 0, heuristic(sx, sy, sz, gx, gy, gz));
-        open.add(startNode);
-
-        int nodesSearched = 0;
-        final int MAX_NODES = 500; // Increased search limit for 3D
-
-        while (!open.isEmpty() && nodesSearched < MAX_NODES) {
-            Node current = open.poll();
-            Vector3i cpos = new Vector3i(current.x, current.y, current.z);
-
-            if (Math.abs(current.x - gx) <= 1 && Math.abs(current.z - gz) <= 1 &&
-                Math.abs(current.y - gy) <= 1) { // Tightened Y tolerance
-                List<Vector3i> result = reconstructPath(cameFrom, cpos);
-                if (DEBUG_AI) System.out.println("[PATHFIND] Path found successfully! Length: " + result.size());
-                return result;
-            }
-
-            closed.add(cpos);
-            nodesSearched++;
-
-            for (int[] dir : NEIGHBOR_DIRECTIONS) {
-                int nx = current.x + dir[0];
-                int ny = current.y + dir[1];
-                int nz = current.z + dir[2];
-
-                Vector3i neighbor = new Vector3i(nx, ny, nz);
-                if (closed.contains(neighbor) || !isWalkable(nx, ny, nz)) continue;
-
-                double g = current.g + ((dir[0] != 0 && dir[2] != 0) ? 1.414 : 1.0);
-                if (dir[1] != 0) g += 0.5; // Slight penalty for vertical movement
-                
-                double h = heuristic(nx, ny, nz, gx, gy, gz);
-                Node next = new Node(nx, ny, nz, g, h);
-
-                open.add(next);
-                cameFrom.put(neighbor, cpos);
-            }
-        }
-
-        if (DEBUG_AI) System.out.println("[PATHFIND] No path found or search limit reached");
-        return Collections.emptyList();
+        if (world == null) return Collections.emptyList();
+        return com.voxel.ai.PathFinder.findPath(world::getVoxel,
+                start.x, start.y, start.z, goal.x, goal.y, goal.z);
     }
-
-    private List<Vector3i> reconstructPath(Map<Vector3i, Vector3i> cameFrom, Vector3i end) {
-        List<Vector3i> pathList = new ArrayList<>();
-        Vector3i current = end;
-        while (current != null) {
-            pathList.add(current);
-            current = cameFrom.get(current);
-        }
-        Collections.reverse(pathList);
-        return pathList;
-    }
-
-    private static final int[][] NEIGHBOR_DIRECTIONS = {
-            {1,0,0}, {-1,0,0}, {0,0,1}, {0,0,-1}, // Horizontal
-            {1,0,1}, {1,0,-1}, {-1,0,1}, {-1,0,-1}, // Diagonal
-            {1,1,0}, {-1,1,0}, {0,1,1}, {0,1,-1}, // Step up
-            {1,-1,0}, {-1,-1,0}, {0,-1,1}, {0,-1,-1} // Step down
-    };
 
     private boolean isWalkable(int x, int y, int z) {
         if (world.getVoxel(x, y - 1, z) == 0) return false; // no ground
         if (world.getVoxel(x, y, z) != 0) return false;     // feet blocked
         if (world.getVoxel(x, y + 1, z) != 0) return false; // head blocked
         return true;
-    }
-
-    private double heuristic(int x, int y, int z, int gx, int gy, int gz) {
-        return Math.abs(x - gx) + Math.abs(y - gy) + Math.abs(z - gz);
     }
 
     public void takeDamage(float amount, Vector3f knockback) {
@@ -472,6 +396,14 @@ public class EnemyEntity extends Entity {
         addPosition(knockback.x, knockback.y, knockback.z);
         hitFlashTime = 0.35f;
         frustration += 3.0f;
+
+        com.voxel.ai.StimulusBus.GLOBAL.publish(new com.voxel.ai.Stimulus(
+                com.voxel.ai.Stimulus.Type.DAMAGE_TAKEN,
+                id,
+                new Vector3f(getPosX(), getPosY(), getPosZ()),
+                amount,
+                null,
+                System.currentTimeMillis()));
 
         if (DEBUG_AI) System.out.printf("[DAMAGE] Took %.1f damage. Remaining health: %.1f%n", amount, health);
 
@@ -496,18 +428,4 @@ public class EnemyEntity extends Entity {
      *  generic enemies fall back to 5 XP (the standard monster value). */
     public int xpDropValue() { return 5; }
     public void setWorld(World world) { this.world = world; }
-
-    private static class Node {
-        int x, y, z;
-        double g, h, f;
-
-        Node(int x, int y, int z, double g, double h) {
-            this.x = x;
-            this.y = y;
-            this.z = z;
-            this.g = g;
-            this.h = h;
-            this.f = g + h;
-        }
-    }
 }

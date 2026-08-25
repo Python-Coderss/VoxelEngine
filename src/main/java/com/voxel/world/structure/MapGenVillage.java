@@ -3,6 +3,7 @@ package com.voxel.world.structure;
 import com.voxel.World;
 import com.voxel.entity.VillagerEntity;
 import org.joml.Vector3f;
+import org.joml.Vector3i;
 import java.util.Random;
 
 /**
@@ -37,6 +38,7 @@ public class MapGenVillage {
     private static final int WATER = 15;
     private static final int FENCE = 73; // oak fence
     private static final int WOOL_WHITE = 80;
+    private static final int VILLAGER_TV = 274;
 
     /** Last generated village center (for /locate command). */
     private static int lastVillageX = 0, lastVillageY = 0, lastVillageZ = 0;
@@ -90,6 +92,12 @@ public class MapGenVillage {
             }
         }
 
+        // Villager News studio (always present — every village broadcasts)
+        Vector3i[] newsStation = generateNewsStation(world, centerX, surfaceY, centerZ);
+
+        // The Pit of Death (2-block hole — canonical punishment spot)
+        generatePitOfDeath(world, centerX + 6, surfaceY, centerZ + 6);
+
         // Generate paths between buildings and center
         generatePaths(world, centerX, surfaceY, centerZ, rand);
 
@@ -110,6 +118,10 @@ public class MapGenVillage {
         if (villageManager != null) {
             com.voxel.game.VillagerVillageManager.Village village =
                 villageManager.registerVillage(new org.joml.Vector3i(centerX, surfaceY + 1, centerZ), VILLAGE_SIZE);
+            if (newsStation != null) {
+                village.newsAnchorPos = newsStation[0];
+                village.newsTvPos = newsStation[1];
+            }
             // Mark building origins for existing structures
             for (int i = 0; i < buildingCount; i++) {
                 double angle = (Math.PI * 2 * i) / buildingCount + rand.nextDouble() * 0.3;
@@ -386,6 +398,89 @@ public class MapGenVillage {
 
         // Place a crafting table inside
         world.setVoxel(x + 2, y + 2, z + 2, 115);
+    }
+
+    /**
+     * Villager News studio, Episode-1 style: glass-fronted building facing the
+     * plaza, anchor desk at the back, TV block as the camera.
+     *
+     * @return {anchorStandPos, tvPos} or null when the site is unsuitable
+     *         (positions are feet-level cells for AI use).
+     */
+    private Vector3i[] generateNewsStation(World world, int centerX, int y, int centerZ) {
+        int x0 = centerX + 13;
+        int z0 = centerZ - 3;   // footprint 9(x) x 7(z), west face looks at plaza
+        int by = findSurfaceHeight(world, x0 + 4, z0 + 3);
+        if (by < VILLAGE_MIN_HEIGHT || by > 90) return null;
+
+        // Foundation + floor
+        for (int dx = 0; dx < 9; dx++)
+            for (int dz = 0; dz < 7; dz++) {
+                world.setVoxel(x0 + dx, by, z0 + dz, COBBLESTONE);
+                world.setVoxel(x0 + dx, by + 1, z0 + dz, PLANKS);
+            }
+
+        // Walls (interior height 4: y+2 .. y+5)
+        for (int h = 2; h <= 5; h++) {
+            // West wall (studio front): glass band with a centered doorway
+            for (int dz = 0; dz < 7; dz++) {
+                int wx = x0, wz = z0 + dz;
+                if (dz == 3) {
+                    world.setVoxel(wx, by + h, wz, h <= 3 ? 0 : GLASS);
+                } else {
+                    world.setVoxel(wx, by + h, wz, (h == 3 || h == 4) ? GLASS : PLANKS);
+                }
+            }
+            // East wall with one window
+            for (int dz = 0; dz < 7; dz++) {
+                world.setVoxel(x0 + 8, by + h, z0 + dz,
+                        (dz == 3 && h == 4) ? GLASS : PLANKS);
+            }
+            // North / South walls
+            for (int dx = 1; dx < 8; dx++) {
+                world.setVoxel(x0 + dx, by + h, z0,
+                        (dx == 4 && h == 4) ? GLASS : PLANKS);
+                world.setVoxel(x0 + dx, by + h, z0 + 6,
+                        (dx == 4 && h == 4) ? GLASS : PLANKS);
+            }
+        }
+
+        // Corner logs
+        for (int h = 2; h <= 5; h++) {
+            world.setVoxel(x0, by + h, z0, OAK_LOG);
+            world.setVoxel(x0, by + h, z0 + 6, OAK_LOG);
+            world.setVoxel(x0 + 8, by + h, z0, OAK_LOG);
+            world.setVoxel(x0 + 8, by + h, z0 + 6, OAK_LOG);
+        }
+
+        // Roof (with overhang) — two glowstone ceiling lights
+        for (int dx = -1; dx < 10; dx++)
+            for (int dz = -1; dz < 8; dz++)
+                world.setVoxel(x0 + dx, by + 6, z0 + dz, PLANKS);
+        world.setVoxel(x0 + 2, by + 6, z0 + 3, GLOWSTONE);
+        world.setVoxel(x0 + 6, by + 6, z0 + 3, GLOWSTONE);
+
+        // Anchor desk (planks row) near the back, camera TV on the desk
+        for (int dz = 2; dz <= 4; dz++) {
+            world.setVoxel(x0 + 6, by + 2, z0 + dz, PLANKS);
+        }
+        world.setVoxel(x0 + 6, by + 3, z0 + 3, VILLAGER_TV);
+
+        return new Vector3i[]{
+                new Vector3i(x0 + 7, by + 2, z0 + 3),
+                new Vector3i(x0 + 6, by + 3, z0 + 3)
+        };
+    }
+
+    /** 3x3 cobble rim around a 1x1 two-deep hole villagers can't climb out of. */
+    private void generatePitOfDeath(World world, int x, int y, int z) {
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dz = -1; dz <= 1; dz++) {
+                if (dx == 0 && dz == 0) continue;
+                world.setVoxel(x + dx, y + 1, z + dz, COBBLESTONE);
+            }
+        world.setVoxel(x, y + 1, z, 0);
+        world.setVoxel(x, y + 2, z, 0);
     }
 
     private void generatePaths(World world, int cx, int y, int cz, Random rand) {

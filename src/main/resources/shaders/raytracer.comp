@@ -2498,24 +2498,33 @@ void main() {
                 if (texSample.a >= 0.1) {
                     float pf = float(wirePower) / 15.0;
                     vec3 wireColor = vec3(0.6, 0.1, 0.1) + vec3(0.4, 0.1, 0.0) * pf;
-                    alb *= wireColor;
-                    
+
                     if (abs(n.y) > 0.5) {
-                        float relX = fract(hp.x), relZ = fract(hp.z), nearEdge = 0.0625;
-                        bool nearWest = relX < nearEdge && (wireConn & 1u) != 0u;
-                        bool nearEast = relX > (1.0 - nearEdge) && (wireConn & 2u) != 0u;
-                        bool nearNorth = relZ < nearEdge && (wireConn & 4u) != 0u;
-                        bool nearSouth = relZ > (1.0 - nearEdge) && (wireConn & 8u) != 0u;
-                        if (nearWest || nearEast || nearNorth || nearSouth) alb = max(alb, vec3(0.3, 0.05, 0.05) + vec3(0.7, 0.15, 0.1) * pf);
+                        // Top/bottom: render only the dust strip — a 2px-wide
+                        // center dot plus arms extending toward each connected
+                        // side. Everything else clips out (pass-through).
+                        float relX = fract(hp.x), relZ = fract(hp.z);
+                        const float w = 0.125; // half strip width (2/16 block)
+                        bool armX = ((wireConn & 3u) != 0u) && abs(relZ - 0.5) <= w;
+                        bool armZ = ((wireConn & 12u) != 0u) && abs(relX - 0.5) <= w;
+                        bool dotC = abs(relX - 0.5) <= w && abs(relZ - 0.5) <= w;
+                        if (!(armX || armZ || dotC)) {
+                            trans = 1.0; alb = vec3(1.0);
+                        } else {
+                            // Flat dust color, brighter (and slightly emissive-
+                            // looking) as power rises.
+                            alb = mix(vec3(0.42, 0.07, 0.07), vec3(1.0, 0.28, 0.06), pf);
+                            refl = 0.0;
+                        }
                     }
-                    if (abs(n.x) > 0.5) {
+                    if (trans < 1.0 && abs(n.x) > 0.5) {
                         bool eastFace = n.x > 0.5, westFace = n.x < -0.5;
                         if ((eastFace && (wireConn & 2u) != 0u) || (westFace && (wireConn & 1u) != 0u)) {
                             if (fract(hp.y) < 0.125) alb = mix(alb, wireColor * 1.5, 0.8);
                             else { trans = 1.0; alb = vec3(1.0); }
                         } else { trans = 1.0; alb = vec3(1.0); }
                     }
-                    if (abs(n.z) > 0.5) {
+                    if (trans < 1.0 && abs(n.z) > 0.5) {
                         bool southFace = n.z > 0.5, northFace = n.z < -0.5;
                         if ((southFace && (wireConn & 8u) != 0u) || (northFace && (wireConn & 4u) != 0u)) {
                             if (fract(hp.y) < 0.125) alb = mix(alb, wireColor * 1.5, 0.8);

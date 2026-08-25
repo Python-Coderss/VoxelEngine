@@ -350,6 +350,13 @@ public class ItemDefinitions {
         registerBlock("sandstone_slab", "Sandstone Slab", 210, "sandstone_top");
         // --- Torch ---
         registerBlock("torch", "Torch", 211, "torch_on");
+        // --- End Update blocks (fixed IDs 900+, registered in Main) ---
+        registerBlock("purpur_block", "Purpur Block", 900, "purpur_block");
+        registerBlock("purpur_pillar", "Purpur Pillar", 901, "purpur_pillar");
+        registerBlock("chorus_plant", "Chorus Plant", 902, "chorus_plant");
+        registerBlock("chorus_flower", "Chorus Flower", 903, "chorus_flower");
+        registerBlock("end_glass", "End Glass", 904, "end_glass");
+        registerBlock("void_steel", "Void Steel", 905, "void_steel");
         // --- Tool items with flat models (block IDs 219-230) ---
         registerItemBlock("wood_pickaxe", "Wood Pickaxe", "wood_pickaxe", 219, 238, ToolType.PICKAXE, 4.5f, 1, TIER_WOOD);
         registerItemBlock("wood_shovel", "Wood Shovel", "wood_shovel", 220, 239, ToolType.SHOVEL, 4.0f, 1, TIER_WOOD);

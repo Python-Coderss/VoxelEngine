@@ -99,6 +99,13 @@ public class FurnaceManager {
         addSmelting("dark_oak_log", "charcoal", 1, 8.0f);
         // redstone ore smelting
         addSmelting("redstone_ore", "redstone_wire", 4, 6.0f);
+        // ── End Update ──
+        // Chorus fruit pops when roasted — the key to purpur masonry.
+        addSmelting("chorus_fruit", "chorus_fruit_popped", 1, 5.0f);
+        // ── Food ──
+        addSmelting("potato", "baked_potato", 1, 6.0f);
+        // ── Nether masonry ──
+        addSmelting("netherrack", "netherbrick", 1, 7.0f);
     }
 
     private void addSmelting(String inputId, String outputId, int count, float time) {
@@ -124,6 +131,18 @@ public class FurnaceManager {
         addFuel("coal", 80.0f);
         addFuel("charcoal", 80.0f);
         addFuel("lava_bucket", 1000.0f);
+        // Blaze rods are the premium fuel of the Nether.
+        addFuel("blaze_rod", 120.0f);
+        // Sticks and wooden blocks make decent kindling.
+        addFuel("stick", 5.0f);
+        addFuel("bookshelf", 15.0f);
+        addFuel("chest", 15.0f);
+        addFuel("oak_slab", 4.0f);
+        addFuel("spruce_slab", 4.0f);
+        addFuel("birch_slab", 4.0f);
+        addFuel("jungle_slab", 4.0f);
+        addFuel("acacia_slab", 4.0f);
+        addFuel("dark_oak_slab", 4.0f);
     }
 
     private void addFuel(String itemId, float burnTime) {
