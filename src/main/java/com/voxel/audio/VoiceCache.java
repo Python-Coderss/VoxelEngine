@@ -24,7 +24,9 @@ import villager.voice.SpeechOptions;
  * to scan or migrate the cache directory.
  */
 public final class VoiceCache {
-    private static final String CACHE_VERSION = "voice-cache-v7-singing-default";
+    // v8: base-TTS emotional scales, 0.1 s sentence gaps, spoken numbers and
+    // acronyms in the frontend. Old clips under v7 keys are stale audio.
+    private static final String CACHE_VERSION = "voice-cache-v8-base-overhaul";
 
     private final Path directory;
 

@@ -1,5 +1,32 @@
 # CHANGELOG
 
+## Base Voice Overhaul — Numbers, Acronyms, Prosody (Aug 25, 2026)
+
+### Base TTS frontend (`CoquiFrontend`)
+- **Numbers are spoken, not dropped**: digit runs now expand to English words
+  ("310" -> "three hundred and ten", "1,256" -> "one thousand...", "0" ->
+  "zero", 4+ digit runs support thousands/millions/billions). Previously the
+  digit symbols were silently removed from the token stream, so any line
+  containing a number spoke only the words around it.
+- **Contractions stay glued**: "what's"/"we're" keep the apostrophe inside the
+  word and hit their CMU dictionary entry instead of falling back to
+  letter-by-letter pronunciation.
+- **All-caps acronyms are spelled** ("TV" -> "tee vee") using real CMU letter
+  names (the weak article "a" is remapped to "ay" = /eɪ/).
+- **Money and percent attach to numbers**: "$5"/"5$" -> "five dollars",
+  "50%" -> "fifty percent"; decimals "3.5" -> "three point five".
+
+### Base TTS synthesis (`CoquiVitsTts`)
+- **Sentence joins use the validated 0.1 s gap** (2205 samples at 22.05 kHz)
+  instead of Coqui's 450 ms pad — multi-sentence lines no longer plod.
+- **Emotion-aware base synthesis**: the VITS noise-scale inputs now respond to
+  the line's emotion (angry crisp, sad/scared breathier, happy brighter) so
+  the *base* carries the delivery before RVC ever sees it.
+
+### Other
+- Voice cache version bumped to v8; old clips regenerate automatically.
+- New frontend unit tests for numbers, contractions, acronyms, currency.
+
 ## Mob AI & Villager Voice Improvements (Aug 25, 2026)
 
 ### Mob AI
