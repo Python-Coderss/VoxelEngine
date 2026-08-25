@@ -1,9 +1,11 @@
 package com.voxel.ai.brain;
 
 import com.voxel.ai.MobBrain;
+import com.voxel.ai.PathFinder;
 import com.voxel.ai.Senses;
 import com.voxel.ai.Stimulus;
 import com.voxel.ai.StimulusBus;
+import com.voxel.ai.VoxelView;
 import com.voxel.ai.body.Emote;
 import com.voxel.ai.body.EmotePlayer;
 import com.voxel.ai.body.GazeController;
@@ -14,6 +16,7 @@ import com.voxel.entity.VillagerEntity;
 import org.joml.Vector3f;
 import org.joml.Vector3i;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
@@ -64,6 +67,19 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
 
     private final Vector3f wanderTarget = new Vector3f();
     private boolean hasWanderTarget;
+    private float stuckAccum;
+    private float stuckAtDist;
+    private final Vector3f stuckStart = new Vector3f();
+
+    // Pathfinding: panic-flee and go-indoors run a cached A* route instead of
+    // pushing straight into walls (which previously pinned villagers against
+    // the first obstacle while a threat approached).
+    private VoxelView voxels;
+    private final List<Vector3i> path = new ArrayList<>();
+    private int pathIndex;
+    private boolean usePath;
+    private float repathAccum;
+    private int fleePathAttempts;
 
     public VillagerBrain(VillagerEntity owner) {
         this.owner = owner;
@@ -103,6 +119,7 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
 
     @Override
     public void perceive(Senses senses) {
+        voxels = senses.voxels;
         nearestThreatDist = Float.MAX_VALUE;
         threatVisible = false;
         nearestFriendDist = Float.MAX_VALUE;
@@ -186,6 +203,20 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
         action = next;
         actionElapsed = 0f;
         fleeTime = 0f;
+        usePath = false;
+        path.clear();
+        if (next == Action.PANIC_FLEE) {
+            fleePathAttempts = 0;
+            recordStuckBaseline();
+            // Start the escape route immediately (before any wall contact) so
+            // panicking villagers run around obstacles instead of into them.
+            requestPanicPath();
+        } else if (next == Action.GO_INDOORS) {
+            Vector3i home = owner.getVillageCenter();
+            if (home != null) {
+                tryPathTo(new Vector3f(home.x + 0.5f, owner.getPosY(), home.z + 0.5f));
+            }
+        }
         switch (next) {
             case PANIC_FLEE:
                 screamedThisPanic = false;
@@ -233,24 +264,16 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
         switch (action) {
             case PANIC_FLEE:
                 fleeTime += dt;
-                if (hasThreatPos) {
-                    Vector3f away = new Vector3f(owner.getPosition()).sub(threatPos);
-                    away.y = 0;
-                    if (away.lengthSquared() < 1e-4f) {
-                        away.set(rng.nextFloat() - 0.5f, 0, rng.nextFloat() - 0.5f);
+                if (usePath && !path.isEmpty()) {
+                    stepAlongPath(dt, owner.aiFleeSpeed());
+                    // Route finished but still frightened: line up the next
+                    // one. If no route exists (sealed room), the direct
+                    // zigzag runner resumes on the next tick as a fallback.
+                    if (!usePath && panicRemaining > 0f) {
+                        requestPanicPath();
                     }
-                    away.normalize();
-                    double zig = Math.toRadians(
-                            (float) Math.sin(fleeTime * 7f + owner.id) * 35f);
-                    float cos = (float) Math.cos(zig), sin = (float) Math.sin(zig);
-                    Vector3f dir = new Vector3f(
-                            away.x * cos - away.z * sin, 0,
-                            away.x * sin + away.z * cos);
-                    Vector3f target = new Vector3f(owner.getPosition()).add(dir.mul(3f));
-                    owner.aiMoveToward(target, owner.aiFleeSpeed(), dt);
-                    owner.aiFaceYaw((float) Math.toDegrees(Math.atan2(dir.x, dir.z)));
                 } else {
-                    owner.aiStandAnim(dt);
+                    fleeDirect(dt);
                 }
                 if (emotes.isActive() && !emotes.isPlaying(Emote.COWER)
                         && !emotes.isPlaying(Emote.WAVE_FRANTIC) && rng.nextFloat() < 0.02f) {
@@ -277,8 +300,25 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
                     transition(Action.WANDER);
                     break;
                 }
-                owner.aiMoveToward(new Vector3f(home.x + 0.5f, owner.getPosY(), home.z + 0.5f),
-                        owner.aiWalkSpeed() * 0.8f, dt);
+                Vector3f homePos = new Vector3f(home.x + 0.5f, owner.getPosY(), home.z + 0.5f);
+                float homeDist = homePos.distance(owner.getPosition());
+                if (homeDist < 3f) {
+                    owner.aiMoveToward(homePos, owner.aiWalkSpeed() * 0.8f, dt);
+                    if (homeDist < 1.2f) {
+                        transition(Action.WANDER);
+                    }
+                    break;
+                }
+                if (!usePath && repathAccum >= 4f) {
+                    repathAccum = 0f;
+                    tryPathTo(homePos);
+                }
+                repathAccum += dt;
+                if (usePath && !path.isEmpty()) {
+                    stepAlongPath(dt, owner.aiWalkSpeed() * 0.8f);
+                } else {
+                    owner.aiMoveToward(homePos, owner.aiWalkSpeed() * 0.8f, dt);
+                }
                 break;
 
             case GO_BUILD:
@@ -331,6 +371,19 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
                     actionElapsed = 0f;
                 }
                 owner.aiMoveToward(wanderTarget, owner.aiWalkSpeed() * 0.7f, dt);
+                // Unstick: if a wall or another villager blocks the route, the
+                // wandering villager barely advances (legacy behavior was to
+                // grind against the obstacle for the full 14 s window).
+                stuckAccum += dt;
+                if (stuckAccum >= 2.5f) {
+                    float moved = stuckStart.distance(owner.getPosition());
+                    if (moved < Math.max(0.5f, stuckAtDist * 0.2f)) {
+                        pickWanderTarget();
+                        actionElapsed = 0f;
+                    }
+                    recordStuckBaseline();
+                    stuckAccum = 0f;
+                }
                 break;
 
             case IDLE:
@@ -341,6 +394,119 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
                 if (rng.nextFloat() < 0.0015f) say("Hmm.");
                 break;
         }
+    }
+
+    /** Legacy zigzag sprint straight away from the threat. */
+    private void fleeDirect(float dt) {
+        if (hasThreatPos) {
+            Vector3f away = new Vector3f(owner.getPosition()).sub(threatPos);
+            away.y = 0;
+            if (away.lengthSquared() < 1e-4f) {
+                away.set(rng.nextFloat() - 0.5f, 0, rng.nextFloat() - 0.5f);
+            }
+            away.normalize();
+            double zig = Math.toRadians(
+                    (float) Math.sin(fleeTime * 7f + owner.id) * 35f);
+            float cos = (float) Math.cos(zig), sin = (float) Math.sin(zig);
+            Vector3f dir = new Vector3f(
+                    away.x * cos - away.z * sin, 0,
+                    away.x * sin + away.z * cos);
+            Vector3f target = new Vector3f(owner.getPosition()).add(dir.mul(3f));
+            owner.aiMoveToward(target, owner.aiFleeSpeed(), dt);
+            owner.aiFaceYaw((float) Math.toDegrees(Math.atan2(dir.x, dir.z)));
+
+            // Contact with a wall during panic: hand off to the pathfinder so
+            // the villager runs around the obstacle rather than grinding on it.
+            stuckAccum += dt;
+            if (stuckAccum >= 0.7f && fleePathAttempts < 3) {
+                float moved = stuckStart.distance(owner.getPosition());
+                if (moved < 0.35f) {
+                    requestPanicPath();
+                }
+                recordStuckBaseline();
+                stuckAccum = 0f;
+            }
+        } else {
+            owner.aiStandAnim(dt);
+        }
+    }
+
+    /** Walk cached path nodes; clears {@code usePath} once the route is done. */
+    private void stepAlongPath(float dt, float speed) {
+        if (path.isEmpty() || pathIndex >= path.size()) {
+            usePath = false;
+            return;
+        }
+        Vector3i node = path.get(pathIndex);
+        Vector3f target = new Vector3f(node.x + 0.5f, node.y, node.z + 0.5f);
+        owner.aiMoveToward(target, speed, dt);
+        owner.aiFaceYaw((float) Math.toDegrees(
+                Math.atan2(target.x - owner.getPosX(), target.z - owner.getPosZ())));
+        float dx = owner.getPosX() - target.x;
+        float dz = owner.getPosZ() - target.z;
+        if (dx * dx + dz * dz < 0.36f && Math.abs(owner.getPosY() - target.y) < 1.1f) {
+            pathIndex++;
+            if (pathIndex >= path.size()) {
+                usePath = false;
+            }
+        }
+    }
+
+    /** Pathfind away from the current threat; false when no route exists. */
+    private boolean requestPanicPath() {
+        if (voxels == null || !hasThreatPos || fleePathAttempts >= 3) {
+            return false;
+        }
+        fleePathAttempts++;
+        usePath = false;
+        Vector3f point = pickFleePoint(owner.getPosition(), threatPos, rng);
+        path.clear();
+        pathIndex = 0;
+        path.addAll(PathFinder.findPath(voxels,
+                owner.getPosX(), owner.getPosY(), owner.getPosZ(),
+                point.x, point.y, point.z));
+        if (!path.isEmpty()) {
+            usePath = true;
+            recordStuckBaseline();
+            return true;
+        }
+        return false;
+    }
+
+    /** Pathfind toward a fixed landmark (village center at night). */
+    private void tryPathTo(Vector3f goal) {
+        if (voxels == null) return;
+        usePath = false;
+        path.clear();
+        pathIndex = 0;
+        path.addAll(PathFinder.findPath(voxels,
+                owner.getPosX(), owner.getPosY(), owner.getPosZ(),
+                goal.x, goal.y, goal.z));
+        usePath = !path.isEmpty();
+    }
+
+    /**
+     * Pick a sprint point roughly opposite the threat. Pure geometry (no world
+     * access) so the direction logic is unit-testable.
+     */
+    static Vector3f pickFleePoint(Vector3f position, Vector3f threat, Random rng) {
+        Vector3f away = new Vector3f(position).sub(threat);
+        away.y = 0;
+        if (away.lengthSquared() < 1e-4f) {
+            away.set(1f, 0f, 0f);
+        }
+        away.normalize();
+        // Jitter the bearing so two fleeing villagers do not follow one queue.
+        double zig = Math.toRadians((rng.nextFloat() - 0.5f) * 70.0);
+        float cos = (float) Math.cos(zig), sin = (float) Math.sin(zig);
+        Vector3f dir = new Vector3f(
+                away.x * cos - away.z * sin, 0f,
+                away.x * sin + away.z * cos);
+        return new Vector3f(position).add(dir.mul(8f));
+    }
+
+    private void recordStuckBaseline() {
+        stuckStart.set(owner.getPosition());
     }
 
     private void pickWanderTarget() {
@@ -357,6 +523,9 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
                     owner.getPosZ() + (rng.nextFloat() - 0.5f) * 24f);
         }
         hasWanderTarget = true;
+        stuckAtDist = wanderTarget.distance(owner.getPosition());
+        recordStuckBaseline();
+        stuckAccum = 0f;
     }
 
     private boolean say(String line) {

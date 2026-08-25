@@ -3,7 +3,7 @@ package com.voxel.ai;
 /**
  * Amanatides &amp; Woo voxel grid traversal used for line-of-sight checks.
  */
-final class Raycaster {
+public final class Raycaster {
 
     private Raycaster() {
     }
@@ -12,7 +12,7 @@ final class Raycaster {
      * @return true when the segment from a to b crosses no non-air voxel,
      *         endpoints excluded (the source and target cells never block).
      */
-    static boolean lineOfSight(VoxelView view,
+    public static boolean lineOfSight(VoxelView view,
                                float ax, float ay, float az,
                                float bx, float by, float bz) {
         int x = floor(ax), y = floor(ay), z = floor(az);

@@ -6,16 +6,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
-import java.util.Set;
 
 /**
- * Budget-capped 3D A* over voxel cells. Extracted verbatim from the original
- * EnemyEntity pathfinder (same neighbor set, costs, heuristic, goal tolerance
- * and default 500-node budget) so existing mob behavior is unchanged.
+ * Budget-capped 3D A* over voxel cells. Same neighbor set, costs, heuristic,
+ * goal tolerance and default 500-node budget as the original EnemyEntity
+ * pathfinder so existing mob behavior is unchanged.
  */
 public final class PathFinder {
 
@@ -44,6 +42,15 @@ public final class PathFinder {
                 DEFAULT_MAX_NODES);
     }
 
+    /**
+     * Find a path, or an empty list when the goal is sealed or the node budget
+     * runs out. The open queue may hold stale duplicates (lazy deletion); a
+     * node is only expanded while it is still the best known way to reach its
+     * cell, and a cell re-reached through a strictly cheaper route is
+     * re-opened. cameFrom can therefore never be overwritten by a worse
+     * predecessor (which made a plain closed-set search produce suboptimal
+     * routes and redundant expansions).
+     */
     public static List<Vector3i> findPath(VoxelView view, Walkability walkability,
                                           int sx, int sy, int sz,
                                           int gx, int gy, int gz,
@@ -57,24 +64,29 @@ public final class PathFinder {
             }
         });
 
-        Set<Vector3i> closed = new HashSet<>();
+        Map<Vector3i, Double> bestG = new HashMap<>();
         Map<Vector3i, Vector3i> cameFrom = new HashMap<>();
 
         Vector3i start = new Vector3i(sx, sy, sz);
+        bestG.put(new Vector3i(start), 0.0);
         open.add(new Node(sx, sy, sz, 0, heuristic(sx, sy, sz, gx, gy, gz)));
 
         int nodesSearched = 0;
         while (!open.isEmpty() && nodesSearched < maxNodes) {
             Node current = open.poll();
             Vector3i cpos = new Vector3i(current.x, current.y, current.z);
-            if (closed.contains(cpos)) continue;
+            Double best = bestG.get(cpos);
+            if (best == null || current.g > best.doubleValue() + 1.0e-9) {
+                // Stale duplicate: a cheaper route to this cell was found after
+                // this entry was queued, so it must not be expanded.
+                continue;
+            }
 
             if (Math.abs(current.x - gx) <= 1 && Math.abs(current.z - gz) <= 1
                     && Math.abs(current.y - gy) <= 1) {
                 return reconstructPath(cameFrom, cpos);
             }
 
-            closed.add(cpos);
             nodesSearched++;
 
             for (int[] dir : NEIGHBOR_DIRECTIONS) {
@@ -83,14 +95,18 @@ public final class PathFinder {
                 int nz = current.z + dir[2];
 
                 Vector3i neighbor = new Vector3i(nx, ny, nz);
-                if (closed.contains(neighbor) || !walkability.isWalkable(view, nx, ny, nz)) continue;
+                if (!walkability.isWalkable(view, nx, ny, nz)) continue;
 
                 double g = current.g + ((dir[0] != 0 && dir[2] != 0) ? DIAGONAL_COST : 1.0);
                 if (dir[1] != 0) g += VERTICAL_COST;
 
-                Node next = new Node(nx, ny, nz, g, heuristic(nx, ny, nz, gx, gy, gz));
-                open.add(next);
+                Double previous = bestG.get(neighbor);
+                if (previous != null && g >= previous.doubleValue() - 1.0e-9) {
+                    continue;
+                }
+                bestG.put(neighbor, g);
                 cameFrom.put(neighbor, cpos);
+                open.add(new Node(nx, ny, nz, g, heuristic(nx, ny, nz, gx, gy, gz)));
             }
         }
         return Collections.emptyList();
