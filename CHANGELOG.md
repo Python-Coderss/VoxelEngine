@@ -1,5 +1,39 @@
 # CHANGELOG
 
+## Mob AI & Villager Voice Improvements (Aug 25, 2026)
+
+### Mob AI
+- **Enemies stop wall-hacking**: hostile mobs now only refresh their memory of
+  the player's position with a clear line of sight (voxel raycaster). They still
+  hunt the last seen spot for a few seconds, then lose interest instead of
+  walking through walls to your exact position.
+- **PathFinder relaxation fix**: A* now keeps the best-known cost per cell and
+  re-opens cells only when a strictly cheaper route is found, so a worse
+  predecessor can never overwrite the came-from chain (previously produced
+  bloated routes on flat terrain and wasted expansions).
+- **Villager panic flees around obstacles**: on spotting a threat, villagers
+  immediately pathfind an escape point opposite the monster (jittered so two
+  villagers don't queue), fall back to the zigzag sprint when no route exists,
+  and re-path when pinned against a wall.
+- **Villagers pathfind home at night** instead of grinding into walls, and
+  **wanderers now detect being stuck** and pick a fresh target instead of
+  bumping an obstacle for the full 14 s window.
+- New tests: raycaster line of sight, optimal-cost pathfinding, flee-point
+  geometry; existing AI/voice suites updated and green.
+
+### RVC voice
+- **Per-line noise seed**: each dialogue line now draws its own deterministic
+  RVC posterior noise (seed hashed from the clip), so artifacts no longer
+  repeat identically on every line while the persistent voice cache stays valid.
+- **Energy-scaled excitation**: the RVC noise input is scaled per frame by local
+  RMS energy — pauses and unvoiced consonants carry less random excitation,
+  cutting the steady hiss RVC synthesized into the gaps between words.
+- **Median-smoothed pitch contour**: single-frame autocorrelation outliers
+  (which RVC rendered as chirps/crackles) are removed with a 3-tap median over
+  voiced runs only; real rises and falls are untouched.
+- **Click-free output padding**: if the RVC graph returns a few samples short,
+  the tail is now fade-ramped instead of hard-zeroed (no truncation click).
+
 ## End Update + Tutorial World Expansion (Aug 24, 2026)
 
 ### End Update — a barren void, kept lifeless

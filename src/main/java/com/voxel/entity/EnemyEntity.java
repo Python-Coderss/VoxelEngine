@@ -110,16 +110,24 @@ public class EnemyEntity extends Entity {
         }
 
         float distance = getPosition().distance(playerPos);
+        // Hostile mobs must not see through walls: the player position only
+        // refreshes their memory when a clear line of sight exists. They keep
+        // hunting the remembered spot (and the stale prediction) after losing
+        // sight, then give up once the memory window expires.
+        boolean hasLineOfSight = world != null
+                && com.voxel.ai.Raycaster.lineOfSight(world::getVoxel,
+                        getPosX(), getPosY() + com.voxel.ai.Senses.EYE_HEIGHT, getPosZ(),
+                        playerPos.x, playerPos.y + com.voxel.ai.Senses.EYE_HEIGHT, playerPos.z);
 
         if (DEBUG_AI) {
-            System.out.printf("[AI] Entity(%.1f, %.1f, %.1f) | Player(%.1f, %.1f, %.1f) | Dist: %.2f | State: %s%n",
+            System.out.printf("[AI] Entity(%.1f, %.1f, %.1f) | Player(%.1f, %.1f, %.1f) | Dist: %.2f | LOS: %s | State: %s%n",
                     getPosX(), getPosY(), getPosZ(),
                     playerPos.x, playerPos.y, playerPos.z,
-                    distance, state);
+                    distance, hasLineOfSight, state);
         }
 
-        // Update last known player position
-        if (distance < 26f) {
+        // Update last known player position (only when actually visible)
+        if (distance < 26f && hasLineOfSight) {
             lastKnownPlayerPos.set(playerPos);
             lastSawPlayerTime = System.currentTimeMillis();
 

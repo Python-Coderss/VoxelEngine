@@ -42,6 +42,7 @@ public final class CustomRvcModel implements AutoCloseable {
     private final OrtEnvironment environment;
     private final java.nio.file.Path contentModelPath;
     private final OrtSession rvcSession;
+    /** Seeded per clip via {@link #noiseSeed} before each conversion. */
     private final Random random = new Random(0x56494C4C41474552L);
 
     public CustomRvcModel(java.nio.file.Path contentModel, java.nio.file.Path rvcModel)
@@ -113,10 +114,18 @@ public final class CustomRvcModel implements AutoCloseable {
         }
         pitchBuffer.flip();
 
+        // One seed per clip: every line gets its own RVC posterior noise (so
+        // artifacts do not repeat identically on every line) while a re-render
+        // of the same line stays byte-identical for the voice cache.
+        random.setSeed(noiseSeed(samples));
+        float[] noiseGains = noiseGains(samples, SAMPLE_RATE, modelFrames);
         FloatBuffer noiseBuffer = directFloatBuffer(NOISE_CHANNELS * modelFrames);
         for (int channel = 0; channel < NOISE_CHANNELS; channel++) {
             for (int frame = 0; frame < modelFrames; frame++) {
-                noiseBuffer.put((float) random.nextGaussian());
+                // Scale the excitation by local energy: pauses and unvoiced
+                // consonants carry less random noise, which removes the steady
+                // hiss RVC otherwise synthesizes into the gaps between words.
+                noiseBuffer.put((float) (random.nextGaussian() * noiseGains[frame]));
             }
         }
         noiseBuffer.flip();
@@ -161,12 +170,7 @@ public final class CustomRvcModel implements AutoCloseable {
                 // The ONNX graph returns normalized float samples. WavAudio
                 // already converts [-1, 1] floats to 16-bit PCM, so do not
                 // divide by 32767 here.
-                int expected = samples.length;
-                if (output.length != expected) {
-                    float[] fitted = new float[expected];
-                    System.arraycopy(output, 0, fitted, 0, Math.min(output.length, expected));
-                    output = fitted;
-                }
+                output = fitOutput(output, samples.length);
                 return new WavAudio(SAMPLE_RATE, output)
                         .resampled(VillagerSynthesizer.DEFAULT_SAMPLE_RATE);
             }
@@ -250,8 +254,12 @@ public final class CustomRvcModel implements AutoCloseable {
         // RVC is very sensitive to frame-to-frame F0 jumps. A bare maximum
         // autocorrelation pitch tracker frequently chooses a harmonic (usually
         // an octave away) on one frame, which is heard as a metallic/vocoder
-        // or "movie hacker" effect. Keep the contour continuous while leaving
-        // unvoiced consonants unvoiced.
+        // or "movie hacker" effect. Also kill single-frame non-octave
+        // outliers (chirps) with a voiced-run median before the octave
+        // correction. Keep the contour continuous while leaving unvoiced
+        // consonants unvoiced.
+        raw = median3Smooth(raw);
+
         float[] result = new float[frames];
         // Singing notes must start on a clean pitch. The first voiced frame
         // after an unvoiced run often picks a subharmonic autocorrelation
@@ -437,6 +445,118 @@ public final class CustomRvcModel implements AutoCloseable {
         double mel = 1127.0 * Math.log(1.0 + frequency / 700.0);
         double value = (mel - min) * 254.0 / (max - min) + 1.0;
         return Math.max(1, Math.min(255, Math.round(value)));
+    }
+
+    /**
+     * Deterministic per-clip seed derived from the audio itself, so each line
+     * draws its own RVC posterior noise while the same line re-renders
+     * identically (keeps the persistent voice cache stable).
+     */
+    static long noiseSeed(float[] samples) {
+        long seed = 0xC0FFEE0DDBA5E11L;
+        // Visit ~32 uniformly spaced samples (all of them for short clips) so
+        // two lines with identical openings cannot collide, while the cost
+        // stays constant for long audio.
+        int stride = Math.max(1, samples.length / 32);
+        for (int i = 0; i < samples.length; i += stride) {
+            seed ^= Float.floatToIntBits(samples[i]);
+            seed *= 0x100000001B3L;
+        }
+        if (samples.length > 0 && (samples.length - 1) % stride != 0) {
+            seed ^= Float.floatToIntBits(samples[samples.length - 1]);
+            seed *= 0x100000001B3L;
+        }
+        return seed ^ (long) samples.length * 0x9E3779B97F4A7C15L;
+    }
+
+    /**
+     * Per-frame excitation scale derived from local RMS energy. Quiet frames
+     * (pauses, breath, unvoiced consonants) carry less random excitation,
+     * cutting the steady hiss RVC otherwise synthesizes into the gaps between
+     * words; loud voiced frames keep full-strength noise so the timbre does
+     * not thin out.
+     */
+    static float[] noiseGains(float[] samples, int sampleRate, int frames) {
+        float[] gains = new float[frames];
+        if (frames <= 0) {
+            return gains;
+        }
+        int radius = Math.max(64, sampleRate / 26);
+        float[] energies = new float[frames];
+        float maximum = 0.0f;
+        for (int frame = 0; frame < frames; frame++) {
+            int center = (int) ((frame + 0.5) * samples.length / (double) frames);
+            int start = Math.max(0, center - radius);
+            int end = Math.min(samples.length, center + radius);
+            energies[frame] = rms(samples, start, end);
+            maximum = Math.max(maximum, energies[frame]);
+        }
+        for (int frame = 0; frame < frames; frame++) {
+            float normalized = maximum <= 1.0e-6f ? 0.0f : energies[frame] / maximum;
+            gains[frame] = 0.35f + 0.65f * (float) Math.sqrt(normalized);
+        }
+        return gains;
+    }
+
+    /**
+     * 3-tap median over voiced runs only. Autocorrelation occasionally picks
+     * a single-frame outlier (e.g. 1.3x the local pitch) that is not an octave
+     * error; RVC renders those one-frame spikes as a short chirp/crackle. The
+     * median removes the outlier without touching real rises and falls, which
+     * span many frames, and never bridges unvoiced gaps.
+     */
+    static float[] median3Smooth(float[] raw) {
+        if (raw.length < 3) {
+            return raw;
+        }
+        float[] out = raw.clone();
+        int runStart = -1;
+        for (int i = 0; i <= raw.length; i++) {
+            boolean voiced = i < raw.length && raw[i] > 0.0f;
+            if (voiced) {
+                if (runStart < 0) runStart = i;
+            } else if (runStart >= 0) {
+                smoothVoicedRun(out, raw, runStart, i - 1);
+                runStart = -1;
+            }
+        }
+        return out;
+    }
+
+    private static void smoothVoicedRun(float[] out, float[] raw, int start, int end) {
+        if (end - start + 1 < 3) {
+            return;
+        }
+        float[] window = new float[3];
+        for (int i = start; i <= end; i++) {
+            window[0] = i > start ? raw[i - 1] : raw[i];
+            window[1] = raw[i];
+            window[2] = i < end ? raw[i + 1] : raw[i];
+            java.util.Arrays.sort(window);
+            out[i] = window[1];
+        }
+    }
+
+    /**
+     * Fit the RVC output to the expected clip length. When the graph returns
+     * slightly fewer samples, pad with a short tail fade instead of a hard
+     * zero edge so truncation cannot click; extra samples are simply cut.
+     */
+    static float[] fitOutput(float[] output, int expected) {
+        if (output.length == expected) {
+            return output;
+        }
+        float[] fitted = new float[expected];
+        int copy = Math.min(output.length, expected);
+        System.arraycopy(output, 0, fitted, 0, copy);
+        if (copy < expected) {
+            int fade = Math.min(256, copy);
+            for (int i = 0; i < fade; i++) {
+                float t = (fade - i) / (float) fade;
+                fitted[copy - fade + i] *= t * t;
+            }
+        }
+        return fitted;
     }
 
     private static FloatBuffer directFloatBuffer(int capacity) {

@@ -95,6 +95,28 @@ public class PathFinderTest {
     }
 
     @Test
+    public void findsNearOptimalDiagonalCostPathOnFlatGround() {
+        // On flat ground the cheapest route uses diagonals wherever both axes
+        // remain (8 diagonals at 1.414 + 12 straight at 1.0 = 23.312 for a
+        // (0,0) -> (20,8) run). The relaxation must not let a worse
+        // predecessor overwrite the cameFrom chain, which used to inflate
+        // paths on exactly this kind of tie-dense terrain.
+        List<Vector3i> path = PathFinder.findPath(flat(), 0, GROUND_Y + 1, 0,
+                20, GROUND_Y + 1, 10);
+        assertFalse(path.isEmpty());
+        double cost = 0.0;
+        for (int i = 1; i < path.size(); i++) {
+            Vector3i a = path.get(i - 1);
+            Vector3i b = path.get(i);
+            double step = (a.x != b.x && a.z != b.z) ? 1.414 : 1.0;
+            cost += step;
+        }
+        double optimal = 8 * 1.414 + 12 * 1.0;
+        assertTrue("found cost " + cost + " vs optimal " + optimal,
+                cost <= optimal + 0.5);
+    }
+
+    @Test
     public void respectsNodeBudget() {
         List<Vector3i> path = PathFinder.findPath(flat(), Walkability.HUMANOID,
                 0, GROUND_Y + 1, 0, 200, GROUND_Y + 1, 200, 10);
