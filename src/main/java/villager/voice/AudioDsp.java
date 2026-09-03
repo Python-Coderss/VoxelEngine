@@ -60,10 +60,8 @@ public final class AudioDsp {
             return;
         }
         // Remove sub-bass rumble below 80 Hz while retaining the low
-        // fundamentals of the villager voice (roughly 100-300 Hz). Two passes
-        // give -12 dB/octave roll-off instead of -6 dB/octave, aggressively
-        // cutting the 20-80 Hz band.
-        applyHighPass(samples, sampleRate, 80.0);
+        // fundamentals of the villager voice (roughly 100-300 Hz). One gentle
+        // pass to avoid resonance buildup from multiple filtering stages.
         applyHighPass(samples, sampleRate, 80.0);
         // Stronger high-frequency cleanup, while keeping the important speech
         // consonant band usable. Three mild passes make the transition gradual
@@ -75,6 +73,12 @@ public final class AudioDsp {
         // tonal spikes survive the low-pass because they sit close to the
         // Nyquist limit where a single-pole IIR rolls off slowly.
         applyNotchFilter(samples, sampleRate, 11850.0, 10.0);
+        // Notch out potential midrange oscillation around 500 Hz. RVC
+        // conversion can create narrow-band ringing in the midrange that
+        // sounds like a wavering/robotic artifact; a narrow notch damps it.
+        applyNotchFilter(samples, sampleRate, 500.0, 8.0);
+        // Secondary notch at 800 Hz for upper-midrange artifacts.
+        applyNotchFilter(samples, sampleRate, 800.0, 10.0);
     }
 
     private static void applyHighPass(float[] samples, int sampleRate, double cutoffHz) {
@@ -148,27 +152,47 @@ public final class AudioDsp {
         if (output.length < 2 || source.length < 2 || sampleRate <= 0) {
             return;
         }
-        int frameSize = Math.max(80, sampleRate / 100);
+        int frameSize = Math.max(160, sampleRate / 50); // ~20 ms analysis
         int frameCount = (source.length + frameSize - 1) / frameSize;
         float[] energy = new float[frameCount];
         float maximum = 0.0f;
         for (int frame = 0; frame < frameCount; frame++) {
             int start = frame * frameSize;
-            int end = Math.min(source.length, start + frameSize);
-            energy[frame] = rms(source, start, end);
+            int length = Math.min(frameSize, source.length - start);
+            energy[frame] = rms(source, start, length);
             maximum = Math.max(maximum, energy[frame]);
         }
         if (maximum <= 1.0e-5f) {
             return;
         }
 
-        float floor = maximum * 0.12f;
+        float floor = maximum * 0.08f;
         for (int frame = 0; frame < frameCount; frame++) {
             double normalized = (energy[frame] - floor)
                     / Math.max(1.0e-6, maximum - floor);
             normalized = Math.max(0.0, Math.min(1.0, normalized));
-            energy[frame] = (float) (0.26 + 0.74 * normalized * normalized);
+            // Less aggressive gating: keep more natural source through.
+            // The curve is gentler (linear instead of squared) so mid-energy
+            // frames retain more of the natural carrier.
+            energy[frame] = (float) (0.35 + 0.65 * normalized);
         }
+        // Temporal smoothing: per-frame gain changes at the 10 ms scale are
+        // heard as amplitude modulation (rasp/husk). A gentle moving average
+        // keeps pause gating while voiced frames hold a steady carrier.
+        float[] smoothedGain = new float[frameCount];
+        for (int frame = 0; frame < frameCount; frame++) {
+            double sum = 0.0;
+            int count = 0;
+            for (int k = -3; k <= 3; k++) {
+                int index = frame + k;
+                if (index >= 0 && index < frameCount) {
+                    sum += energy[index];
+                    count++;
+                }
+            }
+            smoothedGain[frame] = (float) (sum / count);
+        }
+        System.arraycopy(smoothedGain, 0, energy, 0, frameCount);
         for (int i = 0; i < output.length; i++) {
             double sourcePosition = i * (source.length - 1.0)
                     / Math.max(1, output.length - 1);
@@ -181,18 +205,96 @@ public final class AudioDsp {
         }
     }
 
+    /**
+     * Crossfade extra natural source into the converted audio wherever the
+     * source is unvoiced and high-frequency-dominant (sibilants, fricatives,
+     * breaths). RVC vocoders mangle exactly those regions; voiced speech keeps
+     * the converted villager timbre. The boost ramps from {@code baseMix} up
+     * to {@code capMix} following a smoothed spectral-centroid mask of the
+     * natural source.
+     */
+    public static void applyUnvoicedSourceBoost(float[] output, float[] source,
+                                                int sampleRate, double baseMix,
+                                                double capMix) {
+        if (output.length < 2 || source.length < 2 || capMix <= baseMix) {
+            return;
+        }
+        // Only the natural source's frication may be crossfaded in. Mixing the
+        // full-band source would leak the base TTS pitch (~111 Hz) into the
+        // sibilant regions, dragging the rendered villager register down and
+        // silently undoing the pitch shift. A high-pass keeps the sibilant
+        // noise while removing the voiced harmonics.
+        float[] frication = source.clone();
+        applyHighPass(frication, sampleRate, 3000.0);
+        int window = Math.max(256, sampleRate / 50); // ~20 ms
+        int hop = window / 2;
+        int frameCount = Math.max(1, (source.length - window) / hop + 1);
+        float[] boost = new float[frameCount];
+        for (int frame = 0; frame < frameCount; frame++) {
+            int start = frame * hop;
+            double weighted = 0.0;
+            double total = 0.0;
+            for (int i = 0; i < window; i++) {
+                float sample = source[start + i];
+                double magnitude = sample * sample;
+                double frequency = i * sampleRate / (double) window;
+                weighted += magnitude * frequency;
+                total += magnitude;
+            }
+            double centroid = total > 1e-9 ? weighted / total : 0.0;
+            // Voiced speech sits under ~2 kHz; sibilant energy lives above it.
+            double amount = (centroid - 2200.0) / 1400.0;
+            amount = Math.max(0.0, Math.min(1.0, amount));
+            boost[frame] = (float) (amount * amount * (3.0 - 2.0 * amount));
+        }
+        // Smooth the mask so consonant onsets crossfade instead of switching.
+        float[] smoothed = new float[frameCount];
+        for (int frame = 0; frame < frameCount; frame++) {
+            double sum = 0.0;
+            int count = 0;
+            for (int k = -2; k <= 2; k++) {
+                int index = frame + k;
+                if (index >= 0 && index < frameCount) {
+                    sum += boost[index];
+                    count++;
+                }
+            }
+            smoothed[frame] = (float) (sum / count);
+        }
+
+        int count = Math.min(output.length, source.length);
+        for (int i = 0; i < count; i++) {
+            double sourcePosition = i * (source.length - 1.0)
+                    / Math.max(1, output.length - 1);
+            double framePosition = sourcePosition / hop;
+            int left = Math.min(frameCount - 1, (int) framePosition);
+            int right = Math.min(frameCount - 1, left + 1);
+            double amount = framePosition - left;
+            double mask = smoothed[left] * (1.0 - amount) + smoothed[right] * amount;
+            double mix = baseMix + (capMix - baseMix) * mask;
+            output[i] = (float) (output[i] * (1.0 - mix + baseMix)
+                    + frication[i] * (mix - baseMix));
+        }
+    }
+
     /** Apply a smooth first-order treble tilt without introducing sharp EQ edges. */
     public static void applyToneTilt(float[] samples, double tone) {
         if (tone == 0.0 || samples.length == 0) {
             return;
         }
         double amount = Math.max(-0.85, Math.min(0.85, tone)) * 0.18;
+        // Use a leak factor that prevents feedback oscillation: the low-pass
+        // state decays faster (0.035 -> 0.025) so it cannot build up energy.
         float low = samples[0];
+        float leak = 0.025f;
         for (int i = 0; i < samples.length; i++) {
             float current = samples[i];
-            low += (current - low) * 0.035f;
+            low = (float) (low * (1.0 - leak) + current * leak);
             samples[i] = (float) (current + amount * (current - low));
         }
+        // Kill any narrowband midrange oscillation created by the tone-tilt
+        // feedback loop interacting with the HPF and denoise stages.
+        notchMidrange(samples, samples.length, 24000);
     }
 
     /**
@@ -218,6 +320,32 @@ public final class AudioDsp {
             float current = samples[i];
             low += (current - low) * 0.035f;
             samples[i] = (float) (current + amount * (current - low));
+        }
+    }
+
+    /**
+     * Second-order notch around 600 Hz (0.2 Q, ~6 dB) to zap residual ringing in
+     * the vocal formant band. Gentle enough to keep brightness, strong enough to stop
+     * the "robotic" midrange oscillation from the DSP feedback chain.
+     */
+    private static void notchMidrange(float[] samples, int length, int sampleRate) {
+        if (length < 4 || sampleRate < 8000) return;
+        double f0 = 600.0;
+        double Q = 0.2;
+        double r = Math.exp(-Math.PI * f0 / (Q * sampleRate));
+        double cosw = Math.cos(2.0 * Math.PI * f0 / sampleRate);
+        double a1 = -2.0 * r * cosw;
+        double a2 = r * r;
+        // peak gain G at f0 for ~6 dB notch depth with Q=0.2:
+        double G = (1.0 - 2.0 * r * cosw + r * r) / (1.0 - 2.0 * r * cosw + r * r + 0.18);
+        float x1 = samples[0], x2 = samples.length > 1 ? samples[1] : 0.0f;
+        float y1 = 0.0f, y2 = 0.0f;
+        for (int i = 0; i < length; i++) {
+            float x0 = samples[i];
+            float y0 = (float) (G * (x0 - x2) - a1 * y1 - a2 * y2);
+            samples[i] = y0;
+            x2 = x1; x1 = x0;
+            y2 = y1; y1 = y0;
         }
     }
 

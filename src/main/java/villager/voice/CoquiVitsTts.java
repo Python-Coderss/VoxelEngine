@@ -10,6 +10,7 @@ import java.nio.FloatBuffer;
 import java.nio.LongBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -39,6 +40,12 @@ public final class CoquiVitsTts implements NeuralBaseTts {
     public static final int OUTPUT_RATE = 22050;
     /** 0.1 s silence at 22050 Hz, per the validated reference recipe. */
     public static final int PAD_SILENCE_SAMPLES = 2205;
+    /** Amplitude below which a sample counts as silence when trimming. */
+    private static final float TRIM_THRESHOLD = 0.01f;
+    /** Silence kept around speech after trimming: 60 ms at 22.05 kHz. */
+    private static final int TRIM_MARGIN_SAMPLES = 1320;
+    /** Edge fade length so utterance boundaries never click: ~5 ms. */
+    private static final int EDGE_FADE_SAMPLES = OUTPUT_RATE / 200;
     private static final long SPEAKER_P226 = 2L;
     private static final Pattern SENTENCE_SPLIT =
             Pattern.compile("(?<=[.!?\\u2026])\\s+");
@@ -115,8 +122,7 @@ public final class CoquiVitsTts implements NeuralBaseTts {
         }
         inputBuffer.flip();
         LongBuffer lengthBuffer = directLongBuffer(1);
-        lengthBuffer.put(ids.length).flip();
-        // Emotion shifts how the base *sounds* before RVC ever sees it: angry
+        lengthBuffer.put(ids.length).flip();        // Emotion shifts how the base *sounds* before RVC ever sees it: angry
         // turns the noise scales down (crisper), sad/scared up (breathier),
         // like the reference's emotional delivery.
         float[] emotionScales = scalesForEmotion(emotion);
@@ -145,11 +151,63 @@ public final class CoquiVitsTts implements NeuralBaseTts {
                 buffer.rewind();
                 float[] samples = new float[buffer.remaining()];
                 buffer.get(samples);
-                return samples;
+                return conditionSentence(samples);
             }
         } catch (Exception error) {
             throw new IllegalStateException("Coqui VITS inference failed: " + error, error);
         }
+    }
+
+    /**
+     * Clean up one sentence of raw VITS output before it becomes either
+     * standalone audio or RVC input:
+     * <ul>
+     * <li>Non-finite samples are zeroed — one NaN frame poisons every
+     *     downstream filter and makes the whole line silent or screeching.</li>
+     * <li>The DC drift VITS leaves on an utterance is removed; it is audible
+     *     as thumps at utterance boundaries and it skews RVC's F0 extraction.</li>
+     * <li>Excess leading/trailing silence is trimmed (60 ms margins kept) so
+     *     lines do not start with dead air after sentence joining.</li>
+     * <li>Edges fade in/out so utterance boundaries never click.</li>
+     * </ul>
+     */
+    private static float[] conditionSentence(float[] samples) {
+        if (samples.length == 0) {
+            return samples;
+        }
+        double sum = 0.0;
+        int finite = 0;
+        for (int i = 0; i < samples.length; i++) {
+            float sample = samples[i];
+            if (!Float.isFinite(sample)) {
+                samples[i] = 0.0f;
+            } else {
+                sum += sample;
+                finite++;
+            }
+        }
+        if (finite == 0) {
+            return new float[0];
+        }
+        float dcOffset = (float) (sum / finite);
+        for (int i = 0; i < samples.length; i++) {
+            samples[i] -= dcOffset;
+        }
+        int first = 0;
+        int last = samples.length - 1;
+        while (first < last && Math.abs(samples[first]) < TRIM_THRESHOLD) {
+            first++;
+        }
+        while (last > first && Math.abs(samples[last]) < TRIM_THRESHOLD) {
+            last--;
+        }
+        int start = Math.max(0, first - TRIM_MARGIN_SAMPLES);
+        int end = Math.min(samples.length, last + 1 + TRIM_MARGIN_SAMPLES);
+        float[] result = start > 0 || end < samples.length
+                ? Arrays.copyOfRange(samples, start, end)
+                : samples;
+        AudioDsp.fadeEdges(result, Math.min(EDGE_FADE_SAMPLES, result.length / 4));
+        return result;
     }
 
     /**
