@@ -1,0 +1,10 @@
+{
+  "line": "Did you see the size of that golem?",
+  "snapshots": [
+    {"text": "Did",   "emotion": "neutral", "speed": 1.0, "pitch": 0.0, "volume": 1.0, "tone": 0.0},
+    {"text": "you",   "emotion": "neutral", "speed": 1.0, "pitch": 0.0, "volume": 1.0, "tone": 0.0},
+    {"text": "see",   "emotion": "scared",  "speed": 1.0, "pitch": 0.0, "volume": 1.0, "tone": 0.2},
+    {"text": "size",  "emotion": "scared",  "speed": 1.05, "pitch": 0.5, "volume": 1.0, "tone": 0.3},
+    {"text": "golem", "emotion": "scared",  "speed": 1.1, "pitch": 1.0, "volume": 0.95, "tone": 0.2}
+  ]
+}

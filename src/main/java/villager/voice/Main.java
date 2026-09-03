@@ -52,14 +52,23 @@ public final class Main {
             DialogueEditor.launch(options.models);
             return;
         }
-        if (!options.newsIntro && options.text == null && options.lines == null) {
-            throw new IllegalArgumentException("give text, --lines, --news-intro, or --editor");
+        if (!options.newsIntro && !options.baseOnly
+                && options.text == null && options.lines == null) {
+            throw new IllegalArgumentException(
+                    "give text, --lines, --news-intro, or --editor");
         }
         if (options.newsIntro && (options.text != null || options.lines != null)) {
             throw new IllegalArgumentException("--news-intro cannot be combined with text or --lines");
         }
         if (options.text != null && options.lines != null) {
             throw new IllegalArgumentException("use either text or --lines, not both");
+        }
+        if (options.baseOnly && options.text == null && options.lines == null) {
+            throw new IllegalArgumentException("--base-only needs text or --lines");
+        }
+        if (options.baseOnly) {
+            renderBaseOnly(options);
+            return;
         }
 
         VillagerSynthesizer synthesizer = new VillagerSynthesizer(options.models);
@@ -85,6 +94,45 @@ public final class Main {
             }
         } finally {
             synthesizer.close();
+        }
+    }
+
+    /**
+     * Render the raw Coqui VITS base voice — the exact audio that feeds the
+     * RVC conversion — without loading any RVC model. Useful for auditing and
+     * tuning the base: whatever sounds wrong here will sound wrong after RVC.
+     */
+    private static void renderBaseOnly(Options options) throws Exception {
+        CoquiVitsTts baseTts = new CoquiVitsTts(
+                ModelBundle.from(options.models).directory());
+        try {
+            SpeechOptions voiceOptions = options.voiceOptions();
+            if (options.lines != null) {
+                Files.createDirectories(options.outdir);
+                List<JsonLines.Entry> entries = JsonLines.read(options.lines);
+                Map<String, String> index = new LinkedHashMap<String, String>();
+                for (JsonLines.Entry entry : entries) {
+                    String fileId = safeFileName(entry.id);
+                    WavAudio audio = baseTts.synthesize(entry.text,
+                            voiceOptions.getEffectiveSpeed(), voiceOptions.getEmotion());
+                    AudioDsp.normalizePeak(audio.samples, 0.9f);
+                    Path output = options.outdir.resolve(fileId + ".wav");
+                    audio.write(output);
+                    index.put(fileId, entry.text);
+                    System.out.println("ok " + fileId + " (base)");
+                }
+                JsonLines.writeIndex(options.outdir.resolve("index.json"), index);
+                System.out.println(entries.size() + " lines -> " + options.outdir
+                        + " (base TTS, no RVC)");
+            } else {
+                WavAudio audio = baseTts.synthesize(options.text,
+                        voiceOptions.getEffectiveSpeed(), voiceOptions.getEmotion());
+                AudioDsp.normalizePeak(audio.samples, 0.9f);
+                audio.write(options.out);
+                System.out.println(options.out + " (base TTS, no RVC)");
+            }
+        } finally {
+            baseTts.close();
         }
     }
 
@@ -135,6 +183,7 @@ public final class Main {
                 + "  --singing VALUE  singing expression from 0.0 (speech) to 1.0\n"
                 + "  --sarcasm VALUE  dry/deadpan delivery from 0.0 to 1.0\n"
                 + "  --question       use a rising interrogative ending\n"
+                + "  --base-only      render the raw Coqui VITS base voice (no RVC)\n"
                 + "  --mode MODE      neural (default, Coqui) or reference (exact transcript clips)\n"
                 + "  --editor         open the standalone voice preset editor\n"
                 + "  --midi-editor    open the Villager News piano-roll MIDI editor\n"
@@ -163,6 +212,7 @@ public final class Main {
         boolean midiEditor;
         boolean dialogueEditor;
         boolean newsIntro;
+        boolean baseOnly;
         boolean overwrite;
         boolean help;
 
@@ -200,6 +250,8 @@ public final class Main {
                     options.sarcasm = parseDouble(next(args, ++i, arg), arg);
                 } else if ("--question".equals(arg)) {
                     options.question = true;
+                } else if ("--base-only".equals(arg)) {
+                    options.baseOnly = true;
                 } else if ("--mode".equals(arg)) {
                     options.mode = VoiceMode.parse(next(args, ++i, arg));
                 } else if ("--editor".equals(arg)) {

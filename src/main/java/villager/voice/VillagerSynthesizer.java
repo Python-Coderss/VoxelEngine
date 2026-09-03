@@ -49,9 +49,31 @@ public final class VillagerSynthesizer implements AutoCloseable {
             baseTts = coquiBase(bundle);
             customVoice = new CustomRvcModel(
                     bundle.path("vec-768-layer-12.onnx"),
-                    bundle.path("rvc-villager.onnx"));
+                    bundle.path("rvc-villager.onnx"),
+                    bundle.directory().resolve("rmvpe.onnx"),
+                    bundle.directory().resolve("rvc-villager-index.bin"));
             referenceVoice = null;
         }
+    }
+
+    /** Full pipeline with an explicit base backend (e.g. the Kokoro eval path). */
+    VillagerSynthesizer(NeuralBaseTts injectedBase, Path modelDirectory) throws Exception {
+        if (injectedBase == null || modelDirectory == null) {
+            throw new IllegalArgumentException("base and model directory are required");
+        }
+        this.mode = VoiceMode.fromProperty();
+        if (mode == VoiceMode.REFERENCE) {
+            throw new IllegalStateException(
+                    "voxel.voice.mode=reference cannot use an injected neural base");
+        }
+        ModelBundle bundle = ModelBundle.from(modelDirectory);
+        baseTts = injectedBase;
+        customVoice = new CustomRvcModel(
+                bundle.path("vec-768-layer-12.onnx"),
+                bundle.path("rvc-villager.onnx"),
+                bundle.directory().resolve("rmvpe.onnx"),
+                bundle.directory().resolve("rvc-villager-index.bin"));
+        referenceVoice = null;
     }
 
     /** The Coqui base is the only neural base; there is no Piper fallback. */
@@ -95,13 +117,29 @@ public final class VillagerSynthesizer implements AutoCloseable {
                 effectiveOptions.getSarcasm(), effectiveOptions.isQuestion());
         // Keep a substantial amount of the natural VITS source under RVC. A
         // completely dry conversion is where the metallic/hacker quality is
-        // most apparent; the default profile supplies 36% natural body.
+        // most apparent; the default profile supplies 40% natural body.
+        //
+        // The natural mix is applied in three stages:
+        // 1. Global blend (mixNaturalSource) — a baseline natural component
+        //    that preserves the base TTS prosody and timing.
+        // 2. Energy masking (applySourceEnergyMask) — fades the natural layer
+        //    out during pauses and weak consonants so it cannot restore a
+        //    continuously voiced carrier.
+        // 3. Unvoiced boost (applyUnvoicedSourceBoost) — crossfades extra
+        //    natural sibilance/frication through RVC-vulnerable regions.
         mixNaturalSource(converted, base, effectiveOptions.getEffectiveNaturalSourceMix());
         // Apply the source envelope after mixing so the natural VITS layer cannot
         // restore a continuously voiced carrier during pauses.
         WavAudio sourceAtOutputRate = base.resampled(converted.sampleRate);
         AudioDsp.applySourceEnergyMask(converted.samples, sourceAtOutputRate.samples,
                 converted.sampleRate);
+        // Sibilants and fricatives survive RVC poorly; crossfade extra natural
+        // source through wherever the source is unvoiced and high-frequency.
+        // Voiced regions keep the full villager timbre. Lower cap to reduce
+        // harshness from high-frequency bleed.
+        AudioDsp.applyUnvoicedSourceBoost(converted.samples, sourceAtOutputRate.samples,
+                converted.sampleRate, effectiveOptions.getEffectiveNaturalSourceMix(),
+                0.60);
         // Clean RVC hiss/rumble after source mixing so both the converted and
         // natural layers receive the same gentle denoise and smoothing pass.
         AudioDsp.applySpeechDenoise(converted.samples, converted.sampleRate);

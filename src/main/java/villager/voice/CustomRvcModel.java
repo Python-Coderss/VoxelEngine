@@ -2,6 +2,7 @@ package villager.voice;
 
 import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OrtEnvironment;
+import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
 
 import java.nio.ByteBuffer;
@@ -42,10 +43,21 @@ public final class CustomRvcModel implements AutoCloseable {
     private final OrtEnvironment environment;
     private final java.nio.file.Path contentModelPath;
     private final OrtSession rvcSession;
+    /** Neural F0 tracker; null when rmvpe.onnx is absent from the bundle. */
+    private final RmvpePitch rmvpe;
+    /** Training-embedding retrieval; null when the flattened index is absent. */
+    private final FeatureIndex featureIndex;
+    private static final double INDEX_RATE = 0.55;
     /** Seeded per clip via {@link #noiseSeed} before each conversion. */
     private final Random random = new Random(0x56494C4C41474552L);
 
     public CustomRvcModel(java.nio.file.Path contentModel, java.nio.file.Path rvcModel)
+            throws Exception {
+        this(contentModel, rvcModel, null, null);
+    }
+
+    public CustomRvcModel(java.nio.file.Path contentModel, java.nio.file.Path rvcModel,
+                          java.nio.file.Path rmvpeModel, java.nio.file.Path featureIndexPath)
             throws Exception {
         environment = OrtEnvironment.getEnvironment();
         contentModelPath = contentModel.toAbsolutePath().normalize();
@@ -64,6 +76,17 @@ public final class CustomRvcModel implements AutoCloseable {
             throw e;
         }
         rvcSession = rvc;
+        if (rmvpeModel != null && java.nio.file.Files.isRegularFile(rmvpeModel)) {
+            java.nio.file.Path bank =
+                    rmvpeModel.toAbsolutePath().normalize().resolveSibling("rmvpe-mel.f32");
+            rmvpe = java.nio.file.Files.isRegularFile(bank)
+                    ? new RmvpePitch(rmvpeModel, bank) : null;
+        } else {
+            rmvpe = null;
+        }
+        featureIndex = featureIndexPath != null
+                && java.nio.file.Files.isRegularFile(featureIndexPath)
+                ? FeatureIndex.load(featureIndexPath) : null;
     }
 
     public WavAudio convert(WavAudio source, double pitchSemitones) throws Exception {
@@ -93,62 +116,142 @@ public final class CustomRvcModel implements AutoCloseable {
             throw new IllegalStateException("ContentVec returned an unexpected shape");
         }
         int contentFrames = content.length;
+        if (featureIndex != null) {
+            featureIndex.apply(content, INDEX_RATE);
+        }
         int modelFrames = contentFrames * 2;
 
-        // Use flat buffers with explicit shapes. Passing Java multidimensional
-        // arrays to a reused OrtSession can make ONNX Runtime retain the shape
-        // of a previous variable-length request and collapse a later input to
-        // a {1} dimension inside the RVC convolution graph.
-        FloatBuffer phoneBuffer = directFloatBuffer(modelFrames * CONTENT_DIMENSION);
-        for (int frame = 0; frame < modelFrames; frame++) {
-            float[] original = content[Math.min(contentFrames - 1, frame / 2)];
-            phoneBuffer.put(original);
-        }
-        phoneBuffer.flip();
-
-        float[] pitchf = estimatePitch(samples, modelFrames, pitchSemitones, singing,
-                emotion, sarcasm, question);
-        LongBuffer pitchBuffer = directLongBuffer(modelFrames);
+        float[] pitchf = estimatePitch(samples, at16k, modelFrames, pitchSemitones,
+                singing, emotion, sarcasm, question);
+        long[] quantizedPitch = new long[modelFrames];
         for (int i = 0; i < modelFrames; i++) {
-            pitchBuffer.put(quantizePitch(pitchf[i]));
+            quantizedPitch[i] = quantizePitch(pitchf[i]);
         }
-        pitchBuffer.flip();
-
+        // The static 1024-frame graph renders every padded frame as voiced
+        // audio, so the padding must carry a plausible voiced pitch. Padding
+        // with the unvoiced code (pitch=1, pitchf=0) collapses the entire
+        // window to the model's default ~100 Hz register - even the real
+        // voiced region. Pad with the clip's median voiced pitch instead;
+        // the padded region's audio is trimmed away by fitOutput afterwards.
+        float pitchfPad = medianVoiced(pitchf);
+        long pitchPad = quantizePitch(pitchfPad);
         // One seed per clip: every line gets its own RVC posterior noise (so
         // artifacts do not repeat identically on every line) while a re-render
         // of the same line stays byte-identical for the voice cache.
         random.setSeed(noiseSeed(samples));
         float[] noiseGains = noiseGains(samples, SAMPLE_RATE, modelFrames);
-        FloatBuffer noiseBuffer = directFloatBuffer(NOISE_CHANNELS * modelFrames);
+
+        // The exported graph is a fixed-frame-budget graph (see
+        // dev/rvc-export/export_villager_onnx.py): dynamic-shape exports bake
+        // trace-time sizes into attention reshapes and break on other lengths,
+        // so conversion runs in padded windows instead. phone_lengths keeps
+        // the real frame count and masks attention, but the pitch-embedding
+        // path still processes padded frames, so pitch/pitchf padding carries
+        // the clip's median voiced pitch (see pitchfPad above) - unvoiced
+        // padding collapses the whole window to ~100 Hz. The extra output
+        // beyond the real frame count is trimmed by fitOutput afterwards.
+        java.util.List<float[]> chunks = new java.util.ArrayList<float[]>();
+        int frameStart = 0;
+        while (frameStart < modelFrames) {
+            int window = Math.min(RVC_FRAME_BUDGET, modelFrames - frameStart);
+            chunks.add(runWindow(content, contentFrames, quantizedPitch, pitchf,
+                    noiseGains, frameStart, window, samples.length,
+                    pitchfPad, pitchPad));
+            frameStart += window;
+        }
+        float[] output = concatChunks(chunks);
+        // The ONNX graph returns normalized float samples. WavAudio already
+        // converts [-1, 1] floats to 16-bit PCM, so do not divide by 32767.
+        output = fitOutput(output, samples.length);
+        return new WavAudio(SAMPLE_RATE, output)
+                .resampled(VillagerSynthesizer.DEFAULT_SAMPLE_RATE);
+    }
+
+    private static final int RVC_FRAME_BUDGET = 1024;
+    /** Wide enough to hide NSF phase resets at window joins inaudibly. */
+    private static final int RVC_WINDOW_FADE = 256;
+
+    /** Run one fixed-size RVC window starting at a global frame index. */
+    private float[] runWindow(float[][] content, int contentFrames,
+                              long[] quantizedPitch, float[] pitchf, float[] noiseGains,
+                              int frameStart, int window, int expectedSamples,
+                              float pitchfPad, long pitchPad)
+            throws Exception {
+        FloatBuffer phoneBuffer = directFloatBuffer(RVC_FRAME_BUDGET * CONTENT_DIMENSION);
+        for (int f = 0; f < window; f++) {
+            int global = frameStart + f;
+            float[] original = content[Math.min(contentFrames - 1, global / 2)];
+            phoneBuffer.put(original);
+        }
+        while (phoneBuffer.hasRemaining()) {
+            phoneBuffer.put(0.0f);
+        }
+        phoneBuffer.rewind();
+
+        LongBuffer pitchBuffer = directLongBuffer(RVC_FRAME_BUDGET);
+        for (int f = 0; f < window; f++) {
+            pitchBuffer.put(quantizedPitch[frameStart + f]);
+        }
+        while (pitchBuffer.hasRemaining()) {
+            pitchBuffer.put(pitchPad);
+        }
+        pitchBuffer.rewind();
+
+        FloatBuffer noiseBuffer = directFloatBuffer(NOISE_CHANNELS * RVC_FRAME_BUDGET);
         for (int channel = 0; channel < NOISE_CHANNELS; channel++) {
-            for (int frame = 0; frame < modelFrames; frame++) {
+            for (int f = 0; f < window; f++) {
                 // Scale the excitation by local energy: pauses and unvoiced
                 // consonants carry less random noise, which removes the steady
                 // hiss RVC otherwise synthesizes into the gaps between words.
-                noiseBuffer.put((float) (random.nextGaussian() * noiseGains[frame]));
+                noiseBuffer.put((float) (random.nextGaussian()
+                        * noiseGains[frameStart + f]));
             }
         }
-        noiseBuffer.flip();
+        while (noiseBuffer.hasRemaining()) {
+            noiseBuffer.put(0.0f);
+        }
+        noiseBuffer.rewind();
 
         LongBuffer lengthBuffer = directLongBuffer(1);
-        lengthBuffer.put(modelFrames).flip();
-        FloatBuffer pitchfBuffer = directFloatBuffer(pitchf.length);
-        pitchfBuffer.put(pitchf).flip();
+        lengthBuffer.put(window).flip();
+        FloatBuffer pitchfBuffer = directFloatBuffer(RVC_FRAME_BUDGET);
+        for (int f = 0; f < window; f++) {
+            pitchfBuffer.put(pitchf[frameStart + f]);
+        }
+        while (pitchfBuffer.hasRemaining()) {
+            pitchfBuffer.put(pitchfPad);
+        }
+        pitchfBuffer.rewind();
         LongBuffer speakerBuffer = directLongBuffer(1);
         speakerBuffer.put(0L).flip();
 
+        boolean dumpThis = System.getProperty("rvc.dump") != null && frameStart == 0;
+        if (dumpThis) {
+            try {
+                java.nio.file.Path dumpDir =
+                        java.nio.file.Paths.get(System.getProperty("rvc.dump"));
+                java.nio.file.Files.createDirectories(dumpDir);
+                dumpTensor(dumpDir.resolve("phone.bin"), phoneBuffer);
+                dumpTensor(dumpDir.resolve("pitch.bin"), pitchBuffer);
+                dumpTensor(dumpDir.resolve("pitchf.bin"), pitchfBuffer);
+                dumpTensor(dumpDir.resolve("rnd.bin"), noiseBuffer);
+            } catch (Exception dumpFailure) {
+                System.err.println("DBG dump failed: " + dumpFailure);
+            }
+        }
+
         try (OnnxTensor phoneTensor = OnnxTensor.createTensor(environment, phoneBuffer,
-                     new long[]{1, modelFrames, CONTENT_DIMENSION});
+                     new long[]{1, RVC_FRAME_BUDGET, CONTENT_DIMENSION});
              OnnxTensor lengthTensor = OnnxTensor.createTensor(environment, lengthBuffer,
                      new long[]{1});
              OnnxTensor pitchTensor = OnnxTensor.createTensor(environment, pitchBuffer,
-                     new long[]{1, modelFrames});
+                     new long[]{1, RVC_FRAME_BUDGET});
              OnnxTensor pitchfTensor = OnnxTensor.createTensor(environment, pitchfBuffer,
-                     new long[]{1, modelFrames});
+                     new long[]{1, RVC_FRAME_BUDGET});
              OnnxTensor speakerTensor = OnnxTensor.createTensor(environment, speakerBuffer,
                      new long[]{1});
              OnnxTensor noiseTensor = OnnxTensor.createTensor(environment, noiseBuffer,
-                     new long[]{1, NOISE_CHANNELS, modelFrames})) {
+                     new long[]{1, NOISE_CHANNELS, RVC_FRAME_BUDGET})) {
             Map<String, OnnxTensor> inputs = new LinkedHashMap<String, OnnxTensor>();
             inputs.put("phone", phoneTensor);
             inputs.put("phone_lengths", lengthTensor);
@@ -165,16 +268,60 @@ public final class CustomRvcModel implements AutoCloseable {
                 }
                 FloatBuffer outputBuffer = outputTensor.getFloatBuffer().duplicate();
                 outputBuffer.rewind();
-                float[] output = new float[outputBuffer.remaining()];
-                outputBuffer.get(output);
-                // The ONNX graph returns normalized float samples. WavAudio
-                // already converts [-1, 1] floats to 16-bit PCM, so do not
-                // divide by 32767 here.
-                output = fitOutput(output, samples.length);
-                return new WavAudio(SAMPLE_RATE, output)
-                        .resampled(VillagerSynthesizer.DEFAULT_SAMPLE_RATE);
+                float[] audio = new float[outputBuffer.remaining()];
+                outputBuffer.get(audio);
+                if (dumpThis) {
+                    try {
+                        WavAudio rawWindow = new WavAudio(SAMPLE_RATE,
+                                audio.clone());
+                        AudioDsp.normalizePeak(rawWindow.samples, 0.9f);
+                        rawWindow.write(java.nio.file.Paths.get(
+                                System.getProperty("rvc.dump"), "window_raw.wav"));
+                        StringBuilder pf = new StringBuilder();
+                        int shown = 0;
+                        for (int f2 = 0; f2 < window && shown < 30; f2++) {
+                            if (pitchf[frameStart + f2] > 0) {
+                                pf.append(String.format("%.0f,",
+                                        pitchf[frameStart + f2]));
+                                shown++;
+                            }
+                        }
+                        System.err.println("DBG window pitchf[:30]: " + pf);
+                    } catch (Exception dumpFailure) {
+                        System.err.println("DBG wav dump failed: " + dumpFailure);
+                    }
+                }
+                return fitOutput(audio, Math.min(expectedSamples - frameStart * 400,
+                        window * 400));
             }
         }
+    }
+
+    /** Join windows with micro-fades so NSF phase resets cannot click. */
+
+    private static float[] concatChunks(java.util.List<float[]> chunks) {
+        int total = 0;
+        for (float[] chunk : chunks) {
+            total += chunk.length;
+        }
+        float[] joined = new float[total];
+        int offset = 0;
+        for (int c = 0; c < chunks.size(); c++) {
+            float[] chunk = chunks.get(c);
+            if (c > 0) {
+                for (int i = 0; i < RVC_WINDOW_FADE && i < chunk.length; i++) {
+                    chunk[i] *= i / (float) RVC_WINDOW_FADE;
+                }
+            }
+            if (c < chunks.size() - 1) {
+                for (int i = 0; i < RVC_WINDOW_FADE && i < chunk.length; i++) {
+                    chunk[chunk.length - 1 - i] *= i / (float) RVC_WINDOW_FADE;
+                }
+            }
+            System.arraycopy(chunk, 0, joined, offset, chunk.length);
+            offset += chunk.length;
+        }
+        return joined;
     }
 
     private float[][] content(float[] audio16k) throws Exception {
@@ -191,65 +338,113 @@ public final class CustomRvcModel implements AutoCloseable {
                         audioBuffer, new long[]{1, 1, audio16k.length});
                      OrtSession.Result result = contentSession.run(Collections.singletonMap(
                              contentSession.getInputNames().iterator().next(), input))) {
-            OnnxTensor output = (OnnxTensor) result.get(0);
-            long[] shape = output.getInfo().getShape();
-            if (shape.length != 3 || shape[0] != 1) {
-                throw new IllegalStateException("ContentVec output must be rank 3, got "
-                        + java.util.Arrays.toString(shape));
-            }
+                    OnnxTensor output = (OnnxTensor) result.get(0);
+                    long[] shape = output.getInfo().getShape();
+                    if (shape.length != 3 || shape[0] != 1) {
+                        throw new IllegalStateException("ContentVec output must be rank 3, got "
+                                + java.util.Arrays.toString(shape));
+                    }
 
-            // This exported ContentVec model has the fixed layout
-            // [1, frames, 768]. Do not infer orientation from dimensions:
-            // [1, 768, 768] is valid and dimensionally ambiguous.
-            if (shape[2] != CONTENT_DIMENSION) {
-                throw new IllegalStateException("ContentVec output must be [1, frames, 768]: "
-                        + java.util.Arrays.toString(shape));
-            }
-            int frames = (int) shape[1];
-            if (frames <= 0) {
-                throw new IllegalStateException("ContentVec returned no frames");
-            }
+                    // This exported ContentVec model has the fixed layout
+                    // [1, frames, 768]. Do not infer orientation from dimensions:
+                    // [1, 768, 768] is valid and dimensionally ambiguous.
+                    if (shape[2] != CONTENT_DIMENSION) {
+                        throw new IllegalStateException("ContentVec output must be [1, frames, 768]: "
+                                + java.util.Arrays.toString(shape));
+                    }
+                    int frames = (int) shape[1];
+                    if (frames <= 0) {
+                        throw new IllegalStateException("ContentVec returned no frames");
+                    }
 
-            FloatBuffer values = output.getFloatBuffer().duplicate();
-            values.rewind();
-            float[][] normalized = new float[frames][CONTENT_DIMENSION];
-            for (int frame = 0; frame < frames; frame++) {
-                values.get(normalized[frame]);
-            }
+                    FloatBuffer values = output.getFloatBuffer().duplicate();
+                    values.rewind();
+                    float[][] normalized = new float[frames][CONTENT_DIMENSION];
+                    for (int frame = 0; frame < frames; frame++) {
+                        values.get(normalized[frame]);
+                    }
                     return normalized;
                 }
             }
         }
     }
 
-    private static float[] estimatePitch(float[] audio, int frames, double semitones,
-                                         double singing, String emotion, double sarcasm,
-                                         boolean question) {
+    private float[] estimatePitch(float[] audio, float[] audio16k, int frames,
+                                  double semitones, double singing, String emotion,
+                                  double sarcasm, boolean question) {
         float[] raw = new float[frames];
-        float[] energies = new float[frames];
         double shift = Math.pow(2.0, semitones / 12.0);
-        float maximumEnergy = 0.0f;
-        for (int frame = 0; frame < frames; frame++) {
-            int center = (int) ((frame + 0.5) * audio.length / (double) frames);
-            int start = Math.max(0, center - PITCH_RADIUS);
-            int end = Math.min(audio.length, center + PITCH_RADIUS);
-            energies[frame] = rms(audio, start, end);
-            maximumEnergy = Math.max(maximumEnergy, energies[frame]);
-        }
 
-        // Do not let autocorrelation invent a voiced F0 for weak consonants,
-        // breath, or pauses. Carrying pitch through those regions was the main
-        // difference from the reference: generated voicing was about 87% versus
-        // about 42% in the matching TEAVSRP clip.
-        float voicingFloor = maximumEnergy * 0.14f;
-        for (int frame = 0; frame < frames; frame++) {
-            int center = (int) ((frame + 0.5) * audio.length / (double) frames);
-            int start = Math.max(0, center - PITCH_RADIUS);
-            int end = Math.min(audio.length, center + PITCH_RADIUS);
-            if (energies[frame] >= voicingFloor) {
-                raw[frame] = (float) (autocorrelationPitch(audio, start, end) * shift);
+        if (rmvpe != null && audio16k != null && audio16k.length > 0) {
+            // Neural F0 tracking. The villager model was trained on RMVPE
+            // contours; matching the extractor at inference time is the single
+            // biggest factor for natural (non-buzzy) pitch in the output.
+            try {
+                raw = resampleFrames(rmvpe.pitch(audio16k), frames);
+            } catch (java.lang.Exception failure) {
+                throw new IllegalStateException("RMVPE pitch tracking failed", failure);
+            }
+        } else {
+            float[] energies = new float[frames];
+            double maximumEnergy = 0.0;
+            for (int frame = 0; frame < frames; frame++) {
+                int center = (int) ((frame + 0.5) * audio.length / (double) frames);
+                int start = Math.max(0, center - PITCH_RADIUS);
+                int end = Math.min(audio.length, center + PITCH_RADIUS);
+                energies[frame] = rms(audio, start, end);
+                maximumEnergy = Math.max(maximumEnergy, energies[frame]);
+            }
+
+            // Do not let autocorrelation invent a voiced F0 for weak consonants,
+            // breath, or pauses. Carrying pitch through those regions was the main
+            // difference from the reference: generated voicing was about 87% versus
+            // about 42% in the matching TEAVSRP clip.
+            float voicingFloor = (float) maximumEnergy * 0.14f;
+            for (int frame = 0; frame < frames; frame++) {
+                int center = (int) ((frame + 0.5) * audio.length / (double) frames);
+                int start = Math.max(0, center - PITCH_RADIUS);
+                int end = Math.min(audio.length, center + PITCH_RADIUS);
+                if (energies[frame] >= voicingFloor) {
+                    raw[frame] = autocorrelationPitch(audio, start, end);
+                }
             }
         }
+
+        // Absolute register lift. The fixed +8 semitone offset maps a ~111 Hz
+        // base onto the villager register, but overshoots when the base already
+        // runs high (bright female deliveries read ~188 Hz and would land at
+        // ~298 Hz). Instead map the base contour's median onto the target
+        // register and let the remaining semitones (user + emotion offsets)
+        // shift relative to that fixed target.
+        double shiftEff = registerShift(raw, shift, semitones);
+        for (int frame = 0; frame < frames; frame++) {
+            if (raw[frame] > 0.0f) {
+                float value = raw[frame] * (float) shiftEff;
+                // Register guard: the villager timbre lives near 180 Hz
+                // (TEAVSRP analysis). RMVPE on synthetic bases flips clusters
+                // across octaves; folding into the character's plausible band
+                // keeps the generator on-register even when a flip slips
+                // through the repairs. The low side doubles (fixes RMVPE
+                // octave-down reading), the high side clamps instead of
+                // halving: halving frames above 300 Hz splits one contour
+                // into two clusters and makes the pitch knob non-monotonic.
+                while (value > 0.0f && value < 120.0f) {
+                    value *= 2.0f;
+                }
+                if (value > 300.0f) {
+                    value = 300.0f;
+                }
+                raw[frame] = value;
+            }
+        }
+
+        // Neural F0 tracks contain occasional subharmonic frames (RMVPE at
+        // run onsets especially). The sequential octave corrector below seeds
+        // from the first voiced frame, so one bad value there used to collapse
+        // the whole contour by half. Repair every voiced run against its own
+        // median first: outliers get folded back onto the nearest octave of
+        // the local pitch, giving the corrector a trustworthy seed.
+        repairVoicedRuns(raw);
 
         // RVC is very sensitive to frame-to-frame F0 jumps. A bare maximum
         // autocorrelation pitch tracker frequently chooses a harmonic (usually
@@ -299,17 +494,10 @@ public final class CustomRvcModel implements AutoCloseable {
                 }
             }
             if (singing > 0.0f) {
-                // Restrained musical vibrato on the F0 contour. The modulation
-                // fades in over the first ~150 ms so the opening phoneme keeps
-                // its natural onset: starting the sine at full depth on the
-                // first syllable bends the initial vowel ("I" becomes "uh" or
-                // "them").
-                double elapsed = frame * (audio.length / (double) SAMPLE_RATE)
-                        / Math.max(1, frames - 1);
-                double onset = Math.min(1.0, Math.max(0.0, elapsed / 0.15));
-                double vibrato = Math.sin(2.0 * Math.PI * 5.2 * elapsed);
-                double cents = singing * 38.0 * vibrato * onset;
-                candidate *= (float) Math.pow(2.0, cents / 1200.0);
+                // No vibrato - singing mode just uses the base pitch contour
+                // without added modulation. Natural speech already has micro-
+                // variation from the phrase offsets; adding a synthetic sine
+                // vibrato made it sound artificial.
             } else {
                 // Speech needs a small, slowly changing contour rather than a
                 // perfectly quantized staircase. The offsets are interpolated
@@ -331,16 +519,120 @@ public final class CustomRvcModel implements AutoCloseable {
         return result;
     }
 
+    /**
+     * Fold octave-discontinuities out of an F0 track. Low male voices make
+     * RMVPE drop entire voiced runs one or two octaves down, and both per-run
+     * statistics and sequential trackers are blind to that (runs inherit the
+     * error; gaps reset the tracker). Instead, take a running median of
+     * log-frequency over +-300 ms - octave flips are brief and one-sided while
+     * legitimate prosody drifts slowly - and pull every frame into the nearest
+     * octave of that reference.
+     */
+    private static void repairVoicedRuns(float[] f0) {
+        int frames = f0.length;
+        float[] reference = new float[frames];
+        int radius = 30; // ~300 ms at the 10 ms frame rate
+        for (int i = 0; i < frames; i++) {
+            float[] window = new float[2 * radius + 1];
+            int count = 0;
+            for (int k = -radius; k <= radius; k++) {
+                int index = i + k;
+                if (index >= 0 && index < frames && f0[index] > 0.0f) {
+                    window[count++] = f0[index];
+                }
+            }
+            if (count == 0) {
+                reference[i] = 0.0f;
+                continue;
+            }
+            java.util.Arrays.sort(window, 0, count);
+            reference[i] = window[count / 2];
+        }
+        for (int i = 0; i < frames; i++) {
+            float value = f0[i];
+            float ref = reference[i];
+            if (value <= 0.0f || ref <= 0.0f) {
+                continue;
+            }
+            while (value > 1.9f * ref) {
+                value *= 0.5f;
+            }
+            while (value < 0.52f * ref) {
+                value *= 2.0f;
+            }
+            f0[i] = value;
+        }
+    }
+
+    /**
+     * Absolute register lift factor. The villager register target (TEAVSRP
+     * median ~180 Hz) is fixed; the semitones passed in carry the user pitch,
+     * the +8 register lift, and emotion offsets. Removing the +8 lift leaves
+     * user+emotion, applied relative to the fixed target instead of on top of
+     * whatever the base happens to read.
+     */
+    private static double registerShift(float[] raw, double shift, double semitones) {
+        float baseMedian = medianVoiced(raw);
+        if (baseMedian <= 0.0f) {
+            return shift;
+        }
+        double relative = Math.pow(2.0,
+                (semitones - SpeechOptions.VILLAGER_REGISTER_SEMITONES) / 12.0);
+        return VILLAGER_REGISTER_HZ / baseMedian * relative;
+    }
+
+    /** The absolute register the +8 lift targets (TEAVSRP median). */
+    private static final double VILLAGER_REGISTER_HZ = 180.0;
+
+    /**
+     * Median of the voiced pitchf values, or 0 when nothing is voiced. Used to
+     * pad the static-budget graph so padded frames render on the clip's
+     * register instead of dragging the whole window to the default ~100 Hz.
+     */
+    private static float medianVoiced(float[] pitchf) {
+        float[] voiced = new float[pitchf.length];
+        int count = 0;
+        for (float value : pitchf) {
+            if (value > 0.0f) {
+                voiced[count++] = value;
+            }
+        }
+        if (count == 0) {
+            return 0.0f;
+        }
+        java.util.Arrays.sort(voiced, 0, count);
+        return voiced[count / 2];
+    }
+
+    /** Linear-interpolate an F0 track onto a new frame count. */    private static float[] resampleFrames(float[] f0, int targetFrames) {
+        int sourceFrames = f0.length;
+        if (sourceFrames == targetFrames || sourceFrames == 0) {
+            return f0;
+        }
+        float[] resampled = new float[targetFrames];
+        for (int frame = 0; frame < targetFrames; frame++) {
+            double position = frame * (double) (sourceFrames - 1)
+                    / Math.max(1, targetFrames - 1);
+            int left = Math.min(sourceFrames - 1, (int) position);
+            int right = Math.min(sourceFrames - 1, left + 1);
+            double amount = position - left;
+            resampled[frame] = (float) (f0[left] * (1.0 - amount) + f0[right] * amount);
+        }
+        return resampled;
+    }
+
     private static float[] phraseOffsets(int frames, String emotion, double sarcasm) {
         float[] offsets = new float[Math.max(0, frames)];
         if (frames == 0) {
             return offsets;
         }
-        double depth = 0.16;
-        if ("happy".equalsIgnoreCase(emotion)) depth = 0.48;
-        if ("angry".equalsIgnoreCase(emotion)) depth = 0.36;
-        if ("sad".equalsIgnoreCase(emotion)) depth = 0.12;
-        if ("scared".equalsIgnoreCase(emotion)) depth = 0.42;
+        // Reduced depth to avoid artificial wobble. The original values were
+        // too strong and created a vibrato-like effect. Keep them subtle.
+        double depth = 0.08;
+        if ("happy".equalsIgnoreCase(emotion)) depth = 0.15;
+        if ("angry".equalsIgnoreCase(emotion)) depth = 0.12;
+        if ("sad".equalsIgnoreCase(emotion)) depth = 0.06;
+        if ("scared".equalsIgnoreCase(emotion)) depth = 0.14;
         // Sarcasm is intentionally flatter and less musically sincere.
         depth *= Math.max(0.0, 1.0 - sarcasm);
 
@@ -537,6 +829,26 @@ public final class CustomRvcModel implements AutoCloseable {
         }
     }
 
+    private static void smoothJitterRun(float[] out, int start, int end) {
+        if (end - start + 1 < 5) {
+            return;
+        }
+        float[] coeffs = new float[]{0.1f, 0.2f, 0.4f, 0.2f, 0.1f};
+        for (int i = start; i <= end; i++) {
+            double sum = 0.0;
+            double weightSum = 0.0;
+            for (int k = -2; k <= 2; k++) {
+                int index = i + k;
+                if (index >= start && index <= end) {
+                    float w = coeffs[k + 2];
+                    sum += out[index] * w;
+                    weightSum += w;
+                }
+            }
+            out[i] = (float) (sum / weightSum);
+        }
+    }
+
     /**
      * Fit the RVC output to the expected clip length. When the graph returns
      * slightly fewer samples, pad with a short tail fade instead of a hard
@@ -569,13 +881,48 @@ public final class CustomRvcModel implements AutoCloseable {
                 .order(ByteOrder.nativeOrder()).asLongBuffer();
     }
 
+    /** Debug helper for -Drvc.dump: write a tensor as raw little-endian data. */
+    private static void dumpTensor(java.nio.file.Path path, FloatBuffer buffer)
+            throws java.io.IOException {
+        FloatBuffer copy = buffer.duplicate();
+        copy.rewind();
+        ByteBuffer bytes = ByteBuffer.allocate(copy.remaining() * Float.BYTES)
+                .order(ByteOrder.LITTLE_ENDIAN);
+        while (copy.hasRemaining()) {
+            bytes.putFloat(copy.get());
+        }
+        java.nio.file.Files.write(path, bytes.array());
+    }
+
+    private static void dumpTensor(java.nio.file.Path path, LongBuffer buffer)
+            throws java.io.IOException {
+        LongBuffer copy = buffer.duplicate();
+        copy.rewind();
+        ByteBuffer bytes = ByteBuffer.allocate(copy.remaining() * Long.BYTES)
+                .order(ByteOrder.LITTLE_ENDIAN);
+        while (copy.hasRemaining()) {
+            bytes.putLong(copy.get());
+        }
+        java.nio.file.Files.write(path, bytes.array());
+    }
+
     private static float[] resample(float[] input, int sourceRate, int destinationRate) {
-        int length = Math.max(1, Math.round(input.length * destinationRate / (float) sourceRate));
+        // Multiply in double precision: long clips can overflow int before
+        // the division, collapsing the destination length to one sample
+        // (same bug previously fixed in WavAudio.resampled).
+        int length = Math.max(1, (int) Math.round(
+                input.length * (double) destinationRate / sourceRate));
         return AudioDsp.resample(input, length);
     }
 
     @Override
     public void close() throws Exception {
-        rvcSession.close();
+        try {
+            rvcSession.close();
+        } finally {
+            if (rmvpe != null) {
+                rmvpe.close();
+            }
+        }
     }
 }

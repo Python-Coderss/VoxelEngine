@@ -1,0 +1,9 @@
+{
+  "line": "I am haggling you.",
+  "snapshots": [
+    {"text": "I",        "emotion": "neutral", "speed": 1.0, "pitch": 0.0, "volume": 1.0, "tone": 0.0},
+    {"text": "am",       "emotion": "neutral", "speed": 1.0, "pitch": 0.0, "volume": 1.0, "tone": 0.1},
+    {"text": "haggling", "emotion": "happy",   "speed": 1.0, "pitch": 0.0, "volume": 1.0, "tone": 0.3},
+    {"text": "you",      "emotion": "neutral", "speed": 1.0, "pitch": 0.0, "volume": 1.0, "tone": 0.0}
+  ]
+}

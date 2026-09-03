@@ -140,7 +140,7 @@
         <dependency>
             <groupId>com.microsoft.onnxruntime</groupId>
             <artifactId>onnxruntime</artifactId>
-            <version>1.17.1</version>
+            <version>1.20.0</version>
         </dependency>
         <dependency>
             <groupId>junit</groupId>
@@ -179,6 +179,19 @@
                         </goals>
                         <configuration>
                             <mainClass>com.voxel.tools.TutorialWorldExporter</mainClass>
+                        </configuration>
+                    </execution>
+                    <!-- Villager voice CLI: render dialogue lines from the
+                         command line, e.g.
+                         MAVEN_OPTS="-Xmx2g" ./mvnw compile exec:java@voice
+                             -Dexec.args="...voice cli arguments here..." -->
+                    <execution>
+                        <id>voice</id>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>villager.voice.Main</mainClass>
                         </configuration>
                     </execution>
                     <!-- One-time dev tool: build the Point & Click demo world and

@@ -5,7 +5,7 @@ public final class SpeechOptions {
     // Tone is now a delivery mood: -1 is serious, 0 is neutral, +1 is joking.
     // Keep the natural source mix conservative so RVC retains the villager body.
     public static final SpeechOptions DEFAULT = new SpeechOptions(
-            1.0, 0.0, 1.0, 0.0, 0.36, "happy", 0.0, 0.0, false, true);
+            1.0, 0.0, 1.0, 0.0, 0.60, "happy", 0.0, 0.0, false, true);
 
     private final double speed;
     private final double pitchSemitones;
@@ -19,18 +19,19 @@ public final class SpeechOptions {
     private final boolean automaticQuestionDetection;
 
     public SpeechOptions() {
-        this(1.0, 0.0, 1.0, 0.0, 0.36, "happy", 0.0, 0.0, false, true);
+        this(1.0, 0.0, 1.0, 0.0, 0.60, "happy", 0.0, 0.0, false, true);
     }
 
     /** Backwards-compatible constructor for callers that only set speed/pitch. */
     public SpeechOptions(double speed, double pitchSemitones) {
-        this(speed, pitchSemitones, 1.0, 0.0, 0.36, "happy", 0.0, 0.0, false, true);
+        this(speed, pitchSemitones, 1.0, 0.0, 0.60, "happy", 0.0, 0.0, false, true);
     }
 
     /** Backwards-compatible constructor for the original editable profile. */
     public SpeechOptions(double speed, double pitchSemitones, double volume,
                          double tone, double naturalSourceMix) {
-        this(speed, pitchSemitones, volume, tone, naturalSourceMix,
+        this(speed, pitchSemitones, volume, tone,
+                Math.max(0.45, naturalSourceMix),
                 "neutral", 0.0, 0.0, false, true);
     }
 
@@ -58,7 +59,7 @@ public final class SpeechOptions {
         requireFinite("pitchSemitones", pitchSemitones);
         requireRange("volume", volume, 0.0, 2.0);
         requireRange("tone", tone, -1.0, 1.0);
-        requireRange("naturalSourceMix", naturalSourceMix, 0.0, 0.5);
+        requireRange("naturalSourceMix", naturalSourceMix, 0.0, 0.6);
         requireRange("singing", singing, 0.0, 1.0);
         requireRange("sarcasm", sarcasm, 0.0, 1.0);
         this.speed = speed;
@@ -117,9 +118,17 @@ public final class SpeechOptions {
         return speed * multiplier;
     }
 
+    /**
+     * The villager timbre lives in Dan Lloyd's high register (TEAVSRP F0
+     * median ~180 Hz per voice/corpus/analysis.txt), while neural bases speak
+     * near 110 Hz. Without this lift the generator renders villager formants
+     * over an octave-too-low excitation, which reads as hoarse and robotic.
+     */
+    public static final double VILLAGER_REGISTER_SEMITONES = 8.0;
+
     /** Effective RVC pitch offset after mood, emotion, sarcasm, and explicit pitch. */
     public double getEffectivePitchSemitones() {
-        double offset = tone * 0.75;
+        double offset = VILLAGER_REGISTER_SEMITONES + tone * 0.75;
         if ("happy".equals(emotion)) offset += 1.0;
         if ("sad".equals(emotion)) offset -= 1.5;
         if ("angry".equals(emotion)) offset += 0.8;
@@ -165,7 +174,7 @@ public final class SpeechOptions {
     /** Stable text used as part of generated-audio cache keys. */
     public String cacheKey() {
         return String.format(java.util.Locale.ROOT,
-                "speed=%.6f;pitch=%.6f;volume=%.6f;tone=%.6f;natural=%.6f;emotion=%s;singing=%.6f;sarcasm=%.6f;question=%s",
+                "v2;speed=%.6f;pitch=%.6f;volume=%.6f;tone=%.6f;natural=%.6f;emotion=%s;singing=%.6f;sarcasm=%.6f;question=%s",
                 speed, pitchSemitones, volume, tone, naturalSourceMix, emotion,
                 singing, sarcasm, question);
     }
