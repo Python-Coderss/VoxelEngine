@@ -161,6 +161,8 @@ public class Main {
     private final java.util.Set<Integer> tutorialMobZonesSpawned = new java.util.HashSet<>(); // zones whose mobs are placed
     private int nextTutorialMobId = 65000; // unique id counter for tutorial-zone mobs
     private int nextSpawnCommandId = 75000; // unique id counter for /spawn-created mobs
+    /** Cadence accumulator for the crop-growth / farmland-hydration scan. */
+    private float farmScanTimer = 0.0f;
     private com.voxel.World panoramaWorld;
     private int panoramaNextSlot = 0;
     private float panoramaAngle = 0f;    // orbit angle (radians)
@@ -245,6 +247,9 @@ public class Main {
     public CommandProcessor commandProcessor;
     public AtmosphereRenderer atmosphereRenderer;
     public com.voxel.audio.VillagerAudioManager villagerAudioManager;
+    public com.voxel.audio.MusicPlayer musicPlayer;
+    /** Music context wanted by the logic thread; applied on the render thread. */
+    private volatile String desiredMusicContext = null;
 
     public com.voxel.camera.CameraController cameraController;
     public com.voxel.ui.HudUI hud;
@@ -419,6 +424,10 @@ public class Main {
         glDeleteBuffers(sdfSSBO);
         glDeleteBuffers(columnTopSSBO);
         if (persistentPlBuf != null) MemoryUtil.memFree(persistentPlBuf);
+        // Close music first: it shares the dialogue manager's OpenAL context.
+        if (musicPlayer != null) {
+            musicPlayer.close();
+        }
         if (villagerAudioManager != null) {
             villagerAudioManager.close();
         }
@@ -489,6 +498,22 @@ public class Main {
         // asynchronously and never runs inside the game loop.
         villagerAudioManager = new com.voxel.audio.VillagerAudioManager();
         villagerAudioManager.initialize();
+        // Background music shares the OpenAL context and plays the mono MP3
+        // playlist from src/main/resources/music (see tools/convert_music.sh).
+        musicPlayer = new com.voxel.audio.MusicPlayer();
+        musicPlayer.initialize();
+        java.io.File musicDir = new java.io.File("src/main/resources/music");
+        if (musicDir.isDirectory()) {
+            musicPlayer.setRoot(musicDir);
+            System.out.println("[audio] music root ready (" + musicPlayer.trackCount()
+                    + " tracks, " + musicPlayer.pendingCount() + " placeholders); contexts: "
+                    + com.voxel.audio.MusicDirector.CONTEXT_COMBAT + "/"
+                    + com.voxel.audio.MusicDirector.CONTEXT_DANGER + "/"
+                    + com.voxel.audio.MusicDirector.CONTEXT_NIGHT + "/"
+                    + com.voxel.audio.MusicDirector.CONTEXT_CALM);
+        } else {
+            System.out.println("[audio] no music folder at " + musicDir.getPath() + " — silence");
+        }
         presentEarlyLoadingFrame(earlyLoadingTexture);
         bootMark.accept("OpenAL ready");
 
@@ -509,6 +534,19 @@ public class Main {
         com.voxel.entity.EnemyEntity.setEntityManager(entityManager);
         com.voxel.entity.VillagerEntity.setEntityManager(entityManager);
         com.voxel.world.structure.MapGenVillage.setEntityManager(entityManager);
+        // Passive livestock (overworld farm animals + Aether wildlife) drop their
+        // loot through the same item system enemies use. ctx is captured, so the
+        // manager may be created after this wiring point.
+        com.voxel.entity.FarmAnimalEntity.setDropSpawner((item, count, x, y, z) -> {
+            if (ctx.droppedItemManager != null) {
+                ctx.droppedItemManager.spawn(item, count, (int) x, (int) y, (int) z);
+            }
+        });
+        com.voxel.entity.AetherPassiveEntity.setDropSpawner((item, count, x, y, z) -> {
+            if (ctx.droppedItemManager != null) {
+                ctx.droppedItemManager.spawn(item, count, (int) x, (int) y, (int) z);
+            }
+        });
         com.voxel.world.structure.MapGenVillage.setTextureManager(textureManager);
         // Start near the origin; spawn resolution replaces the fallback Y with
         // the generated surface height before gameplay begins.
@@ -1872,6 +1910,15 @@ public class Main {
         // Restore health (clamped to max).
         float maxHp = player.getMaxHealth();
         player.setHealth(Math.max(1, Math.min(maxHp, ctx.loadHealth)));
+        // Restore the food bar and equipped armor.
+        player.setHunger(Math.max(0, Math.min(20, ctx.loadHunger)));
+        player.setSaturation(Math.max(0, Math.min(20, ctx.loadSaturation)));
+        if (ctx.loadArmor != null) {
+            for (int i = 0; i < Math.min(ctx.loadArmor.length, 4); i++) {
+                playerInventory.setArmorSlot(i, ctx.loadArmor[i]);
+            }
+        }
+        player.setArmorPoints(playerInventory.getTotalArmorPoints());
         // Restore spawn point so death respawns in the saved world.
         player.setSpawnPoint(new org.joml.Vector3f(player.getPosition()));
         // Restore persisted entities: this dimension's immediately; the rest
@@ -2427,6 +2474,9 @@ public class Main {
             ctx.loadHealth = ps.health;
             ctx.loadWorldTime = ctx.worldTime;
             ctx.loadInventory = ps.inventory;
+            ctx.loadArmor = ps.armor;
+            ctx.loadHunger = ps.hunger;
+            ctx.loadSaturation = ps.saturation;
         }
         ctx.worldSizeConfirmed = true;
         ctx.worldSizeMenu = false;
@@ -2828,9 +2878,29 @@ public class Main {
             com.voxel.world.MobSpawnerLogic.tick(world, blockDataManager,
                     entityManager, player);
 
+            // ── Primed TNT: count down the fuse and detonate ──
+            com.voxel.game.TntBlock.tick(world, chunkManager, player, dt);
+
+            // ── Music director: hostile proximity + day/night → context pool ──
+            updateMusicContext(player);
+
             // ── Aether dungeons: spawn guards/bosses near the player, unlock on boss death ──
             com.voxel.world.aether.AetherDungeonRegistry.tick(world, entityManager,
                     textureManager, player, activeDimension, DimensionType.AETHER, dt);
+
+            // ── Survival systems: hunger ticking + armor points. Refresh each
+            // tick so equipping/removing armor updates protection immediately
+            // and creative mode never drains the food bar.
+            player.setSurvivalActive(gameMode == GameContext.GameMode.SURVIVAL
+                    && !player.isFlying());
+            player.setArmorPoints(playerInventory.getTotalArmorPoints());
+
+            // ── Crop growth + farmland hydration (every 0.5 s around the player) ──
+            farmScanTimer += dt;
+            if (farmScanTimer >= 0.5f) {
+                farmScanTimer -= 0.5f;
+                com.voxel.game.FarmBlocks.tickSurvival(world, chunkManager, player);
+            }
 
             // ── Beacon buffs: scan all known beacons, find the best one near the
             // player, and apply its tier buffs (jump, speed, regen at tier 4).
@@ -4175,11 +4245,53 @@ public class Main {
 
             glfwSwapBuffers(window);
             glfwPollEvents();
+            if (musicPlayer != null) {
+                musicPlayer.update();
+                if (desiredMusicContext != null) {
+                    musicPlayer.playContext(desiredMusicContext);
+                }
+            }
             if (villagerAudioManager != null) {
                 villagerAudioManager.update();
             }
             leftMousePressedThisFrame = false;
             // ctx.leftMousePressedThisFrame is consumed/reset by the logic thread in tick()
+        }
+    }
+
+    /**
+     * Counts hostile mobs around the player and picks the music pool the
+     * render thread should switch to (combat > danger > night > calm).
+     */
+    private void updateMusicContext(com.voxel.Player player) {
+        if (musicPlayer == null || entityManager == null || player == null) return;
+        float px = com.voxel.utils.FixedPoint.toFloat(player.getFixedX());
+        float py = com.voxel.utils.FixedPoint.toFloat(player.getFixedY());
+        float pz = com.voxel.utils.FixedPoint.toFloat(player.getFixedZ());
+        int close = 0, near = 0;
+        float combatSq = com.voxel.audio.MusicDirector.COMBAT_RANGE * com.voxel.audio.MusicDirector.COMBAT_RANGE;
+        float dangerSq = com.voxel.audio.MusicDirector.DANGER_RANGE * com.voxel.audio.MusicDirector.DANGER_RANGE;
+        for (com.voxel.entity.Entity e : entityManager.getEntitiesSnapshot()) {
+            if (!(e instanceof com.voxel.entity.EnemyEntity)) continue;
+            com.voxel.entity.EnemyEntity mob = (com.voxel.entity.EnemyEntity) e;
+            if (mob.isDead()) continue;
+            org.joml.Vector3f p = mob.getPosition();
+            float dx = p.x - px, dy = p.y - py, dz = p.z - pz;
+            float d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 <= combatSq) close++;
+            else if (d2 <= dangerSq) near++;
+        }
+        desiredMusicContext = com.voxel.audio.MusicDirector.contextFor(near + close, close, isNightTime());
+    }
+
+    /** Night = the sun is below the horizon (Aether/Nether skies stay calm). */
+    private boolean isNightTime() {
+        try {
+            float[] sun = new float[3];
+            AtmosphereRenderer.computeSunDir(activeDimension, worldTime, sun);
+            return sun[1] < 0.0f;
+        } catch (Throwable t) {
+            return false;
         }
     }
 
@@ -6554,6 +6666,37 @@ public class Main {
         shaderBlockRegistry.register(905, 905);
         blockDataManager.registerBlock(905, "void_steel", textureManager, mcModels);
 
+        // ── Survival farming (fixed IDs 906-915) ──
+        // Farmland (dry/wet) is made by hoeing dirt/grass; it is not a
+        // placeable item and drops dirt when broken.
+        blockRegistry.register("farmland_dry", 906);
+        blockRegistry.register("farmland", 906);
+        shaderBlockRegistry.register(906, 906);
+        blockDataManager.registerBlock(906, "farmland_dry", textureManager, mcModels);
+        blockDataManager.setFullBlock(906, false);
+        blockDataManager.setHardness(906, 0.6f);
+
+        blockRegistry.register("farmland_wet", 907);
+        shaderBlockRegistry.register(907, 907);
+        blockDataManager.registerBlock(907, "farmland_wet", textureManager, mcModels);
+        blockDataManager.setFullBlock(907, false);
+        blockDataManager.setHardness(907, 0.6f);
+
+        // Wheat crops: 8 growth stages (0 seed → 7 ripe). Each stage is its own
+        // block so the world can advance them with simple ID swaps.
+        for (int stage = 0; stage < 8; stage++) {
+            int id = 908 + stage;
+            String stageName = "wheat_stage" + stage;
+            blockRegistry.register(stageName, id);
+            shaderBlockRegistry.register(id, id);
+            blockDataManager.registerBlock(id, stageName, textureManager, mcModels);
+            blockDataManager.setFullBlock(id, false);
+            blockDataManager.setHardness(id, 0.0f);
+            blockDataManager.setTransparency(id, 0);
+        }
+        blockRegistry.register("wheat", 908);
+        blockRegistry.register("wheat_crop", 908);
+
         // Auto-register every remaining vanilla 1.12.2 blockstate from the resource pack.
         // Hand-authored IDs above remain authoritative; new content gets stable IDs
         // after the existing registry and reuses the native Minecraft models/textures.
@@ -6561,6 +6704,44 @@ public class Main {
                 blockDataManager, blockRegistry, shaderBlockRegistry, textureManager,
                 "src/main/resources/assets/minecraft/blockstates",
                 "src/main/resources/assets/minecraft/models/block", 472);
+
+        // ── Redstone input switches ──
+        // Levers/buttons/pressure plates arrive from the pack above as static
+        // scenery. Give each a powered companion block (off = base pack id,
+        // on = off+1, freshly allocated) whose model shows the active state.
+        int switchNextFree = 2000;
+        int leverBase = blockRegistry.getId("lever");
+        int stoneButtonBase = blockRegistry.getId("stone_button");
+        int woodButtonBase = blockRegistry.getId("wooden_button");
+        int stonePlateBase = blockRegistry.getId("stone_pressure_plate");
+        int woodPlateBase = blockRegistry.getId("wooden_pressure_plate");
+        if (leverBase > 0 && stoneButtonBase > 0 && woodButtonBase > 0 && stonePlateBase > 0 && woodPlateBase > 0) {
+            while (blockRegistry.hasId(switchNextFree) || blockDataManager.blockRegistry.containsKey(switchNextFree)) switchNextFree++;
+            int leverOnId = switchNextFree++;
+            int stoneButtonOnId = switchNextFree++;
+            int woodButtonOnId = switchNextFree++;
+            int stonePlateOnId = switchNextFree++;
+            int woodPlateOnId = switchNextFree++;
+            registerSwitchPair(leverBase, "lever", leverOnId, mcModels);
+            registerSwitchPair(stoneButtonBase, "stone_button_pressed", stoneButtonOnId, mcModels);
+            registerSwitchPair(woodButtonBase, "wooden_button_pressed", woodButtonOnId, mcModels);
+            registerSwitchPair(stonePlateBase, "stone_pressure_plate_down", stonePlateOnId, mcModels);
+            registerSwitchPair(woodPlateBase, "wooden_pressure_plate_down", woodPlateOnId, mcModels);
+            com.voxel.game.RedstoneSwitches.configure(
+                    leverBase, leverOnId,
+                    stoneButtonBase, stoneButtonOnId,
+                    woodButtonBase, woodButtonOnId,
+                    stonePlateBase, stonePlateOnId,
+                    woodPlateBase, woodPlateOnId);
+        } else {
+            System.err.println("[MC content] Switch blocks not found in pack (lever=" + leverBase
+                    + " button=" + stoneButtonBase + ") — redstone inputs disabled");
+        }
+        int tntBase = blockRegistry.getId("tnt");
+        com.voxel.game.TntBlock.configure(tntBase);
+        if (tntBase <= 0) {
+            System.err.println("[MC content] TNT blockstate missing — TNT disabled");
+        }
 
         // Register shader state variants for directional and on/off blocks
         shaderBlockRegistry.registerOnOff(28, true, 30);
@@ -6577,6 +6758,18 @@ public class Main {
         com.voxel.world.BeaconLogic.VALID_PYRAMID_BLOCKS.add(blockDataManager.findBlockId("emerald_block"));
 
         blockDataManager.uploadToGPU();
+    }
+
+    /**
+     * Registers the powered companion block for a redstone switch. The base
+     * (off) block came from the resource pack auto-loader; this adds the
+     * pressed/flipped model on a fresh id so state swaps are visible.
+     */
+    private void registerSwitchPair(int offId, String onModel, int onId, String modelsDir) {
+        shaderBlockRegistry.register(onId, onId);
+        blockDataManager.registerBlock(onId, onModel, textureManager, modelsDir);
+        blockDataManager.setFullBlock(onId, false);
+        blockDataManager.setHardness(onId, 0.5f);
     }
 
     public void generateCapeTexture() {

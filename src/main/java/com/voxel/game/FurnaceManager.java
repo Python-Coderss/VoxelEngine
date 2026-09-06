@@ -104,6 +104,14 @@ public class FurnaceManager {
         addSmelting("chorus_fruit", "chorus_fruit_popped", 1, 5.0f);
         // ── Food ──
         addSmelting("potato", "baked_potato", 1, 6.0f);
+        // Raw meats → cooked (vanilla 1.12.2 furnace recipes, 10 s each).
+        addSmelting("porkchop", "cooked_porkchop", 1, 10.0f);
+        addSmelting("beef", "cooked_beef", 1, 10.0f);
+        addSmelting("chicken", "cooked_chicken", 1, 10.0f);
+        addSmelting("mutton", "cooked_mutton", 1, 10.0f);
+        addSmelting("rabbit", "cooked_rabbit", 1, 10.0f);
+        addSmelting("fish", "cooked_fish", 1, 10.0f);
+        addSmelting("salmon", "cooked_salmon", 1, 10.0f);
         // ── Nether masonry ──
         addSmelting("netherrack", "netherbrick", 1, 7.0f);
     }

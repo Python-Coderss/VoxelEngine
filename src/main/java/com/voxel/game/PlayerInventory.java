@@ -14,6 +14,8 @@ public class PlayerInventory {
     public static final int CRAFTING_3X3_SLOTS = 9;   // 3x3 ingredient grid
 
     private final ItemDefinitions.ItemStack[] inventory = new ItemDefinitions.ItemStack[INVENTORY_SIZE];
+    /** Armor slots: 0=helmet, 1=chestplate, 2=leggings, 3=boots. */
+    private final ItemDefinitions.ItemStack[] armorSlots = new ItemDefinitions.ItemStack[com.voxel.game.ArmorValues.ARMOR_SLOT_COUNT];
     private String[][] craftingGrid = new String[2][2];
     private String[][] craftingGrid3x3 = new String[3][3];
     private int selectedSlot = 0;
@@ -36,6 +38,56 @@ public class PlayerInventory {
     public int getInventorySize() { return INVENTORY_SIZE; }
     public ItemDefinitions.ItemStack getSlot(int i) { return inventory[i]; }
     public void setSlot(int i, ItemDefinitions.ItemStack stack) { inventory[i] = stack; }
+    public ItemDefinitions.ItemStack getArmorSlot(int i) { return armorSlots[i]; }
+    public void setArmorSlot(int i, ItemDefinitions.ItemStack stack) { armorSlots[i] = stack; }
+
+    /**
+     * Sum of defense points across all equipped armor (0-20).
+     * Used by Main to refresh Player.armorPoints every tick.
+     */
+    public int getTotalArmorPoints() {
+        int total = 0;
+        for (ItemDefinitions.ItemStack stack : armorSlots) {
+            if (stack != null) total += com.voxel.game.ArmorValues.defenseFor(stack.itemId);
+        }
+        return Math.min(20, total);
+    }
+
+    /** Removes and returns the stack in an armor slot (unequip). */
+    public ItemDefinitions.ItemStack takeOffArmor(int slot) {
+        ItemDefinitions.ItemStack s = armorSlots[slot];
+        armorSlots[slot] = null;
+        return s;
+    }
+
+    /**
+     * Inventory-UI click handler for an armor slot: pick up / place / swap,
+     * mirroring {@link #handleInventorySlotClick} but restricted to pieces
+     * that belong in the clicked slot.
+     */
+    public void handleArmorSlotClick(int slotIndex) {
+        if (slotIndex < 0 || slotIndex >= armorSlots.length || !ctx.inventoryOpen) return;
+        ItemDefinitions.ItemStack slotStack = armorSlots[slotIndex];
+
+        if (carriedStack == null) {
+            if (slotStack != null) {
+                carriedStack = slotStack.copy();
+                armorSlots[slotIndex] = null;
+            }
+            return;
+        }
+        // Only the matching armor type fits this slot.
+        if (com.voxel.game.ArmorValues.slotFor(carriedStack.itemId) != slotIndex) return;
+        if (slotStack == null) {
+            armorSlots[slotIndex] = carriedStack;
+            carriedStack = null;
+            return;
+        }
+        // Swap with the currently worn piece.
+        armorSlots[slotIndex] = carriedStack;
+        carriedStack = slotStack;
+    }
+
     public ItemDefinitions.ItemStack getCarriedStack() { return carriedStack; }
     public void setCarriedStack(ItemDefinitions.ItemStack stack) { this.carriedStack = stack; }
     /** Legacy 2x2 recipe buffer used by surface crafting; not rendered in inventory. */
@@ -144,6 +196,16 @@ public class PlayerInventory {
         inventory[5] = new ItemDefinitions.ItemStack("dirt", 32);
         inventory[6] = new ItemDefinitions.ItemStack("stone", 32);
         inventory[7] = new ItemDefinitions.ItemStack("crafting_table", 8);
+    }
+
+    /** Armor-slot icon names per slot (used by the inventory UI). */
+    public static String armorIconId(int slot) {
+        switch (slot) {
+            case com.voxel.game.ArmorValues.SLOT_HELMET: return "iron_helmet";
+            case com.voxel.game.ArmorValues.SLOT_CHESTPLATE: return "iron_chestplate";
+            case com.voxel.game.ArmorValues.SLOT_LEGGINGS: return "iron_leggings";
+            default: return "iron_boots";
+        }
     }
 
     // --- Slot click handling ---

@@ -14,4 +14,9 @@ public class SheepuffEntity extends AetherPassiveEntity {
         pickHeight = 1.3f;
         bindLegs("leg_1", "leg_2", "leg_3", "leg_4");
     }
+
+    @Override
+    protected String[][] deathLoot() {
+        return new String[][] { { "mutton", "2" }, { "wool", "1" } };
+    }
 }

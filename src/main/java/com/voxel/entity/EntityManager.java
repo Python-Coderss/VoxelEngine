@@ -375,6 +375,8 @@ public class EntityManager {
             if (e instanceof ArrowEntity) return ((ArrowEntity) e).isExpired();
             if (e instanceof AetherProjectileEntity) return ((AetherProjectileEntity) e).isExpired();
             if (e instanceof EnemyEntity) return ((EnemyEntity) e).isDead();
+            if (e instanceof FarmAnimalEntity) return ((FarmAnimalEntity) e).isDead();
+            if (e instanceof AetherPassiveEntity) return ((AetherPassiveEntity) e).isDead();
             return false;
         });
     }

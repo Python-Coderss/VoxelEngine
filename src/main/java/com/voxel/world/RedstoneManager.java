@@ -139,6 +139,9 @@ public class RedstoneManager {
     /** Comparator output state: packed → current output strength (0-15). */
     private final Map<Long, Integer> comparatorOutputs = new ConcurrentHashMap<>();
 
+    /** Button auto-release timers: packed → engine ticks left before a pressed button pops out. */
+    private final Map<Long, Integer> buttonTimers = new ConcurrentHashMap<>();
+
     /** Container managers for comparator fill-strength reads (set from Main). */
     private com.voxel.game.ChestManager chestManager;
     private com.voxel.game.FurnaceManager furnaceManager;
@@ -223,6 +226,7 @@ public class RedstoneManager {
             lampLitState.remove(key);
             pistonExtended.remove(key);
             repeaterTimers.remove(key);
+            buttonTimers.remove(key);
             repeaterOutputs.remove(key);
             comparatorOutputs.remove(key);
             action = "REMOVED from components (block=" + block + ")";
@@ -253,7 +257,8 @@ public class RedstoneManager {
             || block == BLOCK_REDSTONE_ORE
             || isLamp(block)
             || isRepeater(block)
-            || isComparator(block);
+            || isComparator(block)
+            || com.voxel.game.RedstoneSwitches.isSwitchBlock(block);
     }
 
     /**
@@ -403,9 +408,16 @@ public class RedstoneManager {
         // Tick torch cooldowns
         torchCooldown.replaceAll((k, v) -> v > 0 ? v - 1 : 0);
 
+        // Pressed buttons pop back out after their hold time.
+        tickSwitchTimers();
+
         // Repeaters/comparators update against the previous tick's power map; any
         // output change requests a rebuild so the new power reaches the network.
         evaluateComponents();
+
+        // Pressure plates follow the player's feet; state/strength changes queue
+        // a block-ID swap (applied by the GL thread) and request a rebuild.
+        evaluatePressurePlates();
 
         if (needsRebuild) {
             RedstoneLogger.log("tickLamps: needsRebuild=true, componentCount=" + components.size() + " starting rebuild");
@@ -417,6 +429,96 @@ public class RedstoneManager {
         }
         evaluateLampStates();
         evaluatePistons();
+    }
+
+    // ========================================================================
+    //  Switches: levers, buttons, pressure plates
+    // ========================================================================
+
+    /**
+     * Called from the GL thread after the player flips a lever or presses a
+     * button. Schedules the button's auto-release and requests a network
+     * rebuild so the new source state reaches adjacent wires next tick.
+     */
+    public void onSwitchToggled(int x, int y, int z, int newBlockId) {
+        long key = pack(x, y, z);
+        if (com.voxel.game.RedstoneSwitches.isButton(newBlockId)) {
+            if (com.voxel.game.RedstoneSwitches.isOn(newBlockId)) {
+                buttonTimers.put(key, com.voxel.game.RedstoneSwitches.buttonHoldTicks(newBlockId));
+            } else {
+                buttonTimers.remove(key);
+            }
+        }
+        onBlockChanged(x, y, z);
+        notifyNeighbors(x, y, z);
+    }
+
+    /** Decrement button release timers; pop out any that have finished. */
+    private void tickSwitchTimers() {
+        if (buttonTimers.isEmpty()) return;
+        java.util.List<Long> released = new java.util.ArrayList<>();
+        for (Map.Entry<Long, Integer> e : buttonTimers.entrySet()) {
+            int left = e.getValue() - 1;
+            if (left <= 0) {
+                released.add(e.getKey());
+            } else {
+                e.setValue(left);
+            }
+        }
+        for (long key : released) {
+            buttonTimers.remove(key);
+            int x = unpackX(key), y = unpackY(key), z = unpackZ(key);
+            int block = world.getVoxel(x, y, z);
+            if (!com.voxel.game.RedstoneSwitches.isButton(block)
+                    || !com.voxel.game.RedstoneSwitches.isOn(block)) continue;
+            int face = (world.getRawVoxel(x, y, z) >> 16) & 0x7;
+            int offId = com.voxel.game.RedstoneSwitches.offId(block);
+            RedstoneLogger.log("buttonRelease", x, y, z, "releasing to " + offId);
+            lampChangeQueue.add(new int[]{x, y, z, offId, face});
+            needsRebuild = true;
+        }
+    }
+
+    /**
+     * Pressure plates turn on while the player stands in their cell and off
+     * otherwise. The powered block carries a strength nibble (extra bits 4-7):
+     * wooden plates output 1 per entity on them (a lone player = 1) while stone
+     * plates sum weighted entity light (a player counts 10), matching 1.12.
+     */
+    private void evaluatePressurePlates() {
+        for (long key : components) {
+            int x = unpackX(key), y = unpackY(key), z = unpackZ(key);
+            int block = world.getVoxel(x, y, z);
+            if (!com.voxel.game.RedstoneSwitches.isPressurePlate(block)) continue;
+            boolean stone = com.voxel.game.RedstoneSwitches.isStonePlate(block);
+            boolean onNow = com.voxel.game.RedstoneSwitches.isOn(block);
+            boolean standing = playerStandsOn(x, y, z);
+            int extra = (world.getRawVoxel(x, y, z) >> 16) & 0xFF;
+            int face = extra & 0x7;
+
+            if (standing) {
+                int strength = com.voxel.game.RedstoneSwitches.plateSignal(stone, 1);
+                int wantExtra = face | (strength << 4);
+                if (!onNow || ((extra >> 4) & 0xF) != strength) {
+                    RedstoneLogger.log("plateDown", x, y, z, "strength=" + strength + " stone=" + stone);
+                    lampChangeQueue.add(new int[]{x, y, z, com.voxel.game.RedstoneSwitches.onId(block), wantExtra});
+                    needsRebuild = true;
+                }
+            } else if (onNow) {
+                RedstoneLogger.log("plateUp", x, y, z, "releasing plate");
+                lampChangeQueue.add(new int[]{x, y, z, com.voxel.game.RedstoneSwitches.offId(block), face});
+                needsRebuild = true;
+            }
+        }
+    }
+
+    /** True when the player's feet cell matches the plate cell. */
+    private boolean playerStandsOn(int x, int y, int z) {
+        int px = (int) Math.floor(playerX);
+        int pz = (int) Math.floor(playerZ);
+        if (px != x || pz != z) return false;
+        // Feet between just below the plate and the top of its cell keep it down.
+        return playerY > y - 0.3f && playerY < y + 1.0f;
     }
 
     // ========================================================================
@@ -466,9 +568,9 @@ public class RedstoneManager {
             int x = change[0], y = change[1], z = change[2], id = change[3];
             String idName = (id == BLOCK_REDSTONE_LAMP_ON) ? "LAMP_ON" : (id == BLOCK_REDSTONE_LAMP) ? "LAMP_OFF" : String.valueOf(id);
             RedstoneLogger.log("applyLampChanges", x, y, z, "swapping to " + idName);
-            // Preserve the low extra byte so repeater delays and comparator modes survive swaps.
-            int raw = world.getRawVoxel(x, y, z);
-            int extra = (raw >> 16) & 0xFF;
+            // Preserve the low extra byte so repeater delays and comparator modes survive
+            // swaps; switches pass an explicit extra (mount face + plate strength).
+            int extra = (change.length > 4) ? change[4] : ((world.getRawVoxel(x, y, z) >> 16) & 0xFF);
             chunkManager.setVoxelWithData(x, y, z, id, extra);
             pendingNeighborUpdates.add(new int[]{x, y, z});
             count++;
@@ -515,6 +617,20 @@ public class RedstoneManager {
         for (long key : components) {
             int x = unpackX(key), y = unpackY(key), z = unpackZ(key);
             int block = world.getVoxel(x, y, z);
+            // Powered lever/button/plate states are sources: levers and buttons
+            // emit full 15, plates emit their stored strength nibble.
+            if (com.voxel.game.RedstoneSwitches.isOn(block)) {
+                int power = MAX_POWER;
+                if (com.voxel.game.RedstoneSwitches.isPressurePlate(block)) {
+                    int stored = ((world.getRawVoxel(x, y, z) >> 16) & 0xFF) >> 4;
+                    power = stored > 0 ? stored : MAX_POWER;
+                }
+                powerLevels.put(key, power);
+                queue.add(new PowerNode(x, y, z, power));
+                RedstoneLogger.log("rebuildNetwork/Phase1", x, y, z, "SWITCH source, power=" + power);
+                sourcesFound++;
+                continue;
+            }
             switch (block) {
                 case BLOCK_REDSTONE_BLOCK:
                     powerLevels.put(key, MAX_POWER);
@@ -731,7 +847,8 @@ public class RedstoneManager {
     private boolean isBlockPowered(int x, int y, int z) {
         if (powerLevels.getOrDefault(pack(x, y, z), 0) > 0) return true;
         int block = world.getVoxel(x, y, z);
-        return block == BLOCK_REDSTONE_BLOCK || block == BLOCK_REDSTONE_TORCH || block == BLOCK_REDSTONE_ORE;
+        return block == BLOCK_REDSTONE_BLOCK || block == BLOCK_REDSTONE_TORCH
+                || block == BLOCK_REDSTONE_ORE || com.voxel.game.RedstoneSwitches.isOn(block);
     }
 
     /**

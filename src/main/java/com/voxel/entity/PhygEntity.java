@@ -26,4 +26,9 @@ public class PhygEntity extends AetherPassiveEntity {
             rw.rotation.z = -flap;
         }
     }
+
+    @Override
+    protected String[][] deathLoot() {
+        return new String[][] { { "porkchop", "3" }, { "feather", "2" } };
+    }
 }
