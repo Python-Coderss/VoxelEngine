@@ -40,7 +40,9 @@ public final class VoicePreset {
         double pitch = numberValue(json, "pitch", 0.0);
         double volume = numberValue(json, "volume", 1.0);
         double tone = numberValue(json, "tone", 0.0);
-        double natural = numberValue(json, "naturalSourceMix", 0.36);
+        // Legacy key now carries the RVC retrieval weight; default matches
+        // SpeechOptions.DEFAULT (0.55 index rate).
+        double natural = numberValue(json, "naturalSourceMix", 0.55);
         String emotion = stringValue(json, "emotion", "neutral");
         double singing = numberValue(json, "singing", 0.0);
         double sarcasm = numberValue(json, "sarcasm", 0.0);

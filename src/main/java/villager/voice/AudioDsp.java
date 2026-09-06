@@ -8,6 +8,16 @@ public final class AudioDsp {
     private AudioDsp() {
     }
 
+    /**
+     * Windowed-sinc resampler (Hann-windowed, 32-tap half-width).
+     *
+     * Replaces the old linear interpolation: when down-sampling, linear
+     * interpolation has no anti-aliasing attenuation, so spectral content
+     * above the destination Nyquist folds back into the audible band. RVC
+     * then renders those aliases as a steady hiss/harshness (the 11.8 kHz
+     * tonal spike the removed notch filters were chasing). This resampler
+     * low-passes at ~95% of the destination Nyquist while resampling.
+     */
     public static float[] resample(float[] input, int outputLength) {
         if (outputLength <= 0 || input.length == 0) {
             return new float[0];
@@ -25,14 +35,34 @@ public final class AudioDsp {
         if (input.length == outputLength) {
             return input.clone();
         }
+        // This helper historically maps input[0]..input[n-1] onto
+        // output[0]..output[m-1]; keep that phase convention so pitch and
+        // timing stay identical to previous renders.
+        double scale = (input.length - 1.0) / (outputLength - 1.0);
+        // Steps per input sample: >1 while down-sampling (wider sinc kernel
+        // in input units = proportionally lower cutoff).
+        double step = Math.max(1.0, scale);
+        double cutoff = 0.95 / step;
+        final int half = 32;
         float[] output = new float[outputLength];
-        double scale = input.length == 1 ? 0.0 : (input.length - 1.0) / (outputLength - 1.0);
         for (int i = 0; i < outputLength; i++) {
             double position = i * scale;
-            int left = (int) position;
-            int right = Math.min(input.length - 1, left + 1);
-            double amount = position - left;
-            output[i] = (float) (input[left] * (1.0 - amount) + input[right] * amount);
+            int center = (int) Math.floor(position);
+            double sum = 0.0;
+            double weightSum = 0.0;
+            int from = Math.max(0, center - half);
+            int to = Math.min(input.length - 1, center + half);
+            for (int j = from; j <= to; j++) {
+                double x = (j - position) / step;
+                double sinc = x == 0.0 ? cutoff : cutoff
+                        * Math.sin(Math.PI * cutoff * x) / (Math.PI * cutoff * x);
+                double window = x >= -1.0 && x <= 1.0
+                        ? 0.5 + 0.5 * Math.cos(Math.PI * x) : 0.0;
+                double weight = sinc * window;
+                sum += input[j] * weight;
+                weightSum += weight;
+            }
+            output[i] = (float) (weightSum != 0.0 ? sum / weightSum : 0.0);
         }
         return output;
     }
@@ -47,40 +77,6 @@ public final class AudioDsp {
         }
     }
 
-    /**
-     * Reduce synthesized speech noise without changing its channel layout.
-     *
-     * The low cut is deliberately gentle so the voice keeps its body. The high
-     * cut is applied in three short passes because the RVC artifacts are
-     * concentrated in the upper band; this smooths isolated clicks without
-     * averaging across enough samples to flatten pitch movement.
-     */
-    public static void applySpeechDenoise(float[] samples, int sampleRate) {
-        if (samples.length < 2 || sampleRate <= 0) {
-            return;
-        }
-        // Remove sub-bass rumble below 80 Hz while retaining the low
-        // fundamentals of the villager voice (roughly 100-300 Hz). One gentle
-        // pass to avoid resonance buildup from multiple filtering stages.
-        applyHighPass(samples, sampleRate, 80.0);
-        // Stronger high-frequency cleanup, while keeping the important speech
-        // consonant band usable. Three mild passes make the transition gradual
-        // instead of producing a hard, muffled cutoff.
-        applyLowPass(samples, sampleRate, 7600.0);
-        applyLowPass(samples, sampleRate, 7600.0);
-        applyLowPass(samples, sampleRate, 7600.0);
-        // Notch out RVC synthesis artifacts clustered near 11.8 kHz. These
-        // tonal spikes survive the low-pass because they sit close to the
-        // Nyquist limit where a single-pole IIR rolls off slowly.
-        applyNotchFilter(samples, sampleRate, 11850.0, 10.0);
-        // Notch out potential midrange oscillation around 500 Hz. RVC
-        // conversion can create narrow-band ringing in the midrange that
-        // sounds like a wavering/robotic artifact; a narrow notch damps it.
-        applyNotchFilter(samples, sampleRate, 500.0, 8.0);
-        // Secondary notch at 800 Hz for upper-midrange artifacts.
-        applyNotchFilter(samples, sampleRate, 800.0, 10.0);
-    }
-
     private static void applyHighPass(float[] samples, int sampleRate, double cutoffHz) {
         double alpha = Math.exp(-2.0 * Math.PI * cutoffHz / sampleRate);
         float previousInput = samples[0];
@@ -91,15 +87,6 @@ public final class AudioDsp {
             samples[i] = output;
             previousInput = input;
             previousOutput = output;
-        }
-    }
-
-    private static void applyLowPass(float[] samples, int sampleRate, double cutoffHz) {
-        double alpha = 1.0 - Math.exp(-2.0 * Math.PI * cutoffHz / sampleRate);
-        float previousOutput = samples[0];
-        for (int i = 1; i < samples.length; i++) {
-            previousOutput += (float) (alpha * (samples[i] - previousOutput));
-            samples[i] = previousOutput;
         }
     }
 
@@ -292,9 +279,13 @@ public final class AudioDsp {
             low = (float) (low * (1.0 - leak) + current * leak);
             samples[i] = (float) (current + amount * (current - low));
         }
-        // Kill any narrowband midrange oscillation created by the tone-tilt
-        // feedback loop interacting with the HPF and denoise stages.
-        notchMidrange(samples, samples.length, 24000);
+        // Keep extreme settings inside the float range; a final clamp is the
+        // only safety net this stage needs now that the midrange notch that
+        // fed its own ringing loop is gone.
+        for (int i = 0; i < samples.length; i++) {
+            if (samples[i] > 4.0f) samples[i] = 4.0f;
+            else if (samples[i] < -4.0f) samples[i] = -4.0f;
+        }
     }
 
     /**
@@ -323,29 +314,277 @@ public final class AudioDsp {
         }
     }
 
+    // ── Vocoder comb-whine removal ────────────────────────────────────────
+
+    /** Analysis FFT size for whine detection (5.5 Hz bins at 24 kHz). */
+    private static final int WHINE_FFT = 8192;
+    /** Running-median half width for the spectral floor (±9 bins ≈ ±26 Hz). */
+    private static final int WHINE_MEDIAN_RADIUS = 9;
     /**
-     * Second-order notch around 600 Hz (0.2 Q, ~6 dB) to zap residual ringing in
-     * the vocal formant band. Gentle enough to keep brightness, strong enough to stop
-     * the "robotic" midrange oscillation from the DSP feedback chain.
+     * A bin must rise this far above its local spectral median to count as a
+     * whine candidate. Measured v9 comb teeth sit at +8 to +19 dB over a
+     * well-averaged floor; this detector averages fewer windows, so its floor
+     * is noisier and teeth can read +7.5. Real wobbled harmonics survive the
+     * bar only to be rejected by the span filter, so the lower threshold is
+     * safe (the sung clip's true harmonics peaked at +8.4 over a smooth floor).
      */
-    private static void notchMidrange(float[] samples, int length, int sampleRate) {
-        if (length < 4 || sampleRate < 8000) return;
-        double f0 = 600.0;
-        double Q = 0.2;
-        double r = Math.exp(-Math.PI * f0 / (Q * sampleRate));
-        double cosw = Math.cos(2.0 * Math.PI * f0 / sampleRate);
-        double a1 = -2.0 * r * cosw;
-        double a2 = r * r;
-        // peak gain G at f0 for ~6 dB notch depth with Q=0.2:
-        double G = (1.0 - 2.0 * r * cosw + r * r) / (1.0 - 2.0 * r * cosw + r * r + 0.18);
-        float x1 = samples[0], x2 = samples.length > 1 ? samples[1] : 0.0f;
-        float y1 = 0.0f, y2 = 0.0f;
-        for (int i = 0; i < length; i++) {
-            float x0 = samples[i];
-            float y0 = (float) (G * (x0 - x2) - a1 * y1 - a2 * y2);
-            samples[i] = y0;
-            x2 = x1; x1 = x0;
-            y2 = y1; y1 = y0;
+    private static final double WHINE_SPIKE_DB = 7.5;
+    /**
+     * Core bar: bins above spikeDb minus this margin count toward a
+     * candidate's spectral span.
+     */
+    private static final double WHINE_CORE_MARGIN_DB = 3.0;
+    /**
+     * A tone that is perfectly stable across the whole clip concentrates its
+     * average-spectrum energy inside a Hann mainlobe (about 5 bins at this
+     * FFT size, span limit 9 with measurement slack; high-frequency teeth
+     * legitimately reach 9 with asymmetric skirts). Candidates whose
+     * elevated footprint spans wider are wobbling speech harmonics smeared by
+     * the averaging — width, not height, separates stable vocoder residue
+     * from real signal, and it also catches swept harmonics whose energy
+     * bimodally splits around the sweep center.
+     */
+    private static final int WHINE_MAX_SPAN_BINS = 9;
+    /** Speech harmonics rarely matter above this; comb whine does. */
+    private static final double WHINE_MIN_HZ = 2500.0;
+    /** Safety cap so pathological spectra cannot get dozens of holes. */
+    private static final int WHINE_MAX_NOTCHES = 12;
+
+    /**
+     * Remove the vocoder's frame-rate comb whine from a converted clip.
+     *
+     * <p>The RVC NSF source re-interpolates its excitation sine once per frame
+     * (400 samples at 40 kHz = 100 Hz), so per-frame phase steps inject
+     * discrete sidebands at near-exact multiples of 100 Hz. In the speech band
+     * they hide under real harmonics, but above ~2.5 kHz they stick out of the
+     * noise floor as pure tones — the metallic whine measured in the v9 clip
+     * set (dominant 3.5-4.6 kHz component at speech level, spikes to 11.8 kHz
+     * at +8 to +19 dB over the local median). Speech harmonics wobble with the
+     * voice, so they smear across bins and vanish in the averaged spectrum;
+     * only the stable comb survives detection. Detected clusters are cut with
+     * smooth biquad notches sized so the response is down notchDepthDb at the
+     * cluster edge — no ringing band, no dulling of the rest of the spectrum.
+     */
+    public static void applyCombWhineCleanup(float[] samples, int sampleRate) {
+        if (samples == null || samples.length < WHINE_FFT || sampleRate <= 0) {
+            return;
+        }
+        // Two passes: pass one notches each whine by about notchDepthDb; the
+        // second re-detects whatever still pokes above the threshold (the
+        // strongest v9 combs reached +19 dB) without digging any single hole
+        // deep enough to ring on ordinary speech.
+        for (int pass = 0; pass < 2; pass++) {
+            if (!applyCombWhineNotch(samples, sampleRate, WHINE_MIN_HZ,
+                    sampleRate * 0.5, WHINE_SPIKE_DB, 10.0)) {
+                break;
+            }
+        }
+    }
+
+    /**
+     * One detection+notch pass. Returns true when at least one whine cluster
+     * was found and notched.
+     */
+    static boolean applyCombWhineNotch(float[] samples, int sampleRate,
+                                       double minHz, double maxHz,
+                                       double spikeDb, double notchDepthDb) {
+        if (samples == null || samples.length < WHINE_FFT || sampleRate <= 0) {
+            return false;
+        }
+        double binHz = sampleRate / (double) WHINE_FFT;
+        double[] spectrum = averageSpectrum(samples);
+        double[] level = new double[spectrum.length];
+        for (int i = 0; i < spectrum.length; i++) {
+            level[i] = 10.0 * Math.log10(spectrum[i] + 1e-20);
+        }
+        double[] floor = runningMedian(level, WHINE_MEDIAN_RADIUS);
+
+        int minBin = Math.max(1, (int) Math.ceil(minHz / binHz));
+        int maxBin = Math.min(spectrum.length - 2, (int) Math.floor(maxHz / binHz));
+        // Group candidate bins (excess above the bar) into clusters, merging
+        // across gaps of up to 3 quieter bins so a mainlobe dip does not
+        // split one whine in two.
+        java.util.List<int[]> clusters = new java.util.ArrayList<int[]>();
+        int bin = minBin;
+        while (bin <= maxBin) {
+            if (level[bin] - floor[bin] <= spikeDb) {
+                bin++;
+                continue;
+            }
+            int end = bin;
+            int lastAbove = bin;
+            while (end + 1 <= maxBin) {
+                if (level[end + 1] - floor[end + 1] > spikeDb) {
+                    end++;
+                    lastAbove = end;
+                } else if (end - lastAbove < 4) {
+                    end++;
+                } else {
+                    break;
+                }
+            }
+            clusters.add(new int[]{bin, end});
+            bin = end + 1;
+        }
+        if (clusters.isEmpty()) {
+            return false;
+        }
+
+        double[] peakExcess = new double[clusters.size()];
+        for (int c = 0; c < clusters.size(); c++) {
+            double best = Double.NEGATIVE_INFINITY;
+            for (int k = clusters.get(c)[0]; k <= clusters.get(c)[1]; k++) {
+                best = Math.max(best, level[k] - floor[k]);
+            }
+            peakExcess[c] = best;
+        }
+        Integer[] indices = new Integer[clusters.size()];
+        for (int c = 0; c < indices.length; c++) {
+            indices[c] = c;
+        }
+        java.util.Arrays.sort(indices,
+                (a, b) -> Double.compare(peakExcess[b], peakExcess[a]));
+
+        int applied = 0;
+        for (int c = 0; c < indices.length && applied < WHINE_MAX_NOTCHES; c++) {
+            int[] cluster = clusters.get(indices[c]);
+            int lo = cluster[0];
+            int hi = cluster[1];
+            // Span decides: measure the elevated footprint around the cluster
+            // (short dips included) and skip anything wider than a stable
+            // tone's mainlobe.
+            int windowLo = Math.max(minBin, lo - WHINE_MAX_SPAN_BINS);
+            int windowHi = Math.min(maxBin, hi + WHINE_MAX_SPAN_BINS);
+            int lowest = -1;
+            int highest = -1;
+            for (int k = windowLo; k <= windowHi; k++) {
+                if (level[k] - floor[k] > spikeDb - WHINE_CORE_MARGIN_DB) {
+                    if (lowest < 0) {
+                        lowest = k;
+                    }
+                    highest = k;
+                }
+            }
+            if (lowest < 0 || highest - lowest + 1 > WHINE_MAX_SPAN_BINS) {
+                continue;
+            }
+            // Extend over the tone's skirt so the notch covers the whole
+            // coherent hump, not just the flagged tip.
+            while (hi + 1 <= maxBin
+                    && level[hi + 1] - floor[hi + 1] > spikeDb - WHINE_CORE_MARGIN_DB) {
+                hi++;
+            }
+            while (lo - 1 >= minBin
+                    && level[lo - 1] - floor[lo - 1] > spikeDb - WHINE_CORE_MARGIN_DB) {
+                lo--;
+            }
+            int peak = lo;
+            for (int k = lo; k <= hi; k++) {
+                if (level[k] - floor[k] > level[peak] - floor[peak]) {
+                    peak = k;
+                }
+            }
+            double centerHz = peak * binHz;
+            int halfBins = Math.max(2, (hi - lo) / 2 + 2);
+            double halfHz = halfBins * binHz;
+            if (centerHz - halfHz <= 0.0 || centerHz + halfHz >= sampleRate * 0.5) {
+                continue;
+            }
+            // Biquad notch quality for attenuation notchDepthDb at the cluster
+            // edge: |H|^2 = u^2/(u^2+1) with u = 2*Q*df/f0 gives
+            // Q = f0 / (2 * df * sqrt(10^(depth/10) - 1)) ... folded below.
+            double spread = Math.sqrt(Math.pow(10.0, notchDepthDb / 10.0) - 1.0);
+            double q = centerHz / (2.0 * halfHz * spread);
+            q = Math.max(4.0, Math.min(120.0, q));
+            applyNotchFilter(samples, sampleRate, centerHz, q);
+            applied++;
+        }
+        return applied > 0;
+    }
+
+    /** Power-weighted average spectrum over ~16 Hann windows spanning the clip. */
+    private static double[] averageSpectrum(float[] samples) {
+        int hop = Math.max(1, samples.length / 16);
+        double[] average = new double[WHINE_FFT / 2];
+        double[] window = new double[WHINE_FFT];
+        for (int i = 0; i < WHINE_FFT; i++) {
+            window[i] = 0.5 - 0.5 * Math.cos(2.0 * Math.PI * i / (WHINE_FFT - 1));
+        }
+        double[] re = new double[WHINE_FFT];
+        double[] im = new double[WHINE_FFT];
+        int used = 0;
+        for (int start = 0; start + WHINE_FFT <= samples.length; start += hop) {
+            for (int i = 0; i < WHINE_FFT; i++) {
+                re[i] = samples[start + i] * window[i];
+                im[i] = 0.0;
+            }
+            fft(re, im);
+            for (int i = 0; i < average.length; i++) {
+                average[i] += re[i] * re[i] + im[i] * im[i];
+            }
+            used++;
+        }
+        if (used > 1) {
+            for (int i = 0; i < average.length; i++) {
+                average[i] /= used;
+            }
+        }
+        return average;
+    }
+
+    private static double[] runningMedian(double[] values, int radius) {
+        double[] median = new double[values.length];
+        double[] window = new double[2 * radius + 1];
+        for (int i = 0; i < values.length; i++) {
+            int from = Math.max(0, i - radius);
+            int to = Math.min(values.length - 1, i + radius);
+            int count = to - from + 1;
+            System.arraycopy(values, from, window, 0, count);
+            java.util.Arrays.sort(window, 0, count);
+            median[i] = window[count / 2];
+        }
+        return median;
+    }
+
+    /** In-place iterative radix-2 FFT (length must be a power of two). */
+    private static void fft(double[] re, double[] im) {
+        int n = re.length;
+        for (int i = 1, j = 0; i < n; i++) {
+            int bit = n >> 1;
+            for (; (j & bit) != 0; bit >>= 1) {
+                j ^= bit;
+            }
+            j ^= bit;
+            if (i < j) {
+                double tr = re[i];
+                re[i] = re[j];
+                re[j] = tr;
+                double ti = im[i];
+                im[i] = im[j];
+                im[j] = ti;
+            }
+        }
+        for (int length = 2; length <= n; length <<= 1) {
+            double angle = -2.0 * Math.PI / length;
+            double stepRe = Math.cos(angle);
+            double stepIm = Math.sin(angle);
+            for (int start = 0; start < n; start += length) {
+                double curRe = 1.0;
+                double curIm = 0.0;
+                for (int k = 0; k < length / 2; k++) {
+                    int a = start + k;
+                    int b = a + length / 2;
+                    double tr = re[b] * curRe - im[b] * curIm;
+                    double ti = re[b] * curIm + im[b] * curRe;
+                    re[b] = re[a] - tr;
+                    im[b] = im[a] - ti;
+                    re[a] += tr;
+                    im[a] += ti;
+                    double nextRe = curRe * stepRe - curIm * stepIm;
+                    curIm = curRe * stepIm + curIm * stepRe;
+                    curRe = nextRe;
+                }
+            }
         }
     }
 

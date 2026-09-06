@@ -112,7 +112,7 @@ public class Main {
     public int columnTopSSBO; // per-column highest loaded section (binding=11)
 
     // Cached compute shader uniform locations (avoid glGetUniformLocation per frame)
-    public int locBlockTextures, locEntityTextures, locBlockData, locBlockAABBs, locBlockAABBInfo, locBlockAABBUVs;
+    public int locBlockTextures, locEntityTextures, locBlockData, locBlockAABBs, locBlockAABBInfo, locBlockAABBUVs, locBlockAABBTex;
     public volatile boolean needsWorldUpload = false;
     public volatile boolean needsCursorUpdate = false;
     public int locBiomeMap, locUITexture, locUISource;
@@ -1189,6 +1189,7 @@ public class Main {
         locBlockAABBs = glGetUniformLocation(computeProgram, "u_BlockAABBs");
         locBlockAABBInfo = glGetUniformLocation(computeProgram, "u_BlockAABBInfo");
         locBlockAABBUVs = glGetUniformLocation(computeProgram, "u_BlockAABBUVs");
+        locBlockAABBTex = glGetUniformLocation(computeProgram, "u_BlockAABBTex");
         locBiomeMap = glGetUniformLocation(computeProgram, "u_BiomeMap");
         locUITexture = glGetUniformLocation(computeProgram, "u_UITexture");
         locUISource = glGetUniformLocation(computeProgram, "u_UISource");
@@ -1800,6 +1801,7 @@ public class Main {
 
         ctx.fluidManager = new com.voxel.world.FluidManager(world, chunkManager, blockDataManager, false);
         chunkManager.setFluidManager(ctx.fluidManager);
+        chunkManager.setRedstoneManager(redstoneManager);
 
         player.setDimension(activeDimension);
         playerEntity = new com.voxel.entity.PlayerEntity(10_000, new Vector3f(player.getPosition()), textureManager);
@@ -5297,6 +5299,9 @@ public class Main {
         glActiveTexture(GL_TEXTURE13);
         glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getAABBUVTextureId());
         glUniform1i(locBlockAABBUVs, 13);
+        glActiveTexture(GL_TEXTURE14);
+        glBindTexture(GL_TEXTURE_BUFFER, blockDataManager.getAABBTexOverrideTextureId());
+        glUniform1i(locBlockAABBTex, 14);
         glActiveTexture(GL_TEXTURE8);
         glBindTexture(GL_TEXTURE_2D, biomeManager.getBiomeMapId());
         glUniform1i(locBiomeMap, 8);

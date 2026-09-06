@@ -244,7 +244,7 @@ public class RedstoneManager {
     private static final int CONN_NORTH = 4;
     private static final int CONN_SOUTH = 8;
 
-    private boolean isRedstoneComponent(int block) {
+    public boolean isRedstoneComponent(int block) {
         return block == BLOCK_REDSTONE_BLOCK
             || block == BLOCK_REDSTONE_TORCH
             || block == BLOCK_REDSTONE_LAMP
@@ -254,6 +254,22 @@ public class RedstoneManager {
             || isLamp(block)
             || isRepeater(block)
             || isComparator(block);
+    }
+
+    /**
+     * Registers a redstone component discovered while loading a chunk from a
+     * save. Loaded blocks never pass through onBlockChanged(), so without this
+     * wires render dot-only (wireConn bits never encoded) and repeater/comparator
+     * outputs stay unset until the player edits a neighbor. Safe to call from the
+     * chunk-load thread: the components set is concurrent and needsRebuild is
+     * volatile; the next tickLamps() rebuilds and re-encodes wire connections.
+     */
+    public void registerLoadedComponent(int x, int y, int z, int blockId) {
+        if (!isRedstoneComponent(blockId) && !isPistonBase(blockId)) return;
+        long key = pack(x, y, z);
+        if (components.add(key)) {
+            needsRebuild = true;
+        }
     }
 
     /**

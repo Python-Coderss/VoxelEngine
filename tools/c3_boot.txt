@@ -1,0 +1,30 @@
+[BOOT] init start
+[BOOT] first loading frame presented 414 ms
+[BOOT] GL capabilities ready 414 ms
+[BOOT] OpenAL ready 1194 ms
+[BOOT] shaders ready 1224 ms
+Not enough entity texture headroom for the Iron Golem virtual atlas
+[MC content] Registered 301 additional blockstates
+[BOOT] resources ready 3216 ms
+[MC content] Registered 598 additional item models
+[MC content] Loaded 355 vanilla recipes; skipped 77
+[MC content] Crafting registry ready with 355 imported recipes
+[UI] Loaded virtual cursor asset: src\main\resources\ui\cursor.png
+[BOOT] UI loading frame presented 3667 ms
+[BOOT] UI ready 3667 ms
+Mode: survival. Press E for inventory, / for commands. R to respawn.
+[BOOT] init complete 3674 ms
+[DRS] scale=85% (1088x612) ema=18.3ms fps=0 down
+[DRS] scale=70% (896x504) ema=16.6ms fps=0 down
+[DRS] scale=60% (768x432) ema=11.4ms fps=0 down
+[DRS] scale=70% (896x504) ema=6.6ms fps=144 up
+[DRS] scale=60% (768x432) ema=10.1ms fps=116 down
+[DRS] scale=50% (640x360) ema=10.6ms fps=107 down
+[DRS] scale=60% (768x432) ema=3.7ms fps=119 up
+[DRS] scale=70% (896x504) ema=1.6ms fps=119 up
+[DRS] scale=85% (1088x612) ema=2.7ms fps=142 up
+[DRS] scale=100% (1280x720) ema=1.3ms fps=142 up
+[DRS] scale=85% (1088x612) ema=11.1ms fps=73 down
+[DRS] scale=70% (896x504) ema=22.0ms fps=39 down
+[DRS] scale=60% (768x432) ema=19.6ms fps=39 down
+[DRS] scale=50% (640x360) ema=15.6ms fps=39 down

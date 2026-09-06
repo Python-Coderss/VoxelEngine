@@ -189,7 +189,9 @@ public final class DialogueCatalog {
                 voice.optDouble("pitch", 0.0),
                 voice.optDouble("volume", 1.0),
                 voice.optDouble("tone", 0.0),
-                voice.optDouble("naturalSourceMix", 0.36),
+                // Legacy key now carries the RVC retrieval weight; the default
+                // matches SpeechOptions.DEFAULT (0.55 index rate).
+                voice.optDouble("naturalSourceMix", 0.55),
                 voice.optString("emotion", "happy"),
                 voice.optDouble("singing", 0.0),
                 voice.optDouble("sarcasm", 0.0), question);

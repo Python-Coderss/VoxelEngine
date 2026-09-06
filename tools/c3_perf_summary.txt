@@ -1,0 +1,23 @@
+== compile ==
+compile exit=0
+== boot 120s mode=ground ==
+== parse C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\tools\c3_final_boot.txt ==
+[BOOT] init start
+[BOOT] first loading frame presented 809 ms
+[BOOT] GL capabilities ready 809 ms
+[BOOT] OpenAL ready 1574 ms
+[BOOT] shaders ready 1603 ms
+[BOOT] resources ready 3482 ms
+[BOOT] UI loading frame presented 3973 ms
+[BOOT] UI ready 3973 ms
+[BOOT] init complete 3980 ms
+[BOOT] world pools ready 4 ms
+[BOOT] generator ready 6 ms
+[BOOT] chunk manager ready 13 ms
+[BOOT] dimension ready 20 ms
+[GPU/ms] pools    n=111 min=0.65 med=0.97 p90=1.55 max=24677.10
+[GPU/ms] raytrace n=111 min=5.30 med=7.15 p90=7.53 max=24679.45
+[GPU/ms] present  n=111 min=0.14 med=0.15 p90=0.21 max=24677.02
+[DRS] events=13 scales_seen=[50, 60, 70, 85] fps(min/med/max)=108/128/147
+[DRS] tail: 50% ema=10.3 fps=128 down | 60% ema=6.4 fps=128 up | 50% ema=10.3 fps=128 down | 60% ema=6.0 fps=131 up | 50% ema=10.2 fps=124 down | 60% ema=6.4 fps=139 up | 50% ema=10.3 fps=108 down | 60% ema=6.6 fps=147 up | 50% ema=10.1 fps=118 down | 60% ema=6.5 fps=141 up
+raytrace split: sky-like(<12ms) n=110 med=7.14 | ground-like(>=12ms) n=1 med=24679.45

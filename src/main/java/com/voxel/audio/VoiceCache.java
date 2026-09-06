@@ -26,7 +26,7 @@ import villager.voice.SpeechOptions;
 public final class VoiceCache {
     // v8: base-TTS emotional scales, 0.1 s sentence gaps, spoken numbers and
     // acronyms in the frontend. Old clips under v7 keys are stale audio.
-    private static final String CACHE_VERSION = "voice-cache-v8-base-overhaul";
+    private static final String CACHE_VERSION = "voice-cache-v9-rvc-artifact-fix";
 
     private final Path directory;
 

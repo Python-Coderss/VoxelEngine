@@ -14,13 +14,15 @@ import java.nio.file.Path;
  * RVC feature-index retrieval ("index rate") over the villager training
  * embeddings. The faiss IVFFlat index is pre-flattened offline into a simple
  * binary (centroids + per-list vector blocks); at runtime each ContentVec
- * frame finds its nearest centroid list, then the closest stored embedding in
- * that list, and blends it into the frame. This pulls converted features
- * toward real Dan Lloyd speech segments, which tightens the timbre beyond
- * what the generator alone manages.
+ * frame finds its nearest centroid list, then the top-8 closest stored
+ * embeddings in that list, and blends their weighted mean into the frame.
+ * This pulls converted features toward real Dan Lloyd speech segments, which
+ * tightens the timbre beyond what the generator alone manages.
  */
 public final class FeatureIndex {
     private static final int MAGIC = 0x58495652; // 'RVIX' little-endian
+    /** Weighted-mean neighbourhood size (RVC semantics; exact-search k). */
+    private static final int TOP_K = 8;
     private final int dimension;
     private final int listCount;
     private FloatBuffer centroids;
@@ -83,16 +85,33 @@ public final class FeatureIndex {
     /**
      * Blend retrieved training embeddings into ContentVec frames in place.
      *
-     * @param rate blend strength, 0 disables; ~0.7 mirrors the web UI default
+     * <p>Retrieval is a top-8 weighted mean (weights 1/d^2 over cosine
+     * distance) instead of a single-nearest copy: one fixed vector per frame
+     * quantized the delivery onto individual training segments, which surfaced
+     * as a metallic/gargly edge in the converted audio. A weighted mean tracks
+     * the speaker's feature space smoothly, matching the web UI's faiss
+     * retrieval with {@code k=8}.</p>
+     *
+     * @param rate   blend strength, 0 disables; the RVC "index rate"
+     *               (0.5-0.75 suits the short villager dataset)
+     * @param voiced optional per-frame voicing flags; when supplied, unvoiced
+     *               frames (consonants, breaths, pauses) keep their original
+     *               ContentVec features — the RVC "protect" semantics that
+     *               stops retrieval from smearing frication into hoarseness.
+     *               May be null when no F0 track is available.
      */
-    public void apply(float[][] content, double rate) {
+    public void apply(float[][] content, double rate, boolean[] voiced) {
         if (rate <= 0.0) {
             return;
         }
         double keep = Math.max(0.0, 1.0 - rate);
-        for (float[] frame : content) {
+        for (int frameIndex = 0; frameIndex < content.length; frameIndex++) {
+            float[] frame = content[frameIndex];
             if (frame.length != dimension) {
                 return; // unexpected shape; leave content untouched
+            }
+            if (voiced != null && frameIndex < voiced.length && !voiced[frameIndex]) {
+                continue; // protect: consonants and breaths stay unblended
             }
             normalizeInto(frame, scratch);
             int bestList = 0;
@@ -106,23 +125,63 @@ public final class FeatureIndex {
             }
             int start = listStart[bestList];
             int length = listLength[bestList];
-            int bestVector = -1;
-            bestScore = -Double.MAX_VALUE;
-            for (int i = 0; i < length; i++) {
-                double score = dot(vectors, (long) (start + i) * dimension, scratch);
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestVector = start + i;
-                }
-            }
-            if (bestVector < 0) {
+            int neighbourCount = Math.min(TOP_K, length);
+            if (neighbourCount <= 0) {
                 continue;
             }
-            vectors.position(bestVector * dimension);
+            // Descending top-K by cosine similarity (insertion into a fixed
+            // sorted list; K is tiny so this beats a full sort).
+            double[] bestScores = new double[neighbourCount];
+            int[] bestVectors = new int[neighbourCount];
+            java.util.Arrays.fill(bestScores, -Double.MAX_VALUE);
+            java.util.Arrays.fill(bestVectors, -1);
+            for (int i = 0; i < length; i++) {
+                double score = dot(vectors, (long) (start + i) * dimension, scratch);
+                if (score > bestScores[neighbourCount - 1]) {
+                    int p = neighbourCount - 1;
+                    while (p > 0 && bestScores[p - 1] < score) {
+                        bestScores[p] = bestScores[p - 1];
+                        bestVectors[p] = bestVectors[p - 1];
+                        p--;
+                    }
+                    bestScores[p] = score;
+                    bestVectors[p] = start + i;
+                }
+            }
+            // RVC weighting: 1/d^2 where d is the distance the search ranked
+            // by (here cosine). Clamp so an exact match cannot dominate to
+            // infinity and reduce the neighbourhood back to a single copy.
+            double weightSum = 0.0;
+            double[] weights = new double[neighbourCount];
+            for (int i = 0; i < neighbourCount; i++) {
+                if (bestVectors[i] < 0) {
+                    continue;
+                }
+                double distance = Math.max(1.0e-4, 1.0 - bestScores[i]);
+                weights[i] = 1.0 / (distance * distance);
+                weightSum += weights[i];
+            }
+            if (weightSum <= 0.0) {
+                continue;
+            }
             for (int j = 0; j < dimension; j++) {
-                frame[j] = (float) (frame[j] * keep + vectors.get() * rate);
+                double blended = 0.0;
+                for (int i = 0; i < neighbourCount; i++) {
+                    if (weights[i] <= 0.0) {
+                        continue;
+                    }
+                    blended += weights[i]
+                            * vectors.get(bestVectors[i] * dimension + j);
+                }
+                frame[j] = (float) (frame[j] * keep
+                        + (blended / weightSum) * rate);
             }
         }
+    }
+
+    /** Convenience overload when no voicing information is available. */
+    public void apply(float[][] content, double rate) {
+        apply(content, rate, null);
     }
 
     private static void normalizeInto(float[] frame, float[] out) {

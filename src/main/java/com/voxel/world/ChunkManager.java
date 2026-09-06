@@ -936,6 +936,16 @@ public class ChunkManager {
         this.fluidManager = fm;
     }
 
+    private RedstoneManager redstoneManager;
+
+    /**
+     * Sets the redstone manager so chunk loads can register loaded-from-save
+     * redstone components (wires, repeaters, comparators, torches, ...).
+     */
+    public void setRedstoneManager(RedstoneManager rm) {
+        this.redstoneManager = rm;
+    }
+
     // ══════════════════════════════════════════════════════════════════
     //  CHUNK MANAGEMENT — runs only on the gen thread
     // ══════════════════════════════════════════════════════════════════
@@ -2409,6 +2419,7 @@ public class ChunkManager {
      * Called from loadChunk() after disk-load and after procedural generation.
      */
     private void scheduleFluidsInColumn(int cx, int cz, NavigableMap<Integer, Integer> slots) {
+        scheduleRedstoneColumn(cx, cz, slots);
         if (fluidManager == null) return;
         int worldX = cx << 4;
         int worldZ = cz << 4;
@@ -2426,6 +2437,33 @@ public class ChunkManager {
                             || (blockId >= FluidManager.WATER_FLOWING_BASE && blockId <= FluidManager.WATER_FLOWING_MAX)
                             || blockId == FluidManager.LAVA) {
                             fluidManager.scheduleFluidOnChunkLoad(worldX + lx, worldY + ly, worldZ + lz, blockId);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Scans a freshly loaded column for redstone components and registers them
+     * with the RedstoneManager. Loaded-from-save blocks never trigger
+     * onBlockChanged(), so without this wires render dot-only and
+     * repeater/comparator outputs stay unset until a nearby block is edited.
+     */
+    private void scheduleRedstoneColumn(int cx, int cz, NavigableMap<Integer, Integer> slots) {
+        if (redstoneManager == null) return;
+        int worldX = cx << 4;
+        int worldZ = cz << 4;
+        for (Map.Entry<Integer, Integer> se : slots.entrySet()) {
+            int slot = se.getValue();
+            if (slot == World.EMPTY) continue;
+            int worldY = se.getKey() << 4;
+            for (int ly = 0; ly < 16; ly++) {
+                for (int lx = 0; lx < 16; lx++) {
+                    for (int lz = 0; lz < 16; lz++) {
+                        int blockId = world.getRawVoxelInSlot(slot, lx, ly, lz) & 0xFFFF;
+                        if (blockId != 0) {
+                            redstoneManager.registerLoadedComponent(worldX + lx, worldY + ly, worldZ + lz, blockId);
                         }
                     }
                 }

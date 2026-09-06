@@ -160,6 +160,11 @@ public class BlockDataManager {
         public List<float[]> aabbs = new ArrayList<>();
         // List of UVs for each face of each AABB (6 packed uints per AABB)
         public List<int[]> aabbUvs = new ArrayList<>();
+        // Optional per-AABB texture override: 6 texture indices per AABB
+        // (down, up, north, south, west, east). -1 = use the block's own face
+        // texture. Lets multi-part models (repeater/comparator torch sticks)
+        // carry a different texture than the block base.
+        public List<int[]> aabbTexOverrides = new ArrayList<>();
 
         /** Initializes a block with no textures. */
         public BlockData() {
@@ -212,7 +217,7 @@ public class BlockDataManager {
         Map<String, String> textureMap = new HashMap<>();
 
         // Recursively resolve the block's model hierarchy to find all textures.
-        resolveModelRecursive(name, modelsDir, textureMap, data);
+        resolveModelRecursive(name, modelsDir, textureMap, data, textureManager);
 
         // Map collected textures from the model to the 6 physical faces.
         String all = resolveTextureValue(textureMap.get("all"), textureMap);
@@ -333,6 +338,11 @@ public class BlockDataManager {
         }
         if (name.contains("redstone_dust") || name.equals("redstone_wire")) {
             data.effect = MaterialEffect.WIRE;
+            // Wires are a 1px-tall dust layer, never a full cube. The generic
+            // name check above only catches "dust" names, so "redstone_wire"
+            // (the registered name) would otherwise stay a full block and the
+            // raytracer would hit its full-cube branch before the 1px AABB.
+            data.isFullBlock = false;
         }
         applyMiningDefaults(name, data);
 
@@ -489,7 +499,7 @@ public class BlockDataManager {
      * inherits from 'cube').
      */
     private void resolveModelRecursive(String modelName, String modelsDir, Map<String, String> textureMap,
-            BlockData data) {
+            BlockData data, TextureManager textureManager) {
         // Strip any domain prefix (e.g., "minecraft:block/cube_all" -> "block/cube_all")
         if (modelName.contains(":")) {
             modelName = modelName.substring(modelName.lastIndexOf(':') + 1);
@@ -532,7 +542,7 @@ public class BlockDataManager {
                 }
                 if (!parent.equals("block/block") && !parent.equals("block/cube") && !parent.equals("block/cube_all")
                         && !parent.equals("block/cube_column") && !parent.equals("block/cube_bottom_top")) {
-                    resolveModelRecursive(parent, modelsDir, textureMap, data);
+                    resolveModelRecursive(parent, modelsDir, textureMap, data, textureManager);
                 }
             }
 
@@ -550,10 +560,13 @@ public class BlockDataManager {
                         aabb[j + 3] = (float) to.getDouble(j) / 16.0f;
                     data.aabbs.add(aabb);
 
-                    // Parse faces for UVs
+                    // Parse faces for UVs and optional per-face texture overrides
                     int[] uvs = new int[6];
-                    for (int j = 0; j < 6; j++)
+                    int[] texOvr = new int[6];
+                    for (int j = 0; j < 6; j++) {
                         uvs[j] = packUV(0, 0, 16, 16); // Default
+                        texOvr[j] = NO_AABB_TEX_OVERRIDE;
+                    }
                     if (el.has("faces")) {
                         JSONObject faces = el.getJSONObject("faces");
                         String[] names = { "down", "up", "north", "south", "west", "east" };
@@ -565,10 +578,23 @@ public class BlockDataManager {
                                     uvs[j] = packUV((int) Math.round(uv.getDouble(0)), (int) Math.round(uv.getDouble(1)),
                                             (int) Math.round(uv.getDouble(2)), (int) Math.round(uv.getDouble(3)));
                                 }
+                                // Per-AABB texture override: "texture": "#key" or a
+                                // concrete name resolved through the model's texture map.
+                                if (face.has("texture")) {
+                                    String ref = resolveTextureValue(face.getString("texture"), textureMap);
+                                    if (ref != null && !ref.startsWith("#")) {
+                                        if (ref.contains("/")) {
+                                            ref = ref.substring(ref.lastIndexOf('/') + 1);
+                                        }
+                                        int idx = textureManager.getTextureIndex(ref);
+                                        texOvr[j] = idx;
+                                    }
+                                }
                             }
                         }
                     }
                     data.aabbUvs.add(uvs);
+                    data.aabbTexOverrides.add(texOvr);
                 }
             }
 
@@ -672,6 +698,13 @@ public class BlockDataManager {
     }
 
     private int aabbUvTboId, aabbUvTextureId;
+    private int aabbTexTboId, aabbTexTextureId;
+    public static final int NO_AABB_TEX_OVERRIDE = -1;
+
+    /** @return The ID of the per-AABB texture override TBO, or 0 if no overrides exist. */
+    public int getAABBTexOverrideTextureId() {
+        return aabbTexTextureId;
+    }
 
     private void uploadAABBs(int maxId) {
         List<float[]> allAABBs = new ArrayList<>();
@@ -718,7 +751,6 @@ public class BlockDataManager {
                 uvBuffer.put(uv);
         }
         uvBuffer.flip();
-
         aabbUvTboId = glGenBuffers();
         glBindBuffer(GL_TEXTURE_BUFFER, aabbUvTboId);
         glBufferData(GL_TEXTURE_BUFFER, uvBuffer, GL_STATIC_DRAW);
@@ -728,6 +760,56 @@ public class BlockDataManager {
         glTexBuffer(GL_TEXTURE_BUFFER, GL_R32I, aabbUvTboId);
 
         MemoryUtil.memFree(uvBuffer);
+
+        // Per-AABB texture override buffer: 6 tex indices per AABB (R32I),
+        // -1 = use the block's own face texture. Only allocated when at least
+        // one block declares overrides, so the shader can bind texture unit 14
+        // unconditionally (an empty buffer = no overrides anywhere).
+        List<int[]> allTexOvr = new ArrayList<>();
+        int overrideCount = 0;
+        for (int id = 0; id <= maxId; id++) {
+            BlockData data = blockRegistry.get(id);
+            if (data == null) continue;
+            List<float[]> aabbs = data.aabbs;
+            if (aabbs == null || aabbs.isEmpty()) continue;
+            for (int i = 0; i < aabbs.size(); i++) {
+                int[] raw = (i < data.aabbTexOverrides.size())
+                        ? data.aabbTexOverrides.get(i)
+                        : null;
+                int[] ovr = new int[] { NO_AABB_TEX_OVERRIDE, NO_AABB_TEX_OVERRIDE, NO_AABB_TEX_OVERRIDE,
+                                        NO_AABB_TEX_OVERRIDE, NO_AABB_TEX_OVERRIDE, NO_AABB_TEX_OVERRIDE };
+                if (raw != null) {
+                    for (int j = 0; j < 6; j++) {
+                        // Only an override that differs from the block's own face
+                        // texture means something. Models that reference the same
+                        // texture per face (or special entity-sampled models like
+                        // the chest) keep the block-level behavior.
+                        if (raw[j] >= 0 && raw[j] != data.tex[j]) {
+                            ovr[j] = raw[j];
+                            overrideCount++;
+                        }
+                    }
+                }
+                allTexOvr.add(ovr);
+            }
+        }
+        IntBuffer texOvrBuffer = MemoryUtil.memAllocInt(Math.max(1, allTexOvr.size() * 6));
+        for (int[] ovr : allTexOvr) {
+            for (int t : ovr)
+                texOvrBuffer.put(t);
+        }
+        texOvrBuffer.flip();
+
+        aabbTexTboId = glGenBuffers();
+        glBindBuffer(GL_TEXTURE_BUFFER, aabbTexTboId);
+        glBufferData(GL_TEXTURE_BUFFER, texOvrBuffer, GL_STATIC_DRAW);
+
+        aabbTexTextureId = glGenTextures();
+        glBindTexture(GL_TEXTURE_BUFFER, aabbTexTextureId);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_R32I, aabbTexTboId);
+
+        MemoryUtil.memFree(texOvrBuffer);
+        glBindBuffer(GL_TEXTURE_BUFFER, 0);
 
         // Info buffer
         IntBuffer infoBuffer = MemoryUtil.memAllocInt((maxId + 1) * 2);

@@ -161,6 +161,7 @@ uniform isamplerBuffer u_BlockData;
 uniform samplerBuffer u_BlockAABBs;
 uniform isamplerBuffer u_BlockAABBInfo;
 uniform isamplerBuffer u_BlockAABBUVs;
+uniform isamplerBuffer u_BlockAABBTex;   // per-AABB texture override, 6 per AABB, -1 = block face texture
 uniform sampler2D u_BiomeMap;
 uniform sampler2D u_UITexture;
 uniform sampler2D u_UISource;
@@ -2256,6 +2257,14 @@ void main() {
                 }
                 tex = faceTex(texFace, d0, d1);
                 if (aabbIdx >= 0) {
+                    // Per-AABB texture override (repeater/comparator torch
+                    // sticks carry the redstone torch texture while the block
+                    // base keeps its slab faces). -1 = keep the block texture.
+                    int texOvr = texelFetch(u_BlockAABBTex, aabbIdx * 6 + face).r;
+                    if (texOvr >= 0) {
+                        tex = texOvr;
+                        texFace = face;
+                    }
                     // Use model-defined UVs from u_BlockAABBUVs for non-full blocks
                     vec3 bMin = texelFetch(u_BlockAABBs, aabbIdx * 2).xyz;
                     vec3 bMax = texelFetch(u_BlockAABBs, aabbIdx * 2 + 1).xyz;

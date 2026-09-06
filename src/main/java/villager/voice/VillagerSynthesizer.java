@@ -114,52 +114,28 @@ public final class VillagerSynthesizer implements AutoCloseable {
                 effectiveOptions.getEmotion());
         WavAudio converted = customVoice.convert(base, effectiveOptions.getEffectivePitchSemitones(),
                 effectiveOptions.getSinging(), effectiveOptions.getEmotion(),
-                effectiveOptions.getSarcasm(), effectiveOptions.isQuestion());
-        // Keep a substantial amount of the natural VITS source under RVC. A
-        // completely dry conversion is where the metallic/hacker quality is
-        // most apparent; the default profile supplies 40% natural body.
+                effectiveOptions.getSarcasm(), effectiveOptions.isQuestion(),
+                effectiveOptions.getEffectiveIndexRate());
+        // Artifact control now lives inside the RVC stage itself: the sinc
+        // resampler kills aliasing hiss at the source, top-8 retrieval removes
+        // the metallic per-frame timbre quantization, and unvoiced protect
+        // keeps consonants carried by the original encoder features.
         //
-        // The natural mix is applied in three stages:
-        // 1. Global blend (mixNaturalSource) — a baseline natural component
-        //    that preserves the base TTS prosody and timing.
-        // 2. Energy masking (applySourceEnergyMask) — fades the natural layer
-        //    out during pauses and weak consonants so it cannot restore a
-        //    continuously voiced carrier.
-        // 3. Unvoiced boost (applyUnvoicedSourceBoost) — crossfades extra
-        //    natural sibilance/frication through RVC-vulnerable regions.
-        mixNaturalSource(converted, base, effectiveOptions.getEffectiveNaturalSourceMix());
-        // Apply the source envelope after mixing so the natural VITS layer cannot
-        // restore a continuously voiced carrier during pauses.
-        WavAudio sourceAtOutputRate = base.resampled(converted.sampleRate);
-        AudioDsp.applySourceEnergyMask(converted.samples, sourceAtOutputRate.samples,
-                converted.sampleRate);
-        // Sibilants and fricatives survive RVC poorly; crossfade extra natural
-        // source through wherever the source is unvoiced and high-frequency.
-        // Voiced regions keep the full villager timbre. Lower cap to reduce
-        // harshness from high-frequency bleed.
-        AudioDsp.applyUnvoicedSourceBoost(converted.samples, sourceAtOutputRate.samples,
-                converted.sampleRate, effectiveOptions.getEffectiveNaturalSourceMix(),
-                0.60);
-        // Clean RVC hiss/rumble after source mixing so both the converted and
-        // natural layers receive the same gentle denoise and smoothing pass.
-        AudioDsp.applySpeechDenoise(converted.samples, converted.sampleRate);
+        // The previous downstream band-aids are deliberately gone: the 40%
+        // natural-carrier mix dulled the timbre back toward the base TTS, and
+        // the denoise/notch chain (including notches at 500/800 Hz, right in
+        // the villager formant band) flattened the voice it was trying to
+        // clean. Adding DSP after a clean conversion can only make it worse.
         AudioDsp.fadeEdges(converted.samples,
                 Math.min(converted.sampleRate / 100, converted.samples.length / 5));
+        // Cut the vocoder's frame-rate comb whine before tone shaping so the
+        // tilt does not push the whine further above the noise floor.
+        AudioDsp.applyCombWhineCleanup(converted.samples, converted.sampleRate);
         AudioDsp.applyToneTilt(converted.samples, effectiveOptions.getEffectiveSpectralTilt());
         AudioDsp.normalizePeak(converted.samples, PEAK_CEILING);
         AudioDsp.applyGain(converted.samples, effectiveOptions.getEffectiveVolume());
         AudioDsp.normalizePeak(converted.samples, 0.98f);
         return converted.resampled(DEFAULT_SAMPLE_RATE);
-    }
-
-    private static void mixNaturalSource(WavAudio converted, WavAudio base, double mix) {
-        double naturalMix = Math.max(0.0, Math.min(0.5, mix));
-        WavAudio natural = base.resampled(converted.sampleRate);
-        int count = Math.min(converted.samples.length, natural.samples.length);
-        for (int i = 0; i < count; i++) {
-            converted.samples[i] = converted.samples[i] * (float) (1.0 - naturalMix)
-                    + natural.samples[i] * (float) naturalMix;
-        }
     }
 
     @Override

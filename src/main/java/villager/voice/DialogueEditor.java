@@ -51,7 +51,7 @@ public final class DialogueEditor {
     private final JSlider pitch = slider(-120, 120, 0);
     private final JSlider volume = slider(0, 200, 100);
     private final JSlider tone = slider(-100, 100, 0);
-    private final JSlider natural = slider(0, 50, 36);
+    private final JSlider natural = slider(0, 75, 55);
     private final JSlider singing = slider(0, 100, 0);
     private final JSlider sarcasm = slider(0, 100, 0);
     private final JCheckBox question = new JCheckBox("Question / rising ending");
@@ -127,8 +127,10 @@ public final class DialogueEditor {
                 "Output loudness; 100% is unchanged."));
         controls.add(row("Mood", tone, "%+.2f", 100.0,
                 "-1 serious/weighty, 0 neutral, +1 joking/playful."));
-        controls.add(row("Natural source", natural, "%.0f%%", 1.0,
-                "Natural VITS body under RVC; more is less synthetic."));
+        controls.add(row("Timbre strength", natural, "%.0f%%", 1.0,
+                "RVC retrieval weight (index rate): how strongly each frame blends toward "
+                + "real villager training segments. 0% pure base voice; higher sounds more "
+                + "like the villager, above ~75% artifacts return."));
         controls.add(row("Singing", singing, "%.0f%%", 1.0,
                 "0% spoken; 100% adds the strongest musical pitch movement."));
         controls.add(row("Sarcasm", sarcasm, "%.0f%%", 1.0,
@@ -215,7 +217,7 @@ public final class DialogueEditor {
         pitch.setValue((int) Math.round(o.getPitchSemitones() * 10));
         volume.setValue((int) Math.round(o.getVolume() * 100));
         tone.setValue((int) Math.round(o.getTone() * 100));
-        natural.setValue((int) Math.round(o.getNaturalSourceMix() * 100));
+        natural.setValue((int) Math.round(o.getEffectiveIndexRate() * 100));
         singing.setValue((int) Math.round(o.getSinging() * 100));
         sarcasm.setValue((int) Math.round(o.getSarcasm() * 100));
         question.setSelected(o.isQuestion());
