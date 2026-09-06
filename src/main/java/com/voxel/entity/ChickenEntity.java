@@ -18,6 +18,11 @@ public class ChickenEntity extends FarmAnimalEntity {
     }
 
     @Override
+    protected String[][] deathLoot() {
+        return new String[][] { { "chicken", "2" }, { "feather", "2" } };
+    }
+
+    @Override
     public void update(float dt) {
         super.update(dt);
         float flap = (float) Math.sin(animTime * 8.0f) * 12.0f;

@@ -110,6 +110,11 @@ public class GameContext {
     public volatile double endReturnX, endReturnZ, endReturnY;
     /** Restored inventory: slot -> item stack (may be null entries). */
     public volatile ItemDefinitions.ItemStack[] loadInventory;
+    /** Equipped armor (slot 0-3) restored from a save. */
+    public volatile ItemDefinitions.ItemStack[] loadArmor;
+    /** Food bar / saturation restored from a save. */
+    public float loadHunger = 20.0f;
+    public float loadSaturation = 5.0f;
 
     // ── UI theme ──
     public enum UiTheme { LIGHT, DARK }

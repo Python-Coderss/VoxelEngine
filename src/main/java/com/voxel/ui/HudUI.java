@@ -95,6 +95,9 @@ public class HudUI {
     public UILayer.UITextElement itemNameElement;
     public final UILayer.UIElement[] slotBackgrounds = new UILayer.UIElement[Main.INVENTORY_SIZE];
     public final UILayer.UIElement[] slotItemElements     = new UILayer.UIElement[Main.INVENTORY_SIZE];
+    /** Four armor-equipment slots shown below the inventory grid when open. */
+    public final UILayer.UIElement[] armorSlotBackgrounds = new UILayer.UIElement[4];
+    public final UILayer.UIElement[] armorSlotItems       = new UILayer.UIElement[4];
     public final UILayer.UIElement[] slotCountBars        = new UILayer.UIElement[Main.INVENTORY_SIZE];
     public final UILayer.UIElement[] slotCountDigit1      = new UILayer.UIElement[Main.INVENTORY_SIZE];
     public final UILayer.UIElement[] slotCountDigit2      = new UILayer.UIElement[Main.INVENTORY_SIZE];
@@ -140,6 +143,10 @@ public class HudUI {
 
     public final UILayer.UIElement[] playerHearts = new UILayer.UIElement[10];
     public final UILayer.UIElement[] heartBases   = new UILayer.UIElement[10];
+    /** Hunger bar: drumstick icons under/right of the hearts (0-20 food). */
+    public final UILayer.UIElement[] foodIcons  = new UILayer.UIElement[10];
+    /** Armor bar: chestplate icons above the hearts (0-20 armor points). */
+    public final UILayer.UIElement[] armorIcons = new UILayer.UIElement[10];
 
     public UILayer.UITextElement commandTextElement;
     public UILayer.UITextElement statusTextElement;
@@ -196,6 +203,8 @@ public class HudUI {
     public boolean prevMapOpenForUi = false;
     public int prevSelectedSlot = -1;
     public float prevHealth = -1;
+    public float prevFood = -1;
+    public int prevArmor = -1;
 
     public Vector4f uvHeartFull  = new Vector4f(99, 2, 7, 7);
     public Vector4f uvHeartHalf  = new Vector4f(108, 2, 7, 7);
@@ -589,6 +598,38 @@ public class HudUI {
             layer.addElement(digit2);
         }
 
+        // Armor equipment slots: a single row under the inventory grid
+        // (helmet, chestplate, leggings, boots). Only shown while the
+        // inventory is open; worn items are rendered on top.
+        int armorY = Main.HOTBAR_Y + Main.HOTBAR_SIZE * Main.SLOT_H + 16;
+        for (int i = 0; i < 4; i++) {
+            float ax = Main.HOTBAR_X + i * (Main.SLOT_W + 12);
+            UILayer.UIElement bg = new UILayer.UIElement(
+                new Vector2f(ax, armorY),
+                new Vector2f(Main.SLOT_W, Main.SLOT_H),
+                new Vector4f(0.9f, 0.9f, 0.9f, 1)
+            );
+            if (uiTextureId != 0) {
+                bg.textureId = uiTextureId;
+                bg.uvOffset = new Vector2f(halfU, halfV);
+                bg.uvScale = new Vector2f(uScaleInset, vScaleInset);
+            }
+            final int armorSlot = i;
+            bg.onClick = () -> { playerInventory.handleArmorSlotClick(armorSlot); inventoryUiDirty = true; };
+            bg.visible = false;
+            armorSlotBackgrounds[i] = bg;
+            layer.addElement(bg);
+
+            UILayer.UIElement itemEl = new UILayer.UIElement(
+                new Vector2f(ax + 24, armorY + 16),
+                new Vector2f(40, 40),
+                new Vector4f(0, 0, 0, 0)
+            );
+            itemEl.visible = false;
+            armorSlotItems[i] = itemEl;
+            layer.addElement(itemEl);
+        }
+
         hotbarActiveElement = new UILayer.UIElement(
             new Vector2f(Main.HOTBAR_X, Main.HOTBAR_Y + playerInventory.getSelectedSlot() * Main.SLOT_H),
             new Vector2f(Main.SLOT_W, Main.SLOT_H),
@@ -634,6 +675,26 @@ public class HudUI {
             playerHearts[i].textureId = uiTextureId;
             playerHearts[i].visible = true;
             layer.addElement(playerHearts[i]);
+        }
+
+        // Food bar icons (right of the hearts, same row). Icons are applied at
+        // refresh time from the item atlas (cooked_chicken = drumstick look).
+        for (int i = 0; i < 10; i++) {
+            foodIcons[i] = new UILayer.UIElement(
+                new Vector2f(Main.HOTBAR_X + 10 * 30 + 18 + i * 30, Main.HOTBAR_Y - 30),
+                new Vector2f(21, 21),
+                new Vector4f(1, 1, 1, 1)
+            );
+            foodIcons[i].visible = false;
+            layer.addElement(foodIcons[i]);
+
+            armorIcons[i] = new UILayer.UIElement(
+                new Vector2f(Main.HOTBAR_X + i * 30, Main.HOTBAR_Y - 30 - 30),
+                new Vector2f(21, 21),
+                new Vector4f(1, 1, 1, 1)
+            );
+            armorIcons[i].visible = false;
+            layer.addElement(armorIcons[i]);
         }
 
         // Furnace UI: derive the origin from the panel bounds instead of the
@@ -1344,6 +1405,8 @@ public class HudUI {
         boolean mapForceRefresh = ctx.mapOpen;
         if (!mapForceRefresh && !inventoryUiDirty && main.inventoryOpen == prevInventoryOpenForUi && main.commandMode == prevCommandModeForUi
                 && selSlot == prevSelectedSlot && Math.abs(hp - prevHealth) < 0.05f
+                && main.player.getHunger() == prevFood
+                && main.player.getArmorPoints() == prevArmor
                 && ctx.mapOpen == prevMapOpenForUi) {
             return;
         }
@@ -1353,6 +1416,8 @@ public class HudUI {
         prevMapOpenForUi = ctx.mapOpen;
         prevSelectedSlot = selSlot;
         prevHealth = hp;
+        prevFood = main.player.getHunger();
+        prevArmor = main.player.getArmorPoints();
         double time = glfwGetTime();
         // NOTE: the virtual cursor (crosshairElement) is positioned every
         // frame in updateBillboards(), NOT here — updateInventoryUi has an
@@ -1840,6 +1905,36 @@ public class HudUI {
             }
         }
 
+        // ── Armor equipment slots ──
+        for (int i = 0; i < 4; i++) {
+            boolean visible = main.inventoryOpen;
+            armorSlotBackgrounds[i].visible = visible;
+            UILayer.UIElement aEl = armorSlotItems[i];
+            if (!visible) {
+                aEl.visible = false;
+                continue;
+            }
+            ItemStack worn = playerInventory.getArmorSlot(i);
+            if (worn == null) {
+                aEl.visible = false;
+                continue;
+            }
+            ItemDefinition wornDef = itemDefinitions.getDefinition(worn.itemId);
+            if (wornDef == null || wornDef.iconLayer < 0) {
+                aEl.visible = false;
+                continue;
+            }
+            aEl.visible = true;
+            applyItemIcon(aEl, wornDef);
+            aEl.color.set(1, 1, 1, 1);
+            if (armorSlotBackgrounds[i].isPointInside(main.lastMouseX, main.lastMouseY)) {
+                itemNameElement.text = wornDef.displayName;
+                itemNameElement.visible = true;
+                itemNameElement.color.w = 1.0f;
+                itemNameDisplayUntil = time + 0.1;
+            }
+        }
+
         if (itemNameDisplayUntil > time) {
             itemNameElement.visible = true;
             float alpha = (float) Math.min(1.0, (itemNameDisplayUntil - time) / 0.5);
@@ -1887,6 +1982,40 @@ public class HudUI {
 
         // Update Player Hearts
         hp = main.player.getHealth();
+        float foodBar = main.player.getHunger();
+        int armorBar = main.player.getArmorPoints();
+
+        // Hunger bar (10 drumstick icons, 2 food points each)
+        ItemDefinition foodDef = itemDefinitions.getDefinition("cooked_chicken");
+        for (int i = 0; i < 10; i++) {
+            float foodValue = foodBar - (i * 2);
+            UILayer.UIElement food = foodIcons[i];
+            if (foodValue < 1.0f || foodDef == null || foodDef.iconLayer < 0) {
+                food.visible = false;
+                continue;
+            }
+            food.visible = !main.commandMode;
+            applyItemIcon(food, foodDef);
+            // Full icons are bright; the half drumstick is dimmed like
+            // Minecraft's half-hunger icon.
+            food.color.set(1, 1, 1, 1);
+            if (foodValue < 2.0f) food.color.set(0.55f, 0.55f, 0.55f, 1.0f);
+        }
+
+        // Armor bar (10 chestplate icons, 2 armor points each; hidden when bare)
+        ItemDefinition armorDef = itemDefinitions.getDefinition("iron_chestplate");
+        for (int i = 0; i < 10; i++) {
+            int armorValue = armorBar - (i * 2);
+            UILayer.UIElement armor = armorIcons[i];
+            if (armorBar <= 0 || armorValue < 1 || armorDef == null || armorDef.iconLayer < 0) {
+                armor.visible = false;
+                continue;
+            }
+            armor.visible = !main.commandMode;
+            applyItemIcon(armor, armorDef);
+            armor.color.set(1, 1, 1, 1);
+            if (armorValue < 2) armor.color.set(0.55f, 0.55f, 0.55f, 1.0f);
+        }
         for (int i = 0; i < 10; i++) {
             float texW = uiTextureSize.x;
             float texH = uiTextureSize.y;

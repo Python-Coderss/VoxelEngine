@@ -29,4 +29,9 @@ public class FlyingCowEntity extends AetherPassiveEntity {
             rw.rotation.z = -flap;
         }
     }
+
+    @Override
+    protected String[][] deathLoot() {
+        return new String[][] { { "beef", "3" }, { "leather", "2" } };
+    }
 }

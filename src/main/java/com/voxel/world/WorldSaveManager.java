@@ -463,7 +463,10 @@ public class WorldSaveManager {
         public double x, y, z;
         public float yaw, pitch;
         public float health;
+        public float hunger = 20.0f;
+        public float saturation = 5.0f;
         public ItemDefinitions.ItemStack[] inventory = new ItemDefinitions.ItemStack[PlayerInventory.INVENTORY_SIZE];
+        public ItemDefinitions.ItemStack[] armor = new ItemDefinitions.ItemStack[com.voxel.game.ArmorValues.ARMOR_SLOT_COUNT];
     }
 
     /** Writes level.dat with world metadata + the current player state. */
@@ -489,6 +492,8 @@ public class WorldSaveManager {
                 playerJson.put("yaw", ctx.yaw);
                 playerJson.put("pitch", ctx.pitch);
                 playerJson.put("health", player.getHealth());
+                playerJson.put("hunger", player.getHunger());
+                playerJson.put("saturation", player.getSaturation());
                 playerJson.put("dimension", ctx.activeDimension.name());
             }
             JSONArray invJson = new JSONArray();
@@ -505,6 +510,21 @@ public class WorldSaveManager {
                 }
             }
             playerJson.put("inventory", invJson);
+
+            // Equipped armor pieces (helmet/chestplate/leggings/boots).
+            JSONArray armorJson = new JSONArray();
+            if (inventory != null) {
+                for (int i = 0; i < com.voxel.game.ArmorValues.ARMOR_SLOT_COUNT; i++) {
+                    ItemDefinitions.ItemStack stack = inventory.getArmorSlot(i);
+                    if (stack == null) continue;
+                    JSONObject s = new JSONObject();
+                    s.put("slot", i);
+                    s.put("item", stack.itemId);
+                    s.put("count", stack.count);
+                    armorJson.put(s);
+                }
+            }
+            playerJson.put("armor", armorJson);
             root.put("player", playerJson);
 
             try (Writer w = new OutputStreamWriter(new FileOutputStream(file), "UTF-8")) {
@@ -540,6 +560,8 @@ public class WorldSaveManager {
             ps.z = playerJson.optDouble("z", 0);                ps.yaw = (float) playerJson.optDouble("yaw", -90);
                 ps.pitch = (float) playerJson.optDouble("pitch", 0);
                 ps.health = (float) playerJson.optDouble("health", 20);
+                ps.hunger = (float) playerJson.optDouble("hunger", 20);
+                ps.saturation = (float) playerJson.optDouble("saturation", 5);
                 // Keep the saved dimension separate from the active dimension
                 // until Main has built the correct world/chunk manager.
                 String savedDimension = playerJson.optString("dimension", DimensionType.OVERWORLD.name);
@@ -558,6 +580,16 @@ public class WorldSaveManager {
                         s.optString("item", ""), s.optInt("count", 1));
                     stack.durability = s.optInt("durability", 0);
                     ps.inventory[slot] = stack;
+                }
+            }
+            JSONArray armorJson = playerJson.optJSONArray("armor");
+            if (armorJson != null) {
+                for (int i = 0; i < armorJson.length(); i++) {
+                    JSONObject s = armorJson.getJSONObject(i);
+                    int slot = s.optInt("slot", -1);
+                    if (slot < 0 || slot >= ps.armor.length) continue;
+                    ps.armor[slot] = new ItemDefinitions.ItemStack(
+                        s.optString("item", ""), Math.max(1, s.optInt("count", 1)));
                 }
             }
             return ps;

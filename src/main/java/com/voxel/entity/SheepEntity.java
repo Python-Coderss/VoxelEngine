@@ -48,4 +48,12 @@ public class SheepEntity extends FarmAnimalEntity {
     public void toggleSheared() {
         setSheared(!sheared);
     }
+
+    @Override
+    protected String[][] deathLoot() {
+        // Woolly sheep drop their fleece; sheared ones only meat.
+        return sheared
+                ? new String[][] { { "mutton", "2" } }
+                : new String[][] { { "mutton", "2" }, { "wool", "1" } };
+    }
 }

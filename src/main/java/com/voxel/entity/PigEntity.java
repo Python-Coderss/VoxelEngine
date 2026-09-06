@@ -11,4 +11,9 @@ public class PigEntity extends FarmAnimalEntity {
                 "src/main/resources/assets/minecraft/models/entity/pig.json",
                 "leg_1", "leg_2", "leg_3", "leg_4");
     }
+
+    @Override
+    protected String[][] deathLoot() {
+        return new String[][] { { "porkchop", "3" } };
+    }
 }

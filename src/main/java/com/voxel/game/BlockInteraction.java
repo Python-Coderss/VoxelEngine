@@ -230,6 +230,23 @@ public class BlockInteraction {
                                 new Vector3f(0.05f * damageMult, 0.10f, 0.05f * damageMult));
                         damaged = true;
                     }
+                    // Passive livestock + Aether wildlife: hurt, panic-flee, and
+                    // drop meat when killed.
+                    if (target instanceof com.voxel.entity.FarmAnimalEntity
+                            || target instanceof com.voxel.entity.AetherPassiveEntity) {
+                        Vector3f aPos = target.getPosition();
+                        Vector3f pPos = ctx.player.getPosition();
+                        float dx = aPos.x - pPos.x;
+                        float dz = aPos.z - pPos.z;
+                        float len = (float) Math.sqrt(dx * dx + dz * dz);
+                        if (len > 0.0001f) { dx /= len; dz /= len; }
+                        if (target instanceof com.voxel.entity.FarmAnimalEntity) {
+                            ((com.voxel.entity.FarmAnimalEntity) target).damage(swingDamage, dx, dz);
+                        } else {
+                            ((com.voxel.entity.AetherPassiveEntity) target).damage(swingDamage, dx, dz);
+                        }
+                        damaged = true;
+                    }
                     // Boss-specific onPunch hooks.
                     if (target instanceof com.voxel.entity.EnderDragonEntity) {
                         ((com.voxel.entity.EnderDragonEntity) target).onPunch();
@@ -468,10 +485,34 @@ public class BlockInteraction {
         }
 
         if (collectDrop) {
+            // Levers/buttons/plates always drop their item, in both states.
+            String switchDrop = com.voxel.game.RedstoneSwitches.dropItem(blockId);
+            if (switchDrop != null) {
+                if (ctx.droppedItemManager != null) {
+                    ctx.droppedItemManager.spawn(switchDrop, 1, x, y, z);
+                }
+                return;
+            }
+
             // Minecraft harvest check: wrong tool class or insufficient tier = no drop
             if (!canHarvestBlock(blockId)) {
                 ctx.setStatus("Need a better tool to mine this");
                 return; // No drop if the block can't be harvested
+            }
+
+            // Ripe wheat drops grain + seeds; immature plants drop only seeds.
+            if (com.voxel.game.FarmBlocks.isWheat(blockId)) {
+                if (ctx.droppedItemManager != null) {
+                    int stage = com.voxel.game.FarmBlocks.wheatStage(blockId);
+                    if (stage >= 7) {
+                        ctx.droppedItemManager.spawn("wheat", 1, x, y, z);
+                        int extra = new java.util.Random().nextInt(3); // 0-2 extra seeds
+                        if (extra > 0) ctx.droppedItemManager.spawn("wheat_seeds", extra, x, y, z);
+                    } else {
+                        ctx.droppedItemManager.spawn("wheat_seeds", 1, x, y, z);
+                    }
+                }
+                return;
             }
 
             String dropItem;
@@ -674,6 +715,8 @@ public class BlockInteraction {
         if (blockId == 2) return "cobblestone";
         if (blockId == 26) return "redstone_wire";
         if (blockId == 85) return "lapis_ore";
+        // Farmland reverts to dirt when broken.
+        if (blockId == 906 || blockId == 907) return "dirt";
         // Proper progression: coal and diamond ores drop their material, not the block
         if (blockId == 61) return "coal";
         if (blockId == 83) return "diamond";
@@ -1016,6 +1059,8 @@ public class BlockInteraction {
                     if (held.count <= 0) ctx.playerInventory.clearSlot(ctx.playerInventory.getSelectedSlot());
                     return;
                 }
+                // Right-click on empty space with a food item: eat.
+                if (tryEatFood()) return;
                 return;
             }
         }
@@ -1325,6 +1370,33 @@ public class BlockInteraction {
             return true;
         }
 
+        // ── TNT: ignite with flint and steel (or a fire charge) ──
+        if (!ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive && !ctx.furnaceCutsceneActive
+                && com.voxel.game.TntBlock.isTnt(hitBlock)) {
+            ItemDefinitions.ItemStack held = ctx.playerInventory.getSelected();
+            if (held != null && ("flint_and_steel".equals(held.itemId) || "fire_charge".equals(held.itemId))) {
+                if (com.voxel.game.TntBlock.ignite(ctx.world, hit[0], hit[1], hit[2])) {
+                    ctx.setStatus("TNT primed — stand back!");
+                    return true;
+                }
+            }
+        }
+
+        // ── Redstone lever / button: pull the lever, press the button ──
+        if (!ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive && !ctx.furnaceCutsceneActive
+                && (com.voxel.game.RedstoneSwitches.isLever(hitBlock) || com.voxel.game.RedstoneSwitches.isButton(hitBlock))) {
+            // A pressed button is already on — clicking again does nothing (vanilla).
+            if (com.voxel.game.RedstoneSwitches.isOn(hitBlock)) return true;
+            int raw = ctx.world.getRawVoxel(hit[0], hit[1], hit[2]);
+            int face = (raw >> 16) & 0x7;
+            int nextId = com.voxel.game.RedstoneSwitches.onId(hitBlock);
+            ctx.chunkManager.setVoxelWithData(hit[0], hit[1], hit[2], nextId, face);
+            ctx.redstoneManager.onSwitchToggled(hit[0], hit[1], hit[2], nextId);
+            ctx.setStatus(com.voxel.game.RedstoneSwitches.isLever(hitBlock)
+                    ? "Flipped lever" : "Button pressed");
+            return true;
+        }
+
         return false;
     }
 
@@ -1428,6 +1500,39 @@ public class BlockInteraction {
         }
         // ── End bucket interaction ──
 
+        // ── Hoe: till dirt/grass into farmland (no item consumed, like vanilla) ──
+        if (selected.itemId.contains("hoe")
+                && FarmBlocks.isTillable(hitBlock, ctx.blockDataManager)) {
+            int fx = hit[0], fy = hit[1], fz = hit[2];
+            if (!ctx.chunkManager.setVoxel(fx, fy, fz, FarmBlocks.farmlandIdFor(ctx.world, fx, fy, fz))) {
+                ctx.setStatus("Can't till this block");
+                return;
+            }
+            notifyManagersOfBlockChange(fx, fy, fz);
+            ctx.setStatus("Tilled soil");
+            return;
+        }
+
+        // ── Wheat seeds: plant a crop on the farmland we are looking at ──
+        if (selected.itemId.equals("wheat_seeds")
+                && FarmBlocks.isFarmland(hitBlock)) {
+            int px2 = hit[0], py2 = hit[1] + 1, pz2 = hit[2];
+            if (ctx.world.getVoxel(px2, py2, pz2) != 0) {
+                ctx.setStatus("Blocked above the soil");
+                return;
+            }
+            if (intersectsPlayer(px2, py2, pz2)) return;
+            if (!ctx.chunkManager.setVoxel(px2, py2, pz2, FarmBlocks.BLOCK_WHEAT_0)) return;
+            notifyManagersOfBlockChange(px2, py2, pz2);
+            if (ctx.gameMode == GameMode.SURVIVAL) {
+                selected.count--;
+                if (selected.count <= 0) ctx.playerInventory.setSlot(ctx.playerInventory.getSelectedSlot(), null);
+            }
+            if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
+            ctx.setStatus("Planted wheat");
+            return;
+        }
+
         // ── Minecart item: spawn a cart entity on the target rail (not a block) ──
         if (def.id.equals("minecart")) {
             int px = hit[3], py = hit[4], pz = hit[5];
@@ -1450,6 +1555,9 @@ public class BlockInteraction {
         }
 
         if (def.kind != ItemDefinitions.ItemKind.BLOCK) {
+            // Food items (and future use-items) are consumed by right-click
+            // instead of being treated as un-placeable.
+            if (tryEatFood()) return;
             ctx.setStatus("Select a block item to place");
             return;
         }
@@ -1541,6 +1649,11 @@ public class BlockInteraction {
             // Comparator: horizontal facing from the clicked face, compare mode
             int dir = horizontalFacing(hit, px, py, pz);
             if (!ctx.chunkManager.setVoxelWithData(px, py, pz, 337 + dir - 2, 0)) return;
+        } else if (com.voxel.game.RedstoneSwitches.isSwitchBlock(placeBlockId)) {
+            // Lever / button / pressure plate: mount on the clicked block's
+            // face. The mount face is stored in the voxel extra bits so state
+            // swaps (off <-> on) keep it.
+            if (!placeSwitch(px, py, pz, placeBlockId, hit)) return;
         } else {
             if (!ctx.chunkManager.setVoxel(px, py, pz, placeBlockId)) return;
         }
@@ -1573,6 +1686,33 @@ public class BlockInteraction {
             if (selected.count <= 0) ctx.playerInventory.setSlot(ctx.playerInventory.getSelectedSlot(), null);
         }
         if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
+    }
+
+    /**
+     * Eats the food in the selected slot when possible. Returns true when the
+     * click should be consumed (food eaten, or food held but uneatable).
+     * Placeable block foods (melon) are never eaten here — they fall through
+     * to the normal placement path, matching Minecraft's ItemBlock behavior.
+     */
+    private boolean tryEatFood() {
+        ItemDefinitions.ItemStack selected = ctx.playerInventory.getSelected();
+        if (selected == null || !com.voxel.game.FoodValues.isFood(selected.itemId)) return false;
+        ItemDefinitions.ItemDefinition def = ctx.itemDefinitions.getDefinition(selected.itemId);
+        if (def != null && def.kind == ItemDefinitions.ItemKind.BLOCK && def.blockId > 0) return false;
+
+        if (!ctx.player.eatFood(
+                com.voxel.game.FoodValues.hunger(selected.itemId),
+                com.voxel.game.FoodValues.saturationRatio(selected.itemId))) {
+            ctx.setStatus("You are too full to eat");
+            return true;
+        }
+        if (ctx.gameMode == GameContext.GameMode.SURVIVAL) {
+            selected.count--;
+            if (selected.count <= 0) ctx.playerInventory.clearSlot(ctx.playerInventory.getSelectedSlot());
+        }
+        if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
+        ctx.setStatus("Ate " + selected.itemId.replace('_', ' '));
+        return true;
     }
 
     /**
@@ -1746,6 +1886,27 @@ public class BlockInteraction {
         if (dz > 0) return 3;
         if (dz < 0) return 2;
         return 2;
+    }
+
+    /**
+     * Places a redstone switch (lever/button/plate) onto the clicked block's
+     * face. Returns false (no block placed) when the mount is missing or a
+     * pressure plate is asked to hang on anything but a block top.
+     */
+    private boolean placeSwitch(int px, int py, int pz, int blockId, int[] hit) {
+        boolean plate = com.voxel.game.RedstoneSwitches.isPressurePlate(blockId);
+        // Pressure plates sit flat: only the top face of the block below works.
+        if (plate && (hit[0] != px || hit[1] + 1 != py || hit[2] != pz)) {
+            ctx.setStatus("Place the pressure plate on top of a block");
+            return false;
+        }
+        int mountBlock = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
+        if (mountBlock == 0) {
+            ctx.setStatus("Nothing to mount the switch on");
+            return false;
+        }
+        int face = facingFromClickedFace(hit, px, py, pz);
+        return ctx.chunkManager.setVoxelWithData(px, py, pz, blockId, face);
     }
 
     public int[] raycastBlock(float maxDist) {

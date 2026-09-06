@@ -897,6 +897,12 @@ public class BlockDataManager {
         if (data != null) data.miningTier = tier;
     }
 
+    /** Overrides the block's hardness (seconds with a bare hand, 0 = instant). */
+    public void setHardness(int blockId, float hardness) {
+        BlockData data = blockRegistry.get(blockId);
+        if (data != null) data.hardness = Math.max(0.0f, hardness);
+    }
+
     /**
      * Overrides whether the block occupies the full voxel space. Non-full blocks
      * render through their model-defined AABBs and let light pass through them

@@ -25,6 +25,62 @@ public abstract class AetherPassiveEntity extends Entity {
     protected float flyMinY = 90f, flyMaxY = 120f;
     protected float moveSpeed = 0.9f;
 
+    // ── Health / damage (Aether wildlife is huntable for loot) ──
+    protected float health = 10.0f;
+    protected float maxHealth = 10.0f;
+    private boolean dead = false;
+    public float hitFlashTime = 0.0f;
+    /** Frames left in the panic run; 0 = calm wandering. */
+    private int fleeTimer = 0;
+    private float fleeYaw = 0.0f;
+
+    /** Runtime hook so Main can route drops into DroppedItemManager. */
+    public interface DropSpawner {
+        void spawn(String itemId, int count, float x, float y, float z);
+    }
+    private static volatile DropSpawner dropSpawner;
+
+    public static void setDropSpawner(DropSpawner spawner) { dropSpawner = spawner; }
+
+    public float getHealth() { return health; }
+    public float getMaxHealth() { return maxHealth; }
+    public boolean isDead() { return dead; }
+
+    /** Passive wildlife: hurt flash, panic flee, death with item drops. */
+    public void damage(float amount, float dirX, float dirZ) {
+        if (dead) return;
+        health -= amount;
+        hitFlashTime = 0.35f;
+        if ((dirX != 0.0f || dirZ != 0.0f) && !dead) {
+            fleeYaw = (float) Math.atan2(dirX, dirZ);
+            fleeTimer = 120; // ~2 s of panic
+        }
+        if (health <= 0.0f) die();
+    }
+
+    /** Item drops on death: {itemId, maxRoll}, engine drops 1..maxRoll. */
+    protected String[][] deathLoot() { return null; }
+
+    private void die() {
+        if (dead) return;
+        dead = true;
+        rotation.x = 78.0f;
+        DropSpawner spawner = dropSpawner;
+        if (spawner == null) return;
+        String[][] loot = deathLoot();
+        if (loot == null) return;
+        float x = getPosX(), y = getPosY() + 0.4f, z = getPosZ();
+        for (String[] entry : loot) {
+            if (entry == null || entry.length < 2) continue;
+            int max = Math.max(1, Integer.parseInt(entry[1]));
+            int count = 1 + random.nextInt(max);
+            spawner.spawn(entry[0], count, x, y, z);
+        }
+    }
+
+    /** Persistence hook: restore saved health. */
+    public void restoreHealth(float h) { health = Math.max(1.0f, Math.min(h, maxHealth)); }
+
     protected AetherPassiveEntity(int id, Vector3f position,
                                   com.voxel.utils.TextureManager textureManager,
                                   String modelPath) {
@@ -39,13 +95,23 @@ public abstract class AetherPassiveEntity extends Entity {
         super.update(dt);
         animTime += dt;
         snapshotPrev();
+        if (hitFlashTime > 0.0f) hitFlashTime -= dt;
+        if (dead) return;
 
         wanderTimer -= dt;
         if (wanderTimer <= 0.0f) {
-            wanderTimer = 1.5f + random.nextFloat() * 3.5f;
-            wanderYaw = (random.nextFloat() < 0.35f)
-                    ? Float.NaN
-                    : random.nextFloat() * (float) Math.PI * 2.0f;
+            if (fleeTimer > 0) {
+                fleeTimer--;
+                wanderYaw = fleeYaw;
+                wanderTimer = 0.2f; // keep the panic heading
+                moveSpeed = 2.2f;
+            } else {
+                wanderTimer = 1.5f + random.nextFloat() * 3.5f;
+                wanderYaw = (random.nextFloat() < 0.35f)
+                        ? Float.NaN
+                        : random.nextFloat() * (float) Math.PI * 2.0f;
+                moveSpeed = 0.9f;
+            }
         }
 
         boolean moved = false;

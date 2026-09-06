@@ -84,6 +84,25 @@ public class Player {
 
     // Health / death / spawn
     private float health = 20.0f;
+
+    // ── Hunger (survival mode) ──
+    // Minecraft semantics: hunger (0-20) is the food bar; saturation is eaten
+    // first before the hunger bar drops; exhaustion accumulates from actions
+    // and converts 4:1 into saturation/hunger loss. Natural regen requires
+    // hunger >= 18; starving at hunger 0 drains health.
+    private float hunger = 20.0f;
+    private float saturation = 5.0f;
+    private float exhaustion = 0.0f;
+    private int foodTimer = 0;
+    /** Hunger/regen tick only runs in survival; Main flips this each frame. */
+    private boolean survivalActive = true;
+
+    // ── Armor ──
+    // Total armor points (0-20) derived from equipped pieces. Main refreshes
+    // this from the inventory every tick; damage reduction is applied here so
+    // every damage source (mobs, fall, arrows) benefits uniformly.
+    private int armorPoints = 0;
+
     private int experienceLevel = 0;
     private int experiencePoints = 0;
     /** Cumulative XP across the whole save; level is derived from this. */
@@ -200,6 +219,8 @@ public class Player {
 
     private void tick(float tickDt, World world, BlockDataManager blockDataManager,
                        boolean inColdAercloud, boolean inBlueAercloud, boolean onQuicksoil) {
+        tickFoodAndRegen();
+
         // Gravity
         if (!flying) {
             if (inBlueAercloud && !parachuteDeployed && velocity.y <= 0) {
@@ -328,9 +349,55 @@ public class Player {
         // Move and collide — position += velocity in fixed-point
         moveAndCollide(world, blockDataManager);
 
+        // Hunger exhaustion from movement (vanilla 1.12.2 semantics: 4
+        // exhaustion = 1 hunger/saturation point). Walking, sprinting, jumping
+        // and swimming all accrue exhaustion.
+        if (survivalActive) {
+            boolean moving = moveStrafing != 0.0f || moveForward != 0.0f;
+            if (isSwimming && moving) {
+                exhaustion += 0.01f * tickDt * 20.0f;
+            } else if (moving) {
+                if (isSprinting) exhaustion += 0.05f * tickDt * 20.0f;
+                else if (onGround) exhaustion += 0.008f * tickDt * 20.0f;
+            }
+            if (exhaustion > 40.0f) exhaustion = 40.0f;
+        }
+
         moveStrafing = 0.0f;
         moveForward = 0.0f;
         moveVertical = 0.0f;
+    }
+
+    /**
+     * Per-tick (20 Hz) hunger bookkeeping: exhaustion conversion, natural
+     * regen at hunger ≥ 18, and starvation damage at hunger 0. Runs only in
+     * survival mode; creative/flying never touches the food bar.
+     */
+    private void tickFoodAndRegen() {
+        if (!survivalActive || isDead || flying) return;
+
+        // Exhaustion → saturation first, then hunger (4:1).
+        if (exhaustion >= 4.0f) {
+            exhaustion -= 4.0f;
+            if (saturation > 0.0f) {
+                saturation = Math.max(0.0f, saturation - 1.0f);
+            } else if (hunger > 0.0f) {
+                hunger = Math.max(0.0f, hunger - 1.0f);
+            }
+        }
+
+        foodTimer++;
+        if (foodTimer < 80) return; // 80 ticks = 4 s (Minecraft's interval)
+        foodTimer = 0;
+
+        if (hunger <= 0.0f) {
+            // Starvation: 1 damage per 4 s.
+            health = Math.max(0.0f, health - 1.0f);
+            if (health <= 0.0f && !isDead) die();
+        } else if (hunger >= 18.0f && health < maxHealth && !isDead) {
+            // Natural regen: 1 HP per 4 s while the food bar is high.
+            health = Math.min(maxHealth, health + 1.0f);
+        }
     }
 
     /**
@@ -549,9 +616,60 @@ public class Player {
 
     public void takeDamage(float amount) {
         if (isDead || flying) return;
-        health = Math.max(0, health - amount);
+        health = Math.max(0, health - applyArmorReduction(amount));
         if (health <= 0) die();
     }
+
+    /**
+     * Vanilla armor damage formula (EntityLivingBase.damageArmor):
+     * damage × (1 − min(20, max(armorPoints, damage/2)) / 25). Armor 20 caps at
+     * ~80% reduction; heavy hits punch through armor because the armor term
+     * is bounded by the incoming damage.
+     */
+    private float applyArmorReduction(float amount) {
+        if (armorPoints <= 0 || amount <= 0.0f) return amount;
+        int ap = Math.min(20, armorPoints);
+        float factor = Math.min(20.0f, Math.max(ap, amount / 2.0f));
+        return amount * (1.0f - factor / 25.0f);
+    }
+
+    /**
+     * Attempts to eat food. Returns false when the food bar is already full.
+     * Adds food points and saturation (saturation = food × ratio × 2, capped
+     * at the new food level), matching Minecraft's ItemFood.
+     */
+    public boolean eatFood(float foodPoints, float saturationRatio) {
+        if (isDead || hunger >= 20.0f) return false;
+        float newHunger = Math.min(20.0f, hunger + foodPoints);
+        saturation = Math.min(newHunger, saturation + foodPoints * saturationRatio * 2.0f);
+        hunger = newHunger;
+        exhaustion = Math.max(0.0f, exhaustion - 1.0f); // eating briefly eases exhaustion (MC-…)
+        return true;
+    }
+
+    public float getHunger() { return hunger; }
+    public float getSaturation() { return saturation; }
+
+    /** Sets hunger directly (used when loading a save). */
+    public void setHunger(float value) {
+        hunger = Math.max(0.0f, Math.min(20.0f, value));
+        if (hunger > saturation) saturation = Math.min(saturation, hunger);
+    }
+
+    /** Sets saturation directly (used when loading a save). */
+    public void setSaturation(float value) {
+        saturation = Math.max(0.0f, Math.min(20.0f, value));
+    }
+
+    public int getArmorPoints() { return armorPoints; }
+    public void setArmorPoints(int points) { armorPoints = Math.max(0, Math.min(20, points)); }
+
+    /**
+     * Survival-mode gate for the hunger system. Main sets this every frame so
+     * creative mode (and flying) never drains the food bar.
+     */
+    public void setSurvivalActive(boolean active) { this.survivalActive = active; }
+    public boolean isSurvivalActive() { return survivalActive; }
 
     public void takeDamage(float amount, boolean invincible) {
         if (invincible) return;
@@ -582,6 +700,10 @@ public class Player {
         }
         velocity.set(0);
         health = maxHealth;
+        hunger = 20.0f;
+        saturation = 5.0f;
+        exhaustion = 0.0f;
+        foodTimer = 0;
         isDead = false;
         fallDistance = 0;
         tickAccumulator = 0;

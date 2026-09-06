@@ -48,4 +48,9 @@ public class MoaEntity extends AetherPassiveEntity {
         }
         super.update(dt);
     }
+
+    @Override
+    protected String[][] deathLoot() {
+        return new String[][] { { "chicken", "2" }, { "feather", "3" } };
+    }
 }
