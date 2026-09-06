@@ -51,6 +51,9 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
     static final float GIVE_UP_SECONDS = 6f;
     static final float REPATH_INTERVAL = 0.45f;
     static final float DECISION_INTERVAL = 0.2f;
+    static final float ATTACK_RANGE = 2.7f;
+    static final float ATTACK_COOLDOWN_SECONDS = 1.4f;
+    static final float WINDUP_SECONDS = 0.75f;
     private static final float CHASE_SPEED = 2.4f;
     private static final float ATTACK_WALK_SPEED = 1.3f;
     private static final float SEARCH_SPEED = 1.6f;
@@ -81,6 +84,12 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
 
     private final List<Vector3i> path = new ArrayList<Vector3i>();
     private int pathIndex;
+
+    // Melee attack state (mirrors the legacy FSM's telegraphed strike, so a
+    // brain-driven hunter still lands hits through overridable performAttack).
+    private float attackCooldown;
+    private boolean windingUp;
+    private float windUpTime;
 
     private HunterBrain(EnemyEntity owner) {
         this.owner = owner;
@@ -214,6 +223,43 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
         // connects instead of overshooting a sprinting target.
         float speed = dist < 4f ? ATTACK_WALK_SPEED : CHASE_SPEED;
         stepWithPaths(target, speed, dt);
+        tryMeleeAttack(dt);
+    }
+
+    /**
+     * Telegraphed melee strike against the player, routed through the
+     * overridable {@link EnemyEntity#performAttack} so subclass damage and
+     * special effects (creeper explosion, cockatrice peck, ...) still apply.
+     * Villager prey cannot be damaged (no damage API), so the hunter only
+     * looms at them — the chase itself keeps the encounter threatening.
+     */
+    private void tryMeleeAttack(float dt) {
+        attackCooldown = Math.max(0f, attackCooldown - dt);
+        if (owner.player == null) return;
+        Vector3f playerPos = owner.player.getPosition();
+        if (owner.getPosition().distance(playerPos) >= ATTACK_RANGE) {
+            windingUp = false;
+            windUpTime = 0f;
+            if (owner.hitFlashTime > 0f && !windingUp) owner.hitFlashTime = 0f;
+            return;
+        }
+        if (attackCooldown > 0f) return;
+        if (!windingUp) {
+            windingUp = true;
+            windUpTime = 0f;
+            owner.hitFlashTime = 0.01f;
+            return;
+        }
+        windUpTime += dt;
+        float progress = Math.min(1f, windUpTime / WINDUP_SECONDS);
+        owner.hitFlashTime = 0.5f + progress * 0.5f;
+        if (windUpTime >= WINDUP_SECONDS) {
+            owner.performAttack(playerPos);
+            attackCooldown = ATTACK_COOLDOWN_SECONDS;
+            windingUp = false;
+            windUpTime = 0f;
+            owner.hitFlashTime = 0f;
+        }
     }
 
     /** Where to hunt right now: own sighting first, then the pack's call. */

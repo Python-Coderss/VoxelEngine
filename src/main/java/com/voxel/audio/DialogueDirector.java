@@ -121,6 +121,18 @@ public final class DialogueDirector {
         s.mood.fear = (float) clamp(Math.max(s.mood.fear, 0.6 + 0.4 * clamp(severity)));
     }
 
+    /**
+     * Gossip contagion: a neighbor shouted about danger. Milder than seeing
+     * the threat directly — enough to color the next lines and keep a crowd
+     * wary after the screamer calms down.
+     */
+    public static void onGossip(int villagerId, float severity) {
+        State s = state(villagerId);
+        float lift = (float) clamp(0.25 + 0.35 * clamp(severity));
+        s.mood.fear = (float) Math.min(1.0, Math.max(s.mood.fear, lift * 0.7));
+        s.mood.wary = (float) clamp(s.mood.wary + lift * 0.3);
+    }
+
     /** Called after each spoken interaction; repeated chats breed wariness. */
     public static void onSpokenTo(int villagerId) {
         State s = state(villagerId);

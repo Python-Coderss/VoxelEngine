@@ -71,6 +71,10 @@ public class EnemyEntity extends Entity {
             else if (part.name.equals("right_leg")) rightLeg = part;
         }
         this.player = p;
+        // Pack-hunter brain for subclasses that keep the legacy updateAI
+        // contract (no override). Subclasses with their own updateAI keep
+        // their FSM; see Brains.newHunterBrainIfLegacy.
+        this.brain = com.voxel.ai.brain.Brains.newHunterBrainIfLegacy(this);
     }
 
     @Override
