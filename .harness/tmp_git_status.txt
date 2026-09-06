@@ -1,0 +1,8 @@
+?? .harness/
+?? tools/c3_grep.py
+?? tools/c3_lines.py
+697e359b fixes and optimization
+dcaf9aa4 Aether entities, portal orientation/animation, and center crosshair
+d604016d Refine chest geometry, latch, and UV rendering
+287bc0f4 Integrate point-and-click cinematic systems and world updates
+6eb4244b Fix chest rendering and center furnace UI

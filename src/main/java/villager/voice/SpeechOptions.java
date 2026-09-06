@@ -2,8 +2,10 @@ package villager.voice;
 
 /** Immutable per-line controls for the custom Java voice. */
 public final class SpeechOptions {
-    // Tone is now a delivery mood: -1 is serious, 0 is neutral, +1 is joking.
-    // Keep the natural source mix conservative so RVC retains the villager body.
+    // Tone is a delivery mood: -1 is serious, 0 is neutral, +1 is joking.
+    // The fifth field is the RVC retrieval weight ("index rate", stored in the
+    // legacy naturalSourceMix JSON key): 0.55-0.6 keeps the villager timbre
+    // tight without the artifacts that set in beyond ~0.75.
     public static final SpeechOptions DEFAULT = new SpeechOptions(
             1.0, 0.0, 1.0, 0.0, 0.60, "happy", 0.0, 0.0, false, true);
 
@@ -59,7 +61,11 @@ public final class SpeechOptions {
         requireFinite("pitchSemitones", pitchSemitones);
         requireRange("volume", volume, 0.0, 2.0);
         requireRange("tone", tone, -1.0, 1.0);
-        requireRange("naturalSourceMix", naturalSourceMix, 0.0, 0.6);
+        // Historically the natural-carrier mix (0-0.6); since the RVC artifact
+        // rework this field stores the RVC retrieval weight ("index rate",
+        // 0-0.75). The JSON key is unchanged so old presets/dialog catalogs
+        // round-trip; values in the old 0.36-0.6 range remain valid.
+        requireRange("naturalSourceMix", naturalSourceMix, 0.0, 0.75);
         requireRange("singing", singing, 0.0, 1.0);
         requireRange("sarcasm", sarcasm, 0.0, 1.0);
         this.speed = speed;
@@ -81,6 +87,16 @@ public final class SpeechOptions {
     /** Delivery mood: -1 serious, 0 neutral, +1 joking. */
     public double getTone() { return tone; }
     public double getNaturalSourceMix() { return naturalSourceMix; }
+    /**
+     * RVC retrieval weight ("index rate"): how strongly ContentVec frames
+     * blend toward the top-8 nearest villager training embeddings. 0 disables
+     * retrieval (pure base-TTS content); 0.6 is the default; beyond ~0.75 the
+     * short training dataset starts to inject its own artifacts. Stored in
+     * the legacy {@code naturalSourceMix} JSON field.
+     */
+    public double getEffectiveIndexRate() {
+        return Math.max(0.0, Math.min(0.75, naturalSourceMix));
+    }
     public String getEmotion() { return emotion; }
     /** Singing expression from 0 (spoken) to 1 (strongly sung). */
     public double getSinging() { return singing; }
@@ -166,15 +182,10 @@ public final class SpeechOptions {
         return Math.max(0.0, Math.min(2.0, volume * multiplier));
     }
 
-    /** Singing and strong sarcasm avoid mixing a competing natural carrier. */
-    public double getEffectiveNaturalSourceMix() {
-        return singing > 0.0 ? 0.0 : naturalSourceMix * (1.0 - sarcasm * 0.35);
-    }
-
     /** Stable text used as part of generated-audio cache keys. */
     public String cacheKey() {
         return String.format(java.util.Locale.ROOT,
-                "v2;speed=%.6f;pitch=%.6f;volume=%.6f;tone=%.6f;natural=%.6f;emotion=%s;singing=%.6f;sarcasm=%.6f;question=%s",
+                "v3;speed=%.6f;pitch=%.6f;volume=%.6f;tone=%.6f;natural=%.6f;emotion=%s;singing=%.6f;sarcasm=%.6f;question=%s",
                 speed, pitchSemitones, volume, tone, naturalSourceMix, emotion,
                 singing, sarcasm, question);
     }

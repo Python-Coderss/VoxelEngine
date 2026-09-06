@@ -231,15 +231,10 @@ public final class KokoroVoice implements AutoCloseable {
                 state.emotion);
         WavAudio converted = rvc.convert(base, options.getEffectivePitchSemitones(),
                 options.getSinging(), options.getEmotion(), options.getSarcasm(),
-                options.isQuestion());
-        // Natural source mix (same as VillagerSynthesizer pipeline).
-        mixNaturalSource(converted, base, options.getEffectiveNaturalSourceMix());
-        WavAudio sourceAtOutputRate = base.resampled(converted.sampleRate);
-        AudioDsp.applySourceEnergyMask(converted.samples, sourceAtOutputRate.samples,
-                converted.sampleRate);
-        AudioDsp.applyUnvoicedSourceBoost(converted.samples, sourceAtOutputRate.samples,
-                converted.sampleRate, options.getEffectiveNaturalSourceMix(), 0.60);
-        AudioDsp.applySpeechDenoise(converted.samples, converted.sampleRate);
+                options.isQuestion(), options.getEffectiveIndexRate());
+        // Same artifact strategy as VillagerSynthesizer: the fix lives inside
+        // the RVC stage (sinc resampler, top-8 retrieval, unvoiced protect);
+        // the old natural-carrier mix + denoise/notch chain is gone.
         AudioDsp.fadeEdges(converted.samples,
                 Math.min(converted.sampleRate / 100, converted.samples.length / 5));
         AudioDsp.applyToneTilt(converted.samples, options.getEffectiveSpectralTilt());
@@ -287,17 +282,6 @@ public final class KokoroVoice implements AutoCloseable {
         Segment(int start, int end) {
             this.start = start;
             this.end = end;
-        }
-    }
-
-    /** Blend natural VITS/Kokoro source with RVC-converted audio. */
-    private static void mixNaturalSource(WavAudio converted, WavAudio base, double mix) {
-        double naturalMix = Math.max(0.0, Math.min(0.5, mix));
-        WavAudio natural = base.resampled(converted.sampleRate);
-        int count = Math.min(converted.samples.length, natural.samples.length);
-        for (int i = 0; i < count; i++) {
-            converted.samples[i] = converted.samples[i] * (float) (1.0 - naturalMix)
-                    + natural.samples[i] * (float) naturalMix;
         }
     }
 

@@ -31,6 +31,14 @@ public final class CustomRvcModel implements AutoCloseable {
     private static final float OCTAVE_ERROR_LOW = 0.57f;
     private static final double[] PITCH_WINDOW = createHannWindow(PITCH_RADIUS * 2);
 
+    /**
+     * RVC "protect" rate: feature retrieval must stay off the unvoiced
+     * frames (consonants, breaths, pauses). Blending training embeddings into
+     * frication is what turns clean sibilants into hoarse/gargly noise. Below
+     * 0.5 the mechanism is active, mirroring the web UI semantics.
+     */
+    private static final double PROTECT_RATE = 0.33;
+
     private static double[] createHannWindow(int length) {
         double[] window = new double[length];
         for (int i = 0; i < length; i++) {
@@ -41,12 +49,13 @@ public final class CustomRvcModel implements AutoCloseable {
     }
 
     private final OrtEnvironment environment;
-    private final java.nio.file.Path contentModelPath;
+    private final OrtSession contentSession;
     private final OrtSession rvcSession;
     /** Neural F0 tracker; null when rmvpe.onnx is absent from the bundle. */
     private final RmvpePitch rmvpe;
     /** Training-embedding retrieval; null when the flattened index is absent. */
     private final FeatureIndex featureIndex;
+    /** Default RVC retrieval weight ("index rate") when the caller omits it. */
     private static final double INDEX_RATE = 0.55;
     /** Seeded per clip via {@link #noiseSeed} before each conversion. */
     private final Random random = new Random(0x56494C4C41474552L);
@@ -60,7 +69,7 @@ public final class CustomRvcModel implements AutoCloseable {
                           java.nio.file.Path rmvpeModel, java.nio.file.Path featureIndexPath)
             throws Exception {
         environment = OrtEnvironment.getEnvironment();
-        contentModelPath = contentModel.toAbsolutePath().normalize();
+        OrtSession content = null;
         OrtSession rvc = null;
         try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
             // Both graphs receive variable-length clips. ORT's memory-pattern
@@ -68,13 +77,22 @@ public final class CustomRvcModel implements AutoCloseable {
             // execution plan on the next request, collapsing a Conv input to
             // {1}. Disable it for these dynamic audio sessions.
             options.setMemoryPatternOptimization(false);
+            // One persistent ContentVec session: with memory patterns disabled
+            // the session is reusable across clips, and rebuilding the whole
+            // deserialized graph per line was minutes of cumulative startup
+            // latency (and non-deterministic allocator reuse) in dialogue.
+            content = environment.createSession(contentModel.toString(), options);
             rvc = environment.createSession(rvcModel.toString(), options);
         } catch (Exception e) {
+            if (content != null) {
+                content.close();
+            }
             if (rvc != null) {
                 rvc.close();
             }
             throw e;
         }
+        contentSession = content;
         rvcSession = rvc;
         if (rmvpeModel != null && java.nio.file.Files.isRegularFile(rmvpeModel)) {
             java.nio.file.Path bank =
@@ -107,22 +125,61 @@ public final class CustomRvcModel implements AutoCloseable {
     /** Convert with singing, emotion, sarcasm, and an optional question rise. */
     public WavAudio convert(WavAudio source, double pitchSemitones, double singing,
                             String emotion, double sarcasm, boolean question) throws Exception {
+        return convert(source, pitchSemitones, singing, emotion, sarcasm, question, INDEX_RATE);
+    }
+
+    /** Full conversion; {@code indexRate} is the RVC retrieval weight (0-0.75). */
+    public WavAudio convert(WavAudio source, double pitchSemitones, double singing,
+                            String emotion, double sarcasm, boolean question,
+                            double indexRate) throws Exception {
         WavAudio at40k = source.resampled(SAMPLE_RATE);
         float[] samples = at40k.samples;
         float[] at16k = resample(samples, SAMPLE_RATE, CONTENT_RATE);
 
         float[][] content = content(at16k);
+        // Deep-copy the un-retrieved encoder output: retrieval mutates the
+        // rows in place, and the protect stage below must blend against the
+        // original features, not the already-blended ones.
+        float[][] originalContent = new float[content.length][];
+        for (int i = 0; i < content.length; i++) {
+            originalContent[i] = content[i].clone();
+        }
         if (content.length == 0 || content[0].length != CONTENT_DIMENSION) {
             throw new IllegalStateException("ContentVec returned an unexpected shape");
         }
         int contentFrames = content.length;
-        if (featureIndex != null) {
-            featureIndex.apply(content, INDEX_RATE);
-        }
         int modelFrames = contentFrames * 2;
 
+        // Estimate F0 before retrieval: the voiced/unvoiced track feeds both
+        // the retrieval protect and the synthesis inputs.
         float[] pitchf = estimatePitch(samples, at16k, modelFrames, pitchSemitones,
                 singing, emotion, sarcasm, question);
+
+        if (featureIndex != null && indexRate > 0.0) {
+            boolean[] voiced = new boolean[modelFrames];
+            for (int i = 0; i < modelFrames; i++) {
+                voiced[i] = pitchf[i] > 0.0f;
+            }
+            featureIndex.apply(content, indexRate, voiced);
+        }
+
+        // RVC "protect": after blending, restore the original ContentVec
+        // features on unvoiced frames (weighted toward the original by the
+        // protect rate, matching the web UI formula). Repair passes may have
+        // re-voiced frames after the flags were taken, so this guarantees
+        // consonants and breaths are carried by the unmodified encoder
+        // output, not by retrieved vowel embeddings.
+        if (PROTECT_RATE < 0.5) {
+            for (int i = 0; i < modelFrames; i++) {
+                if (pitchf[i] <= 0.0f) {
+                    float[] frame = content[i / 2];
+                    for (int d = 0; d < frame.length; d++) {
+                        frame[d] = (float) (frame[d] * PROTECT_RATE
+                                + originalContent[i / 2][d] * (1.0 - PROTECT_RATE));
+                    }
+                }
+            }
+        }
         long[] quantizedPitch = new long[modelFrames];
         for (int i = 0; i < modelFrames; i++) {
             quantizedPitch[i] = quantizePitch(pitchf[i]);
@@ -325,13 +382,10 @@ public final class CustomRvcModel implements AutoCloseable {
     }
 
     private float[][] content(float[] audio16k) throws Exception {
-        // This ContentVec export is variable-length and fails on the second
-        // run when the same OrtSession is reused, even with memory-pattern
-        // optimization disabled. Isolate each request in a fresh session so
-        // ORT cannot retain an execution plan from the previous clip.
-        try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
-            options.setMemoryPatternOptimization(false);
-            try (OrtSession contentSession = environment.createSession(contentModelPath.toString(), options)) {
+        // Persistent session (created in the constructor): memory-pattern
+        // optimization is disabled, which is what made reuse unsafe.
+        OrtSession contentSession = this.contentSession;
+        {
                 FloatBuffer audioBuffer = directFloatBuffer(audio16k.length);
                 audioBuffer.put(audio16k).flip();
                 try (OnnxTensor input = OnnxTensor.createTensor(environment,
@@ -365,7 +419,6 @@ public final class CustomRvcModel implements AutoCloseable {
                     }
                     return normalized;
                 }
-            }
         }
     }
 
@@ -767,6 +820,12 @@ public final class CustomRvcModel implements AutoCloseable {
      * cutting the steady hiss RVC otherwise synthesizes into the gaps between
      * words; loud voiced frames keep full-strength noise so the timbre does
      * not thin out.
+     *
+     * <p>The floor is deliberately low: the vocoder turns even a modest
+     * constant noise input into audible wideband hiss in pauses, and the v9
+     * clip set showed a ~-105 dB HF floor in pauses (clean clips sit at
+     * -119 dB). Pauses need only enough excitation to avoid a hard-gated
+     * silence; 0.12 keeps the timbre body intact where it matters.
      */
     static float[] noiseGains(float[] samples, int sampleRate, int frames) {
         float[] gains = new float[frames];
@@ -785,7 +844,7 @@ public final class CustomRvcModel implements AutoCloseable {
         }
         for (int frame = 0; frame < frames; frame++) {
             float normalized = maximum <= 1.0e-6f ? 0.0f : energies[frame] / maximum;
-            gains[frame] = 0.35f + 0.65f * (float) Math.sqrt(normalized);
+            gains[frame] = 0.12f + 0.88f * (float) Math.pow(normalized, 0.8);
         }
         return gains;
     }
@@ -918,10 +977,14 @@ public final class CustomRvcModel implements AutoCloseable {
     @Override
     public void close() throws Exception {
         try {
-            rvcSession.close();
+            contentSession.close();
         } finally {
-            if (rmvpe != null) {
-                rmvpe.close();
+            try {
+                rvcSession.close();
+            } finally {
+                if (rmvpe != null) {
+                    rmvpe.close();
+                }
             }
         }
     }

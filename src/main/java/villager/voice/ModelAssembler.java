@@ -99,7 +99,8 @@ public final class ModelAssembler {
     private static boolean isAllowedModel(String fileName) {
         return "coqui-vctk-vits.onnx".equals(fileName)
                 || "vec-768-layer-12.onnx".equals(fileName)
-                || "rvc-villager.onnx".equals(fileName);
+                || "rvc-villager.onnx".equals(fileName)
+                || "kokoro-v1.0.onnx".equals(fileName);
     }
 
     private static void assemble(Path source, Path runtime, ModelSpec model) throws IOException {

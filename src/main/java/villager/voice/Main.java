@@ -178,7 +178,8 @@ public final class Main {
                 + "  --pitch VALUE    extra RVC pitch offset in semitones; default 0\n"
                 + "  --volume VALUE   output gain, 1.0 is unchanged\n"
                 + "  --tone VALUE     mood from -1.0 serious to +1.0 joking\n"
-                + "  --natural VALUE  natural VITS mix from 0.0 to 0.5\n"
+                + "  --natural VALUE  RVC retrieval weight (index rate) from 0.0 to 0.75; "
+                + "higher sounds more like the villager\n"
                 + "  --emotion NAME   neutral, happy, sad, angry, or scared\n"
                 + "  --singing VALUE  singing expression from 0.0 (speech) to 1.0\n"
                 + "  --sarcasm VALUE  dry/deadpan delivery from 0.0 to 1.0\n"
@@ -202,7 +203,7 @@ public final class Main {
         double pitch = 0.0;
         double volume = 1.0;
         double tone = 0.0;
-        double natural = 0.36;
+        double natural = 0.55;
         String emotion = "neutral";
         double singing = 0.0;
         double sarcasm = 0.0;
@@ -285,9 +286,9 @@ public final class Main {
                     || Double.isNaN(options.tone) || Double.isInfinite(options.tone)) {
                 throw new IllegalArgumentException("--tone must be between -1 and 1");
             }
-            if (options.natural < 0.0 || options.natural > 0.5
+            if (options.natural < 0.0 || options.natural > 0.75
                     || Double.isNaN(options.natural) || Double.isInfinite(options.natural)) {
-                throw new IllegalArgumentException("--natural must be between 0 and 0.5");
+                throw new IllegalArgumentException("--natural must be between 0 and 0.75");
             }
             if (options.singing < 0.0 || options.singing > 1.0
                     || Double.isNaN(options.singing) || Double.isInfinite(options.singing)) {

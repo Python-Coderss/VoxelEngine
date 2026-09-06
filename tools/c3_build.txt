@@ -1,0 +1,19 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -----------------------< com.voxel:fastpbrjava >------------------------
+[INFO] Building fastpbrjava 1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ fastpbrjava ---
+[INFO] Copying 10386 resources from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.8.1:compile (default-compile) @ fastpbrjava ---
+[INFO] Changes detected - recompiling the module!
+[INFO] Compiling 225 source files to C:\Users\raman\eclipse-workspace\fastpbrjava\VoxelEngine\target\classes
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  13.957 s
+[INFO] Finished at: 2026-08-24T15:54:10-06:00
+[INFO] ------------------------------------------------------------------------

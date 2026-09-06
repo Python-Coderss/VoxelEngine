@@ -51,7 +51,7 @@ public class CustomRvcModelTest {
         float[] gains = CustomRvcModel.noiseGains(silence, 40000, 100);
         assertEquals(100, gains.length);
         for (float gain : gains) {
-            assertEquals(0.35f, gain, 1e-6f);
+            assertEquals(0.12f, gain, 1e-6f);
         }
     }
 
@@ -64,7 +64,7 @@ public class CustomRvcModelTest {
         float[] gains = CustomRvcModel.noiseGains(loud, 40000, 50);
         assertEquals(1.0f, gains[25], 1e-6f);
         for (float gain : gains) {
-            assertTrue(gain >= 0.35f && gain <= 1.0f);
+            assertTrue(gain >= 0.12f && gain <= 1.0f);
         }
     }
 

@@ -35,7 +35,7 @@ public final class VoiceEditor {
     private final JSlider pitch = slider(-120, 120, 0);
     private final JSlider volume = slider(0, 200, 100);
     private final JSlider tone = slider(-100, 100, 0);
-    private final JSlider natural = slider(0, 50, 36);
+    private final JSlider natural = slider(0, 75, 55);
     private final JSlider singing = slider(0, 100, 0);
     private final JSlider sarcasm = slider(0, 100, 0);
     private final JCheckBox question = new JCheckBox("Question / rising ending");
@@ -81,8 +81,10 @@ public final class VoiceEditor {
                 "Output loudness. 100% is unchanged; it is normalized to avoid clipping."));
         controls.add(row("Mood", tone, "%+.1f", 100.0,
                 "Delivery mood: -1 serious/weighty, 0 neutral, +1 joking/playful."));
-        controls.add(row("Natural source", natural, "%.0f%%", 1.0,
-                "Natural VITS body mixed under RVC. More sounds less synthetic."));
+        controls.add(row("Timbre strength", natural, "%.0f%%", 1.0,
+                "RVC retrieval weight (index rate): how strongly each frame blends toward "
+                + "real villager training segments. 0% pure base voice; higher sounds more "
+                + "like the villager, above ~75% artifacts return."));
         controls.add(row("Singing", singing, "%.0f%%", 1.0,
                 "Musical vibrato and sustained pitch. 0% is spoken; 100% is strongly sung."));
         controls.add(row("Sarcasm", sarcasm, "%.0f%%", 1.0,
@@ -237,7 +239,7 @@ public final class VoiceEditor {
         pitch.setValue((int) Math.round(options.getPitchSemitones() * 10.0));
         volume.setValue((int) Math.round(options.getVolume() * 100.0));
         tone.setValue((int) Math.round(options.getTone() * 100.0));
-        natural.setValue((int) Math.round(options.getNaturalSourceMix() * 100.0));
+        natural.setValue((int) Math.round(options.getEffectiveIndexRate() * 100.0));
         singing.setValue((int) Math.round(options.getSinging() * 100.0));
         sarcasm.setValue((int) Math.round(options.getSarcasm() * 100.0));
         question.setSelected(options.isQuestion());
