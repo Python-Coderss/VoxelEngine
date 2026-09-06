@@ -14,6 +14,9 @@ public class ZombieEntity extends EnemyEntity {
 
     public ZombieEntity(int id, Vector3f position, com.voxel.utils.TextureManager textureManager, Player p2) {
         super(id, position, textureManager, p2);
+        // Pack-hunter brain (sight memory, HUNT_CALL coordination, retreat);
+        // installed only when brains are enabled (see {@link Brains}).
+        this.brain = com.voxel.ai.brain.Brains.newHunterBrain(this);
         loadModel("src/main/resources/assets/minecraft/models/entity/zombie.json", textureManager);
 
         for (ModelPart p : parts) {

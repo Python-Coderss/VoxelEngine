@@ -34,6 +34,36 @@ public final class VillagerDialogue {
         return period(worldTime).name();
     }
 
+    /**
+     * Built-in line pool for a (profession, period) pair, exposed so the
+     * dialogue director can merge built-ins with the editable catalog.
+     * Ids use the same "builtin_..." scheme as {@link #chooseLine}.
+     */
+    public static java.util.List<DialogueLine> builtinLinesFor(String professionName,
+                                                               String periodName) {
+        VillagerEntity.Profession profession;
+        Period period;
+        try {
+            profession = VillagerEntity.Profession.valueOf(professionName);
+        } catch (IllegalArgumentException error) {
+            profession = VillagerEntity.Profession.NITWIT;
+        }
+        try {
+            period = Period.valueOf(periodName);
+        } catch (IllegalArgumentException error) {
+            period = Period.DAY;
+        }
+        String[] values = linesFor(profession, period);
+        java.util.List<DialogueLine> result = new java.util.ArrayList<DialogueLine>(values.length);
+        String idPrefix = "builtin_" + profession.name().toLowerCase()
+                + "_" + period.name().toLowerCase() + "_";
+        for (int i = 0; i < values.length; i++) {
+            result.add(new DialogueLine(idPrefix + i, values[i], profession.name(),
+                    period.name(), i, SpeechOptions.DEFAULT));
+        }
+        return result;
+    }
+
     private static Period period(float worldTime) {
         float time = worldTime % 1440.0f;
         if (time < 360.0f) return Period.NIGHT;

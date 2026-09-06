@@ -13,7 +13,9 @@ public final class Stimulus {
         DAMAGE_TAKEN,
         SPEECH_HEARD,
         POINT_GESTURE,
-        NOVEL_EVENT
+        NOVEL_EVENT,
+        /** Predator broadcast: "I found prey here" — pack hunters converge. */
+        HUNT_CALL
     }
 
     public final Type type;
