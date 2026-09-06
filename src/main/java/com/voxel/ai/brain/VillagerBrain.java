@@ -101,6 +101,20 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
             }
             adoptFear(stimulus.position,
                     stimulus.type == Stimulus.Type.POINT_GESTURE ? 2.5f : 4.5f);
+            return;
+        }
+        if (stimulus.type == Stimulus.Type.SPEECH_HEARD
+                && stimulus.sourceId != owner.id) {
+            // Gossip: a frightened neighbor's shout spreads mood through the
+            // crowd. Weaker than seeing the threat yourself.
+            if (stimulus.position.distanceSquared(owner.getPosition())
+                    > EARSHOT_RANGE * EARSHOT_RANGE) {
+                return;
+            }
+            DialogueDirector.onGossip(owner.id, stimulus.severity);
+            if (stimulus.severity >= 0.5f) {
+                adoptFear(stimulus.position, stimulus.severity * 2.0f);
+            }
         }
     }
 
@@ -259,9 +273,16 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
 
         long now = System.currentTimeMillis();
         if (!screamedThisPanic && now - lastScreamMillis > SCREAM_COOLDOWN_MILLIS) {
-            if (say(SCREAMS[rng.nextInt(SCREAMS.length)])) {
+            String scream = SCREAMS[rng.nextInt(SCREAMS.length)];
+            if (say(scream)) {
                 screamedThisPanic = true;
                 lastScreamMillis = now;
+                // The shout itself carries the alarm: gossip listeners adopt
+                // fear toward the threat without seeing it.
+                StimulusBus.GLOBAL.publish(new Stimulus(
+                        Stimulus.Type.SPEECH_HEARD, owner.id,
+                        new Vector3f(threatPos), 0.8f, scream,
+                        System.currentTimeMillis()));
             }
         }
     }

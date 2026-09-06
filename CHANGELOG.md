@@ -1,5 +1,31 @@
 # CHANGELOG
 
+## Hunter AI Rollout & Villager Gossip (Sep 5, 2026)
+
+### Pack-hunter brain rollout
+- The hunter brain now installs automatically on every hostile mob that keeps
+  the legacy `updateAI` contract (Cockatrice, Creeper, Endermite, GenericMob,
+  MagmaCube, Silverfish, Valkyrie, Zombie). Subclasses with custom FSMs
+  (Blaze, Skeleton, Spider, Enderman, Sentry, Mimic, Swet, bosses, ...) keep
+  their behavior; the reflection gate walks the hierarchy below EnemyEntity.
+- Installation moved to the EnemyEntity base constructor via
+  `Brains.newHunterBrainIfLegacy`; no per-entity wiring needed.
+- **Brain-driven melee**: a claimed tick previously could not land hits (the
+  legacy attack path was skipped). Hunters now telegraph and strike through
+  the overridable `performAttack`, so creeper explosions, cockatrice pecks,
+  and valkyrie strikes all keep their subclass damage while under brain
+  control. Villager prey cannot be damaged (no damage API), so chases against
+  them stay atmospheric.
+
+### Villager gossip
+- Panic screams now publish `SPEECH_HEARD`; villagers in earshot adopt mild
+  fear (`DialogueDirector.onGossip`) and alert-look toward the danger without
+  ever seeing it. Stronger gossip also seeds panic. Fear spreads through a
+  crowd hop by hop until the shouters calm down.
+
+### Tests
+- Full suite: 317 tests, 0 failures (was 311).
+
 ## Dialogue Director & Pack-Hunter Mob AI (Sep 5, 2026)
 
 ### Improved dialogue system (`com.voxel.audio.DialogueDirector`)

@@ -178,6 +178,26 @@ public class DialogueDirectorTest {
         assertTrue(moodFear(12345) <= 1.0);
     }
 
+    @Test
+    public void gossipLiftsFearMilderThanDirectSight() {
+        DialogueDirector.onGossip(70, 0.8f);
+        double gossipFear = moodFear(70);
+        assertTrue("gossip should lift fear", gossipFear > 0.2);
+
+        DialogueDirector.reset();
+        DialogueDirector.onThreatSeen(71, 0.8f);
+        double sightFear = moodFear(71);
+        assertTrue("direct sight should scare more than gossip",
+                sightFear > gossipFear);
+    }
+
+    @Test
+    public void gossipAddsWariness() {
+        double before = DialogueDirector.state(72).mood.warinessLevel();
+        DialogueDirector.onGossip(72, 1.0f);
+        assertTrue(DialogueDirector.state(72).mood.warinessLevel() > before);
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────
 
     private static double moodFear(int id) {
