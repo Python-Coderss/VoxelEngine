@@ -1,5 +1,53 @@
 # CHANGELOG
 
+## Dialogue Director & Pack-Hunter Mob AI (Sep 5, 2026)
+
+### Improved dialogue system (`com.voxel.audio.DialogueDirector`)
+- **Temperament**: every villager now has a stable personality (chattiness,
+  cheerfulness) derived from their entity id, so the same villager always
+  sounds like the same person.
+- **Mood**: fear and wariness spike when hurt or when threats are seen and
+  decay over time. Mood colors delivery through the voice pipeline — scared
+  lines get louder, faster, higher-pitched delivery with `scared` emotion —
+  and biases line selection toward panicked or calm text.
+- **Memory**: recently spoken lines are excluded for 6 picks, so villagers
+  stop repeating themselves in back-to-back chats; repeated interaction adds
+  wariness that fades with time.
+- **Merged pools**: the editable `DialogueCatalog` and the built-in
+  profession/time table are one pool; `VillagerDialogue.builtinLinesFor`
+  exposes built-ins with the same `builtin_...` id scheme for tooling.
+- `VillagerAudioManager.requestVillagerDialogue` now routes through the
+  director; catalog entries still win over built-ins.
+- VillagerBrain publishes threat sightings into the dialogue mood; 12 new
+  unit tests (`DialogueDirectorTest`).
+
+### Pack-hunter mob AI (`com.voxel.ai.brain.HunterBrain`)
+- **Sight memory**: prey position refreshes only on real line of sight and
+  decays over 8 s; losing sight switches the hunter to circling the last-seen
+  spot (SEARCH) and it gives up after 6 s instead of homing omnisciently.
+- **Pack coordination**: spotting prey publishes a new `HUNT_CALL` stimulus;
+  hunters within 24 blocks converge on the shared point with restored hunt
+  interest. Independent per-hunter pathing produces natural flanking.
+- **Retaliation without omniscience**: damage taken re-aims the hunt at the
+  attacker's position even without line of sight.
+- **Self-preservation**: below 25% health the hunter disengages and retreats
+  from the last known prey position.
+- **Path-backed chase**: throttled A* repaths (0.45 s) shared with the
+  villager brain, slowing to a walk inside melee range so the attack
+  telegraph connects. LURK defers to the legacy FSM so idle behavior is kept.
+- Installed on `ZombieEntity` when brains are enabled
+  (`-Dvoxel.ai.brains.off=true` restores pure legacy FSM); 6 new decision
+  matrix tests (`HunterBrainTest`).
+
+### Voice model bundle
+- All four ONNX models (Coqui VCTK VITS, ContentVec, RVC villager, Kokoro)
+  re-verified bit-for-bit against `model-parts.manifest`: 23 part files, all
+  SHA-256 checksums match. A fresh clone downloads the complete voice setup
+  and `ModelAssembler` rebuilds the runtime models on first launch.
+
+### Tests
+- Full suite: 311 tests, 0 failures (was 293).
+
 ## Base Voice Overhaul — Numbers, Acronyms, Prosody (Aug 25, 2026)
 
 ### Base TTS frontend (`CoquiFrontend`)

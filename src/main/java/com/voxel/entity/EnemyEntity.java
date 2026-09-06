@@ -265,6 +265,11 @@ public class EnemyEntity extends Entity {
         }
     }
 
+    /** Public movement hook for AI brains running from another package. */
+    public void aiMoveToward(Vector3f target, float dt, float speed) {
+        moveToward(target, dt, speed);
+    }
+
     // ====================== MOVEMENT ======================
 
     protected void moveToward(Vector3f target, float dt, float speed) {

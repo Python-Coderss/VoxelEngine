@@ -9,6 +9,7 @@ import com.voxel.ai.VoxelView;
 import com.voxel.ai.body.Emote;
 import com.voxel.ai.body.EmotePlayer;
 import com.voxel.ai.body.GazeController;
+import com.voxel.audio.DialogueDirector;
 import com.voxel.ai.speech.VillagerSpeech;
 import com.voxel.entity.Entity;
 import com.voxel.entity.EnemyEntity;
@@ -153,11 +154,16 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
 
         if (threatVisible) {
             panicRemaining = Math.max(panicRemaining, 4f);
+            // Feed the dialogue mood: a visible threat makes the villager
+            // talk scared until the fear decays again.
+            DialogueDirector.onThreatSeen(owner.id,
+                    1f - nearestThreatDist / THREAT_SIGHT_RANGE);
         }
     }
 
     @Override
     public boolean update(float dt) {
+        DialogueDirector.tick(owner.id, dt);
         gaze.tick(dt);
         emotes.update(dt);
         panicRemaining = Math.max(0f, panicRemaining - dt);

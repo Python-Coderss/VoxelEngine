@@ -223,9 +223,10 @@ public final class VillagerAudioManager implements AutoCloseable {
         int count = oldCount == null ? 0 : oldCount;
         interactionCounts.put(villager.id, count + 1);
         String period = VillagerDialogue.periodName(worldTime);
-        DialogueLine authored = dialogueCatalog.choose(villager, period, count);
-        DialogueLine selected = authored != null
-                ? authored : VillagerDialogue.chooseLine(villager, worldTime, count);
+        // Improved dialogue path: temperament + mood + no-repeat memory, with
+        // the editable catalog merged over the built-in lines.
+        DialogueLine selected = DialogueDirector.choose(villager, period, count,
+                dialogueCatalog.getLines());
         requestSpeech(selected.getText(), selected.getOptions());
         return selected.getText();
     }

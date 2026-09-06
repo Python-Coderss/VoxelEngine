@@ -1,6 +1,7 @@
 package com.voxel.ai.brain;
 
 import com.voxel.ai.MobBrain;
+import com.voxel.entity.EnemyEntity;
 import com.voxel.entity.VillagerEntity;
 
 /**
@@ -19,5 +20,10 @@ public final class Brains {
     /** @return the brain to install on a new villager, or null when disabled. */
     public static MobBrain newVillagerBrain(VillagerEntity owner) {
         return ENABLED ? new VillagerBrain(owner) : null;
+    }
+
+    /** @return the predator brain for a hostile mob, or null when disabled. */
+    public static MobBrain newHunterBrain(EnemyEntity owner) {
+        return ENABLED ? HunterBrain.attach(owner) : null;
     }
 }
