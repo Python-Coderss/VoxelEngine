@@ -47,6 +47,8 @@ public class TextureManager {
     private final List<String> entityTexturePaths = new ArrayList<>();
     /** Extra layers allocated above the measured entity-texture count (room for loadItemAsEntityTexture). */
     private static final int ENTITY_LAYER_HEADROOM = 128;
+    /** Reserved top layers of the entity array: the Iron Golem virtual atlas strips. */
+    private static final int IRON_GOLEM_STRIPS = 8;
     /** Layers actually allocated in the entity texture array (set when it is created). */
     private int entityLayerCount = 0;
 
@@ -208,6 +210,23 @@ public class TextureManager {
                 g.dispose();
                 img = canvas;
                 uploadFrameToLayer(img, layer, textureSize);
+            } else if (textureSize == ENTITY_TEXTURE_SIZE && originalWidth > textureSize
+                    && originalWidth == 2 * originalHeight) {
+                // High-resolution 2:1 entity skins (Aether moa/cockatrice 128x64,
+                // slider/mimic 128x64, zephyr 128x32, aerwhale 256x128, ...).
+                // Squishing them into the square layer (the old fallback) garbled
+                // every face region; downscale UNIFORMLY to 64x(w/2) and paste at
+                // the top-left instead. Models transcribed from these skins carry
+                // a matching "uv_scale" so their atlas UVs land exactly on the
+                // downscaled art (see Entity.loadModelRecursive).
+                int half = textureSize;                       // 64
+                int halfH = originalHeight * textureSize / originalWidth;
+                BufferedImage scaled = new BufferedImage(textureSize, textureSize, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g = scaled.createGraphics();
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+                g.drawImage(img, 0, 0, half, halfH, null);
+                g.dispose();
+                uploadFrameToLayer(scaled, layer, textureSize);
             } else {
                 // Non-animated: scale to target size if needed
                 if (img.getWidth() != textureSize || img.getHeight() != textureSize) {
@@ -292,14 +311,9 @@ public class TextureManager {
 
         if (entityTexturePaths.isEmpty()) return;
 
-        if (entityTextureArrayId == 0) {
-            entityLayerCount = entityTexturePaths.size() + ENTITY_LAYER_HEADROOM;
-            checkLayerCount(entityLayerCount, "entity");
-            entityTextureArrayId = glGenTextures();
-            glBindTexture(GL_TEXTURE_2D_ARRAY, entityTextureArrayId);
-            glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8,
-                    ENTITY_TEXTURE_SIZE, ENTITY_TEXTURE_SIZE, entityLayerCount);
-        }
+        // A later scan directory may add more textures than the first
+        // allocation reserved, so grow (and re-upload) when needed.
+        ensureEntityArrayCapacity(entityTexturePaths.size());
 
         glBindTexture(GL_TEXTURE_2D_ARRAY, entityTextureArrayId);
 
@@ -328,7 +342,10 @@ public class TextureManager {
     private void prepareIronGolemVirtualAtlas() {
         Integer sourceIndex = entityTextureToIndex.get("iron_golem");
         if (sourceIndex == null || sourceIndex < 0 || sourceIndex >= entityTexturePaths.size()) return;
-        if (entityTexturePaths.size() + 8 > entityLayerCount) {
+        // The strips live in the reserved top layers so runtime item textures
+        // (added after the scans) can never overwrite them.
+        int baseLayer = entityLayerCount - IRON_GOLEM_STRIPS;
+        if (baseLayer < entityTexturePaths.size()) {
             System.err.println("Not enough entity texture headroom for the Iron Golem virtual atlas");
             return;
         }
@@ -346,8 +363,7 @@ public class TextureManager {
                 }
             }
 
-            int baseLayer = entityTexturePaths.size();
-            for (int strip = 0; strip < 8; strip++) {
+            for (int strip = 0; strip < IRON_GOLEM_STRIPS; strip++) {
                 BufferedImage packed = new BufferedImage(ENTITY_TEXTURE_SIZE, ENTITY_TEXTURE_SIZE,
                         BufferedImage.TYPE_INT_ARGB);
                 Graphics2D g = packed.createGraphics();
@@ -419,6 +435,34 @@ public class TextureManager {
         return glGetInteger(GL_MAX_ARRAY_TEXTURE_LAYERS);
     }
 
+    /**
+     * Ensures the entity texture array can hold {@code needed} used layers plus
+     * spare ones for runtime item textures and the reserved Iron Golem virtual
+     * atlas strips. When the array has to grow it is recreated larger, every
+     * already-loaded layer is re-uploaded and the golem strips are re-packed at
+     * their new home in the reserved top layers.
+     */
+    private void ensureEntityArrayCapacity(int needed) {
+        if (entityTextureArrayId != 0 && needed + ENTITY_LAYER_HEADROOM <= entityLayerCount) return;
+        int oldId = entityTextureArrayId;
+        entityLayerCount = needed + ENTITY_LAYER_HEADROOM;
+        checkLayerCount(entityLayerCount, "entity");
+        entityTextureArrayId = glGenTextures();
+        glBindTexture(GL_TEXTURE_2D_ARRAY, entityTextureArrayId);
+        glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8,
+                ENTITY_TEXTURE_SIZE, ENTITY_TEXTURE_SIZE, entityLayerCount);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        for (int i = 0; i < entityTexturePaths.size(); i++) {
+            loadAndUploadTexture(entityTexturePaths.get(i), i, ENTITY_TEXTURE_SIZE);
+        }
+        prepareIronGolemVirtualAtlas();
+        if (oldId != 0) glDeleteTextures(oldId);
+        glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    }
+
     /** Fails fast with a clear message if a texture array would exceed the GPU's limit. */
     private static void checkLayerCount(int layers, String what) {
         int max = queryMaxArrayLayers();
@@ -449,24 +493,9 @@ public class TextureManager {
         entityTextureToIndex.put(name, idx);
         entityTexturePaths.add(filePath);
 
-        // Allocate texture array on first use, sized for the entity textures plus
-        // headroom for item textures added at runtime.
-        if (entityTextureArrayId == 0) {
-            entityLayerCount = entityTexturePaths.size() + ENTITY_LAYER_HEADROOM;
-            checkLayerCount(entityLayerCount, "entity");
-            entityTextureArrayId = glGenTextures();
-            glBindTexture(GL_TEXTURE_2D_ARRAY, entityTextureArrayId);
-            glTexStorage3D(GL_TEXTURE_2D_ARRAY, 5, GL_RGBA8,
-                    ENTITY_TEXTURE_SIZE, ENTITY_TEXTURE_SIZE, entityLayerCount);
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        } else if (idx >= entityLayerCount) {
-            throw new RuntimeException(
-                "Entity texture array full: cannot add '" + name + "' (layer " + idx
-                + " >= " + entityLayerCount + "). Increase ENTITY_LAYER_HEADROOM in TextureManager.java");
-        }
+        // The array is allocated with headroom for later item textures and the
+        // Iron Golem virtual atlas strips; grow it if that ever runs out.
+        ensureEntityArrayCapacity(idx + 1);
 
         glBindTexture(GL_TEXTURE_2D_ARRAY, entityTextureArrayId);
         loadAndUploadTexture(filePath, idx, ENTITY_TEXTURE_SIZE);

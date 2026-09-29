@@ -55,6 +55,7 @@ public class BlockInteraction {
         ctx.inventoryOpen = true;
         ctx.activeUI = GameContext.ActiveUI.FURNACE;
         ctx.setStatus("Furnace");
+        VillagerReactions.fire(ctx, VillagerReactions.Trigger.FURNACE, x, y, z);
     }
 
     /** Opens the chest UI for the given block position. */
@@ -76,10 +77,27 @@ public class BlockInteraction {
             ctx.chestManager.setInventory(x, y, z, inv);
             ctx.setStatus("Testing-facility archive: power fragments recovered");
         }
+        // Aether dungeon treasure: first open rolls the tiered loot table.
+        if (com.voxel.world.aether.AetherDungeonRegistry.lootChestAt(x, y, z) != null) {
+            ItemStack[] lootInv = ctx.chestManager.getInventory(x, y, z);
+            if (lootInv != null
+                    && com.voxel.world.aether.AetherDungeonRegistry.fillDungeonChestLoot(x, y, z, lootInv)) {
+                switch (com.voxel.world.aether.AetherDungeonRegistry.lootChestAt(x, y, z)) {
+                    case BRONZE: ctx.setStatus("Bronze dungeon treasure"); break;
+                    case SILVER: ctx.setStatus("Silver dungeon treasure"); break;
+                    default:     ctx.setStatus("Gold dungeon treasure"); break;
+                }
+            }
+        }
         ctx.chestOpen = true;
         ctx.inventoryOpen = true;
         ctx.activeUI = GameContext.ActiveUI.CHEST;
         ctx.setStatus("Chest");
+        if (ctx.cinematic != null) {
+            ctx.cinematic.playActionBeat(com.voxel.cinematic.CinematicSystem.Beat.CHEST,
+                new Vector3f(x, y, z), false);
+        }
+        VillagerReactions.fire(ctx, VillagerReactions.Trigger.OPEN_CHEST, x, y, z);
     }
 
     /** Opens the item-vault UI (shares the ChestManager storage keyed by position). */
@@ -395,6 +413,16 @@ public class BlockInteraction {
         // Piston base: derive facing direction from directional block ID before clearing
         int pistonDir = getPistonDirection(blockId);
         if (!ctx.chunkManager.setVoxel(x, y, z, 0)) return;
+        // Striking ore earns a cutaway close-up on the vein (first of each kind
+        // is a milestone beat; later strikes are throttled).
+        if (ctx.cinematic != null && isOreBlock(blockId)) {
+            boolean first = ctx.cinematic.firstTime("ore:" + blockId);
+            ctx.cinematic.playActionBeat(com.voxel.cinematic.CinematicSystem.Beat.ORE,
+                new Vector3f(x, y, z), first);
+        }
+        // Villagers nearby notice the racket and may comment on it.
+        VillagerReactions.onBlockBroken(ctx, x, y, z,
+                ctx.blockRegistry == null ? null : ctx.blockRegistry.getName(blockId));
         // Removing a rail may leave a curve orphaned — recompute neighbouring
         // rail shapes so leftover curves snap back to straights.
         if (com.voxel.entity.MinecartEntity.isRail(blockId)) {
@@ -711,6 +739,26 @@ public class BlockInteraction {
      * Package-private so the drop rule can be regression-tested without constructing the
      * full OpenGL-backed game context.
      */
+    /** True for mineable ore veins (drives the first-strike cutaway beat). */
+    static boolean isOreBlock(int blockId) {
+        switch (blockId) {
+            case 26:  // redstone_ore
+            case 61:  // coal_ore
+            case 81:  // iron_ore
+            case 82:  // gold_ore
+            case 83:  // diamond_ore
+            case 84:  // emerald_ore
+            case 85:  // lapis_ore
+            case 107: // ambrosium_ore
+            case 108: // gravitite_ore
+            case 111: // zanite_ore
+            case 142: // copper_ore
+                return true;
+            default:
+                return false;
+        }
+    }
+
     static String dropItemForBlock(int blockId) {
         if (blockId == 2) return "cobblestone";
         if (blockId == 26) return "redstone_wire";
@@ -870,6 +918,12 @@ public class BlockInteraction {
                     ? ctx.villagerAudioManager.requestVillagerDialogue(v, ctx.worldTime)
                     : "Hmm...";
             ctx.setStatus("Villager (" + name + ") — \"" + dialogue + "\"");
+            // Shot/reverse-shot conversation framing (MCSM dialogue style).
+            if (ctx.cinematic != null) {
+                Vector3f vp = v.getPosition();
+                ctx.cinematic.playActionBeat(com.voxel.cinematic.CinematicSystem.Beat.VILLAGER,
+                    new Vector3f(vp.x, vp.y, vp.z), false);
+            }
         } else if (e instanceof com.voxel.entity.MinecartEntity) {
             com.voxel.entity.MinecartEntity cart = (com.voxel.entity.MinecartEntity) e;
             // Shift-right-click: empty the cart of dirt.
@@ -970,20 +1024,14 @@ public class BlockInteraction {
     /** Raycasts the mouse cursor onto the active block's top face and returns quadrant 0..3. */
     public int raycastSurfaceCraftingCell() {
         if (!ctx.surfaceCraftingOpen) return -1;
-        Vector3f origin = getActiveCameraPosition();
-        Vector3f lookTarget = new Vector3f(origin).add(getLookDirection());
-        Matrix4f projection = new Matrix4f().perspective(
-            (float) Math.toRadians(70.0),
-            (float) ctx.width / Math.max(1, ctx.height),
-            0.1f, 2048.0f
-        );
-        Matrix4f view = new Matrix4f().lookAt(origin, lookTarget, new Vector3f(0, 1, 0));
-        Matrix4f inverse = new Matrix4f(projection).mul(view).invert();
+        Vector3f near = getActiveCameraPosition();
+        // Canonical unprojection (matches the shader ray gen; the old 70°
+        // projection drifted against the 90° render at the screen edges).
         float ndcX = (ctx.lastMouseX / Math.max(1, ctx.width)) * 2.0f - 1.0f;
         float ndcY = 1.0f - (ctx.lastMouseY / Math.max(1, ctx.height)) * 2.0f;
-        Vector3f near = new Vector3f(ndcX, ndcY, -1.0f).mulProject(inverse);
-        Vector3f far = new Vector3f(ndcX, ndcY, 1.0f).mulProject(inverse);
-        Vector3f direction = new Vector3f(far).sub(near).normalize();
+        Vector3f direction = com.voxel.camera.CameraController.ndcRayDir(
+            ndcX, ndcY, ctx.yaw, ctx.pitch,
+            (float) ctx.width / Math.max(1, ctx.height), ctx.cameraTanHalfFov);
 
         float topY = ctx.surfaceCraftingBlockY + 1.0f;
         if (Math.abs(direction.y) < 1e-6f) return -1;
@@ -1712,6 +1760,16 @@ public class BlockInteraction {
         }
         if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
         ctx.setStatus("Ate " + selected.itemId.replace('_', ' '));
+        // Cutaway close-up on the player taking a bite (throttled).
+        if (ctx.cinematic != null) {
+            Vector3f pp = ctx.player.getPosition();
+            ctx.cinematic.playActionBeat(com.voxel.cinematic.CinematicSystem.Beat.EAT,
+                new Vector3f(pp.x, pp.y, pp.z), false);
+        }
+        if (ctx.player != null) {
+            Vector3f pp = ctx.player.getPosition();
+            VillagerReactions.fire(ctx, VillagerReactions.Trigger.EAT, pp.x, pp.y, pp.z);
+        }
         return true;
     }
 

@@ -53,7 +53,9 @@ public final class TutorialWorldAuthor {
             // ── End Update blocks (fixed IDs registered in Main) ──
             PURPUR = 900, PURPUR_PILLAR = 901, CHORUS = 902, CHORUS_FLOWER = 903,
             END_GLASS = 904, VOID_STEEL = 905,
-            BEACON = 457, ENCHANT_TABLE = 458, END_BRICKS = 464, END_ROD = 465, DRAGON_EGG = 466;
+            BEACON = 457, ENCHANT_TABLE = 458, END_BRICKS = 464, END_ROD = 465, DRAGON_EGG = 466,
+            // ── Aether dungeon exhibit blocks (fixed IDs registered in Main) ──
+            GRAVITITE_ORE = 108, ICESTONE = 110, ZANITE_ORE = 111, GOLDEN_AERCLOUD = 126;
 
     private static final int RS_PISTON = com.voxel.world.RedstoneManager.BLOCK_PISTON;
     private static final int RS_STICKY = com.voxel.world.RedstoneManager.BLOCK_STICKY_PISTON;
@@ -93,12 +95,30 @@ public final class TutorialWorldAuthor {
         new Zone("Smelting Works", "Furnaces, blaze burners and steam engines — the heat of industry.", 320, -320, 22),
         new Zone("Grand Throne Castle", "A towering stone-brick keep with turrets, banners and a gold throne.", -320, -320, 24),
         new Zone("The Barren Isles", "An End update exhibit: drifting end-stone isles, obsidian monoliths, dead purpur ruins and the last chorus grove.", -320, 160, 22),
+        new Zone("Aether Dungeons", "Bronze, silver and gold boss halls — Slider, Valkyrie Queen and Sun Spirit treasure.", 320, 160, 22),
+        new Zone("Villager News Studio", "The VN newsroom: anchor desk, camera rigs and the satellite tower.", 320, 320, 22),
+        new Zone("Cinematic Studio", "A film set for cutscenes: director's tower, spotlights and a dolly track.", 160, 320, 22),
+        // Guided progression stations (zone indices FIRST_STATION_ZONE..+5),
+        // laid on an arc around the castle. Titles double as step-by-step cards.
+        new Zone("Step 1 · Mining", "Break stone and dig ore — everything starts underground.", 42, 0, 7),
+        new Zone("Step 2 · Crafting", "Turn planks and cobblestone into tools at the crafting table.", 34, 25, 7),
+        new Zone("Step 3 · Smelting", "Feed the furnace coal — cook raw ore into ingots.", 13, 40, 7),
+        new Zone("Step 4 · Iron Gear", "Upgrade to iron: tools, provisions and a full torch stack.", -13, 40, 7),
+        new Zone("Step 5 · Portals", "Obsidian and fire open the Nether; an Aether portal glows beside it.", -34, 25, 7),
+        new Zone("Step 6 · Dungeon Loot", "Tiered treasure: bronze, silver and gold — the spoils of the boss halls.", -42, 0, 7),
     };
 
     public static Zone[] zones() { return ZONES; }
 
     /** Zone index of the Minecart Coaster (rideable carts spawn on entry). */
     public static final int MINECART_ZONE = 3;
+
+    /** Zone indices of the three content exhibits added after the original tour. */
+    public static final int DUNGEON_ZONE = 15, NEWS_ZONE = 16, FILM_ZONE = 17;
+    /** Zone index of the first guided progression station (6 stations follow). */
+    public static final int FIRST_STATION_ZONE = 18;
+    /** Number of guided progression stations. */
+    public static final int STATION_COUNT = 6;
 
     /**
      * Rideable minecart entity spawn points (x, y, z) on the coaster's straight
@@ -131,6 +151,60 @@ public final class TutorialWorldAuthor {
         return best;
     }
 
+    /** A villager resident of the tutorial world: spawn point (block x/z) + profession. */
+    public static final class VillagerSpawn {
+        public final int x, z;
+        public final com.voxel.entity.VillagerEntity.Profession profession;
+
+        VillagerSpawn(int x, int z, com.voxel.entity.VillagerEntity.Profession profession) {
+            this.x = x;
+            this.z = z;
+            this.profession = profession;
+        }
+    }
+
+    /**
+     * Villager residents, spawned once when the player first enters a zone
+     * (Main.spawnTutorialZoneMobs). They react to whatever the player does via
+     * {@code VillagerReactions} and chat with each other.
+     */
+    public static VillagerSpawn[] villagerSpawns() {
+        com.voxel.entity.VillagerEntity.Profession B = com.voxel.entity.VillagerEntity.Profession.BUILDER;
+        com.voxel.entity.VillagerEntity.Profession F = com.voxel.entity.VillagerEntity.Profession.FARMER;
+        com.voxel.entity.VillagerEntity.Profession N = com.voxel.entity.VillagerEntity.Profession.NEWS_ANCHOR;
+        com.voxel.entity.VillagerEntity.Profession S = com.voxel.entity.VillagerEntity.Profession.SHOPKEEPER;
+        com.voxel.entity.VillagerEntity.Profession W = com.voxel.entity.VillagerEntity.Profession.NITWIT;
+        return new VillagerSpawn[] {
+            // Tutorial Castle
+            new VillagerSpawn(7, 7, B), new VillagerSpawn(-8, 6, S),
+            // Create Machine Works
+            new VillagerSpawn(8, -152, B), new VillagerSpawn(-9, -156, W),
+            // Redstone Laboratory
+            new VillagerSpawn(168, 6, B), new VillagerSpawn(152, -6, S),
+            // Village
+            new VillagerSpawn(150, -150, F), new VillagerSpawn(170, -152, F),
+            new VillagerSpawn(158, -172, S), new VillagerSpawn(166, -170, W),
+            // Quarry Mine
+            new VillagerSpawn(150, 168, B),
+            // Farm & Food
+            new VillagerSpawn(-8, -312, F), new VillagerSpawn(8, -312, F), new VillagerSpawn(0, -330, S),
+            // Storage Vault
+            new VillagerSpawn(-310, 8, S), new VillagerSpawn(-330, -6, W),
+            // Smelting Works
+            new VillagerSpawn(310, -312, B), new VillagerSpawn(330, -314, W),
+            // Grand Throne Castle
+            new VillagerSpawn(-310, -310, B), new VillagerSpawn(-330, -312, S),
+            // Aether Dungeons (the loot vendor out front)
+            new VillagerSpawn(320, 180, S),
+            // Villager News Studio (the crew out front)
+            new VillagerSpawn(316, 332, N), new VillagerSpawn(324, 332, N), new VillagerSpawn(320, 336, S),
+            // Cinematic Studio (director + comic relief)
+            new VillagerSpawn(152, 330, N), new VillagerSpawn(168, 330, W),
+            // Progression path guides at both arc ends
+            new VillagerSpawn(42, 8, S), new VillagerSpawn(-42, 8, N),
+        };
+    }
+
     /** A target that receives every voxel the author places (type + facing). */
     public interface Sink {
         void set(int x, int y, int z, int type, int extra);
@@ -148,6 +222,7 @@ public final class TutorialWorldAuthor {
         Author a = new Author(sink, chests);
         a.buildBaseTerrain();
         for (int i = 0; i < ZONES.length; i++) a.buildZone(i);
+        a.buildProgressPath();
         a.buildFill();
     }
 
@@ -195,6 +270,13 @@ public final class TutorialWorldAuthor {
                 case 12: buildSmeltingWorks(z); break;
                 case 13: buildThroneCastle(z); break;
                 case 14: buildBarrenIsles(z); break;
+                case 15: buildAetherDungeons(z); break;
+                case 16: buildVillagerNewsStudio(z); break;
+                case 17: buildCinematicStudio(z); break;
+                // Zones 18+ are the guided progression stations; they are built
+                // in one pass by buildProgressPath() so the connecting walkways
+                // can span station borders.
+                default: break;
             }
         }
 
@@ -803,6 +885,337 @@ public final class TutorialWorldAuthor {
             }
         }
 
+        /**
+         * Zone 15 — Aether Dungeons.
+         *
+         * Three boss halls standing in for the Aether's bronze, silver and gold
+         * dungeons (built from fixed-ID lookalikes: carved stone → stone brick,
+         * angelic stone → stone brick + iron + glass, hellfire stone → nether
+         * brick + lava). Each hall carries its tier's loot chest, matching the
+         * live AetherDungeonRegistry tier tables.
+         */
+        private void buildAetherDungeons(Zone z) {
+            int x = z.cx, zz = z.cz;
+            buildDungeonHall(x - 26, zz, 0); // bronze — Slider
+            buildDungeonHall(x, zz, 1);      // silver — Valkyrie Queen
+            buildDungeonHall(x + 26, zz, 2); // gold — Sun Spirit
+
+            // Walkway linking the three south doors, then the entry plaza.
+            floor(x - 26, zz + 9, x + 26, zz + 12, G, STONE_BRICK);
+            floor(x - 12, zz + 13, x + 12, zz + 20, G, STONE_BRICK);
+            for (int px = x - 12; px <= x + 12; px += 6) lampPost(px, G, zz + 20);
+            // Golden aercloud drifts over the halls.
+            place(x - 26, G + 10, zz + 13, GOLDEN_AERCLOUD);
+            place(x - 24, G + 11, zz + 13, GOLDEN_AERCLOUD);
+            place(x + 26, G + 10, zz + 13, GOLDEN_AERCLOUD);
+            place(x + 28, G + 11, zz + 13, GOLDEN_AERCLOUD);
+        }
+
+        /** One boss hall. tier: 0 = bronze (Slider), 1 = silver (Valkyrie Queen), 2 = gold (Sun Spirit). */
+        private void buildDungeonHall(int hx, int hz, int tier) {
+            int wall, floorB, trim;
+            if (tier == 0) { wall = MOSSY; floorB = STONE_BRICK; trim = STONE_BRICK; }
+            else if (tier == 1) { wall = STONE_BRICK; floorB = STONE_BRICK; trim = IRON_BLOCK; }
+            else { wall = NETHER_BRICKS; floorB = NETHERRACK; trim = GOLD_BLOCK; }
+            int r = 8, h = 7;
+
+            // Shell: floor, four walls with a 3-wide south doorway, roof.
+            floor(hx - r, hz - r, hx + r, hz + r, G, floorB);
+            for (int dx = -r; dx <= r; dx++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
+                    if (dz == r && Math.abs(dx) <= 1) continue; // doorway
+                    for (int py = 1; py <= h; py++) place(hx + dx, G + py, hz + dz, wall);
+                }
+            }
+            floor(hx - r, hz - r, hx + r, hz + r, G + h + 1, wall); // ceiling
+            for (int[] c : new int[][]{{-r, -r}, {r, -r}, {-r, r}, {r, r}}) {
+                for (int py = 1; py <= h; py++) place(hx + c[0], G + py, hz + c[1], trim);
+            }
+
+            // Boss pedestal + spawner under a ceiling light.
+            for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) place(hx + dx, G + 1, hz + dz, trim);
+            place(hx, G + 2, hz, SPAWNER);
+            place(hx, G + h, hz, GLOWSTONE);
+
+            // Tier loot chest against the north wall.
+            place(hx, G + 1, hz - r + 1, CHEST);
+            if (tier == 0) {
+                chestAt(hx, G + 1, hz - r + 1,
+                        new String[]{"zanite_ore", "coal", "torch", "iron_ingot", "icestone", "stone_pickaxe"},
+                        new int[]{8, 16, 16, 8, 4, 1});
+            } else if (tier == 1) {
+                chestAt(hx, G + 1, hz - r + 1,
+                        new String[]{"gravitite_ore", "golden_aercloud", "diamond", "iron_ingot", "torch", "iron_pickaxe"},
+                        new int[]{8, 8, 4, 8, 16, 1});
+            } else {
+                chestAt(hx, G + 1, hz - r + 1,
+                        new String[]{"gold_ingot", "fire_charge", "blaze_rod", "diamond", "gold_block", "diamond_pickaxe"},
+                        new int[]{16, 8, 8, 4, 4, 1});
+            }
+
+            // Tier flavour.
+            if (tier == 0) {
+                // Bronze: a frozen trap moat behind the entry and ore seams.
+                for (int dx = -6; dx <= 6; dx++) if (Math.abs(dx) > 1) set(hx + dx, G + 1, hz + r - 2, WATER);
+                set(hx - r, G + 3, hz - 3, COAL_ORE);
+                set(hx + r, G + 3, hz - 3, COAL_ORE);
+                set(hx - r, G + 4, hz + 3, IRON_ORE);
+                set(hx + r, G + 4, hz + 3, GOLD_ORE);
+            } else if (tier == 1) {
+                // Silver: glazed windows in the side walls, ice-stone accents.
+                for (int dz = -4; dz <= 4; dz += 4) {
+                    for (int py = 3; py <= 4; py++) {
+                        set(hx - r, G + py, hz + dz, GLASS);
+                        set(hx + r, G + py, hz + dz, GLASS);
+                    }
+                }
+                place(hx - 4, G + 1, hz + 4, ICESTONE);
+                place(hx + 4, G + 1, hz + 4, ICESTONE);
+            } else {
+                // Gold: a lava channel across the entry and glowstone coals.
+                for (int dx = -6; dx <= 6; dx++) {
+                    if (Math.abs(dx) <= 1) continue; // keep the doorway walk clear
+                    set(hx + dx, G + 1, hz + r - 2, LAVA);
+                }
+                place(hx - 6, G + 1, hz + 4, GLOWSTONE);
+                place(hx + 6, G + 1, hz + 4, GLOWSTONE);
+            }
+        }
+
+        /**
+         * Zone 16 — Villager News Studio.
+         *
+         * The VN newsroom: a glazed studio shell with an anchor desk, a wall of
+         * TV screens, camera rigs, ceiling lights and the satellite tower out
+         * back. The news crew spawns out front (see villagerSpawns()).
+         */
+        private void buildVillagerNewsStudio(Zone z) {
+            int x = z.cx, zz = z.cz;
+            hollow(x - 12, G, zz - 8, x + 12, G + 8, zz + 8, STONE_BRICK);
+            floor(x - 11, zz - 7, x + 11, zz + 7, G, PLANKS);
+
+            // Glazed south entrance + side windows.
+            for (int h = 1; h <= 3; h++) for (int dx = -1; dx <= 1; dx++) set(x + dx, G + h, zz + 8, 0);
+            for (int dz = -4; dz <= 4; dz += 4) {
+                for (int py = 3; py <= 5; py++) {
+                    set(x - 12, G + py, zz + dz, GLASS);
+                    set(x + 12, G + py, zz + dz, GLASS);
+                }
+            }
+
+            // Screen wall + anchor desk.
+            for (int dx = -3; dx <= 3; dx += 3) {
+                for (int py = 2; py <= 3; py++) set(x + dx, G + py, zz - 8, TV);
+            }
+            floor(x - 2, zz - 2, x + 2, zz - 1, G + 1, PLANKS);
+            place(x, G + 2, zz - 1, TV); // desk monitor
+
+            // Camera rigs pointed at the desk.
+            for (int cx : new int[]{-5, 5}) {
+                place(x + cx, G + 1, zz + 2, SHAFT);
+                place(x + cx, G + 2, zz + 2, TV);
+                place(x + cx, G + 3, zz + 2, FAN);
+            }
+
+            // Ceiling light rig.
+            for (int dx = -8; dx <= 8; dx += 4) place(x + dx, G + 7, zz, GLOWSTONE);
+            place(x - 4, G + 6, zz, END_ROD);
+            place(x + 4, G + 6, zz, END_ROD);
+
+            // Broadcast kit chest.
+            place(x + 10, G + 1, zz - 6, CHEST);
+            chestAt(x + 10, G + 1, zz - 6,
+                    new String[]{"redstone", "redstone_torch", "glass", "torch", "gold_ingot", "bread"},
+                    new int[]{16, 8, 16, 16, 4, 8});
+
+            // Satellite tower + dish out front.
+            tower(x + 17, zz + 6, G, 8, STONE_BRICK);
+            place(x + 16, G + 10, zz + 6, WHEEL);
+            place(x + 18, G + 10, zz + 6, WHEEL);
+
+            // Front walkway with lamps.
+            floor(x - 3, zz + 9, x + 3, zz + 14, G, STONE_BRICK);
+            lampPost(x - 3, G, zz + 14);
+            lampPost(x + 3, G, zz + 14);
+        }
+
+        /**
+         * Zone 17 — Cinematic Studio.
+         *
+         * A backlot film set for the cutscene system: clapperboard arch,
+         * director's tower, spotlight masts, a camera dolly track and a
+         * wall-sized backdrop.
+         */
+        private void buildCinematicStudio(Zone z) {
+            int x = z.cx, zz = z.cz;
+            floor(x - 13, zz - 9, x + 13, zz + 9, G, PLANKS);
+
+            // Backdrop wall (north edge).
+            for (int dx = -13; dx <= 13; dx++)
+                for (int py = 1; py <= 6; py++) place(x + dx, G + py, zz - 9, WOOL);
+
+            // Clapperboard arch over the entrance.
+            for (int py = 1; py <= 4; py++) {
+                place(x - 3, G + py, zz + 8, WOOL);
+                place(x + 3, G + py, zz + 8, WOOL);
+            }
+            for (int dx = -3; dx <= 3; dx++) place(x + dx, G + 5, zz + 8, (dx & 1) == 0 ? WOOL : STONE_BRICK);
+
+            // Director's tower with a glowstone lamp.
+            for (int py = 1; py <= 5; py++) place(x - 11, G + py, zz + 7, OAK_LOG);
+            floor(x - 13, zz + 5, x - 9, zz + 9, G + 5, PLANKS);
+            for (int dz = 5; dz <= 9; dz += 2) place(x - 13, G + 6, zz + dz, STONE_BRICK);
+            place(x - 11, G + 6, zz + 7, GLOWSTONE);
+
+            // Spotlight masts.
+            for (int mx : new int[]{-10, 10}) {
+                for (int py = 1; py <= 5; py++) place(x + mx, G + py, zz - 7, OAK_LOG);
+                place(x + mx, G + 6, zz - 7, GLOWSTONE);
+                place(x + mx, G + 5, zz - 6, END_ROD);
+            }
+
+            // Camera dolly track + the cutscene trigger pad.
+            for (int dz = -6; dz <= 6; dz++) {
+                set(x - 4, G + 1, zz + dz, RAIL_NS);
+                set(x + 4, G + 1, zz + dz, RAIL_NS);
+            }
+            floor(x - 1, zz - 1, x + 1, zz + 1, G, GLOWSTONE);
+
+            // Prop crates.
+            place(x - 12, G + 1, zz + 2, CHEST);
+            chestAt(x - 12, G + 1, zz + 2,
+                    new String[]{"oak_planks", "glass", "torch", "stick", "bread", "gold_ingot"},
+                    new int[]{16, 8, 8, 8, 4, 2});
+            place(x + 12, G + 1, zz + 2, CHEST);
+            chestAt(x + 12, G + 1, zz + 2,
+                    new String[]{"wool", "oak_planks", "stone_brick", "torch", "stick"},
+                    new int[]{8, 8, 8, 8, 8});
+        }
+
+        // ── Guided progression path ──────────────────────────────────
+
+        /**
+         * Builds the six step stations (zones FIRST_STATION_ZONE..+5) on their
+         * arc around the castle, plus a stone-brick walkway connecting each
+         * station to the next and both arc ends back to the castle gates.
+         */
+        private void buildProgressPath() {
+            for (int i = 0; i < STATION_COUNT; i++) {
+                Zone s = ZONES[FIRST_STATION_ZONE + i];
+                buildProgressStation(s.cx, s.cz, i + 1);
+            }
+            for (int i = 0; i < STATION_COUNT - 1; i++) {
+                Zone a = ZONES[FIRST_STATION_ZONE + i];
+                Zone b = ZONES[FIRST_STATION_ZONE + i + 1];
+                path(a.cx, a.cz, b.cx, b.cz);
+            }
+            path(ZONES[FIRST_STATION_ZONE].cx, ZONES[FIRST_STATION_ZONE].cz, 17, 0);
+            path(ZONES[FIRST_STATION_ZONE + STATION_COUNT - 1].cx,
+                 ZONES[FIRST_STATION_ZONE + STATION_COUNT - 1].cz, -17, 0);
+        }
+
+        /** A 3-wide stone-brick walkway from (x0,z0) to (x1,z1). */
+        private void path(int x0, int z0, int x1, int z1) {
+            int steps = Math.max(Math.abs(x1 - x0), Math.abs(z1 - z0));
+            if (steps == 0) return;
+            for (int s = 0; s <= steps; s++) {
+                int px = x0 + (x1 - x0) * s / steps;
+                int pz = z0 + (z1 - z0) * s / steps;
+                set(px, G, pz, STONE_BRICK);
+                set(px - 1, G, pz, STONE_BRICK);
+                set(px + 1, G, pz, STONE_BRICK);
+            }
+        }
+
+        /** One progression station: paved pad, beacon pillar and the step's demo. */
+        private void buildProgressStation(int sx, int sz, int step) {
+            floor(sx - 4, sz - 4, sx + 4, sz + 4, G, STONE_BRICK);
+            // Beacon pillar + corner torches so the station is visible from afar.
+            for (int py = 1; py <= 3; py++) place(sx, G + py, sz - 3, STONE_BRICK);
+            place(sx, G + 4, sz - 3, GLOWSTONE);
+            place(sx - 3, G + 1, sz - 3, TORCH);
+            place(sx + 3, G + 1, sz - 3, TORCH);
+
+            switch (step) {
+                case 1: { // Mining — an exposed ore face
+                    floor(sx - 3, sz + 2, sx + 3, sz + 2, G + 1, STONE);
+                    for (int px = -2; px <= 2; px++) set(sx + px, G + 2, sz + 2, COAL_ORE);
+                    set(sx - 1, G + 2, sz + 2, IRON_ORE);
+                    set(sx, G + 2, sz + 2, GOLD_ORE);
+                    set(sx + 1, G + 2, sz + 2, DIAMOND_ORE);
+                    place(sx - 3, G + 1, sz, CHEST);
+                    chestAt(sx - 3, G + 1, sz,
+                            new String[]{"wood_pickaxe", "stone_pickaxe", "coal", "cobblestone", "torch"},
+                            new int[]{2, 1, 8, 16, 8});
+                    break;
+                }
+                case 2: { // Crafting — tables + a planks bench
+                    place(sx - 1, G + 1, sz + 2, CRAFT_TABLE);
+                    place(sx + 1, G + 1, sz + 2, CRAFT_TABLE);
+                    floor(sx - 1, sz + 3, sx + 1, sz + 3, G + 1, PLANKS);
+                    place(sx - 3, G + 1, sz, CHEST);
+                    chestAt(sx - 3, G + 1, sz,
+                            new String[]{"oak_planks", "stick", "stone_pickaxe", "stone_axe", "torch"},
+                            new int[]{32, 16, 1, 1, 8});
+                    break;
+                }
+                case 3: { // Smelting — furnaces, a blaze burner and a chimney
+                    place(sx - 1, G + 1, sz + 2, FURNACE);
+                    place(sx + 1, G + 1, sz + 2, FURNACE);
+                    place(sx, G + 1, sz + 4, BURNER);
+                    for (int py = 1; py <= 3; py++) place(sx, G + py, sz + 1, COBBLE);
+                    place(sx, G + 4, sz + 1, GLOWSTONE);
+                    place(sx - 3, G + 1, sz, CHEST);
+                    chestAt(sx - 3, G + 1, sz,
+                            new String[]{"coal", "iron_ore", "gold_ore", "cobblestone", "torch"},
+                            new int[]{16, 8, 4, 16, 8});
+                    break;
+                }
+                case 4: { // Iron gear — an iron plinth + full iron kit
+                    floor(sx - 1, sz + 2, sx + 1, sz + 3, G + 1, IRON_BLOCK);
+                    place(sx, G + 2, sz + 2, IRON_BLOCK);
+                    place(sx - 3, G + 1, sz + 3, FURNACE);
+                    place(sx - 3, G + 1, sz, CHEST);
+                    chestAt(sx - 3, G + 1, sz,
+                            new String[]{"iron_ingot", "iron_pickaxe", "iron_axe", "iron_shovel", "bread", "torch"},
+                            new int[]{16, 1, 1, 1, 8, 16});
+                    break;
+                }
+                case 5: { // Portals — nether frame + an aether portal glow
+                    for (int py = 1; py <= 4; py++) {
+                        place(sx - 2, G + py, sz + 2, OBSIDIAN);
+                        place(sx + 2, G + py, sz + 2, OBSIDIAN);
+                    }
+                    for (int px = -2; px <= 2; px++) place(sx + px, G + 5, sz + 2, OBSIDIAN);
+                    for (int px = -1; px <= 1; px++)
+                        for (int py = 1; py <= 4; py++) set(sx + px, G + py, sz + 2, NETHER_PORTAL);
+                    // Aether portal shrine beside it.
+                    place(sx - 4, G + 1, sz + 2, GLOWSTONE);
+                    place(sx - 4, G + 4, sz + 2, GLOWSTONE);
+                    for (int py = 1; py <= 3; py++) set(sx - 4, G + py, sz + 2, py == 1 || py == 3 ? GLOWSTONE : AETHER_PORTAL);
+                    place(sx - 3, G + 1, sz, CHEST);
+                    chestAt(sx - 3, G + 1, sz,
+                            new String[]{"obsidian", "flint_and_steel", "fire_charge", "gold_ingot"},
+                            new int[]{16, 2, 8, 8});
+                    break;
+                }
+                default: { // Dungeon loot — the three tiers on pedestals
+                    place(sx - 2, G + 1, sz + 3, ZANITE_ORE);
+                    place(sx, G + 1, sz + 3, ICESTONE);
+                    place(sx + 2, G + 1, sz + 3, GRAVITITE_ORE);
+                    place(sx - 2, G + 2, sz + 3, GOLD_BLOCK);
+                    place(sx + 2, G + 2, sz + 3, GOLDEN_AERCLOUD);
+                    place(sx, G + 2, sz + 3, SPAWNER);
+                    place(sx - 3, G + 1, sz, CHEST);
+                    chestAt(sx - 3, G + 1, sz,
+                            new String[]{"zanite_ore", "gravitite_ore", "icestone", "golden_aercloud", "diamond", "gold_block"},
+                            new int[]{8, 8, 8, 8, 4, 4});
+                    break;
+                }
+            }
+        }
+
         // ── Fill pass: roads + a building in every cell (no empty areas) ──
 
         private static final int FILL_CELL = 32;
@@ -855,6 +1268,7 @@ public final class TutorialWorldAuthor {
             for (int i = 0; i < trees; i++) {
                 int tx = x + 2 + (rng(s) % (FILL_CELL - 4));
                 int tz = z + 2 + (rng(s) % (FILL_CELL - 4));
+                if (!naturalGround(tx, tz)) continue; // never punch trees through builds/paving
                 tree(tx, tz, OAK_LOG, OAK_LEAF);
             }
             int flowers = 3 + Math.floorMod(h >> 3, 4);
@@ -1070,6 +1484,17 @@ public final class TutorialWorldAuthor {
         private static int rng(int[] s) {
             s[0] = s[0] * 1103515245 + 12345;
             return (s[0] >>> 16) & 0x7FFF;
+        }
+
+        /**
+         * True when a tree may grow here: natural (unpaved) ground with no
+         * build overhead, so trunks never punch through buildings or walkways.
+         */
+        private boolean naturalGround(int x, int z) {
+            int under = sink.get(x, G, z);
+            if (under != 0 && under != GRASS && under != DIRT) return false;
+            for (int y = G + 1; y <= G + 9; y++) if (sink.get(x, y, z) != 0) return false;
+            return true;
         }
 
         private boolean nearZone(int x, int z) {

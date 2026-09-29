@@ -32,11 +32,32 @@ public class SunSpiritEntity extends EnemyEntity {
         addPosition(0.0f, (float) Math.sin(animTime * 1.2) * 0.02f, 0.0f);
 
         spin += dt * 60.0f;
-        ModelPart r1 = findPart("ring_1");
-        ModelPart r2 = findPart("ring_2");
-        if (r1 != null) r1.rotation.y = spin % 360.0f;
-        if (r2 != null) r2.rotation.z = spin % 360.0f;
+        // Hovering fire spirit: slow arm drift, a breathing torso and a jaw
+        // that murmurs. (The old ring_1/ring_2 targets never existed in the
+        // SunSpiritModel — those spins were silently doing nothing.)
+        float t = animTime;
+        ModelPart head = findPart("head");
+        if (head != null) {
+            head.rotation.y = (float) Math.sin(t * 0.6) * 12.0f;
+            head.rotation.x = (float) Math.sin(t * 0.9) * 4.0f;
+        }
+        ModelPart mouth = findPart("head_mouth");
+        if (mouth != null) {
+            mouth.rotation.x = 6.0f + (float) Math.abs(Math.sin(t * 3.1)) * 10.0f;
+        }
+        ModelPart la = findPart("left_arm_upper");
+        if (la != null) la.rotation.z = (float) Math.sin(t * 0.8) * 14.0f - 8.0f;
+        ModelPart ra = findPart("right_arm_upper");
+        if (ra != null) ra.rotation.z = (float) Math.sin(t * 0.8 + Math.PI) * 14.0f + 8.0f;
+        ModelPart mid = findPart("torso_middle");
+        if (mid != null) {
+            if (Float.isNaN(midOffsetY)) midOffsetY = mid.offset.y;
+            mid.offset.y = midOffsetY + (float) Math.sin(t * 1.4) * 0.12f;
+        }
     }
+
+    /** Resting y of the middle torso segment (offset animates around it). */
+    private float midOffsetY = Float.NaN;
 
     @Override
     public void updateAI(Vector3f playerPos, Vector3f playerVelocity, float dt) {

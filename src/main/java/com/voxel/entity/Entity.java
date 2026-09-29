@@ -170,6 +170,13 @@ public class Entity {
             String content = new String(Files.readAllBytes(Paths.get(path)));
             JSONObject json = new JSONObject(content);
 
+            // Model-level UV scale: models transcribed from high-resolution
+            // Minecraft skins (128x64, 256x128, ...) keep the source texOffs
+            // values verbatim and declare the factor between that layout and
+            // the engine's 64-unit atlas. TextureManager downscales the
+            // texture by the same factor, so sampling matches the mod.
+            float uvScale = (float) json.optDouble("uv_scale", 1.0);
+
             // 1. Handle Parent Inheritance
             if (json.has("parent")) {
                 String parentPath = json.getString("parent");
@@ -204,12 +211,16 @@ public class Entity {
                             texIdx
                         );
                         
-                        if (p.has("uv")) {
-                            JSONArray uv = p.getJSONArray("uv");
-                            part.uvOrigin.set((float)uv.getDouble(0), (float)uv.getDouble(1));
-                        }
-                        
-                        loadedParts.put(name, part);
+                    if (p.has("uv")) {
+                        JSONArray uv = p.getJSONArray("uv");
+                        part.uvOrigin.set((float)uv.getDouble(0), (float)uv.getDouble(1));
+                    }
+                    if (uvScale != 1.0f) {
+                        part.uvOrigin.mul(uvScale);
+                        part.uvSize.mul(uvScale);
+                    }
+
+                    loadedParts.put(name, part);
                     } else {
                         // Override existing part properties
                         if (p.has("from")) {
@@ -225,7 +236,7 @@ public class Entity {
                         }
                         if (p.has("uv")) {
                             JSONArray uv = p.getJSONArray("uv");
-                            part.uvOrigin.set((float)uv.getDouble(0), (float)uv.getDouble(1));
+                            part.uvOrigin.set((float)uv.getDouble(0) * uvScale, (float)uv.getDouble(1) * uvScale);
                         }
                     }
 
@@ -242,7 +253,7 @@ public class Entity {
 
                     if (p.has("uv_size")) {
                         JSONArray uvSize = p.getJSONArray("uv_size");
-                        part.uvSize.set((float)uvSize.getDouble(0), (float)uvSize.getDouble(1), (float)uvSize.getDouble(2));
+                        part.uvSize.set((float)uvSize.getDouble(0) * uvScale, (float)uvSize.getDouble(1) * uvScale, (float)uvSize.getDouble(2) * uvScale);
                     }
 
                     if (p.has("emissive")) {

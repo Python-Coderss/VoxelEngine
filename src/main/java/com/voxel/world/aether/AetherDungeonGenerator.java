@@ -94,8 +94,8 @@ public final class AetherDungeonGenerator {
         carveBossRoom(world, bx, baseY, bz, 6, 5, 6, holystoneId, lockedCarvedId, doorBronzeId);
 
         // Loot + guards
-        placeChest(world, cxw + 14, baseY, czw - 3);
-        placeChest(world, cxw, baseY, czw + 9);
+        placeChest(world, cxw + 14, baseY, czw - 3, AetherDungeonRegistry.DungeonType.BRONZE);
+        placeChest(world, cxw, baseY, czw + 9, AetherDungeonRegistry.DungeonType.BRONZE);
         AetherDungeonRegistry.addSpawnPoint(AetherDungeonRegistry.DungeonType.BRONZE, "sentry",
                 cxw + 2.5f, baseY + 1, czw + 2.5f);
         AetherDungeonRegistry.addSpawnPoint(AetherDungeonRegistry.DungeonType.BRONZE, "sentry",
@@ -149,7 +149,7 @@ public final class AetherDungeonGenerator {
         // Boss chamber at the north end
         carveBossRoom(world, wx, baseY, wz - 2, 4, 4, 3, angelicId, lockedAngelicId, doorSilverId);
 
-        placeChest(world, wx + 4, baseY, wz + 4);
+        placeChest(world, wx + 4, baseY, wz + 4, AetherDungeonRegistry.DungeonType.SILVER);
         AetherDungeonRegistry.addSpawnPoint(AetherDungeonRegistry.DungeonType.SILVER, "valkyrie",
                 wx - 3.5f, baseY, wz + 2.5f);
         AetherDungeonRegistry.addSpawnPoint(AetherDungeonRegistry.DungeonType.SILVER, "valkyrie",
@@ -195,7 +195,7 @@ public final class AetherDungeonGenerator {
             world.setVoxel(wx - t, baseY - 1, wz, lightHellfireId > 0 ? lightHellfireId : hellfireId);
         }
 
-        placeChest(world, wx + 3, baseY, wz + 3);
+        placeChest(world, wx + 3, baseY, wz + 3, AetherDungeonRegistry.DungeonType.GOLD);
         AetherDungeonRegistry.Dungeon d = AetherDungeonRegistry.addDungeon(
                 AetherDungeonRegistry.DungeonType.GOLD, wx + 0.5f, baseY + 1.0f, wz + 0.5f);
         registerDoorway(world, d, wx, baseY, wz, 4, doorGoldId);
@@ -259,7 +259,8 @@ public final class AetherDungeonGenerator {
         }
     }
 
-    private void placeChest(World world, int x, int y, int z) {
+    private void placeChest(World world, int x, int y, int z,
+                            AetherDungeonRegistry.DungeonType type) {
         if (chestId <= 0) return;
         if (world.getVoxel(x, y, z) == 0 && world.getVoxel(x, y - 1, z) != 0) {
             world.setVoxel(x, y, z, chestId);
@@ -267,6 +268,8 @@ public final class AetherDungeonGenerator {
             world.setVoxel(x, y, z, chestId);
             world.setVoxel(x, y - 1, z, holystoneId > 0 ? holystoneId : 1);
         }
+        // Tiered one-shot loot is rolled when the chest is first opened.
+        AetherDungeonRegistry.registerLootChest(x, y, z, type);
     }
 
     private int findSurface(World world, int x, int z, int startY) {

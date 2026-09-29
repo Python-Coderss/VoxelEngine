@@ -70,6 +70,12 @@ public class VillagerEntity extends Entity {
     private int tvChannel = 0;
     private float watchTimer = 0.0f;
 
+    // ── Talk / voice animation (expressive voiceline gestures + lip sync) ──
+    private float talkTimer = 0.0f;
+    private float talkPhase = 0.0f;
+    private int talkGesture = 0;
+    private static final Random TALK_RNG = new Random();
+
     // ── Social / Schedule ──
     private float socialTimer = 0.0f;
     private float lookTimer = 0.0f;
@@ -322,6 +328,69 @@ public class VillagerEntity extends Entity {
         prevPosition.set(getPosition());
         animTime += dt * Math.max(0.9f, speed);
         isMoving = speed > 0.05f;
+
+        // Talk gestures + lip sync overlay, applied after state animations
+        applyTalkAnimation(dt);
+    }
+
+    /**
+     * Play an expressive talk gesture with lip sync for the given duration,
+     * in the style of the Villager News addon's voiceline animations.
+     */
+    public void startTalking(float seconds) {
+        if (seconds <= 0) {
+            return;
+        }
+        talkTimer = Math.max(talkTimer, seconds);
+        talkPhase = TALK_RNG.nextFloat() * 6.283f;
+        talkGesture = TALK_RNG.nextInt(3); // 0 = nod, 1 = one arm, 2 = both arms
+    }
+
+    /** True while a talk gesture is playing. */
+    public boolean isTalking() {
+        return talkTimer > 0;
+    }
+
+    /** Additive talk overlay: runs after the state animations each frame. */
+    private void applyTalkAnimation(float dt) {
+        if (talkTimer <= 0) {
+            return;
+        }
+        talkTimer = Math.max(0, talkTimer - dt);
+        talkPhase += dt * 9.0f; // syllable rate
+        float env = Math.min(1.0f, talkTimer * 1.5f); // settle out at the end
+        float syl = (float) Math.sin(talkPhase);
+        float syl2 = (float) Math.sin(talkPhase * 0.5f + 0.7f);
+        if (head != null) {
+            head.rotation.x += (syl2 * 4.0f + 2.0f) * env; // nods
+            head.rotation.y += (float) Math.sin(talkPhase * 0.37f) * 6.0f * env;
+        }
+        if (nose != null) {
+            nose.rotation.x += syl * 8.0f * env; // lip sync bob
+        }
+        switch (talkGesture) {
+            case 1: // one-armed emphasis gesture
+                if (rightArm != null) {
+                    rightArm.rotation.x += (-30.0f + syl * 18.0f) * env;
+                    rightArm.rotation.z += -8.0f * env;
+                }
+                if (armConnector != null) armConnector.rotation.x += syl2 * 5.0f * env;
+                break;
+            case 2: // both arms open
+                if (leftArm != null) {
+                    leftArm.rotation.x += (-22.0f + syl * 14.0f) * env;
+                    leftArm.rotation.z += 10.0f * env;
+                }
+                if (rightArm != null) {
+                    rightArm.rotation.x += (-22.0f + syl * 14.0f) * env;
+                    rightArm.rotation.z += -10.0f * env;
+                }
+                if (armConnector != null) armConnector.rotation.x += syl2 * 4.0f * env;
+                break;
+            default: // head nod + nose only
+                if (armConnector != null) armConnector.rotation.x += syl2 * 3.0f * env;
+                break;
+        }
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -585,6 +654,13 @@ public class VillagerEntity extends Entity {
                 float dx = socialTarget.getPosX() - getPosX();
                 float dz = socialTarget.getPosZ() - getPosZ();
                 rotation.y = (float)Math.toDegrees(Math.atan2(dx, dz));
+                // Villager-to-villager conversation: take turns gesturing
+                Random chatRng = new Random();
+                if (chatRng.nextFloat() < 0.02f) {
+                    startTalking(1.2f + chatRng.nextFloat() * 1.5f);
+                } else if (chatRng.nextFloat() < 0.015f) {
+                    socialTarget.startTalking(1.2f + chatRng.nextFloat() * 1.5f);
+                }
                 updateIdleAnimation(dt);
             }
             return true;

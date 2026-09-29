@@ -113,12 +113,16 @@ def snap90(rot):
 
 
 class Part:
-    def __init__(self, name, mn, mx, pivot, rot=(0.0, 0.0, 0.0)):
+    def __init__(self, name, mn, mx, pivot, rot=(0.0, 0.0, 0.0), uv_size=None):
         self.name = name
         self.mn = [float(v) for v in mn]
         self.mx = [float(v) for v in mx]
         self.pivot = [float(v) for v in pivot]
         self.rot = [float(v) for v in rot]
+        # Atlas layout dims WITHOUT CubeDeformation inflation — the shader's
+        # cuboid atlas samples the original cuboid layout even when the
+        # geometry is inflated (wool/shoulder padding).
+        self.uv_size = [float(v) for v in uv_size] if uv_size else None
 
     def engine_json(self, **props):
         mn, mx = flip_box(self.mn, self.mx)
@@ -133,6 +137,8 @@ class Part:
         if any(abs(v) > 1e-9 for v in pv) or any(abs(r) > 1e-9 for r in self.rot):
             part["absolute_offset"] = [round(v, 4) + 0.0 for v in pv]
         part.update(props)
+        if self.uv_size is not None and "uv_size" not in part:
+            part["uv_size"] = [round(v, 4) + 0.0 for v in self.uv_size]
         ordered = {"name": part["name"], "from": part["from"], "size": part["size"]}
         if "rotation" in part:
             ordered["rotation"] = part["rotation"]
@@ -153,7 +159,7 @@ def quad(name, pivot, rel_xyzwhd, inflate=0.0, rot=(0.0, 0.0, 0.0), parent_pivot
     mx = [mn[0] + w + 2 * inflate, mn[1] + h + 2 * inflate, mn[2] + d + 2 * inflate]
     if parent_pivot is not None and any(abs(r) > 1e-9 for r in parent_rot):
         mn, mx = bake(pp, parent_rot, mn, mx)
-    return Part(name, mn, mx, pivot, rot)
+    return Part(name, mn, mx, pivot, rot, uv_size=(w, h, d))
 
 
 def deg(rad):
@@ -255,14 +261,20 @@ def aerbunny_parts():
     p.append(quad("body", bp, (-3, -4, -3, 6, 8, 6), rot=brot))
     p.append(quad("puff_tail", (0, 0, 0), (-3.5, -3.5, -3.5, 7, 7, 7), rot=brot))
     p.append(quad("tail", bp, (-2, 4, -2, 4, 3, 4), parent_pivot=bp, parent_rot=brot))
-    p.append(quad("right_front_leg", bp, (-3 + 0, -3 + 0, -3 - 1, 2, 2, 2),
-                  parent_pivot=bp, parent_rot=brot))
-    p.append(quad("left_front_leg", bp, (3 - 2, -3, -3 - 1, 2, 2, 2),
-                  parent_pivot=bp, parent_rot=brot))
-    p.append(quad("right_back_leg", bp, (-3, 4, -3 - 4, 2, 2, 4),
-                  parent_pivot=bp, parent_rot=brot))
-    p.append(quad("left_back_leg", bp, (3 - 2, 4, -3 - 4, 2, 2, 4),
-                  parent_pivot=bp, parent_rot=brot))
+    # Legs are children of the rotated body with nonzero PartPose.offset: the
+    # box corners bake through the body rotation, and the leg's own pivot is
+    # body pivot + Rx90(offset) (the hip) — NOT the body pivot. Rotating the
+    # leg around the body pivot would swing it around the torso.
+    for name, off, box in (
+            ("right_front_leg", (-3, -3, -3), (0, 0, -1, 2, 2, 2)),
+            ("left_front_leg", (3, -3, -3), (-2, 0, -1, 2, 2, 2)),
+            ("right_back_leg", (-3, 4, -3), (0, 0, -4, 2, 2, 4)),
+            ("left_back_leg", (3, 4, -3), (-2, 0, -4, 2, 2, 4))):
+        q = quad(name, bp,
+                 (off[0] + box[0], off[1] + box[1], off[2] + box[2], box[3], box[4], box[5]),
+                 parent_pivot=bp, parent_rot=brot)
+        o = rotate(brot, off)
+        p.append(Part(name, q.mn, q.mx, [bp[0] + o[0], bp[1] + o[1], bp[2] + o[2]]))
     return p
 
 
@@ -459,7 +471,7 @@ def aechor_defaults():
 # --------------------------------------------------------------------------
 
 def spec(name, parts, keep=(), drops=(), defaults=None, parent=None,
-         overrides=None, preserve_missing=True):
+         overrides=None, preserve_missing=True, uv_scale=1.0):
     return {
         "file": name,
         "parts": parts,
@@ -473,6 +485,10 @@ def spec(name, parts, keep=(), drops=(), defaults=None, parent=None,
         "overrides": overrides or {},
         # keep unknown extra parts found in the existing file
         "preserve_missing": preserve_missing,
+        # Factor between the source texOffs layout and the engine's 64-unit
+        # atlas (64 / texture width). UVs are kept verbatim in the JSON and the
+        # engine applies this at load (Entity.loadModelRecursive "uv_scale").
+        "uv_scale": uv_scale,
     }
 
 
@@ -541,13 +557,15 @@ def build_specs():
     # The-Aether SliderModel names its single box "slider"; the old engine
     # file called it "body" -> renamed, old part dropped to avoid duplicates.
     specs.append(spec("slider.json", slider_parts(), keep={"face"}, drops={"body"},
-                      defaults={"slider": {"texture": "slider/slider_awake", "uv": [0, 0]}}))
+                      defaults={"slider": {"texture": "slider/slider_awake", "uv": [0, 0]}},
+                      uv_scale=0.5))  # 128x64 native layout
     specs.append(spec("sun_spirit.json", sun_spirit_parts(),
                       defaults={
                           "left_arm_tip": {"texture": "sun_spirit/sun_spirit", "uv": [20, 48]},
                           "right_arm_tip": {"texture": "sun_spirit/sun_spirit", "uv": [0, 48]},
                       }))
-    specs.append(spec("zephyr.json", zephyr_parts()))
+    specs.append(spec("zephyr.json", zephyr_parts(),
+                      uv_scale=0.5))  # 128x32 native layout
     specs.append(spec("aechor_plant.json", aechor_plant_parts(),
                       keep={"petal_1", "petal_2", "petal_3", "petal_4"},
                       defaults=aechor_defaults()))
@@ -563,7 +581,8 @@ def build_specs():
             quad("right_leg", (-2.5, 9, 0), (-5.1, 0, -3, 6, 15, 6)),
         ],
         defaults={"knob": {"texture": "mimic/normal", "uv": [0, 0],
-                           "uv_size": [2, 4, 1]}}))
+                           "uv_size": [2, 4, 1]}},
+        uv_scale=0.5))  # 128x64 native layout
     # Chest Mimic closed state: the engine keeps the static closed chest built
     # from the same MimicModel boxes; only the knob was missing.
     specs.append(spec(
@@ -574,7 +593,8 @@ def build_specs():
         ],
         keep={"lower_body", "lid"},
         defaults={"knob": {"texture": "mimic/normal", "uv": [0, 0],
-                           "uv_size": [2, 4, 1]}}))
+                           "uv_size": [2, 4, 1]}},
+        uv_scale=0.5))  # 128x64 native layout
     specs.append(spec("valkyrie.json", valkyrie_parts(), defaults=valkyrie_defaults()))
     specs.append(spec(
         "valkyrie_queen.json", [],
@@ -584,7 +604,8 @@ def build_specs():
         preserve_missing=False))
 
     # --- ambient ------------------------------------------------------------
-    specs.append(spec("aerwhale.json", aerwhale_parts()))
+    specs.append(spec("aerwhale.json", aerwhale_parts(),
+                      uv_scale=0.25))  # 256x128 native layout
     # whirlwind: engine invention (the mod renders it purely with particles);
     # no source-of-truth geometry exists -> left untouched.
     return specs
@@ -624,7 +645,11 @@ def generate(spec, report):
         props = {}
         prev = old_by_name.get(cname)
         if prev is not None:
-            for k in ("texture", "uv", "uv_size", "texture_mapping", "emissive"):
+            # NOTE: uv_size is NOT carried over — it is regenerated from the
+            # uninflated cuboid dims every time (the old JSONs baked CubeDeformation
+            # inflation into uv_size, which made inflated parts sample bleeding
+            # atlas regions).
+            for k in ("texture", "uv", "texture_mapping", "emissive"):
                 if k in prev:
                     props[k] = prev[k]
             if "texture_mapping" not in props:
@@ -632,11 +657,6 @@ def generate(spec, report):
         else:
             props.update(spec["defaults"].get(cname, {}))
             props.setdefault("texture_mapping", "cuboid_atlas")
-        if "uv" in props and "uv_size" not in props:
-            w = part.mx[0] - part.mn[0]
-            h = part.mx[1] - part.mn[1]
-            d = part.mx[2] - part.mn[2]
-            props["uv_size"] = [round(w, 4) + 0.0, round(h, 4) + 0.0, round(d, 4) + 0.0]
         out_parts.append(part.engine_json(**props))
         seen.add(cname)
 
@@ -680,6 +700,8 @@ def generate(spec, report):
     doc = {}
     if spec["parent"]:
         doc["parent"] = spec["parent"]
+    if spec.get("uv_scale", 1.0) != 1.0:
+        doc["uv_scale"] = spec["uv_scale"]
     doc["parts"] = out_parts
     return doc
 
@@ -688,6 +710,8 @@ def fmt(doc):
     lines = ["{"]
     if "parent" in doc:
         lines.append('  "parent": "%s",' % doc["parent"])
+    if "uv_scale" in doc:
+        lines.append('  "uv_scale": %s,' % json.dumps(doc["uv_scale"]))
     lines.append('  "parts": [')
     for i, p in enumerate(doc["parts"]):
         item = "    { " + ", ".join('"%s": %s' % (k, json.dumps(v)) for k, v in p.items()) + " }"

@@ -25,6 +25,17 @@ public class CameraController {
     public static final float THIRD_PERSON_TARGET_HEIGHT = 1.35f;
     public static final float CAMERA_COLLISION_STEP = 0.1f;
 
+    /**
+     * Canonical vertical field of view. The compute shader's ray generation
+     * (raytracer.comp: `camForward + ndc.x*aspect*camRight + ndc.y*camUp`)
+     * corresponds to a vertical FOV of 90° when the basis vectors are unit
+     * length, so this is the one FOV every picking/projection path must use.
+     * Cinematic shots narrow it (long lens) via setFovDegrees().
+     */
+    public static final float DEFAULT_FOV_DEGREES = 90.0f;
+
+    private volatile float fovDegrees = DEFAULT_FOV_DEGREES;
+
     // Crafting table grid layout (relative to texture cells)
     public static final float CT_MARGIN = 4.0f / 16.0f;     // 0.25
     public static final float CT_CELL = 2.0f / 16.0f;       // 0.125
@@ -51,11 +62,85 @@ public class CameraController {
 
     /** Forward unit vector based on Main's yaw/pitch fields. */
     public Vector3f getLookDirection() {
+        return directionFromAngles(main.yaw, main.pitch);
+    }
+
+    /** Forward unit vector for the given yaw/pitch (degrees). */
+    public static Vector3f directionFromAngles(float yawDeg, float pitchDeg) {
         return new Vector3f(
-            (float) (Math.cos(Math.toRadians(main.yaw)) * Math.cos(Math.toRadians(main.pitch))),
-            (float) Math.sin(Math.toRadians(main.pitch)),
-            (float) (Math.sin(Math.toRadians(main.yaw)) * Math.cos(Math.toRadians(main.pitch)))
+            (float) (Math.cos(Math.toRadians(yawDeg)) * Math.cos(Math.toRadians(pitchDeg))),
+            (float) Math.sin(Math.toRadians(pitchDeg)),
+            (float) (Math.sin(Math.toRadians(yawDeg)) * Math.cos(Math.toRadians(pitchDeg)))
         ).normalize();
+    }
+
+    // ── Lens (FOV) ────────────────────────────────────────────────────────────
+
+    /** Current vertical FOV in degrees (90 = gameplay default). */
+    public float getFovDegrees() { return fovDegrees; }
+
+    public void setFovDegrees(float degrees) {
+        fovDegrees = Math.max(8.0f, Math.min(120.0f, degrees));
+    }
+
+    public void resetFov() { fovDegrees = DEFAULT_FOV_DEGREES; }
+
+    /** tan(fov/2) — the exact scale the shader ray gen bakes into the basis. */
+    public float getTanHalfFov() {
+        return (float) Math.tan(Math.toRadians(fovDegrees * 0.5));
+    }
+
+    // ── Camera basis ─────────────────────────────────────────────────────────
+
+    /**
+     * Orthonormal camera basis from yaw/pitch, matching the exact construction
+     * Main.loop() uploads to the shader (right is horizontal, up = right × fwd).
+     * Result: {forward, right, up}.
+     */
+    public static Vector3f[] buildBasis(float yawDeg, float pitchDeg) {
+        Vector3f fwd = directionFromAngles(yawDeg, pitchDeg);
+        Vector3f right = new Vector3f(-fwd.z, 0, fwd.x);
+        float rl = right.length();
+        if (rl > 0) right.div(rl);
+        Vector3f up = new Vector3f(
+            right.y * fwd.z - right.z * fwd.y,
+            right.z * fwd.x - right.x * fwd.z,
+            right.x * fwd.y - right.y * fwd.x
+        );
+        return new Vector3f[]{fwd, right, up};
+    }
+
+    /**
+     * World-space view ray through an NDC point (-1..1), using the canonical
+     * camera basis and the current FOV. Every mouse-unprojection path funnels
+     * through here so picking always matches what the shader renders.
+     */
+    public Vector3f ndcRayDir(float ndcX, float ndcY, float yawDeg, float pitchDeg, float aspect) {
+        return ndcRayDir(ndcX, ndcY, yawDeg, pitchDeg, aspect, getTanHalfFov());
+    }
+
+    /** Static form for callers without a controller (uses an explicit tan(fov/2)). */
+    public static Vector3f ndcRayDir(float ndcX, float ndcY, float yawDeg, float pitchDeg,
+                                     float aspect, float tanHalfFov) {
+        Vector3f[] b = buildBasis(yawDeg, pitchDeg);
+        float thf = tanHalfFov;
+        return new Vector3f(b[0])
+            .fma(ndcX * thf * aspect, b[1])
+            .fma(ndcY * thf, b[2])
+            .normalize();
+    }
+
+    /**
+     * Mouse pixel → world ray (origin + direction) through the active camera.
+     * Returns float[]{ox, oy, oz, dx, dy, dz}.
+     */
+    public float[] cursorRay(float mouseX, float mouseY, float width, float height,
+                             Vector3f origin, float yawDeg, float pitchDeg) {
+        float aspect = width / Math.max(1.0f, height);
+        float ndcX = (mouseX / Math.max(1.0f, width)) * 2.0f - 1.0f;
+        float ndcY = 1.0f - (mouseY / Math.max(1.0f, height)) * 2.0f;
+        Vector3f dir = ndcRayDir(ndcX, ndcY, yawDeg, pitchDeg, aspect);
+        return new float[]{origin.x, origin.y, origin.z, dir.x, dir.y, dir.z};
     }
 
     /** Player position + PLAYER_EYE_HEIGHT. */
@@ -186,26 +271,11 @@ public class CameraController {
      * Returns -1 if no slot is hit.
      */
     public int raycastCraftingCell() {
-        // Build projection/view matrices using the active camera
-        Vector3f pos = getActiveCameraPosition();
-        Vector3f dir = getLookDirection();
-        Vector3f lookTarget = new Vector3f(pos).add(dir);
-
-        float fovRad = (float) Math.toRadians(70.0);
-        float aspect = (float) main.width / main.height;
-        Matrix4f proj = new Matrix4f().perspective(fovRad, aspect, 0.1f, 2048.0f);
-        Matrix4f view = new Matrix4f().lookAt(pos, lookTarget, new Vector3f(0, 1, 0));
-
-        // Convert mouse pixel → NDC
-        float ndcX = (float) ((main.lastMouseX / main.width) * 2.0 - 1.0);
-        float ndcY = (float) (1.0 - (main.lastMouseY / main.height) * 2.0);
-
-        // Unproject near + far points → world-space ray
-        Matrix4f inv = new Matrix4f(proj).mul(view).invert();
-        Vector3f nearW = new Vector3f(ndcX, ndcY, -1.0f).mulProject(inv);
-        Vector3f farW = new Vector3f(ndcX, ndcY, 1.0f).mulProject(inv);
-        Vector3f rayOrigin = new Vector3f(nearW);
-        Vector3f rayDir = new Vector3f(farW).sub(nearW).normalize();
+        // Single canonical unprojection (matches the shader's ray generation).
+        Vector3f rayOrigin = getActiveCameraPosition();
+        float[] ray = cursorRay(main.lastMouseX, main.lastMouseY, main.width, main.height,
+            rayOrigin, main.yaw, main.pitch);
+        Vector3f rayDir = new Vector3f(ray[3], ray[4], ray[5]);
 
         // The crafting table is one block tall; intersect with top of the block at y = tableY + 1
         int tableX = ctx.craftingTableBlockX;

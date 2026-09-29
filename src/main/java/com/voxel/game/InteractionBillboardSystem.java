@@ -259,7 +259,9 @@ public class InteractionBillboardSystem {
         // Same view/projection as the cursor ray in Main.updatePointAndClick.
         Vector3f camPos = main.cameraController.getActiveCameraPosition();
         Vector3f dir = main.getLookDirection();
-        float fovRad = (float) Math.toRadians(70.0);
+        // Canonical lens: vertical FOV = 2*atan(tanHalfFov), matching the shader.
+        float tanHalfFov = main.cameraController.getTanHalfFov();
+        float fovRad = 2.0f * (float) Math.atan(tanHalfFov);
         float aspect = (float) main.width / (float) main.height;
         Matrix4f proj = new Matrix4f().perspective(fovRad, aspect, 0.1f, 2048.0f);
         Matrix4f view = new Matrix4f().lookAt(camPos, new Vector3f(camPos).add(dir), new Vector3f(0, 1, 0));
