@@ -1,6 +1,7 @@
 package com.voxel.game;
 
 import com.voxel.crafting.CraftingManager;
+import org.joml.Vector3f;
 
 /**
  * Manages the player's inventory array, hotbar selection, carried stack,
@@ -305,6 +306,14 @@ public class PlayerInventory {
         ctx.craftingManager.consumeItems(craftingGrid);
         saveSurfaceCraftingGrid();
         ctx.setStatus("Crafted " + match.resultItemId.replace('_', ' '));
+        if (ctx.cinematic != null) {
+            boolean first = ctx.cinematic.firstTime("craft:" + match.resultItemId);
+            ctx.cinematic.playActionBeat(com.voxel.cinematic.CinematicSystem.Beat.CRAFT,
+                new Vector3f(ctx.surfaceCraftingBlockX, ctx.surfaceCraftingBlockY, ctx.surfaceCraftingBlockZ),
+                first);
+        }
+        VillagerReactions.fire(ctx, VillagerReactions.Trigger.CRAFT,
+                ctx.surfaceCraftingBlockX, ctx.surfaceCraftingBlockY, ctx.surfaceCraftingBlockZ);
         return true;
     }
 
@@ -418,6 +427,14 @@ public class PlayerInventory {
         crafting3x3ResultItemId = null;
         crafting3x3ResultCount = 0;
         ctx.setStatus("Crafted " + match.resultItemId.replace('_', ' '));
+        if (ctx.cinematic != null) {
+            boolean first = ctx.cinematic.firstTime("craft:" + match.resultItemId);
+            ctx.cinematic.playActionBeat(com.voxel.cinematic.CinematicSystem.Beat.CRAFT,
+                new Vector3f(ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ),
+                first);
+        }
+        VillagerReactions.fire(ctx, VillagerReactions.Trigger.CRAFT,
+                ctx.craftingTableBlockX, ctx.craftingTableBlockY, ctx.craftingTableBlockZ);
         return true;
     }
 

@@ -354,6 +354,7 @@ public class Main {
     public boolean craftingCameraInited = false;
 
     public float cameraShake = 0.0f;
+    private float lastPlayerHealth = 20.0f; // for villager damage/death reactions
     public float hitStop = 0.0f;
     public float combatTime = 0.0f;
     public double lastAttackTime = 0;
@@ -1670,6 +1671,18 @@ public class Main {
             default:
                 break;
         }
+        // Populate the zone with its villager residents — they react to whatever
+        // the player does via VillagerReactions and chat with each other.
+        for (com.voxel.world.TutorialWorldAuthor.VillagerSpawn vs
+                : com.voxel.world.TutorialWorldAuthor.villagerSpawns()) {
+            if (com.voxel.world.TutorialWorldAuthor.zoneAt(vs.x, vs.z) != zoneIdx) continue;
+            com.voxel.entity.VillagerEntity v = new com.voxel.entity.VillagerEntity(
+                nextTutorialMobId++, new Vector3f(vs.x + 0.5f, surfaceYAt(vs.x, vs.z), vs.z + 0.5f), textureManager);
+            v.dimension = activeDimension;
+            v.setWorld(world);
+            v.setProfession(vs.profession);
+            entityManager.addEntity(v);
+        }
     }
 
     /** Surface Y (one above the topmost solid block) at a column, for standing mobs. */
@@ -2886,7 +2899,8 @@ public class Main {
 
             // ── Aether dungeons: spawn guards/bosses near the player, unlock on boss death ──
             com.voxel.world.aether.AetherDungeonRegistry.tick(world, entityManager,
-                    textureManager, player, activeDimension, DimensionType.AETHER, dt);
+                    textureManager, player, activeDimension, DimensionType.AETHER, dt,
+                    ctx.droppedItemManager, this::setStatus);
 
             // ── Survival systems: hunger ticking + armor points. Refresh each
             // tick so equipping/removing armor updates protection immediately
@@ -3081,8 +3095,9 @@ public class Main {
                 ctx.cutsceneStartPos.z + (ctx.cutsceneTargetPos.z - ctx.cutsceneStartPos.z) * smoothT
             );
 
-            // Lerp camera yaw/pitch
-            yaw = ctx.cutsceneStartYaw + (ctx.cutsceneTargetYaw - ctx.cutsceneStartYaw) * smoothT;
+            // Lerp camera yaw/pitch (shortest arc — raw lerp spun the long way
+            // when the target crossed the ±180° seam)
+            yaw = com.voxel.cinematic.CinematicSystem.lerpAngle(ctx.cutsceneStartYaw, ctx.cutsceneTargetYaw, smoothT);
             pitch = ctx.cutsceneStartPitch + (ctx.cutsceneTargetPitch - ctx.cutsceneStartPitch) * smoothT;
             ctx.yaw = yaw;
             ctx.pitch = pitch;
@@ -3119,8 +3134,8 @@ public class Main {
                 ctx.furnaceCutsceneStartPos.z + (ctx.furnaceCutsceneTargetPos.z - ctx.furnaceCutsceneStartPos.z) * smoothT
             );
 
-            // Lerp camera yaw/pitch toward the furnace
-            yaw = ctx.furnaceCutsceneStartYaw + (ctx.furnaceCutsceneTargetYaw - ctx.furnaceCutsceneStartYaw) * smoothT;
+            // Lerp camera yaw/pitch toward the furnace (shortest arc)
+            yaw = com.voxel.cinematic.CinematicSystem.lerpAngle(ctx.furnaceCutsceneStartYaw, ctx.furnaceCutsceneTargetYaw, smoothT);
             pitch = ctx.furnaceCutsceneStartPitch + (ctx.furnaceCutsceneTargetPitch - ctx.furnaceCutsceneStartPitch) * smoothT;
             ctx.yaw = yaw;
             ctx.pitch = pitch;
@@ -3151,6 +3166,25 @@ public class Main {
         }
 
         if (ctx.cinematic != null) ctx.cinematic.tick(dt);
+        com.voxel.game.VillagerReactions.tick(dt);
+        if (player != null && ctx.villagerAudioManager != null) {
+            float hp = player.getHealth();
+            if (hp < lastPlayerHealth - 0.01f) {
+                org.joml.Vector3f pp = player.getPosition();
+                if (hp <= 0f) {
+                    com.voxel.game.VillagerReactions.fire(ctx,
+                            com.voxel.game.VillagerReactions.Trigger.DEATH_WITNESSED,
+                            pp.x, pp.y, pp.z);
+                } else {
+                    com.voxel.game.VillagerReactions.fire(ctx,
+                            hp <= 6.0f
+                                ? com.voxel.game.VillagerReactions.Trigger.PLAYER_LOW_HEALTH
+                                : com.voxel.game.VillagerReactions.Trigger.PLAYER_DAMAGED,
+                            pp.x, pp.y, pp.z);
+                }
+            }
+            lastPlayerHealth = hp;
+        }
         VillagerEntity.setGlobalWorldTime(worldTime);
         blockInteraction.updateMining(dt);
         blockInteraction.updatePlacementPreview();
@@ -3350,8 +3384,8 @@ public class Main {
             float t = Math.min(1.0f, ctx.tvCutsceneTimer / GameContext.TV_CUTSCENE_DURATION);
             float smoothT = t * t * (3.0f - 2.0f * t);
 
-            // Lerp camera yaw/pitch to looking at TV
-            yaw = ctx.tvCutsceneStartYaw + (ctx.tvCutsceneTargetYaw - ctx.tvCutsceneStartYaw) * smoothT;
+            // Lerp camera yaw/pitch to looking at TV (shortest arc)
+            yaw = com.voxel.cinematic.CinematicSystem.lerpAngle(ctx.tvCutsceneStartYaw, ctx.tvCutsceneTargetYaw, smoothT);
             pitch = ctx.tvCutsceneStartPitch + (ctx.tvCutsceneTargetPitch - ctx.tvCutsceneStartPitch) * smoothT;
             ctx.yaw = yaw;
             ctx.pitch = pitch;
@@ -3886,6 +3920,13 @@ public class Main {
             // Camera uses interpolated player position
             if (ctx != null) updatePointAndClick();
             Vector3f cameraPos = cameraController.getActiveCameraPosition(playerPartialTicks);
+            // Cinematic lens: shots narrow/widen the FOV (close-ups use a long
+            // lens); gameplay resets to the canonical 90°.
+            if (ctx != null && ctx.cinematic != null && ctx.cinematic.cameraActive()) {
+                cameraController.setFovDegrees(ctx.cinematic.getFovDegrees());
+            } else {
+                cameraController.resetFov();
+            }
 
             // ── Map: top-down camera, height derived from zoom level ──
             // Zooming in lowers the camera for closer terrain; zooming out
@@ -3949,6 +3990,23 @@ public class Main {
             float rl = (float) Math.sqrt(rx * rx + rz * rz);
             if (rl > 0) { rx /= rl; rz /= rl; }
             float ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;
+            // Cinematic lens: shots narrow/widen the FOV. The shader's ray gen
+            // bakes tan(fov/2) into the basis vectors, so pre-scale right/up
+            // here (the picking paths use CameraController.getTanHalfFov() and
+            // therefore always agree with what is rendered).
+            float camRoll = cinematicCam ? ctx.cinematic.getRoll() : 0.0f;
+            if (camRoll != 0.0f) {
+                // Dutch angle: rotate right/up around the forward axis.
+                double ra = Math.toRadians(camRoll);
+                float ca = (float) Math.cos(ra), sa = (float) Math.sin(ra);
+                float nrx = rx * ca + ux * sa, nry = 0 * ca + uy * sa, nrz = rz * ca + uz * sa;
+                float nux = ux * ca - rx * sa, nuy = uy * ca - 0 * sa, nuz = uz * ca - rz * sa;
+                rx = nrx; rz = nrz; ux = nux; uy = nuy; uz = nuz;
+            }
+            float camThf = cameraController.getTanHalfFov();
+            ctx.cameraTanHalfFov = camThf;
+            rx *= camThf; rz *= camThf;
+            ux *= camThf; uy *= camThf; uz *= camThf;
             
             glUseProgram(computeProgram);
             // Camera in buffer-relative space: decompose into camBlock (relative to u_WorldOffset,
@@ -5030,18 +5088,11 @@ public class Main {
         float curX = pacSmoothX;
         float curY = pacSmoothY;
         Vector3f pos = cameraController.getActiveCameraPosition();
-        Vector3f dir = getLookDirection();
-        float fovRad = (float) Math.toRadians(70.0);
-        float aspect = (float) width / (float) height;
-        Matrix4f proj = new Matrix4f().perspective(fovRad, aspect, 0.1f, 2048.0f);
-        Matrix4f view = new Matrix4f().lookAt(pos, new Vector3f(pos).add(dir), new Vector3f(0, 1, 0));
-        float ndcX = (curX / width) * 2.0f - 1.0f;
-        float ndcY = 1.0f - (curY / height) * 2.0f;
-        Matrix4f inv = new Matrix4f(proj).mul(view).invert();
-        Vector3f nearW = new Vector3f(ndcX, ndcY, -1.0f).mulProject(inv);
-        Vector3f farW = new Vector3f(ndcX, ndcY, 1.0f).mulProject(inv);
-        Vector3f rayDir = new Vector3f(farW).sub(nearW).normalize();
-        ctx.cursorRayOverride = new float[]{ nearW.x, nearW.y, nearW.z, rayDir.x, rayDir.y, rayDir.z };
+        // Canonical unprojection — matches the shader's ray generation exactly
+        // (the old path used a 70° projection against a 90° render, so edge
+        // clicks drifted toward the screen centre).
+        ctx.cursorRayOverride = cameraController.cursorRay(
+            curX, curY, width, height, pos, yaw, pitch);
 
         // --- Hover affordance: is there a block or entity under the cursor? ---
         // Only run once the logic thread has committed a world + entity
@@ -7409,8 +7460,9 @@ public class Main {
         float ndcX = 2.0f * lastMouseX / width - 1.0f;
         float ndcY = 1.0f - 2.0f * lastMouseY / height;
 
-        // Perspective projection (same FOV as the compute shader)
-        float tanHalfFov = (float) Math.tan(Math.toRadians(45.0)); // FOV 90°
+        // Perspective projection (same FOV as the compute shader — one source
+        // of truth lives on CameraController so cinematic lenses stay in sync)
+        float tanHalfFov = cameraController.getTanHalfFov();
         float aspect = (float) width / height;
 
         // Ray direction through the mouse cursor

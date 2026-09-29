@@ -171,6 +171,10 @@ public class GameContext {
 
     // --- Camera ---
     public float yaw = -90, pitch = 0;
+    /** tan(fov/2) of the active camera lens — published by Main each frame so
+     *  picking paths without a CameraController reference unproject exactly
+     *  like the shader renders (cinematic shots can narrow the FOV). */
+    public volatile float cameraTanHalfFov = 1.0f;
     // --- MCSM point-and-click: when non-null, world-space picking ray {ox,oy,oz,dx,dy,dz} under the free cursor. ---
     public volatile float[] cursorRayOverride;
 

@@ -228,6 +228,8 @@ public final class VillagerAudioManager implements AutoCloseable {
         DialogueLine selected = DialogueDirector.choose(villager, period, count,
                 dialogueCatalog.getLines());
         requestSpeech(selected.getText(), selected.getOptions());
+        // Expressive talk gesture + lip sync while the line plays
+        villager.startTalking(Math.max(1.2f, selected.getText().length() * 0.052f + 0.4f));
         return selected.getText();
     }
 
