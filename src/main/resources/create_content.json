@@ -1,0 +1,3089 @@
+[
+  {
+    "name": "create_acacia_window",
+    "id": 5000,
+    "displayName": "Acacia Window",
+    "icon": "create_block_palettes_acacia_window",
+    "fullBlock": true
+  },
+  {
+    "name": "create_acacia_window_pane",
+    "id": 5001,
+    "displayName": "Acacia Window Pane",
+    "icon": "create_block_palettes_acacia_window",
+    "fullBlock": false
+  },
+  {
+    "name": "create_adjustable_chain_gearshift",
+    "id": 5002,
+    "displayName": "Adjustable Chain Gearshift",
+    "icon": "create_block_adjustable_chain_gearshift",
+    "fullBlock": false
+  },
+  {
+    "name": "create_adjustable_crate",
+    "id": 5003,
+    "displayName": "Adjustable Crate",
+    "icon": "create_block_crate_brass_side",
+    "fullBlock": false
+  },
+  {
+    "name": "create_adjustable_pulse_repeater",
+    "id": 5004,
+    "displayName": "Adjustable Pulse Repeater",
+    "icon": "create_block_diodes_adjustable_pulse_repeater_idle",
+    "fullBlock": false
+  },
+  {
+    "name": "create_adjustable_repeater",
+    "id": 5005,
+    "displayName": "Adjustable Repeater",
+    "icon": "create_block_diodes_adjustable_repeater_idle",
+    "fullBlock": false
+  },
+  {
+    "name": "create_analog_lever",
+    "id": 5006,
+    "displayName": "Analog Lever",
+    "icon": "lever",
+    "fullBlock": false
+  },
+  {
+    "name": "create_andesite_belt_funnel",
+    "id": 5007,
+    "displayName": "Andesite Belt Funnel",
+    "icon": "polished_andesite",
+    "fullBlock": false
+  },
+  {
+    "name": "create_andesite_bricks",
+    "id": 5008,
+    "displayName": "Andesite Bricks",
+    "icon": "create_block_palettes_andesite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_andesite_bricks_slab",
+    "id": 5009,
+    "displayName": "Andesite Bricks Slab",
+    "icon": "create_block_palettes_andesite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_andesite_bricks_stairs",
+    "id": 5010,
+    "displayName": "Andesite Bricks Stairs",
+    "icon": "create_block_palettes_andesite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_andesite_bricks_wall",
+    "id": 5011,
+    "displayName": "Andesite Bricks Wall",
+    "icon": "create_block_palettes_andesite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_andesite_casing",
+    "id": 5012,
+    "displayName": "Andesite Casing",
+    "icon": "create_block_andesite_casing",
+    "fullBlock": true
+  },
+  {
+    "name": "create_andesite_cobblestone",
+    "id": 5013,
+    "displayName": "Andesite Cobblestone",
+    "icon": "create_block_palettes_andesite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_andesite_cobblestone_slab",
+    "id": 5014,
+    "displayName": "Andesite Cobblestone Slab",
+    "icon": "create_block_palettes_andesite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_andesite_cobblestone_stairs",
+    "id": 5015,
+    "displayName": "Andesite Cobblestone Stairs",
+    "icon": "create_block_palettes_andesite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_andesite_cobblestone_wall",
+    "id": 5016,
+    "displayName": "Andesite Cobblestone Wall",
+    "icon": "create_block_palettes_andesite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_andesite_encased_shaft",
+    "id": 5017,
+    "displayName": "Andesite Encased Shaft",
+    "icon": "create_block_andesite_casing",
+    "fullBlock": false
+  },
+  {
+    "name": "create_andesite_funnel",
+    "id": 5018,
+    "displayName": "Andesite Funnel",
+    "icon": "create_block_andesite_casing",
+    "fullBlock": false
+  },
+  {
+    "name": "create_andesite_pillar",
+    "id": 5019,
+    "displayName": "Andesite Pillar",
+    "icon": "create_block_palettes_andesite_pillar",
+    "fullBlock": true
+  },
+  {
+    "name": "create_andesite_tunnel",
+    "id": 5020,
+    "displayName": "Andesite Tunnel",
+    "icon": "polished_andesite",
+    "fullBlock": false
+  },
+  {
+    "name": "create_basin",
+    "id": 5021,
+    "displayName": "Basin",
+    "icon": "create_block_basin",
+    "fullBlock": false
+  },
+  {
+    "name": "create_belt",
+    "id": 5022,
+    "displayName": "Belt",
+    "icon": "create_block_belt",
+    "fullBlock": false
+  },
+  {
+    "name": "create_birch_window",
+    "id": 5023,
+    "displayName": "Birch Window",
+    "icon": "create_block_palettes_birch_window",
+    "fullBlock": true
+  },
+  {
+    "name": "create_birch_window_pane",
+    "id": 5024,
+    "displayName": "Birch Window Pane",
+    "icon": "create_block_palettes_birch_window",
+    "fullBlock": false
+  },
+  {
+    "name": "create_black_nixie_tube",
+    "id": 5025,
+    "displayName": "Black Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_black_sail",
+    "id": 5026,
+    "displayName": "Black Sail",
+    "icon": "create_block_sail_canvas_black",
+    "fullBlock": false
+  },
+  {
+    "name": "create_black_seat",
+    "id": 5027,
+    "displayName": "Black Seat",
+    "icon": "create_block_seat_top_black",
+    "fullBlock": false
+  },
+  {
+    "name": "create_black_toolbox",
+    "id": 5028,
+    "displayName": "Black Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_black_valve_handle",
+    "id": 5029,
+    "displayName": "Black Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_blaze_burner",
+    "id": 5030,
+    "displayName": "Blaze Burner",
+    "icon": "create_block_dark_metal_block",
+    "fullBlock": false
+  },
+  {
+    "name": "create_blue_nixie_tube",
+    "id": 5031,
+    "displayName": "Blue Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_blue_sail",
+    "id": 5032,
+    "displayName": "Blue Sail",
+    "icon": "create_block_sail_canvas_blue",
+    "fullBlock": false
+  },
+  {
+    "name": "create_blue_seat",
+    "id": 5033,
+    "displayName": "Blue Seat",
+    "icon": "create_block_seat_top_blue",
+    "fullBlock": false
+  },
+  {
+    "name": "create_blue_toolbox",
+    "id": 5034,
+    "displayName": "Blue Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_blue_valve_handle",
+    "id": 5035,
+    "displayName": "Blue Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_brass_belt_funnel",
+    "id": 5036,
+    "displayName": "Brass Belt Funnel",
+    "icon": "create_block_brass_block",
+    "fullBlock": false
+  },
+  {
+    "name": "create_brass_block",
+    "id": 5037,
+    "displayName": "Block of Brass",
+    "icon": "create_block_brass_storage_block",
+    "fullBlock": true
+  },
+  {
+    "name": "create_brass_casing",
+    "id": 5038,
+    "displayName": "Brass Casing",
+    "icon": "create_block_brass_casing",
+    "fullBlock": true
+  },
+  {
+    "name": "create_brass_encased_shaft",
+    "id": 5039,
+    "displayName": "Brass Encased Shaft",
+    "icon": "create_block_brass_casing",
+    "fullBlock": false
+  },
+  {
+    "name": "create_brass_funnel",
+    "id": 5040,
+    "displayName": "Brass Funnel",
+    "icon": "create_block_brass_casing",
+    "fullBlock": false
+  },
+  {
+    "name": "create_brass_tunnel",
+    "id": 5041,
+    "displayName": "Brass Tunnel",
+    "icon": "create_block_brass_block",
+    "fullBlock": false
+  },
+  {
+    "name": "create_brown_nixie_tube",
+    "id": 5042,
+    "displayName": "Brown Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_brown_sail",
+    "id": 5043,
+    "displayName": "Brown Sail",
+    "icon": "create_block_sail_canvas_brown",
+    "fullBlock": false
+  },
+  {
+    "name": "create_brown_seat",
+    "id": 5044,
+    "displayName": "Brown Seat",
+    "icon": "create_block_seat_top_brown",
+    "fullBlock": false
+  },
+  {
+    "name": "create_brown_toolbox",
+    "id": 5045,
+    "displayName": "Brown Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_brown_valve_handle",
+    "id": 5046,
+    "displayName": "Brown Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_cart_assembler",
+    "id": 5047,
+    "displayName": "Cart Assembler",
+    "icon": "create_block_cart_assembler_side",
+    "fullBlock": false
+  },
+  {
+    "name": "create_chiseled_dark_scoria",
+    "id": 5048,
+    "displayName": "Chiseled Dark Scoria",
+    "icon": "create_block_palettes_dark_scoria_chiseled",
+    "fullBlock": true
+  },
+  {
+    "name": "create_chiseled_dolomite",
+    "id": 5049,
+    "displayName": "Chiseled Dolomite",
+    "icon": "create_block_palettes_dolomite_chiseled",
+    "fullBlock": true
+  },
+  {
+    "name": "create_chiseled_gabbro",
+    "id": 5050,
+    "displayName": "Chiseled Gabbro",
+    "icon": "create_block_palettes_gabbro_chiseled",
+    "fullBlock": true
+  },
+  {
+    "name": "create_chiseled_limestone",
+    "id": 5051,
+    "displayName": "Chiseled Limestone",
+    "icon": "create_block_palettes_limestone_chiseled",
+    "fullBlock": true
+  },
+  {
+    "name": "create_chiseled_scoria",
+    "id": 5052,
+    "displayName": "Chiseled Scoria",
+    "icon": "create_block_palettes_scoria_chiseled",
+    "fullBlock": true
+  },
+  {
+    "name": "create_chiseled_weathered_limestone",
+    "id": 5053,
+    "displayName": "Chiseled Weathered Limestone",
+    "icon": "create_block_palettes_weathered_limestone_chiseled",
+    "fullBlock": true
+  },
+  {
+    "name": "create_chocolate",
+    "id": 5054,
+    "displayName": "Chocolate",
+    "icon": "create_fluid_chocolate_still",
+    "fullBlock": true
+  },
+  {
+    "name": "create_chute",
+    "id": 5055,
+    "displayName": "Chute",
+    "icon": "hopper_inside",
+    "fullBlock": false
+  },
+  {
+    "name": "create_clockwork_bearing",
+    "id": 5056,
+    "displayName": "Clockwork Bearing",
+    "icon": "create_block_clockwork_bearing_side",
+    "fullBlock": false
+  },
+  {
+    "name": "create_clutch",
+    "id": 5057,
+    "displayName": "Clutch",
+    "icon": "create_block_clutch_off",
+    "fullBlock": false
+  },
+  {
+    "name": "create_cogwheel",
+    "id": 5058,
+    "displayName": "Cogwheel",
+    "icon": "stripped_spruce_log",
+    "fullBlock": false
+  },
+  {
+    "name": "create_content_observer",
+    "id": 5059,
+    "displayName": "Content Observer",
+    "icon": "create_block_filtered_detector_front",
+    "fullBlock": false
+  },
+  {
+    "name": "create_controller_rail",
+    "id": 5060,
+    "displayName": "Controller Rail",
+    "icon": "create_block_controller_rail_base",
+    "fullBlock": false
+  },
+  {
+    "name": "create_copper_backtank",
+    "id": 5061,
+    "displayName": "Copper Backtank",
+    "icon": "create_block_copper_backtank",
+    "fullBlock": false
+  },
+  {
+    "name": "create_copper_block",
+    "id": 5062,
+    "displayName": "Block of Copper",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": true
+  },
+  {
+    "name": "create_copper_casing",
+    "id": 5063,
+    "displayName": "Copper Casing",
+    "icon": "create_block_copper_casing",
+    "fullBlock": true
+  },
+  {
+    "name": "create_copper_ore",
+    "id": 5064,
+    "displayName": "Copper Ore",
+    "icon": "create_block_oxidized_copper_ore_0",
+    "fullBlock": true
+  },
+  {
+    "name": "create_copper_shingles",
+    "id": 5065,
+    "displayName": "Copper Shingles",
+    "icon": "create_block_oxidized_copper_shingles_0",
+    "fullBlock": true
+  },
+  {
+    "name": "create_copper_tiles",
+    "id": 5066,
+    "displayName": "Copper Tiles",
+    "icon": "create_block_oxidized_copper_tiles_0",
+    "fullBlock": true
+  },
+  {
+    "name": "create_copper_valve_handle",
+    "id": 5067,
+    "displayName": "Copper Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_creative_crate",
+    "id": 5068,
+    "displayName": "Creative Crate",
+    "icon": "create_block_crate_creative_side",
+    "fullBlock": false
+  },
+  {
+    "name": "create_creative_fluid_tank",
+    "id": 5069,
+    "displayName": "Creative Fluid Tank",
+    "icon": "create_block_creative_fluid_tank",
+    "fullBlock": false
+  },
+  {
+    "name": "create_creative_motor",
+    "id": 5070,
+    "displayName": "Creative Motor",
+    "icon": "create_block_creative_casing",
+    "fullBlock": false
+  },
+  {
+    "name": "create_crimson_window",
+    "id": 5071,
+    "displayName": "Crimson Window",
+    "icon": "create_block_palettes_crimson_window",
+    "fullBlock": true
+  },
+  {
+    "name": "create_crimson_window_pane",
+    "id": 5072,
+    "displayName": "Crimson Window Pane",
+    "icon": "create_block_palettes_crimson_window",
+    "fullBlock": false
+  },
+  {
+    "name": "create_crushing_wheel",
+    "id": 5073,
+    "displayName": "Crushing Wheel",
+    "icon": "polished_andesite",
+    "fullBlock": false
+  },
+  {
+    "name": "create_cuckoo_clock",
+    "id": 5074,
+    "displayName": "Cuckoo Clock",
+    "icon": "stripped_spruce_log",
+    "fullBlock": false
+  },
+  {
+    "name": "create_cyan_nixie_tube",
+    "id": 5075,
+    "displayName": "Cyan Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_cyan_sail",
+    "id": 5076,
+    "displayName": "Cyan Sail",
+    "icon": "create_block_sail_canvas_cyan",
+    "fullBlock": false
+  },
+  {
+    "name": "create_cyan_seat",
+    "id": 5077,
+    "displayName": "Cyan Seat",
+    "icon": "create_block_seat_top_cyan",
+    "fullBlock": false
+  },
+  {
+    "name": "create_cyan_toolbox",
+    "id": 5078,
+    "displayName": "Cyan Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_cyan_valve_handle",
+    "id": 5079,
+    "displayName": "Cyan Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_dark_oak_window",
+    "id": 5080,
+    "displayName": "Dark Oak Window",
+    "icon": "create_block_palettes_dark_oak_window",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dark_oak_window_pane",
+    "id": 5081,
+    "displayName": "Dark Oak Window Pane",
+    "icon": "create_block_palettes_dark_oak_window",
+    "fullBlock": false
+  },
+  {
+    "name": "create_dark_scoria",
+    "id": 5082,
+    "displayName": "Dark Scoria",
+    "icon": "create_block_palettes_dark_scoria_plain",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dark_scoria_bricks",
+    "id": 5083,
+    "displayName": "Dark Scoria Bricks",
+    "icon": "create_block_palettes_dark_scoria_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dark_scoria_bricks_slab",
+    "id": 5084,
+    "displayName": "Dark Scoria Bricks Slab",
+    "icon": "create_block_palettes_dark_scoria_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dark_scoria_bricks_stairs",
+    "id": 5085,
+    "displayName": "Dark Scoria Bricks Stairs",
+    "icon": "create_block_palettes_dark_scoria_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dark_scoria_bricks_wall",
+    "id": 5086,
+    "displayName": "Dark Scoria Bricks Wall",
+    "icon": "create_block_palettes_dark_scoria_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dark_scoria_cobblestone",
+    "id": 5087,
+    "displayName": "Dark Scoria Cobblestone",
+    "icon": "create_block_palettes_dark_scoria_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dark_scoria_cobblestone_slab",
+    "id": 5088,
+    "displayName": "Dark Scoria Cobblestone Slab",
+    "icon": "create_block_palettes_dark_scoria_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dark_scoria_cobblestone_stairs",
+    "id": 5089,
+    "displayName": "Dark Scoria Cobblestone Stairs",
+    "icon": "create_block_palettes_dark_scoria_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dark_scoria_cobblestone_wall",
+    "id": 5090,
+    "displayName": "Dark Scoria Cobblestone Wall",
+    "icon": "create_block_palettes_dark_scoria_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dark_scoria_pillar",
+    "id": 5091,
+    "displayName": "Dark Scoria Pillar",
+    "icon": "create_block_palettes_dark_scoria_pillar",
+    "fullBlock": true
+  },
+  {
+    "name": "create_deployer",
+    "id": 5092,
+    "displayName": "Deployer",
+    "icon": "create_block_gearbox_top",
+    "fullBlock": false
+  },
+  {
+    "name": "create_depot",
+    "id": 5093,
+    "displayName": "Depot",
+    "icon": "create_block_andesite_casing",
+    "fullBlock": false
+  },
+  {
+    "name": "create_diorite_bricks",
+    "id": 5094,
+    "displayName": "Diorite Bricks",
+    "icon": "create_block_palettes_diorite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_diorite_bricks_slab",
+    "id": 5095,
+    "displayName": "Diorite Bricks Slab",
+    "icon": "create_block_palettes_diorite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_diorite_bricks_stairs",
+    "id": 5096,
+    "displayName": "Diorite Bricks Stairs",
+    "icon": "create_block_palettes_diorite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_diorite_bricks_wall",
+    "id": 5097,
+    "displayName": "Diorite Bricks Wall",
+    "icon": "create_block_palettes_diorite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_diorite_cobblestone",
+    "id": 5098,
+    "displayName": "Diorite Cobblestone",
+    "icon": "create_block_palettes_diorite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_diorite_cobblestone_slab",
+    "id": 5099,
+    "displayName": "Diorite Cobblestone Slab",
+    "icon": "create_block_palettes_diorite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_diorite_cobblestone_stairs",
+    "id": 5100,
+    "displayName": "Diorite Cobblestone Stairs",
+    "icon": "create_block_palettes_diorite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_diorite_cobblestone_wall",
+    "id": 5101,
+    "displayName": "Diorite Cobblestone Wall",
+    "icon": "create_block_palettes_diorite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_diorite_pillar",
+    "id": 5102,
+    "displayName": "Diorite Pillar",
+    "icon": "create_block_palettes_diorite_pillar",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dolomite",
+    "id": 5103,
+    "displayName": "Dolomite",
+    "icon": "create_block_palettes_dolomite_plain",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dolomite_bricks",
+    "id": 5104,
+    "displayName": "Dolomite Bricks",
+    "icon": "create_block_palettes_dolomite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dolomite_bricks_slab",
+    "id": 5105,
+    "displayName": "Dolomite Bricks Slab",
+    "icon": "create_block_palettes_dolomite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dolomite_bricks_stairs",
+    "id": 5106,
+    "displayName": "Dolomite Bricks Stairs",
+    "icon": "create_block_palettes_dolomite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dolomite_bricks_wall",
+    "id": 5107,
+    "displayName": "Dolomite Bricks Wall",
+    "icon": "create_block_palettes_dolomite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dolomite_cobblestone",
+    "id": 5108,
+    "displayName": "Dolomite Cobblestone",
+    "icon": "create_block_palettes_dolomite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dolomite_cobblestone_slab",
+    "id": 5109,
+    "displayName": "Dolomite Cobblestone Slab",
+    "icon": "create_block_palettes_dolomite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dolomite_cobblestone_stairs",
+    "id": 5110,
+    "displayName": "Dolomite Cobblestone Stairs",
+    "icon": "create_block_palettes_dolomite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dolomite_cobblestone_wall",
+    "id": 5111,
+    "displayName": "Dolomite Cobblestone Wall",
+    "icon": "create_block_palettes_dolomite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_dolomite_pillar",
+    "id": 5112,
+    "displayName": "Dolomite Pillar",
+    "icon": "create_block_palettes_dolomite_pillar",
+    "fullBlock": true
+  },
+  {
+    "name": "create_encased_chain_drive",
+    "id": 5113,
+    "displayName": "Encased Chain Drive",
+    "icon": "create_block_encased_chain_drive",
+    "fullBlock": false
+  },
+  {
+    "name": "create_encased_fan",
+    "id": 5114,
+    "displayName": "Encased Fan",
+    "icon": "create_block_fan_side",
+    "fullBlock": false
+  },
+  {
+    "name": "create_encased_fluid_pipe",
+    "id": 5115,
+    "displayName": "Encased Fluid Pipe",
+    "icon": "create_block_copper_casing",
+    "fullBlock": false
+  },
+  {
+    "name": "create_fancy_andesite_bricks",
+    "id": 5116,
+    "displayName": "Fancy Andesite Bricks",
+    "icon": "create_block_palettes_andesite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_andesite_bricks_slab",
+    "id": 5117,
+    "displayName": "Fancy Andesite Bricks Slab",
+    "icon": "create_block_palettes_andesite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_andesite_bricks_stairs",
+    "id": 5118,
+    "displayName": "Fancy Andesite Bricks Stairs",
+    "icon": "create_block_palettes_andesite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_andesite_bricks_wall",
+    "id": 5119,
+    "displayName": "Fancy Andesite Bricks Wall",
+    "icon": "create_block_palettes_andesite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_dark_scoria_bricks",
+    "id": 5120,
+    "displayName": "Fancy Dark Scoria Bricks",
+    "icon": "create_block_palettes_dark_scoria_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_dark_scoria_bricks_slab",
+    "id": 5121,
+    "displayName": "Fancy Dark Scoria Bricks Slab",
+    "icon": "create_block_palettes_dark_scoria_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_dark_scoria_bricks_stairs",
+    "id": 5122,
+    "displayName": "Fancy Dark Scoria Bricks Stairs",
+    "icon": "create_block_palettes_dark_scoria_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_dark_scoria_bricks_wall",
+    "id": 5123,
+    "displayName": "Fancy Dark Scoria Bricks Wall",
+    "icon": "create_block_palettes_dark_scoria_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_diorite_bricks",
+    "id": 5124,
+    "displayName": "Fancy Diorite Bricks",
+    "icon": "create_block_palettes_diorite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_diorite_bricks_slab",
+    "id": 5125,
+    "displayName": "Fancy Diorite Bricks Slab",
+    "icon": "create_block_palettes_diorite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_diorite_bricks_stairs",
+    "id": 5126,
+    "displayName": "Fancy Diorite Bricks Stairs",
+    "icon": "create_block_palettes_diorite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_diorite_bricks_wall",
+    "id": 5127,
+    "displayName": "Fancy Diorite Bricks Wall",
+    "icon": "create_block_palettes_diorite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_dolomite_bricks",
+    "id": 5128,
+    "displayName": "Fancy Dolomite Bricks",
+    "icon": "create_block_palettes_dolomite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_dolomite_bricks_slab",
+    "id": 5129,
+    "displayName": "Fancy Dolomite Bricks Slab",
+    "icon": "create_block_palettes_dolomite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_dolomite_bricks_stairs",
+    "id": 5130,
+    "displayName": "Fancy Dolomite Bricks Stairs",
+    "icon": "create_block_palettes_dolomite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_dolomite_bricks_wall",
+    "id": 5131,
+    "displayName": "Fancy Dolomite Bricks Wall",
+    "icon": "create_block_palettes_dolomite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_gabbro_bricks",
+    "id": 5132,
+    "displayName": "Fancy Gabbro Bricks",
+    "icon": "create_block_palettes_gabbro_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_gabbro_bricks_slab",
+    "id": 5133,
+    "displayName": "Fancy Gabbro Bricks Slab",
+    "icon": "create_block_palettes_gabbro_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_gabbro_bricks_stairs",
+    "id": 5134,
+    "displayName": "Fancy Gabbro Bricks Stairs",
+    "icon": "create_block_palettes_gabbro_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_gabbro_bricks_wall",
+    "id": 5135,
+    "displayName": "Fancy Gabbro Bricks Wall",
+    "icon": "create_block_palettes_gabbro_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_granite_bricks",
+    "id": 5136,
+    "displayName": "Fancy Granite Bricks",
+    "icon": "create_block_palettes_granite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_granite_bricks_slab",
+    "id": 5137,
+    "displayName": "Fancy Granite Bricks Slab",
+    "icon": "create_block_palettes_granite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_granite_bricks_stairs",
+    "id": 5138,
+    "displayName": "Fancy Granite Bricks Stairs",
+    "icon": "create_block_palettes_granite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_granite_bricks_wall",
+    "id": 5139,
+    "displayName": "Fancy Granite Bricks Wall",
+    "icon": "create_block_palettes_granite_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_limestone_bricks",
+    "id": 5140,
+    "displayName": "Fancy Limestone Bricks",
+    "icon": "create_block_palettes_limestone_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_limestone_bricks_slab",
+    "id": 5141,
+    "displayName": "Fancy Limestone Bricks Slab",
+    "icon": "create_block_palettes_limestone_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_limestone_bricks_stairs",
+    "id": 5142,
+    "displayName": "Fancy Limestone Bricks Stairs",
+    "icon": "create_block_palettes_limestone_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_limestone_bricks_wall",
+    "id": 5143,
+    "displayName": "Fancy Limestone Bricks Wall",
+    "icon": "create_block_palettes_limestone_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_scoria_bricks",
+    "id": 5144,
+    "displayName": "Fancy Scoria Bricks",
+    "icon": "create_block_palettes_scoria_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_scoria_bricks_slab",
+    "id": 5145,
+    "displayName": "Fancy Scoria Bricks Slab",
+    "icon": "create_block_palettes_scoria_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_scoria_bricks_stairs",
+    "id": 5146,
+    "displayName": "Fancy Scoria Bricks Stairs",
+    "icon": "create_block_palettes_scoria_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_scoria_bricks_wall",
+    "id": 5147,
+    "displayName": "Fancy Scoria Bricks Wall",
+    "icon": "create_block_palettes_scoria_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_weathered_limestone_bricks",
+    "id": 5148,
+    "displayName": "Fancy Weathered Limestone Bricks",
+    "icon": "create_block_palettes_weathered_limestone_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_weathered_limestone_bricks_slab",
+    "id": 5149,
+    "displayName": "Fancy Weathered Limestone Bricks Slab",
+    "icon": "create_block_palettes_weathered_limestone_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_weathered_limestone_bricks_stairs",
+    "id": 5150,
+    "displayName": "Fancy Weathered Limestone Bricks Stairs",
+    "icon": "create_block_palettes_weathered_limestone_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fancy_weathered_limestone_bricks_wall",
+    "id": 5151,
+    "displayName": "Fancy Weathered Limestone Bricks Wall",
+    "icon": "create_block_palettes_weathered_limestone_fancy_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_fluid_pipe",
+    "id": 5152,
+    "displayName": "Fluid Pipe",
+    "icon": "create_block_fluid_pipe",
+    "fullBlock": false
+  },
+  {
+    "name": "create_fluid_tank",
+    "id": 5153,
+    "displayName": "Fluid Tank",
+    "icon": "create_block_fluid_tank",
+    "fullBlock": false
+  },
+  {
+    "name": "create_fluid_valve",
+    "id": 5154,
+    "displayName": "Fluid Valve",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_flywheel",
+    "id": 5155,
+    "displayName": "Flywheel",
+    "icon": "create_block_steam_engine_wheel",
+    "fullBlock": false
+  },
+  {
+    "name": "create_framed_glass",
+    "id": 5156,
+    "displayName": "Framed Glass",
+    "icon": "create_block_palettes_framed_glass",
+    "fullBlock": true
+  },
+  {
+    "name": "create_framed_glass_pane",
+    "id": 5157,
+    "displayName": "Framed Glass Pane",
+    "icon": "create_block_palettes_framed_glass",
+    "fullBlock": false
+  },
+  {
+    "name": "create_furnace_engine",
+    "id": 5158,
+    "displayName": "Furnace Engine",
+    "icon": "create_block_brass_block",
+    "fullBlock": false
+  },
+  {
+    "name": "create_gabbro",
+    "id": 5159,
+    "displayName": "Gabbro",
+    "icon": "create_block_palettes_gabbro_plain",
+    "fullBlock": true
+  },
+  {
+    "name": "create_gabbro_bricks",
+    "id": 5160,
+    "displayName": "Gabbro Bricks",
+    "icon": "create_block_palettes_gabbro_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_gabbro_bricks_slab",
+    "id": 5161,
+    "displayName": "Gabbro Bricks Slab",
+    "icon": "create_block_palettes_gabbro_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_gabbro_bricks_stairs",
+    "id": 5162,
+    "displayName": "Gabbro Bricks Stairs",
+    "icon": "create_block_palettes_gabbro_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_gabbro_bricks_wall",
+    "id": 5163,
+    "displayName": "Gabbro Bricks Wall",
+    "icon": "create_block_palettes_gabbro_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_gabbro_cobblestone",
+    "id": 5164,
+    "displayName": "Gabbro Cobblestone",
+    "icon": "create_block_palettes_gabbro_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_gabbro_cobblestone_slab",
+    "id": 5165,
+    "displayName": "Gabbro Cobblestone Slab",
+    "icon": "create_block_palettes_gabbro_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_gabbro_cobblestone_stairs",
+    "id": 5166,
+    "displayName": "Gabbro Cobblestone Stairs",
+    "icon": "create_block_palettes_gabbro_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_gabbro_cobblestone_wall",
+    "id": 5167,
+    "displayName": "Gabbro Cobblestone Wall",
+    "icon": "create_block_palettes_gabbro_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_gabbro_pillar",
+    "id": 5168,
+    "displayName": "Gabbro Pillar",
+    "icon": "create_block_palettes_gabbro_pillar",
+    "fullBlock": true
+  },
+  {
+    "name": "create_gantry_carriage",
+    "id": 5169,
+    "displayName": "Gantry Carriage",
+    "icon": "create_block_andesite_casing",
+    "fullBlock": false
+  },
+  {
+    "name": "create_gantry_shaft",
+    "id": 5170,
+    "displayName": "Gantry Shaft",
+    "icon": "create_block_gantry_shaft_flipped",
+    "fullBlock": false
+  },
+  {
+    "name": "create_gearbox",
+    "id": 5171,
+    "displayName": "Gearbox",
+    "icon": "create_block_andesite_casing",
+    "fullBlock": false
+  },
+  {
+    "name": "create_gearshift",
+    "id": 5172,
+    "displayName": "Gearshift",
+    "icon": "create_block_gearshift_off",
+    "fullBlock": false
+  },
+  {
+    "name": "create_glass_fluid_pipe",
+    "id": 5173,
+    "displayName": "Glass Fluid Pipe",
+    "icon": "create_block_glass_fluid_pipe",
+    "fullBlock": false
+  },
+  {
+    "name": "create_granite_bricks",
+    "id": 5174,
+    "displayName": "Granite Bricks",
+    "icon": "create_block_palettes_granite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_granite_bricks_slab",
+    "id": 5175,
+    "displayName": "Granite Bricks Slab",
+    "icon": "create_block_palettes_granite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_granite_bricks_stairs",
+    "id": 5176,
+    "displayName": "Granite Bricks Stairs",
+    "icon": "create_block_palettes_granite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_granite_bricks_wall",
+    "id": 5177,
+    "displayName": "Granite Bricks Wall",
+    "icon": "create_block_palettes_granite_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_granite_cobblestone",
+    "id": 5178,
+    "displayName": "Granite Cobblestone",
+    "icon": "create_block_palettes_granite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_granite_cobblestone_slab",
+    "id": 5179,
+    "displayName": "Granite Cobblestone Slab",
+    "icon": "create_block_palettes_granite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_granite_cobblestone_stairs",
+    "id": 5180,
+    "displayName": "Granite Cobblestone Stairs",
+    "icon": "create_block_palettes_granite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_granite_cobblestone_wall",
+    "id": 5181,
+    "displayName": "Granite Cobblestone Wall",
+    "icon": "create_block_palettes_granite_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_granite_pillar",
+    "id": 5182,
+    "displayName": "Granite Pillar",
+    "icon": "create_block_palettes_granite_pillar",
+    "fullBlock": true
+  },
+  {
+    "name": "create_gray_nixie_tube",
+    "id": 5183,
+    "displayName": "Gray Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_gray_sail",
+    "id": 5184,
+    "displayName": "Gray Sail",
+    "icon": "create_block_sail_canvas_gray",
+    "fullBlock": false
+  },
+  {
+    "name": "create_gray_seat",
+    "id": 5185,
+    "displayName": "Gray Seat",
+    "icon": "create_block_seat_top_gray",
+    "fullBlock": false
+  },
+  {
+    "name": "create_gray_toolbox",
+    "id": 5186,
+    "displayName": "Gray Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_gray_valve_handle",
+    "id": 5187,
+    "displayName": "Gray Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_green_nixie_tube",
+    "id": 5188,
+    "displayName": "Green Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_green_sail",
+    "id": 5189,
+    "displayName": "Green Sail",
+    "icon": "create_block_sail_canvas_green",
+    "fullBlock": false
+  },
+  {
+    "name": "create_green_seat",
+    "id": 5190,
+    "displayName": "Green Seat",
+    "icon": "create_block_seat_top_green",
+    "fullBlock": false
+  },
+  {
+    "name": "create_green_toolbox",
+    "id": 5191,
+    "displayName": "Green Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_green_valve_handle",
+    "id": 5192,
+    "displayName": "Green Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_hand_crank",
+    "id": 5193,
+    "displayName": "Hand Crank",
+    "icon": "create_block_axis",
+    "fullBlock": false
+  },
+  {
+    "name": "create_haunted_bell",
+    "id": 5194,
+    "displayName": "Haunted Bell",
+    "icon": "create_block_bell",
+    "fullBlock": false
+  },
+  {
+    "name": "create_honey",
+    "id": 5195,
+    "displayName": "Honey",
+    "icon": "create_fluid_honey_still",
+    "fullBlock": true
+  },
+  {
+    "name": "create_horizontal_framed_glass",
+    "id": 5196,
+    "displayName": "Horizontal Framed Glass",
+    "icon": "create_block_palettes_framed_glass",
+    "fullBlock": true
+  },
+  {
+    "name": "create_horizontal_framed_glass_pane",
+    "id": 5197,
+    "displayName": "Horizontal Framed Glass Pane",
+    "icon": "create_block_palettes_framed_glass",
+    "fullBlock": false
+  },
+  {
+    "name": "create_hose_pulley",
+    "id": 5198,
+    "displayName": "Hose Pulley",
+    "icon": "create_block_copper_plating",
+    "fullBlock": false
+  },
+  {
+    "name": "create_item_drain",
+    "id": 5199,
+    "displayName": "Item Drain",
+    "icon": "create_block_item_drain_side",
+    "fullBlock": false
+  },
+  {
+    "name": "create_jungle_window",
+    "id": 5200,
+    "displayName": "Jungle Window",
+    "icon": "create_block_palettes_jungle_window",
+    "fullBlock": true
+  },
+  {
+    "name": "create_jungle_window_pane",
+    "id": 5201,
+    "displayName": "Jungle Window Pane",
+    "icon": "create_block_palettes_jungle_window",
+    "fullBlock": false
+  },
+  {
+    "name": "create_large_cogwheel",
+    "id": 5202,
+    "displayName": "Large Cogwheel",
+    "icon": "stripped_spruce_log",
+    "fullBlock": false
+  },
+  {
+    "name": "create_layered_andesite",
+    "id": 5203,
+    "displayName": "Layered Andesite",
+    "icon": "create_block_palettes_andesite_layered",
+    "fullBlock": true
+  },
+  {
+    "name": "create_layered_dark_scoria",
+    "id": 5204,
+    "displayName": "Layered Dark Scoria",
+    "icon": "create_block_palettes_dark_scoria_layered",
+    "fullBlock": true
+  },
+  {
+    "name": "create_layered_diorite",
+    "id": 5205,
+    "displayName": "Layered Diorite",
+    "icon": "create_block_palettes_diorite_layered",
+    "fullBlock": true
+  },
+  {
+    "name": "create_layered_dolomite",
+    "id": 5206,
+    "displayName": "Layered Dolomite",
+    "icon": "create_block_palettes_dolomite_layered",
+    "fullBlock": true
+  },
+  {
+    "name": "create_layered_gabbro",
+    "id": 5207,
+    "displayName": "Layered Gabbro",
+    "icon": "create_block_palettes_gabbro_layered",
+    "fullBlock": true
+  },
+  {
+    "name": "create_layered_granite",
+    "id": 5208,
+    "displayName": "Layered Granite",
+    "icon": "create_block_palettes_granite_layered",
+    "fullBlock": true
+  },
+  {
+    "name": "create_layered_limestone",
+    "id": 5209,
+    "displayName": "Layered Limestone",
+    "icon": "create_block_palettes_limestone_layered",
+    "fullBlock": true
+  },
+  {
+    "name": "create_layered_scoria",
+    "id": 5210,
+    "displayName": "Layered Scoria",
+    "icon": "create_block_palettes_scoria_layered",
+    "fullBlock": true
+  },
+  {
+    "name": "create_layered_weathered_limestone",
+    "id": 5211,
+    "displayName": "Layered Weathered Limestone",
+    "icon": "create_block_palettes_weathered_limestone_layered",
+    "fullBlock": true
+  },
+  {
+    "name": "create_light_blue_nixie_tube",
+    "id": 5212,
+    "displayName": "Light Blue Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_light_blue_sail",
+    "id": 5213,
+    "displayName": "Light Blue Sail",
+    "icon": "create_block_sail_canvas_light_blue",
+    "fullBlock": false
+  },
+  {
+    "name": "create_light_blue_seat",
+    "id": 5214,
+    "displayName": "Light Blue Seat",
+    "icon": "create_block_seat_top_light_blue",
+    "fullBlock": false
+  },
+  {
+    "name": "create_light_blue_toolbox",
+    "id": 5215,
+    "displayName": "Light Blue Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_light_blue_valve_handle",
+    "id": 5216,
+    "displayName": "Light Blue Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_light_gray_nixie_tube",
+    "id": 5217,
+    "displayName": "Light Gray Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_light_gray_sail",
+    "id": 5218,
+    "displayName": "Light Gray Sail",
+    "icon": "create_block_sail_canvas_light_gray",
+    "fullBlock": false
+  },
+  {
+    "name": "create_light_gray_seat",
+    "id": 5219,
+    "displayName": "Light Gray Seat",
+    "icon": "create_block_seat_top_light_gray",
+    "fullBlock": false
+  },
+  {
+    "name": "create_light_gray_toolbox",
+    "id": 5220,
+    "displayName": "Light Gray Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_light_gray_valve_handle",
+    "id": 5221,
+    "displayName": "Light Gray Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_lime_nixie_tube",
+    "id": 5222,
+    "displayName": "Lime Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_lime_sail",
+    "id": 5223,
+    "displayName": "Lime Sail",
+    "icon": "create_block_sail_canvas_lime",
+    "fullBlock": false
+  },
+  {
+    "name": "create_lime_seat",
+    "id": 5224,
+    "displayName": "Lime Seat",
+    "icon": "create_block_seat_top_lime",
+    "fullBlock": false
+  },
+  {
+    "name": "create_lime_toolbox",
+    "id": 5225,
+    "displayName": "Lime Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_lime_valve_handle",
+    "id": 5226,
+    "displayName": "Lime Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_limesand",
+    "id": 5227,
+    "displayName": "Limesand",
+    "icon": "create_block_palettes_limesand",
+    "fullBlock": true
+  },
+  {
+    "name": "create_limestone",
+    "id": 5228,
+    "displayName": "Limestone",
+    "icon": "create_block_palettes_limestone_plain",
+    "fullBlock": true
+  },
+  {
+    "name": "create_limestone_bricks",
+    "id": 5229,
+    "displayName": "Limestone Bricks",
+    "icon": "create_block_palettes_limestone_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_limestone_bricks_slab",
+    "id": 5230,
+    "displayName": "Limestone Bricks Slab",
+    "icon": "create_block_palettes_limestone_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_limestone_bricks_stairs",
+    "id": 5231,
+    "displayName": "Limestone Bricks Stairs",
+    "icon": "create_block_palettes_limestone_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_limestone_bricks_wall",
+    "id": 5232,
+    "displayName": "Limestone Bricks Wall",
+    "icon": "create_block_palettes_limestone_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_limestone_cobblestone",
+    "id": 5233,
+    "displayName": "Limestone Cobblestone",
+    "icon": "create_block_palettes_limestone_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_limestone_cobblestone_slab",
+    "id": 5234,
+    "displayName": "Limestone Cobblestone Slab",
+    "icon": "create_block_palettes_limestone_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_limestone_cobblestone_stairs",
+    "id": 5235,
+    "displayName": "Limestone Cobblestone Stairs",
+    "icon": "create_block_palettes_limestone_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_limestone_cobblestone_wall",
+    "id": 5236,
+    "displayName": "Limestone Cobblestone Wall",
+    "icon": "create_block_palettes_limestone_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_limestone_pillar",
+    "id": 5237,
+    "displayName": "Limestone Pillar",
+    "icon": "create_block_palettes_limestone_pillar",
+    "fullBlock": true
+  },
+  {
+    "name": "create_linear_chassis",
+    "id": 5238,
+    "displayName": "Linear Chassis",
+    "icon": "create_block_linear_chassis_end",
+    "fullBlock": true
+  },
+  {
+    "name": "create_lit_blaze_burner",
+    "id": 5239,
+    "displayName": "Lit Blaze Burner",
+    "icon": "create_block_dark_metal_block",
+    "fullBlock": false
+  },
+  {
+    "name": "create_magenta_nixie_tube",
+    "id": 5240,
+    "displayName": "Magenta Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_magenta_sail",
+    "id": 5241,
+    "displayName": "Magenta Sail",
+    "icon": "create_block_sail_canvas_magenta",
+    "fullBlock": false
+  },
+  {
+    "name": "create_magenta_seat",
+    "id": 5242,
+    "displayName": "Magenta Seat",
+    "icon": "create_block_seat_top_magenta",
+    "fullBlock": false
+  },
+  {
+    "name": "create_magenta_toolbox",
+    "id": 5243,
+    "displayName": "Magenta Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_magenta_valve_handle",
+    "id": 5244,
+    "displayName": "Magenta Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mechanical_arm",
+    "id": 5245,
+    "displayName": "Mechanical Arm",
+    "icon": "create_block_crafter_top",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mechanical_bearing",
+    "id": 5246,
+    "displayName": "Mechanical Bearing",
+    "icon": "create_block_mechanical_bearing_side",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mechanical_crafter",
+    "id": 5247,
+    "displayName": "Mechanical Crafter",
+    "icon": "create_block_brass_casing",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mechanical_drill",
+    "id": 5248,
+    "displayName": "Mechanical Drill",
+    "icon": "create_block_gearbox",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mechanical_harvester",
+    "id": 5249,
+    "displayName": "Mechanical Harvester",
+    "icon": "create_block_andesite_casing_short",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mechanical_mixer",
+    "id": 5250,
+    "displayName": "Mechanical Mixer",
+    "icon": "stripped_spruce_log",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mechanical_piston",
+    "id": 5251,
+    "displayName": "Mechanical Piston",
+    "icon": "create_block_gearbox_top",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mechanical_piston_head",
+    "id": 5252,
+    "displayName": "Mechanical Piston Head",
+    "icon": "piston_top",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mechanical_plough",
+    "id": 5253,
+    "displayName": "Mechanical Plough",
+    "icon": "create_block_andesite_casing_short",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mechanical_press",
+    "id": 5254,
+    "displayName": "Mechanical Press",
+    "icon": "create_block_mechanical_press_side",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mechanical_pump",
+    "id": 5255,
+    "displayName": "Mechanical Pump",
+    "icon": "create_block_fluid_pipe",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mechanical_saw",
+    "id": 5256,
+    "displayName": "Mechanical Saw",
+    "icon": "create_block_mechanical_saw_top",
+    "fullBlock": false
+  },
+  {
+    "name": "create_metal_bracket",
+    "id": 5257,
+    "displayName": "Metal Bracket",
+    "icon": "create_block_bracket_metal",
+    "fullBlock": false
+  },
+  {
+    "name": "create_millstone",
+    "id": 5258,
+    "displayName": "Millstone",
+    "icon": "polished_andesite",
+    "fullBlock": false
+  },
+  {
+    "name": "create_minecart_anchor",
+    "id": 5259,
+    "displayName": "Minecart Anchor",
+    "icon": "create_block_cart_assembler_side",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mossy_andesite",
+    "id": 5260,
+    "displayName": "Mossy Andesite",
+    "icon": "create_block_palettes_andesite_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mossy_dark_scoria",
+    "id": 5261,
+    "displayName": "Mossy Dark Scoria",
+    "icon": "create_block_palettes_dark_scoria_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mossy_diorite",
+    "id": 5262,
+    "displayName": "Mossy Diorite",
+    "icon": "create_block_palettes_diorite_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mossy_dolomite",
+    "id": 5263,
+    "displayName": "Mossy Dolomite",
+    "icon": "create_block_palettes_dolomite_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mossy_gabbro",
+    "id": 5264,
+    "displayName": "Mossy Gabbro",
+    "icon": "create_block_palettes_gabbro_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mossy_granite",
+    "id": 5265,
+    "displayName": "Mossy Granite",
+    "icon": "create_block_palettes_granite_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mossy_limestone",
+    "id": 5266,
+    "displayName": "Mossy Limestone",
+    "icon": "create_block_palettes_limestone_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mossy_scoria",
+    "id": 5267,
+    "displayName": "Mossy Scoria",
+    "icon": "create_block_palettes_scoria_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mossy_weathered_limestone",
+    "id": 5268,
+    "displayName": "Mossy Weathered Limestone",
+    "icon": "create_block_palettes_weathered_limestone_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_mysterious_cuckoo_clock",
+    "id": 5269,
+    "displayName": "Cuckoo Clock",
+    "icon": "stripped_spruce_log",
+    "fullBlock": false
+  },
+  {
+    "name": "create_natural_scoria",
+    "id": 5270,
+    "displayName": "Natural Scoria",
+    "icon": "create_block_palettes_natural_scoria",
+    "fullBlock": true
+  },
+  {
+    "name": "create_nixie_tube",
+    "id": 5271,
+    "displayName": "Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_nozzle",
+    "id": 5272,
+    "displayName": "Nozzle",
+    "icon": "create_block_net",
+    "fullBlock": false
+  },
+  {
+    "name": "create_oak_window",
+    "id": 5273,
+    "displayName": "Oak Window",
+    "icon": "create_block_palettes_oak_window",
+    "fullBlock": true
+  },
+  {
+    "name": "create_oak_window_pane",
+    "id": 5274,
+    "displayName": "Oak Window Pane",
+    "icon": "create_block_palettes_oak_window",
+    "fullBlock": false
+  },
+  {
+    "name": "create_orange_sail",
+    "id": 5275,
+    "displayName": "Orange Sail",
+    "icon": "create_block_sail_canvas_orange",
+    "fullBlock": false
+  },
+  {
+    "name": "create_orange_seat",
+    "id": 5276,
+    "displayName": "Orange Seat",
+    "icon": "create_block_seat_top_orange",
+    "fullBlock": false
+  },
+  {
+    "name": "create_orange_toolbox",
+    "id": 5277,
+    "displayName": "Orange Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_orange_valve_handle",
+    "id": 5278,
+    "displayName": "Orange Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_ornate_iron_window",
+    "id": 5279,
+    "displayName": "Ornate Iron Window",
+    "icon": "create_block_palettes_ornate_iron_window",
+    "fullBlock": true
+  },
+  {
+    "name": "create_ornate_iron_window_pane",
+    "id": 5280,
+    "displayName": "Ornate Iron Window Pane",
+    "icon": "create_block_palettes_ornate_iron_window",
+    "fullBlock": false
+  },
+  {
+    "name": "create_overgrown_andesite",
+    "id": 5281,
+    "displayName": "Overgrown Andesite",
+    "icon": "create_block_palettes_andesite_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_overgrown_dark_scoria",
+    "id": 5282,
+    "displayName": "Overgrown Dark Scoria",
+    "icon": "create_block_palettes_dark_scoria_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_overgrown_diorite",
+    "id": 5283,
+    "displayName": "Overgrown Diorite",
+    "icon": "create_block_palettes_diorite_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_overgrown_dolomite",
+    "id": 5284,
+    "displayName": "Overgrown Dolomite",
+    "icon": "create_block_palettes_dolomite_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_overgrown_gabbro",
+    "id": 5285,
+    "displayName": "Overgrown Gabbro",
+    "icon": "create_block_palettes_gabbro_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_overgrown_granite",
+    "id": 5286,
+    "displayName": "Overgrown Granite",
+    "icon": "create_block_palettes_granite_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_overgrown_limestone",
+    "id": 5287,
+    "displayName": "Overgrown Limestone",
+    "icon": "create_block_palettes_limestone_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_overgrown_scoria",
+    "id": 5288,
+    "displayName": "Overgrown Scoria",
+    "icon": "create_block_palettes_scoria_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_overgrown_weathered_limestone",
+    "id": 5289,
+    "displayName": "Overgrown Weathered Limestone",
+    "icon": "create_block_palettes_weathered_limestone_bricks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_paved_andesite",
+    "id": 5290,
+    "displayName": "Paved Andesite",
+    "icon": "create_block_palettes_andesite_paved_top",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_andesite_slab",
+    "id": 5291,
+    "displayName": "Paved Andesite Slab",
+    "icon": "create_block_palettes_andesite_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_andesite_stairs",
+    "id": 5292,
+    "displayName": "Paved Andesite Stairs",
+    "icon": "create_block_palettes_andesite_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_andesite_wall",
+    "id": 5293,
+    "displayName": "Paved Andesite Wall",
+    "icon": "create_block_palettes_andesite_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_dark_scoria",
+    "id": 5294,
+    "displayName": "Paved Dark Scoria",
+    "icon": "create_block_palettes_dark_scoria_paved_top",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_dark_scoria_slab",
+    "id": 5295,
+    "displayName": "Paved Dark Scoria Slab",
+    "icon": "create_block_palettes_dark_scoria_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_dark_scoria_stairs",
+    "id": 5296,
+    "displayName": "Paved Dark Scoria Stairs",
+    "icon": "create_block_palettes_dark_scoria_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_dark_scoria_wall",
+    "id": 5297,
+    "displayName": "Paved Dark Scoria Wall",
+    "icon": "create_block_palettes_dark_scoria_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_diorite",
+    "id": 5298,
+    "displayName": "Paved Diorite",
+    "icon": "create_block_palettes_diorite_paved_top",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_diorite_slab",
+    "id": 5299,
+    "displayName": "Paved Diorite Slab",
+    "icon": "create_block_palettes_diorite_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_diorite_stairs",
+    "id": 5300,
+    "displayName": "Paved Diorite Stairs",
+    "icon": "create_block_palettes_diorite_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_diorite_wall",
+    "id": 5301,
+    "displayName": "Paved Diorite Wall",
+    "icon": "create_block_palettes_diorite_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_dolomite",
+    "id": 5302,
+    "displayName": "Paved Dolomite",
+    "icon": "create_block_palettes_dolomite_paved_top",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_dolomite_slab",
+    "id": 5303,
+    "displayName": "Paved Dolomite Slab",
+    "icon": "create_block_palettes_dolomite_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_dolomite_stairs",
+    "id": 5304,
+    "displayName": "Paved Dolomite Stairs",
+    "icon": "create_block_palettes_dolomite_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_dolomite_wall",
+    "id": 5305,
+    "displayName": "Paved Dolomite Wall",
+    "icon": "create_block_palettes_dolomite_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_gabbro",
+    "id": 5306,
+    "displayName": "Paved Gabbro",
+    "icon": "create_block_palettes_gabbro_paved_top",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_gabbro_slab",
+    "id": 5307,
+    "displayName": "Paved Gabbro Slab",
+    "icon": "create_block_palettes_gabbro_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_gabbro_stairs",
+    "id": 5308,
+    "displayName": "Paved Gabbro Stairs",
+    "icon": "create_block_palettes_gabbro_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_gabbro_wall",
+    "id": 5309,
+    "displayName": "Paved Gabbro Wall",
+    "icon": "create_block_palettes_gabbro_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_granite",
+    "id": 5310,
+    "displayName": "Paved Granite",
+    "icon": "create_block_palettes_granite_paved_top",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_granite_slab",
+    "id": 5311,
+    "displayName": "Paved Granite Slab",
+    "icon": "create_block_palettes_granite_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_granite_stairs",
+    "id": 5312,
+    "displayName": "Paved Granite Stairs",
+    "icon": "create_block_palettes_granite_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_granite_wall",
+    "id": 5313,
+    "displayName": "Paved Granite Wall",
+    "icon": "create_block_palettes_granite_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_limestone",
+    "id": 5314,
+    "displayName": "Paved Limestone",
+    "icon": "create_block_palettes_limestone_paved_top",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_limestone_slab",
+    "id": 5315,
+    "displayName": "Paved Limestone Slab",
+    "icon": "create_block_palettes_limestone_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_limestone_stairs",
+    "id": 5316,
+    "displayName": "Paved Limestone Stairs",
+    "icon": "create_block_palettes_limestone_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_limestone_wall",
+    "id": 5317,
+    "displayName": "Paved Limestone Wall",
+    "icon": "create_block_palettes_limestone_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_scoria",
+    "id": 5318,
+    "displayName": "Paved Scoria",
+    "icon": "create_block_palettes_scoria_paved_top",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_scoria_slab",
+    "id": 5319,
+    "displayName": "Paved Scoria Slab",
+    "icon": "create_block_palettes_scoria_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_scoria_stairs",
+    "id": 5320,
+    "displayName": "Paved Scoria Stairs",
+    "icon": "create_block_palettes_scoria_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_scoria_wall",
+    "id": 5321,
+    "displayName": "Paved Scoria Wall",
+    "icon": "create_block_palettes_scoria_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_weathered_limestone",
+    "id": 5322,
+    "displayName": "Paved Weathered Limestone",
+    "icon": "create_block_palettes_weathered_limestone_paved_top",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_weathered_limestone_slab",
+    "id": 5323,
+    "displayName": "Paved Weathered Limestone Slab",
+    "icon": "create_block_palettes_weathered_limestone_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_weathered_limestone_stairs",
+    "id": 5324,
+    "displayName": "Paved Weathered Limestone Stairs",
+    "icon": "create_block_palettes_weathered_limestone_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_paved_weathered_limestone_wall",
+    "id": 5325,
+    "displayName": "Paved Weathered Limestone Wall",
+    "icon": "create_block_palettes_weathered_limestone_paved",
+    "fullBlock": true
+  },
+  {
+    "name": "create_peculiar_bell",
+    "id": 5326,
+    "displayName": "Peculiar Bell",
+    "icon": "create_block_bell",
+    "fullBlock": false
+  },
+  {
+    "name": "create_pink_nixie_tube",
+    "id": 5327,
+    "displayName": "Pink Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_pink_sail",
+    "id": 5328,
+    "displayName": "Pink Sail",
+    "icon": "create_block_sail_canvas_pink",
+    "fullBlock": false
+  },
+  {
+    "name": "create_pink_seat",
+    "id": 5329,
+    "displayName": "Pink Seat",
+    "icon": "create_block_seat_top_pink",
+    "fullBlock": false
+  },
+  {
+    "name": "create_pink_toolbox",
+    "id": 5330,
+    "displayName": "Pink Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_pink_valve_handle",
+    "id": 5331,
+    "displayName": "Pink Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_piston_extension_pole",
+    "id": 5332,
+    "displayName": "Piston Extension Pole",
+    "icon": "piston_top",
+    "fullBlock": false
+  },
+  {
+    "name": "create_polished_dark_scoria",
+    "id": 5333,
+    "displayName": "Polished Dark Scoria",
+    "icon": "create_block_palettes_dark_scoria_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_dark_scoria_slab",
+    "id": 5334,
+    "displayName": "Polished Dark Scoria Slab",
+    "icon": "create_block_palettes_dark_scoria_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_dark_scoria_stairs",
+    "id": 5335,
+    "displayName": "Polished Dark Scoria Stairs",
+    "icon": "create_block_palettes_dark_scoria_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_dark_scoria_wall",
+    "id": 5336,
+    "displayName": "Polished Dark Scoria Wall",
+    "icon": "create_block_palettes_dark_scoria_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_dolomite",
+    "id": 5337,
+    "displayName": "Polished Dolomite",
+    "icon": "create_block_palettes_dolomite_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_dolomite_slab",
+    "id": 5338,
+    "displayName": "Polished Dolomite Slab",
+    "icon": "create_block_palettes_dolomite_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_dolomite_stairs",
+    "id": 5339,
+    "displayName": "Polished Dolomite Stairs",
+    "icon": "create_block_palettes_dolomite_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_dolomite_wall",
+    "id": 5340,
+    "displayName": "Polished Dolomite Wall",
+    "icon": "create_block_palettes_dolomite_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_gabbro",
+    "id": 5341,
+    "displayName": "Polished Gabbro",
+    "icon": "create_block_palettes_gabbro_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_gabbro_slab",
+    "id": 5342,
+    "displayName": "Polished Gabbro Slab",
+    "icon": "create_block_palettes_gabbro_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_gabbro_stairs",
+    "id": 5343,
+    "displayName": "Polished Gabbro Stairs",
+    "icon": "create_block_palettes_gabbro_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_gabbro_wall",
+    "id": 5344,
+    "displayName": "Polished Gabbro Wall",
+    "icon": "create_block_palettes_gabbro_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_limestone",
+    "id": 5345,
+    "displayName": "Polished Limestone",
+    "icon": "create_block_palettes_limestone_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_limestone_slab",
+    "id": 5346,
+    "displayName": "Polished Limestone Slab",
+    "icon": "create_block_palettes_limestone_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_limestone_stairs",
+    "id": 5347,
+    "displayName": "Polished Limestone Stairs",
+    "icon": "create_block_palettes_limestone_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_limestone_wall",
+    "id": 5348,
+    "displayName": "Polished Limestone Wall",
+    "icon": "create_block_palettes_limestone_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_scoria",
+    "id": 5349,
+    "displayName": "Polished Scoria",
+    "icon": "create_block_palettes_scoria_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_scoria_slab",
+    "id": 5350,
+    "displayName": "Polished Scoria Slab",
+    "icon": "create_block_palettes_scoria_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_scoria_stairs",
+    "id": 5351,
+    "displayName": "Polished Scoria Stairs",
+    "icon": "create_block_palettes_scoria_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_scoria_wall",
+    "id": 5352,
+    "displayName": "Polished Scoria Wall",
+    "icon": "create_block_palettes_scoria_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_weathered_limestone",
+    "id": 5353,
+    "displayName": "Polished Weathered Limestone",
+    "icon": "create_block_palettes_weathered_limestone_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_weathered_limestone_slab",
+    "id": 5354,
+    "displayName": "Polished Weathered Limestone Slab",
+    "icon": "create_block_palettes_weathered_limestone_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_weathered_limestone_stairs",
+    "id": 5355,
+    "displayName": "Polished Weathered Limestone Stairs",
+    "icon": "create_block_palettes_weathered_limestone_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_polished_weathered_limestone_wall",
+    "id": 5356,
+    "displayName": "Polished Weathered Limestone Wall",
+    "icon": "create_block_palettes_weathered_limestone_polished",
+    "fullBlock": true
+  },
+  {
+    "name": "create_portable_fluid_interface",
+    "id": 5357,
+    "displayName": "Portable Fluid Interface",
+    "icon": "create_block_copper_casing",
+    "fullBlock": false
+  },
+  {
+    "name": "create_portable_storage_interface",
+    "id": 5358,
+    "displayName": "Portable Storage Interface",
+    "icon": "create_block_brass_casing",
+    "fullBlock": false
+  },
+  {
+    "name": "create_powered_latch",
+    "id": 5359,
+    "displayName": "Powered Latch",
+    "icon": "create_block_diodes_powered_latch_idle",
+    "fullBlock": false
+  },
+  {
+    "name": "create_powered_toggle_latch",
+    "id": 5360,
+    "displayName": "Powered Toggle Latch",
+    "icon": "create_block_diodes_powered_toggle_latch_idle",
+    "fullBlock": false
+  },
+  {
+    "name": "create_pulley_magnet",
+    "id": 5361,
+    "displayName": "Pulley Magnet",
+    "icon": "create_block_pulley_magnet",
+    "fullBlock": false
+  },
+  {
+    "name": "create_pulse_repeater",
+    "id": 5362,
+    "displayName": "Pulse Repeater",
+    "icon": "create_block_diodes_pulse_repeater_idle",
+    "fullBlock": false
+  },
+  {
+    "name": "create_purple_nixie_tube",
+    "id": 5363,
+    "displayName": "Purple Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_purple_sail",
+    "id": 5364,
+    "displayName": "Purple Sail",
+    "icon": "create_block_sail_canvas_purple",
+    "fullBlock": false
+  },
+  {
+    "name": "create_purple_seat",
+    "id": 5365,
+    "displayName": "Purple Seat",
+    "icon": "create_block_seat_top_purple",
+    "fullBlock": false
+  },
+  {
+    "name": "create_purple_toolbox",
+    "id": 5366,
+    "displayName": "Purple Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_purple_valve_handle",
+    "id": 5367,
+    "displayName": "Purple Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_radial_chassis",
+    "id": 5368,
+    "displayName": "Radial Chassis",
+    "icon": "create_block_radial_chassis_side",
+    "fullBlock": false
+  },
+  {
+    "name": "create_red_nixie_tube",
+    "id": 5369,
+    "displayName": "Red Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_red_sail",
+    "id": 5370,
+    "displayName": "Red Sail",
+    "icon": "create_block_sail_canvas_red",
+    "fullBlock": false
+  },
+  {
+    "name": "create_red_seat",
+    "id": 5371,
+    "displayName": "Red Seat",
+    "icon": "create_block_seat_top_red",
+    "fullBlock": false
+  },
+  {
+    "name": "create_red_toolbox",
+    "id": 5372,
+    "displayName": "Red Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_red_valve_handle",
+    "id": 5373,
+    "displayName": "Red Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_redstone_contact",
+    "id": 5374,
+    "displayName": "Redstone Contact",
+    "icon": "create_block_contact_side",
+    "fullBlock": false
+  },
+  {
+    "name": "create_redstone_link",
+    "id": 5375,
+    "displayName": "Redstone Link",
+    "icon": "create_block_redstone_bridge",
+    "fullBlock": false
+  },
+  {
+    "name": "create_refined_radiance_casing",
+    "id": 5376,
+    "displayName": "Radiant Casing",
+    "icon": "create_block_refined_radiance_casing",
+    "fullBlock": true
+  },
+  {
+    "name": "create_reinforced_rail",
+    "id": 5377,
+    "displayName": "Reinforced Rail",
+    "icon": "create_block_reinforced_rail_top",
+    "fullBlock": false
+  },
+  {
+    "name": "create_rope",
+    "id": 5378,
+    "displayName": "Rope",
+    "icon": "create_block_pulley_rope",
+    "fullBlock": false
+  },
+  {
+    "name": "create_rope_pulley",
+    "id": 5379,
+    "displayName": "Rope Pulley",
+    "icon": "create_block_pulley_rope",
+    "fullBlock": false
+  },
+  {
+    "name": "create_rotation_speed_controller",
+    "id": 5380,
+    "displayName": "Rotation Speed Controller",
+    "icon": "create_block_brass_gearbox",
+    "fullBlock": false
+  },
+  {
+    "name": "create_sail_frame",
+    "id": 5381,
+    "displayName": "Sail Frame",
+    "icon": "create_block_sail_frame",
+    "fullBlock": false
+  },
+  {
+    "name": "create_schematic_table",
+    "id": 5382,
+    "displayName": "Schematic Table",
+    "icon": "create_block_schematic_table_side",
+    "fullBlock": false
+  },
+  {
+    "name": "create_schematicannon",
+    "id": 5383,
+    "displayName": "Schematicannon",
+    "icon": "spruce_log",
+    "fullBlock": false
+  },
+  {
+    "name": "create_scoria",
+    "id": 5384,
+    "displayName": "Scoria",
+    "icon": "create_block_palettes_scoria_plain",
+    "fullBlock": true
+  },
+  {
+    "name": "create_scoria_bricks",
+    "id": 5385,
+    "displayName": "Scoria Bricks",
+    "icon": "create_block_palettes_scoria_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_scoria_bricks_slab",
+    "id": 5386,
+    "displayName": "Scoria Bricks Slab",
+    "icon": "create_block_palettes_scoria_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_scoria_bricks_stairs",
+    "id": 5387,
+    "displayName": "Scoria Bricks Stairs",
+    "icon": "create_block_palettes_scoria_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_scoria_bricks_wall",
+    "id": 5388,
+    "displayName": "Scoria Bricks Wall",
+    "icon": "create_block_palettes_scoria_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_scoria_cobblestone",
+    "id": 5389,
+    "displayName": "Scoria Cobblestone",
+    "icon": "create_block_palettes_scoria_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_scoria_cobblestone_slab",
+    "id": 5390,
+    "displayName": "Scoria Cobblestone Slab",
+    "icon": "create_block_palettes_scoria_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_scoria_cobblestone_stairs",
+    "id": 5391,
+    "displayName": "Scoria Cobblestone Stairs",
+    "icon": "create_block_palettes_scoria_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_scoria_cobblestone_wall",
+    "id": 5392,
+    "displayName": "Scoria Cobblestone Wall",
+    "icon": "create_block_palettes_scoria_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_scoria_pillar",
+    "id": 5393,
+    "displayName": "Scoria Pillar",
+    "icon": "create_block_palettes_scoria_pillar",
+    "fullBlock": true
+  },
+  {
+    "name": "create_secondary_linear_chassis",
+    "id": 5394,
+    "displayName": "Secondary Linear Chassis",
+    "icon": "create_block_linear_chassis_end",
+    "fullBlock": true
+  },
+  {
+    "name": "create_sequenced_gearshift",
+    "id": 5395,
+    "displayName": "Sequenced Gearshift",
+    "icon": "create_block_brass_gearbox",
+    "fullBlock": false
+  },
+  {
+    "name": "create_shadow_steel_casing",
+    "id": 5396,
+    "displayName": "Shadow Casing",
+    "icon": "create_block_shadow_steel_casing",
+    "fullBlock": true
+  },
+  {
+    "name": "create_shaft",
+    "id": 5397,
+    "displayName": "Shaft",
+    "icon": "create_block_axis",
+    "fullBlock": false
+  },
+  {
+    "name": "create_smart_chute",
+    "id": 5398,
+    "displayName": "Smart Chute",
+    "icon": "hopper_outside",
+    "fullBlock": false
+  },
+  {
+    "name": "create_smart_fluid_pipe",
+    "id": 5399,
+    "displayName": "Smart Fluid Pipe",
+    "icon": "create_block_brass_block",
+    "fullBlock": false
+  },
+  {
+    "name": "create_speedometer",
+    "id": 5400,
+    "displayName": "Speedometer",
+    "icon": "create_block_gauge",
+    "fullBlock": false
+  },
+  {
+    "name": "create_spout",
+    "id": 5401,
+    "displayName": "Spout",
+    "icon": "create_block_copper_plating",
+    "fullBlock": false
+  },
+  {
+    "name": "create_spruce_window",
+    "id": 5402,
+    "displayName": "Spruce Window",
+    "icon": "create_block_palettes_spruce_window",
+    "fullBlock": true
+  },
+  {
+    "name": "create_spruce_window_pane",
+    "id": 5403,
+    "displayName": "Spruce Window Pane",
+    "icon": "create_block_palettes_spruce_window",
+    "fullBlock": false
+  },
+  {
+    "name": "create_sticker",
+    "id": 5404,
+    "displayName": "Sticker",
+    "icon": "create_block_piston_bottom",
+    "fullBlock": false
+  },
+  {
+    "name": "create_sticky_mechanical_piston",
+    "id": 5405,
+    "displayName": "Sticky Mechanical Piston",
+    "icon": "create_block_gearbox_top",
+    "fullBlock": false
+  },
+  {
+    "name": "create_stockpile_switch",
+    "id": 5406,
+    "displayName": "Stockpile Switch",
+    "icon": "create_block_filtered_detector_front",
+    "fullBlock": false
+  },
+  {
+    "name": "create_stressometer",
+    "id": 5407,
+    "displayName": "Stressometer",
+    "icon": "create_block_gauge",
+    "fullBlock": false
+  },
+  {
+    "name": "create_tiled_glass",
+    "id": 5408,
+    "displayName": "Tiled Glass",
+    "icon": "create_block_palettes_tiled_glass",
+    "fullBlock": true
+  },
+  {
+    "name": "create_tiled_glass_pane",
+    "id": 5409,
+    "displayName": "Tiled Glass Pane",
+    "icon": "create_block_palettes_tiled_glass",
+    "fullBlock": true
+  },
+  {
+    "name": "create_turntable",
+    "id": 5410,
+    "displayName": "Turntable",
+    "icon": "stripped_spruce_log",
+    "fullBlock": false
+  },
+  {
+    "name": "create_vertical_framed_glass",
+    "id": 5411,
+    "displayName": "Vertical Framed Glass",
+    "icon": "create_block_palettes_framed_glass",
+    "fullBlock": true
+  },
+  {
+    "name": "create_vertical_framed_glass_pane",
+    "id": 5412,
+    "displayName": "Vertical Framed Glass Pane",
+    "icon": "create_block_palettes_framed_glass",
+    "fullBlock": false
+  },
+  {
+    "name": "create_warped_window",
+    "id": 5413,
+    "displayName": "Warped Window",
+    "icon": "create_block_palettes_warped_window",
+    "fullBlock": true
+  },
+  {
+    "name": "create_warped_window_pane",
+    "id": 5414,
+    "displayName": "Warped Window Pane",
+    "icon": "create_block_palettes_warped_window",
+    "fullBlock": false
+  },
+  {
+    "name": "create_water_wheel",
+    "id": 5415,
+    "displayName": "Water Wheel",
+    "icon": "stripped_spruce_log",
+    "fullBlock": false
+  },
+  {
+    "name": "create_weathered_limestone",
+    "id": 5416,
+    "displayName": "Weathered Limestone",
+    "icon": "create_block_palettes_weathered_limestone_plain",
+    "fullBlock": true
+  },
+  {
+    "name": "create_weathered_limestone_bricks",
+    "id": 5417,
+    "displayName": "Weathered Limestone Bricks",
+    "icon": "create_block_palettes_weathered_limestone_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_weathered_limestone_bricks_slab",
+    "id": 5418,
+    "displayName": "Weathered Limestone Bricks Slab",
+    "icon": "create_block_palettes_weathered_limestone_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_weathered_limestone_bricks_stairs",
+    "id": 5419,
+    "displayName": "Weathered Limestone Bricks Stairs",
+    "icon": "create_block_palettes_weathered_limestone_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_weathered_limestone_bricks_wall",
+    "id": 5420,
+    "displayName": "Weathered Limestone Bricks Wall",
+    "icon": "create_block_palettes_weathered_limestone_bricks",
+    "fullBlock": true
+  },
+  {
+    "name": "create_weathered_limestone_cobblestone",
+    "id": 5421,
+    "displayName": "Weathered Limestone Cobblestone",
+    "icon": "create_block_palettes_weathered_limestone_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_weathered_limestone_cobblestone_slab",
+    "id": 5422,
+    "displayName": "Weathered Limestone Cobblestone Slab",
+    "icon": "create_block_palettes_weathered_limestone_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_weathered_limestone_cobblestone_stairs",
+    "id": 5423,
+    "displayName": "Weathered Limestone Cobblestone Stairs",
+    "icon": "create_block_palettes_weathered_limestone_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_weathered_limestone_cobblestone_wall",
+    "id": 5424,
+    "displayName": "Weathered Limestone Cobblestone Wall",
+    "icon": "create_block_palettes_weathered_limestone_cobblestone",
+    "fullBlock": true
+  },
+  {
+    "name": "create_weathered_limestone_pillar",
+    "id": 5425,
+    "displayName": "Weathered Limestone Pillar",
+    "icon": "create_block_palettes_weathered_limestone_pillar",
+    "fullBlock": true
+  },
+  {
+    "name": "create_weighted_ejector",
+    "id": 5426,
+    "displayName": "Weighted Ejector",
+    "icon": "create_block_weighted_ejector_top",
+    "fullBlock": false
+  },
+  {
+    "name": "create_white_nixie_tube",
+    "id": 5427,
+    "displayName": "White Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_white_sail",
+    "id": 5428,
+    "displayName": "White Sail",
+    "icon": "create_block_sail_canvas_white",
+    "fullBlock": false
+  },
+  {
+    "name": "create_white_seat",
+    "id": 5429,
+    "displayName": "White Seat",
+    "icon": "create_block_seat_top_white",
+    "fullBlock": false
+  },
+  {
+    "name": "create_white_toolbox",
+    "id": 5430,
+    "displayName": "White Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_white_valve_handle",
+    "id": 5431,
+    "displayName": "White Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_windmill_bearing",
+    "id": 5432,
+    "displayName": "Windmill Bearing",
+    "icon": "create_block_windmill_bearing_side",
+    "fullBlock": false
+  },
+  {
+    "name": "create_wooden_bracket",
+    "id": 5433,
+    "displayName": "Wooden Bracket",
+    "icon": "create_block_bracket_wooden",
+    "fullBlock": false
+  },
+  {
+    "name": "create_yellow_nixie_tube",
+    "id": 5434,
+    "displayName": "Yellow Nixie Tube",
+    "icon": "create_block_nixie_tube",
+    "fullBlock": false
+  },
+  {
+    "name": "create_yellow_sail",
+    "id": 5435,
+    "displayName": "Yellow Sail",
+    "icon": "create_block_sail_canvas_yellow",
+    "fullBlock": false
+  },
+  {
+    "name": "create_yellow_seat",
+    "id": 5436,
+    "displayName": "Yellow Seat",
+    "icon": "create_block_seat_top_yellow",
+    "fullBlock": false
+  },
+  {
+    "name": "create_yellow_toolbox",
+    "id": 5437,
+    "displayName": "Yellow Toolbox",
+    "icon": "dark_oak_planks",
+    "fullBlock": false
+  },
+  {
+    "name": "create_yellow_valve_handle",
+    "id": 5438,
+    "displayName": "Yellow Valve Handle",
+    "icon": "create_block_oxidized_copper_block_0",
+    "fullBlock": false
+  },
+  {
+    "name": "create_zinc_block",
+    "id": 5439,
+    "displayName": "Block of Zinc",
+    "icon": "create_block_zinc_block",
+    "fullBlock": true
+  },
+  {
+    "name": "create_zinc_ore",
+    "id": 5440,
+    "displayName": "Zinc Ore",
+    "icon": "create_block_zinc_ore",
+    "fullBlock": true
+  }
+]

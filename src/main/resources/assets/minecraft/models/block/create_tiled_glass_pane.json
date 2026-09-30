@@ -1,0 +1,6 @@
+{
+  "textures": {
+    "pane": "create_block_palettes_tiled_glass",
+    "edge": "glass_pane_top"
+  }
+}

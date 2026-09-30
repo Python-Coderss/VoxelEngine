@@ -1,0 +1,7 @@
+{
+  "textures": {
+    "side": "create_block_palettes_dolomite_polished_slab",
+    "bottom": "create_block_palettes_dolomite_polished",
+    "top": "create_block_palettes_dolomite_polished"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "textures": {
+    "side": "create_block_palettes_andesite_paved",
+    "bottom": "create_block_palettes_andesite_paved",
+    "top": "create_block_palettes_andesite_paved"
+  }
+}

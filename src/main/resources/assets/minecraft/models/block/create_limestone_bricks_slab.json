@@ -1,0 +1,7 @@
+{
+  "textures": {
+    "side": "create_block_palettes_limestone_bricks",
+    "bottom": "create_block_palettes_limestone_bricks",
+    "top": "create_block_palettes_limestone_bricks"
+  }
+}

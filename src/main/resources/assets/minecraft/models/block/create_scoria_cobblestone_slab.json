@@ -1,0 +1,7 @@
+{
+  "textures": {
+    "side": "create_block_palettes_scoria_cobblestone",
+    "bottom": "create_block_palettes_scoria_cobblestone",
+    "top": "create_block_palettes_scoria_cobblestone"
+  }
+}

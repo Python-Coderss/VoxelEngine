@@ -706,6 +706,26 @@ public class CraftingManager {
             "blue_dye", "blue_dye", "blue_dye",
             "blue_dye", "blue_dye", "blue_dye");
         addShapeless2x2("blue_dye", 9, "lapis_block");
+
+        // ===== Minecraft: Story Mode =====
+        // Formidi-Bomb: clay casing around a powder charge (Ivor's design).
+        addRecipe3x3(new String[][]{
+            {"clay", "gunpowder", "clay"},
+            {"gunpowder", "diamond", "gunpowder"},
+            {"clay", "gunpowder", "clay"}
+        }, "formidi_bomb", 1);
+        // Gabriel's Sword: the Order of the Stone's banner blade.
+        addRecipe3x3(new String[][]{
+            {"gold_block", "diamond", "gold_block"},
+            {null, "diamond", null},
+            {null, "stick", null}
+        }, "gabriel_sword", 1);
+        // Enchanted Gauntlet: blaze-forged endgame weapon.
+        addRecipe3x3(new String[][]{
+            {"diamond", "gold_block", "diamond"},
+            {"gold_block", "blaze_rod", "gold_block"},
+            {"diamond", "gold_block", "diamond"}
+        }, "enchant_gauntlet", 1);
     }
 
     private void registerWoodToolRecipes(String plankItemId) {

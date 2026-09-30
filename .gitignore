@@ -20,6 +20,9 @@ saves/
 # Agent collaboration protocol copy (not project source)
 collaboration.txt
 
+# Sparse reference clones (re-fetchable; ported assets live in src/main/resources)
+Create/
+
 # Shared agent workspace (per-session coordination, not project history)
 .agents/
 

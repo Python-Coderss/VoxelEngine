@@ -220,6 +220,11 @@ public class ItemDefinitions {
         // --- Parachutes ---
         registerTool("cold_parachute", "Cold Parachute", "cold_parachute", ToolType.HAND, 1.0f, new Vector4f(0.7f, 0.85f, 1, 1));
         registerTool("golden_parachute", "Golden Parachute", "golden_parachute", ToolType.HAND, 1.0f, new Vector4f(1, 0.9f, 0.5f, 1));
+        // --- Minecraft: Story Mode content ---
+        registerBlock("formidi_bomb", "Formidi-Bomb", 916, "formidi_bomb");
+        registerBlock("white_pumpkin", "White Pumpkin", 917, "white_pumpkin");
+        registerTool("gabriel_sword", "Gabriel's Sword", "gabriel_sword", ToolType.AXE, 12.0f, new Vector4f(0.92f, 0.92f, 0.96f, 1), 3);
+        registerTool("enchant_gauntlet", "Enchanted Gauntlet", "enchant_gauntlet", ToolType.AXE, 20.0f, new Vector4f(0.55f, 0.4f, 0.9f, 1), 4);
         // --- New staple blocks ---
         registerBlock("brick", "Bricks", 130, "brick");
         registerBlock("stone_brick", "Stone Bricks", 131, "stonebrick");
