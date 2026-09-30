@@ -768,6 +768,16 @@ public class Player {
         spawnPoints.put(dimension, new Vector3f(point));
     }
 
+    /**
+     * The world spawn recorded for the player's current dimension (bed or
+     * dimension entry point), or null when none has been set yet. Returns a
+     * copy so callers cannot mutate the stored spawn.
+     */
+    public Vector3f getSpawnPoint() {
+        Vector3f point = spawnPoints.get(dimension);
+        return point != null ? new Vector3f(point) : null;
+    }
+
     // ════════════════════════════════════════════════════════════════
     //  Getters / Setters — public API returns Vector3f (compatible)
     // ════════════════════════════════════════════════════════════════

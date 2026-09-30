@@ -7,6 +7,7 @@ import com.voxel.entity.Entity;
 import com.voxel.entity.EntityManager;
 import com.voxel.entity.PlayerEntity;
 import com.voxel.utils.BiomeManager;
+import com.voxel.utils.FixedPoint;
 import com.voxel.utils.BlockDataManager;
 import com.voxel.utils.BlockRegistry;
 import com.voxel.utils.ShaderBlockRegistry;
@@ -380,6 +381,9 @@ public class GameContext {
     // stays paused until the destination section has finished generating.
     public volatile boolean teleportLoading = false;
     public volatile String teleportLoadingMessage = "Loading terrain...";
+    /** Set by a /spawn teleport: once the destination section exists, the player
+     *  is nudged out of any blocks the stored spawn turned out to be buried in. */
+    private boolean pendingSpawnSurfaceSnap = false;
 
     // --- Heavy init phase (deferred from Main.init() to the loading screen) ---
     // True while Main hasn't yet created the Overworld dimension / chunkManager /
@@ -441,6 +445,57 @@ public class GameContext {
 
     public void finishTeleportTerrainWait() {
         teleportLoading = false;
+        if (pendingSpawnSurfaceSnap) {
+            pendingSpawnSurfaceSnap = false;
+            // Terrain can have changed since the spawn point was recorded, so the
+            // player may land inside blocks. Step up out of them; only fall back
+            // to a full surface scan when the step-up hits its safety limit.
+            if (player.unstuck(world, blockDataManager) < 0) {
+                snapToSurfaceBelowPlayer();
+            }
+        }
+    }
+
+    /**
+     * Sends the player back to the world spawn recorded for the current
+     * dimension. Unlike {@link Player#respawn()} this is a plain teleport: health,
+     * hunger and inventory are untouched. Terrain streaming is gated so the player
+     * never falls through a not-yet-generated destination, and the player is
+     * lifted clear of blocks if the stored spawn is buried.
+     *
+     * @return the destination in block coordinates for the status line, or null
+     *         when the player or its spawn point is missing.
+     */
+    public Vector3f teleportToWorldSpawn() {
+        if (player == null) return null;
+        Vector3f spawn = player.getSpawnPoint();
+        if (spawn == null) return null;
+        player.teleportFixed(FixedPoint.fromFloat(spawn.x),
+            FixedPoint.fromFloat(spawn.y), FixedPoint.fromFloat(spawn.z));
+        pendingSpawnSurfaceSnap = true;
+        beginTeleportTerrainWait();
+        return new Vector3f(
+            FixedPoint.blockX(player.getFixedX()),
+            FixedPoint.blockX(player.getFixedY()),
+            FixedPoint.blockX(player.getFixedZ()));
+    }
+
+    /** Places the player on top of the terrain at their own column. */
+    private void snapToSurfaceBelowPlayer() {
+        if (player == null || world == null) return;
+        int bx = FixedPoint.blockX(player.getFixedX());
+        int bz = FixedPoint.blockX(player.getFixedZ());
+        int surfaceY;
+        if (activeDimension == DimensionType.AETHER || activeDimension == DimensionType.END) {
+            surfaceY = findIslandSurface(bx, bz);
+        } else if (activeDimension == DimensionType.NETHER) {
+            surfaceY = findNetherSpawn(bx, bz);
+        } else {
+            surfaceY = findSurfaceNear(bx, bz,
+                Math.max(1, spawnLoadedMinY()), spawnLoadedMaxY(), 16);
+        }
+        player.setPosition(bx + 0.5, surfaceY, bz + 0.5);
+        player.resetVelocity();
     }
 
     /** Starts deferred spawn resolution for a newly selected world position. */
