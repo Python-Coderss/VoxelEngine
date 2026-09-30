@@ -65,8 +65,22 @@ public class CommandProcessor {
             ctx.spawnMobCommand.accept(parts[1].toLowerCase(Locale.ROOT));
             return;
         }
-        ctx.player.respawn();
-        ctx.setStatus("Teleported to spawn.");
+        // A dead player gets the full respawn treatment (health/hunger reset).
+        if (ctx.player.isDead()) {
+            ctx.player.respawn();
+            ctx.setStatus("Respawned at spawn.");
+            return;
+        }
+        // Alive: a plain teleport back to the world spawn of this dimension, so
+        // it never doubles as a free heal. The destination terrain is streamed in
+        // before physics resumes.
+        Vector3f target = ctx.teleportToWorldSpawn();
+        if (target == null) {
+            ctx.setStatus("No spawn point recorded for this dimension yet.");
+            return;
+        }
+        ctx.setStatus("Teleported to spawn: " + (int) target.x + ", "
+            + (int) target.y + ", " + (int) target.z);
     }
 
     private void handleDimension(String[] parts) {
@@ -328,7 +342,7 @@ public class CommandProcessor {
         sb.append("\n  /gamemode <survival|creative> - Change game mode");
         sb.append("\n  /give <item> [amount] - Give yourself an item");
         sb.append("\n  /slotclear [slot] - Clear inventory slot");
-        sb.append("\n  /spawn - Teleport to spawn");
+        sb.append("\n  /spawn - Teleport to this dimension's world spawn (keeps health and inventory; respawns you if dead)");
         sb.append("\n  /spawn <mob> - Spawn a mob where you're looking (zombie, husk, skeleton, stray, wither_skeleton, spider, cave_spider, enderman, endermite, silverfish, bat, dragon, ghast, guardian, horse, llama, cat, parrot, polar_bear, rabbit, shulker, slime, magma_cube, squid, vex, witch, evoker, vindicator, wither, wolf, creeper, villager, iron_golem, snow_golem, snow_golem_sheared, blaze, pigman, pig, cow, mooshroom, chicken, sheep, sheep_sheared)");
         sb.append("\n  /tp <x> <y> <z> - Teleport to coordinates");
         sb.append("\n  /unstuck - Move upward until the player is clear");
