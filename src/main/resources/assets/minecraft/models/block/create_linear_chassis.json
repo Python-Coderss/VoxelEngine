@@ -1,0 +1,7 @@
+{
+  "textures": {
+    "side": "create_block_linear_chassis_side",
+    "bottom": "create_block_linear_chassis_end",
+    "top": "create_block_linear_chassis_end"
+  }
+}

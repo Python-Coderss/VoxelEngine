@@ -1,0 +1,8 @@
+{
+  "textures": {
+    "bottom": "formidi_bomb",
+    "top": "formidi_bomb",
+    "side": "formidi_bomb",
+    "particle": "formidi_bomb"
+  }
+}

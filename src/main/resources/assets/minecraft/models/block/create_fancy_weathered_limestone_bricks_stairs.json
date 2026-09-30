@@ -1,0 +1,7 @@
+{
+  "textures": {
+    "side": "create_block_palettes_weathered_limestone_fancy_bricks",
+    "bottom": "create_block_palettes_weathered_limestone_fancy_bricks",
+    "top": "create_block_palettes_weathered_limestone_fancy_bricks"
+  }
+}

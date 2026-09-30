@@ -1,0 +1,7 @@
+{
+  "textures": {
+    "side": "create_block_palettes_gabbro_polished_slab",
+    "bottom": "create_block_palettes_gabbro_polished",
+    "top": "create_block_palettes_gabbro_polished"
+  }
+}

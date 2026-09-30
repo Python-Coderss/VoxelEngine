@@ -606,6 +606,7 @@ public class Main {
         // Create extracted subsystems
         itemDefinitions = new ItemDefinitions();
         itemDefinitions.setup(blockDataManager, textureManager);
+        com.voxel.utils.CreateContentLoader.registerItems(itemDefinitions, textureManager);
         com.voxel.utils.MinecraftContentLoader.registerMissingItems(
                 itemDefinitions, blockDataManager, textureManager,
                 "src/main/resources/assets/minecraft/models/item");
@@ -1751,6 +1752,33 @@ public class Main {
         entityManager.addEntity(sheep);
     }
 
+    /** Story surface for the MCSM episode beats (popups, status, voiced lines). */
+    private final com.voxel.game.McsmStory.Host mcsmHost = new com.voxel.game.McsmStory.Host() {
+        @Override public void showPopup(String title, String subtitle) {
+            showTutorialPopup(title, subtitle);
+        }
+        @Override public void setStatus(String message) {
+            Main.this.setStatus(message);
+        }
+        @Override public void speak(String text, villager.voice.SpeechOptions options) {
+            if (ctx != null && ctx.villagerAudioManager != null) {
+                ctx.villagerAudioManager.requestSpeech(text, options);
+            }
+        }
+    };
+
+    /** Spawns the White Pumpkin boss at the pumpkin hideout (story beat). */
+    private void spawnWhitePumpkinBoss() {
+        float x = com.voxel.world.McsmStructures.PUMPKIN_HIDEOUT[0];
+        float z = com.voxel.world.McsmStructures.PUMPKIN_HIDEOUT[1];
+        com.voxel.entity.WhitePumpkinEntity boss = new com.voxel.entity.WhitePumpkinEntity(
+            nextTutorialMobId++, new Vector3f(x + 0.5f, surfaceYAt(x, z), z + 0.5f), textureManager, player);
+        boss.dimension = activeDimension;
+        boss.setWorld(world);
+        entityManager.addEntity(boss);
+        setStatus("The White Pumpkin has risen!");
+    }
+
     /**
      * One-shot deferred init that creates the Overworld dimension + chunk and
      * redstone / fluid managers + the player entity + initial enemy roster, then
@@ -2893,6 +2921,19 @@ public class Main {
 
             // ── Primed TNT: count down the fuse and detonate ──
             com.voxel.game.TntBlock.tick(world, chunkManager, player, dt);
+            com.voxel.game.FormidiBomb.tick(world, chunkManager, player, dt);
+
+            // ── MCSM story: stamp the story sites near the player and run the
+            //    episode beats (dialogue choices, boss summon) in the Overworld ──
+            if (activeDimension == com.voxel.world.DimensionType.OVERWORLD && !ctx.initializing) {
+                com.voxel.world.McsmStructures.ensure(world, chunkManager,
+                        player.getPosition().x, player.getPosition().z);
+                com.voxel.game.McsmStory.tick(mcsmHost, window,
+                        player.getPosition().x, player.getPosition().z, dt);
+                if (com.voxel.game.McsmStory.consumeBossSpawnRequest()) {
+                    spawnWhitePumpkinBoss();
+                }
+            }
 
             // ── Music director: hostile proximity + day/night → context pool ──
             updateMusicContext(player);
@@ -3014,6 +3055,14 @@ public class Main {
                             w.dropLoot(ctx.droppedItemManager);
                             w.markDropped();
                             setStatus("The Wither has been slain");
+                            needsWorldUpload = true;
+                        }
+                    } else if (e instanceof com.voxel.entity.WhitePumpkinEntity) {
+                        com.voxel.entity.WhitePumpkinEntity wp = (com.voxel.entity.WhitePumpkinEntity) e;
+                        if (wp.isDead() && !wp.markedDropped()) {
+                            wp.dropLoot(ctx.droppedItemManager);
+                            wp.markDropped();
+                            setStatus("The White Pumpkin has been defeated!");
                             needsWorldUpload = true;
                         }
                     }
@@ -6748,6 +6797,12 @@ public class Main {
         blockRegistry.register("wheat", 908);
         blockRegistry.register("wheat_crop", 908);
 
+        // Create mod components (ported models + stable 5000+ IDs from the
+        // generated manifest). Registered before the pack scan so its names are
+        // already spoken for. Items follow in init() once ItemDefinitions exists.
+        com.voxel.utils.CreateContentLoader.registerBlocks(
+                blockDataManager, blockRegistry, shaderBlockRegistry, textureManager);
+
         // Auto-register every remaining vanilla 1.12.2 blockstate from the resource pack.
         // Hand-authored IDs above remain authoritative; new content gets stable IDs
         // after the existing registry and reuses the native Minecraft models/textures.
@@ -6788,6 +6843,19 @@ public class Main {
             System.err.println("[MC content] Switch blocks not found in pack (lever=" + leverBase
                     + " button=" + stoneButtonBase + ") — redstone inputs disabled");
         }
+        // ── Minecraft: Story Mode content blocks (fixed IDs 916-917) ──
+        // Formidi-Bomb: placeable mega-charge (ignite like TNT). White Pumpkin:
+        // carved trophy block and the story's boss trigger.
+        blockRegistry.register("formidi_bomb", 916);
+        shaderBlockRegistry.register(916, 916);
+        blockDataManager.registerBlock(916, "formidi_bomb", textureManager, mcModels);
+        blockDataManager.setHardness(916, 0.5f);
+        blockRegistry.register("white_pumpkin", 917);
+        shaderBlockRegistry.register(917, 917);
+        blockDataManager.registerBlock(917, "white_pumpkin", textureManager, mcModels);
+        blockDataManager.setHardness(917, 1.0f);
+        com.voxel.game.FormidiBomb.configure(916);
+
         int tntBase = blockRegistry.getId("tnt");
         com.voxel.game.TntBlock.configure(tntBase);
         if (tntBase <= 0) {

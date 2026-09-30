@@ -1418,11 +1418,16 @@ public class BlockInteraction {
             return true;
         }
 
-        // ── TNT: ignite with flint and steel (or a fire charge) ──
+        // ── TNT / Formidi-Bomb: ignite with flint and steel (or a fire charge) ──
         if (!ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive && !ctx.furnaceCutsceneActive
-                && com.voxel.game.TntBlock.isTnt(hitBlock)) {
+                && (com.voxel.game.TntBlock.isTnt(hitBlock) || com.voxel.game.FormidiBomb.isFormidi(hitBlock))) {
             ItemDefinitions.ItemStack held = ctx.playerInventory.getSelected();
             if (held != null && ("flint_and_steel".equals(held.itemId) || "fire_charge".equals(held.itemId))) {
+                if (com.voxel.game.FormidiBomb.isFormidi(hitBlock)
+                        && com.voxel.game.FormidiBomb.ignite(ctx.world, hit[0], hit[1], hit[2])) {
+                    ctx.setStatus("Formidi-Bomb primed — run!");
+                    return true;
+                }
                 if (com.voxel.game.TntBlock.ignite(ctx.world, hit[0], hit[1], hit[2])) {
                     ctx.setStatus("TNT primed — stand back!");
                     return true;
