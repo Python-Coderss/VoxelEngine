@@ -31,7 +31,8 @@ public final class PointClickWorldAuthor {
     private static final int GRASS = 1, STONE = 2, DIRT = 13,
             OBSIDIAN = 16, GLOWSTONE = 17, NETHER_PORTAL = 19, AETHER_PORTAL = 106,
             CRAFT_TABLE = 115, FURNACE = 116, CHEST = 118,
-            STONE_BRICK = 131, BOOKSHELF = 136, GOLD_BLOCK = 138;
+            STONE_BRICK = 131, BOOKSHELF = 136, GOLD_BLOCK = 138,
+            ANVIL = 456, BEACON = 457, ENCHANTING_TABLE = 458, VILLAGER_TV = 274;
 
     /** A target that receives every voxel the author places (type + facing). */
     public interface Sink {
@@ -108,9 +109,25 @@ public final class PointClickWorldAuthor {
             for (int py = 1; py <= 4; py++) place(x + 7, G + py, zz - 5, GLOWSTONE);
             for (int py = 1; py <= 3; py++) place(x + 7, G + py, zz - 5, AETHER_PORTAL);
             place(x + 7, G, zz - 5, GLOWSTONE);
-            // Villager pedestal (villager is spawned at runtime; this marks the spot).
+            // Villager TV: watchable, and a second billboard source.
+            place(x + 2, G + 1, zz - 4, VILLAGER_TV);
+            // Enchanting corner — table flanked by bookshelf shelves.
+            place(x - 8, G + 1, zz + 2, ENCHANTING_TABLE);
+            place(x - 8, G + 1, zz + 1, BOOKSHELF);
+            place(x - 8, G + 2, zz + 1, BOOKSHELF);
+            place(x - 8, G + 1, zz + 3, BOOKSHELF);
+            // Smithy: an anvil on a stone plinth.
+            place(x + 6, G, zz + 2, STONE);
+            place(x + 6, G + 1, zz + 2, ANVIL);
+            // Beacon on a gold plinth at the plaza's east edge.
+            place(x + 8, G + 1, zz + 2, GOLD_BLOCK);
+            place(x + 8, G + 2, zz + 2, BEACON);
+            // Villager + ancient-builder pedestals (the mobs spawn at runtime;
+            // these mark the spots on either side of the welcome sign).
             place(x - 2, G + 1, zz + 4, GOLD_BLOCK);
             place(x - 2, G + 2, zz + 4, GOLD_BLOCK);
+            place(x + 2, G + 1, zz + 4, GOLD_BLOCK);
+            place(x + 2, G + 2, zz + 4, GOLD_BLOCK);
             // Lamp posts at the four corners of the plaza.
             lampPost(x - 8, G, zz - 8); lampPost(x + 8, G, zz - 8);
             lampPost(x - 8, G, zz + 8); lampPost(x + 8, G, zz + 8);

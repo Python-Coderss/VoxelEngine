@@ -95,6 +95,22 @@ public final class AncientBuilderSites {
     }
 
     private static final Set<String> built = new HashSet<>();
+    private static final java.util.List<Built> freshlyBuilt = new java.util.ArrayList<>();
+
+    /** A site stamped this tick, so callers can reveal it to the player. */
+    public static final class Built {
+        public final String name;
+        public final String displayName;
+        public final int x, y, z;
+
+        Built(Site site, int y) {
+            this.name = site.name;
+            this.displayName = site.displayName();
+            this.x = site.x;
+            this.y = y;
+            this.z = site.z;
+        }
+    }
 
     private AncientBuilderSites() {
     }
@@ -102,6 +118,19 @@ public final class AncientBuilderSites {
     /** Clears the built-site flags (tests / fresh worlds). */
     public static void resetForTest() {
         built.clear();
+        freshlyBuilt.clear();
+    }
+
+    /** Sites stamped since the last call (drained), for a reveal cutscene. */
+    public static java.util.List<Built> consumeNewlyBuilt() {
+        java.util.List<Built> out = new java.util.ArrayList<>(freshlyBuilt);
+        freshlyBuilt.clear();
+        return out;
+    }
+
+    /** Surface height at a column (public wrapper for reveal framing). */
+    public static int surfaceYAt(World world, int x, int z) {
+        return surfaceY(world, x, z);
     }
 
     /** True once the given site has been stamped this session. */
@@ -122,6 +151,7 @@ public final class AncientBuilderSites {
             if (dx * dx + dz * dz > BUILD_RANGE * BUILD_RANGE) continue;
             built.add(site.name);
             final int base = surfaceY(world, site.x, site.z);
+            freshlyBuilt.add(new Built(site, base));
             build(site, variantFor(site), base, new VoxelSink() {
                 @Override
                 public void set(int x, int y, int z, int blockId) {
