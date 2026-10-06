@@ -338,6 +338,17 @@ public class GameContext {
     public String mapCoordinateText = "";
     public float mapCoordinateUpdateTimer = 0f;
 
+    // --- Villager trading ---
+    /** True while the trade panel owns the number keys. */
+    public boolean tradeOpen = false;
+    /** Entity id of the villager being traded with, or -1. */
+    public int tradeVillagerId = -1;
+    /** Offers currently on the table (already filtered by career level). */
+    public java.util.List<VillagerTrades.Offer> tradeOffers =
+            new java.util.ArrayList<VillagerTrades.Offer>();
+    /** Trader's career title, shown as the trade panel heading. */
+    public String tradeTitle = "";
+
     // --- Villager TV ---
     public VillagerTVSystem tvSystem;
     public VillagerVillageManager villageManager;

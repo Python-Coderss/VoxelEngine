@@ -63,6 +63,11 @@ public class VillagerEntity extends Entity {
     public enum Profession { FARMER, BUILDER, NEWS_ANCHOR, SHOPKEEPER, NITWIT }
     private Profession profession = Profession.NITWIT;
     private int careerLevel = 1;
+    /** Job XP earned at the villager's work site; drives {@link #careerLevel}. */
+    private int professionXp = 0;
+    /** Job site the villager walks to and works at (null until one is found). */
+    private Vector3i workstationPos;
+    private int workstationBlockId = com.voxel.game.VillagerProfessions.NO_JOB_SITE;
 
     // ── TV watching ──
     private boolean watchingTV = false;
@@ -145,8 +150,9 @@ public class VillagerEntity extends Entity {
             }
         }
 
-        Profession[] profs = Profession.values();
-        profession = profs[new Random().nextInt(profs.length)];
+        // Fresh villagers get a real trade. Nitwits only exist when something
+        // explicitly makes one (a jobless villager with no work site nearby).
+        profession = com.voxel.game.VillagerProfessions.randomProfession(new Random());
 
         // Crossed-arms rest pose from ModelVillager.setRotationAngles (-0.75 rad
         // ≈ 43° forward about the shared pivot (0,21,1)); negative X tilts
@@ -171,7 +177,78 @@ public class VillagerEntity extends Entity {
     public boolean isInVillage() { return isInVillage; }
     public Vector3i getVillageCenter() { return villageCenter; }
     public Profession getProfession() { return profession; }
-    public void setProfession(Profession p) { this.profession = p; }
+
+    /** Set the profession directly; the career starts over at level 1. */
+    public void setProfession(Profession p) {
+        this.profession = p == null ? Profession.NITWIT : p;
+        this.professionXp = 0;
+        this.careerLevel = 1;
+    }
+
+    // ── Career / job site ──
+
+    public int getProfessionXp() { return professionXp; }
+    public int getCareerLevel() { return careerLevel; }
+
+    /** Career title for the current profession and level ("Expert Farmer"). */
+    public String getProfessionTitle() {
+        return com.voxel.game.VillagerProfessions.title(profession, careerLevel);
+    }
+
+    /**
+     * Award job XP, promoting when a threshold is crossed.
+     *
+     * @return true when this award levelled the villager up
+     */
+    public boolean addProfessionXp(int amount) {
+        if (amount <= 0 || profession == Profession.NITWIT) return false;
+        professionXp += amount;
+        int level = com.voxel.game.VillagerProfessions.levelForXp(professionXp);
+        if (level <= careerLevel) return false;
+        careerLevel = level;
+        com.voxel.ai.speech.VillagerSpeech.say(id, aiDisplayName(),
+                "I have been promoted! " + getProfessionTitle() + ", at your service!");
+        return true;
+    }
+
+    public Vector3i getWorkstationPos() { return workstationPos; }
+    public int getWorkstationBlockId() { return workstationBlockId; }
+    public boolean hasWorkstation() { return workstationPos != null; }
+
+    public void setWorkstation(Vector3i position, int blockId) {
+        this.workstationPos = position == null ? null : new Vector3i(position);
+        this.workstationBlockId = blockId;
+    }
+
+    public void clearWorkstation() {
+        this.workstationPos = null;
+        this.workstationBlockId = com.voxel.game.VillagerProfessions.NO_JOB_SITE;
+    }
+
+    /**
+     * Take the profession of the nearest job site. Jobs are only adopted when
+     * the villager has none, so a village's standing blocks decide who works
+     * where rather than random reassignment.
+     */
+    public boolean adoptProfessionFromWorkstation() {
+        if (world == null) return false;
+        if (com.voxel.game.VillagerProfessions.adoptFromNearbyWorkstation(this, world, false)) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Spawn-time job assignment: the nearest job site sets the profession (and
+     * its work position), overriding the random starting trade. Villages
+     * therefore staff the buildings they actually contain.
+     *
+     * @return true when a job site was found
+     */
+    public boolean assignJobSiteIfAny() {
+        if (world == null) return false;
+        return com.voxel.game.VillagerProfessions.adoptFromNearbyWorkstation(this, world, true);
+    }
 
     /** Whether this villager is available for TV watching or other interruptions. */
     public boolean isAvailable() {
@@ -292,8 +369,11 @@ public class VillagerEntity extends Entity {
         if (--randomTickDivider <= 0) {
             randomTickDivider = 60 + new Random().nextInt(50);
             isNightOrRaining = isNightTime();
-            // Update work state based on time of day
-            isWorking = !isNightOrRaining && profession == Profession.BUILDER;
+            // Every trade works daylight hours; the job site decides where.
+            isWorking = !isNightOrRaining && profession != Profession.NITWIT;
+            if (isWorking && !hasWorkstation()) {
+                adoptProfessionFromWorkstation();
+            }
             if (!isWillingToMate && mateCooldown <= 0 && !isMating && new Random().nextFloat() < 0.08f) {
                 isWillingToMate = true;
             }
@@ -1040,7 +1120,99 @@ public class VillagerEntity extends Entity {
 
     /** Mark the current build task done (brain-driven building). */
     public boolean aiCompleteBuildTarget() {
-        return buildQueue.poll() != null;
+        if (buildQueue.poll() == null) return false;
+        addProfessionXp(com.voxel.game.VillagerProfessions.XP_BUILD);
+        return true;
+    }
+
+    // ── Job-site API used by the brain ──
+
+    public World aiWorld() { return world; }
+    public Profession aiProfession() { return profession; }
+    public String aiProfessionTitle() { return getProfessionTitle(); }
+    public int aiCareerLevel() { return careerLevel; }
+    public boolean aiHasJobSite() { return workstationPos != null; }
+    public Vector3i aiWorkstationPos() {
+        return workstationPos == null ? null : new Vector3i(workstationPos);
+    }
+    public boolean aiAddProfessionXp(int amount) { return addProfessionXp(amount); }
+
+    /**
+     * Look for a nearby job site and adopt it; true when the villager now has
+     * work. A villager that already has a trade looks only for a site of its
+     * own kind, so a farmer never switches to shopkeeping on its own.
+     */
+    public boolean aiAdoptJobSite() {
+        if (world == null) return false;
+        if (profession == Profession.NITWIT) {
+            return assignJobSiteIfAny();
+        }
+        if (workstationPos != null) return true;
+        Vector3i site = com.voxel.game.VillagerProfessions.nearestWorkstationFor(
+                world, getPosX(), getPosY(), getPosZ(), profession);
+        if (site == null) return false;
+        setWorkstation(site, com.voxel.game.VillagerProfessions.workstationBlock(profession));
+        return true;
+    }
+
+    /** True while the block the villager works at still matches its trade. */
+    public boolean aiWorkstationStillValid() {
+        if (world == null || workstationPos == null) return false;
+        int block = world.getVoxel(workstationPos.x, workstationPos.y, workstationPos.z);
+        return com.voxel.game.VillagerProfessions.professionForBlock(block) == profession;
+    }
+
+    /**
+     * Harvest ripe wheat around a point. Ripe crops are removed and dropped
+     * through the world item sink when one is wired up.
+     *
+     * @return number of crops harvested
+     */
+    public int aiHarvestRipeWheat(Vector3i around, int radius) {
+        if (world == null || around == null) return 0;
+        int harvested = 0;
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                for (int dy = -1; dy <= 2; dy++) {
+                    int x = around.x + dx;
+                    int y = around.y + dy;
+                    int z = around.z + dz;
+                    int block = world.getVoxel(x, y, z);
+                    if (!com.voxel.game.FarmBlocks.isWheat(block)) continue;
+                    if (com.voxel.game.FarmBlocks.wheatStage(block) < 7) continue;
+                    world.setVoxel(x, y, z, 0);
+                    if (droppedItemManager != null) {
+                        droppedItemManager.spawn("wheat", 1, x, y, z);
+                    }
+                    harvested++;
+                }
+            }
+        }
+        return harvested;
+    }
+
+    /**
+     * Plant wheat on bare farmland around a point (the farmer's other job).
+     *
+     * @return number of crops planted
+     */
+    public int aiPlantWheat(Vector3i around, int radius) {
+        if (world == null || around == null) return 0;
+        int planted = 0;
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    int x = around.x + dx;
+                    int y = around.y + dy;
+                    int z = around.z + dz;
+                    if (!com.voxel.game.FarmBlocks.isFarmland(world.getVoxel(x, y, z))) continue;
+                    if (world.getVoxel(x, y + 1, z) != 0) continue;
+                    world.setVoxel(x, y + 1, z, com.voxel.game.FarmBlocks.BLOCK_WHEAT_0);
+                    planted++;
+                }
+            }
+        }
+        return planted;
     }
 
     public boolean aiSpeak(String line) {
@@ -1108,10 +1280,14 @@ public class VillagerEntity extends Entity {
 
     public void setWorld(World w) { this.world = w; }
     public boolean isMoving() { return isMoving; }
+
+    /** Optional item sink so job activities (harvesting) can drop loot. */
+    public static com.voxel.game.DroppedItemManager droppedItemManager;
+    public static void setDroppedItemManager(com.voxel.game.DroppedItemManager manager) {
+        droppedItemManager = manager;
+    }
     public boolean isWillingToMate() { return isWillingToMate; }
     public void setWillingToMate(boolean w) { this.isWillingToMate = w; mateCooldown = w ? 0 : 200; }
-    public int getCareerLevel() { return careerLevel; }
-
     /** Get the channel display text for rendering the TV screen UI. */
     public static String getTVDisplayForChannel(int channel, float worldTime, com.voxel.game.VillagerTVSystem tvSystem) {
         if (tvSystem == null) return "No Signal";

@@ -626,6 +626,8 @@ public class Main {
         // Tracks items dropped in the world (hover + auto-pickup). Initialized after
         // playerInventory because pickup uses ctx.playerInventory.addItem().
         ctx.droppedItemManager = new com.voxel.game.DroppedItemManager(ctx);
+        // Village jobs (harvesting) drop their loot through the same item system.
+        com.voxel.entity.VillagerEntity.setDroppedItemManager(ctx.droppedItemManager);
 
         // Encased fans (Create-inspired): push dropped items when redstone-powered
         ctx.encasedFanSystem = new com.voxel.game.EncasedFanSystem(ctx);
@@ -1420,6 +1422,8 @@ public class Main {
             case "villager":
                 mob = new VillagerEntity(nextSpawnCommandId++, pos, textureManager);
                 ((VillagerEntity) mob).setWorld(world);
+                // Take the trade of whatever job site is standing here.
+                ((VillagerEntity) mob).assignJobSiteIfAny();
                 break;
             case "iron_golem":
             case "irongolem":
@@ -3440,6 +3444,16 @@ public class Main {
         entityManager.update(dt);
         portalSystem.checkTeleport();
 
+        // Villages spawn their population once the terrain exists and the
+        // player is close enough to see it (spawning during chunk generation
+        // dropped villagers into ungenerated columns).
+        if (ctx.villageManager != null && ctx.chunkManager != null && player != null) {
+            org.joml.Vector3f pp = player.getPosition();
+            ctx.villageManager.tick(ctx.world, pp.x, pp.z,
+                    com.voxel.world.structure.MapGenVillage.textureManager,
+                    entityManager);
+        }
+
         // Tick villager TV system
         if (ctx.tvSystem != null) {
             ctx.tvSystem.tick(dt);
@@ -3985,6 +3999,7 @@ public class Main {
             hud.updateWindowTitle();
             if (ctx != null) hud.updateCinematic(glfwGetTime());
             hud.updateSpeechCaptions(glfwGetTime());
+            hud.updateTradePanel();
             if (ctx != null) hud.updateBillboards(glfwGetTime());
 
             hud.uiManager.begin();
@@ -4513,7 +4528,9 @@ public class Main {
             }
 
             if (key == GLFW_KEY_V) {
-                // Spawn a test villager at the player's position
+                // Spawn a test villager at the player's position. It takes the
+                // trade of any job site standing around it, so spawning one in
+                // a village gives the villagers you actually built for.
                 com.voxel.entity.VillagerEntity v = new com.voxel.entity.VillagerEntity(
                     70000 + (int)(Math.random() * 1000),
                     new Vector3f(player.getPosition()),
@@ -4521,8 +4538,11 @@ public class Main {
                 );
                 v.dimension = activeDimension;
                 v.setWorld(world);
+                v.assignJobSiteIfAny();
                 entityManager.addEntity(v);
-                System.out.println("Spawned villager at " + player.getPosition());
+                setStatus("Spawned a " + v.getProfessionTitle());
+                System.out.println("Spawned villager at " + player.getPosition()
+                        + " (" + v.getProfessionTitle() + ")");
                 return;
             }
 
@@ -4642,6 +4662,11 @@ public class Main {
             }
 
             if (key == GLFW_KEY_ESCAPE) {
+                if (ctx.tradeOpen) {
+                    com.voxel.game.VillagerTrading.close(ctx);
+                    setStatus("Trade closed");
+                    return;
+                }
                 // Skippable cinematic scene playing? ESC hands control back.
                 if (ctx.cinematic != null && ctx.cinematic.active && !player.isDead()) {
                     ctx.cinematic.skip();
@@ -4672,6 +4697,12 @@ public class Main {
                     return;
                 }
                 glfwSetWindowShouldClose(win, true);
+                return;
+            }
+
+            if (ctx.tradeOpen && key >= GLFW_KEY_1 && key < GLFW_KEY_1 + HOTBAR_SIZE) {
+                // The trade panel owns the number keys while it is open.
+                com.voxel.game.VillagerTrading.accept(ctx, key - GLFW_KEY_1);
                 return;
             }
 
