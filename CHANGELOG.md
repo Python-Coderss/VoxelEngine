@@ -1,5 +1,41 @@
 # CHANGELOG
 
+## Villager Professions (Oct 5, 2026)
+
+### Professions are real jobs now
+- Every trade has a **job site** built from blocks villages already place: farms ->
+  farmland/wheat, workshops -> crafting table, houses -> chests, the Villager News
+  studio -> the TV block. A villager takes the trade of the nearest job site instead
+  of rolling one at random, so a village's professions follow from what is actually
+  standing in it.
+- **Work loop:** `VillagerBrain` gained a `WORK` action in the utility order
+  (panic > shelter > build > work > socialize > wander). Villagers walk to their
+  job site and work it: farmers harvest ripe wheat (dropping grain through the
+  world item sink) and plant bare farmland, anchors broadcast at the desk,
+  traders tend the stall, builders keep hammering at the workbench between builds.
+  Breaking a workbench sends its villager looking for another one.
+- **Career ladder:** job XP (tend 2, plant 3, harvest 5, build 4, broadcast 3,
+  trade 6) promotes villagers through five levels with their own titles
+  (Novice Farmer -> Master Farmer, Junior Reporter -> Prime Anchor). Promotions
+  are announced as a spoken line and every dialogue/status line now shows the
+  career title instead of the bare profession.
+- **Trading:** shift-right-click a villager with a trade to open the barter panel
+  (career title, up to three offers, `1`-`3` to trade, `ESC` to close). Offers
+  scale with career level: a Novice Trader sells coal and sticks, a Master
+  Trader deals diamonds. Trades pay job XP, so a busy merchant can promote
+  mid-session.
+- **Villager spawning fixed:** the structure generator no longer spawns villagers
+  during chunk generation — it queues the village, and `VillagerVillageManager`
+  places the population once the ground under the village is loaded and the
+  player is within 160 blocks. Villagers spawn on their real surface (never
+  inside terrain, water, or an ungenerated column), get unique ids, and are
+  added to the village population list.
+- **Pressing V no longer makes nitwits:** fresh villagers get a weighted trade
+  (farmer/builder/shopkeeper/anchor) and adopt the nearest job site; nitwits only
+  exist when nothing around could employ them. Villages now generate farmland
+  with crops and a chest per house so the new jobs have somewhere to happen.
+- Tests: 390 total, 0 failures.
+
 ## Ancient-Builder Modern Sites (Oct 4, 2026)
 
 ### The final age before the wipeout

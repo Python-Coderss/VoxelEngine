@@ -912,12 +912,19 @@ public class BlockInteraction {
     public void interactWithEntity(com.voxel.entity.Entity e) {
         if (e instanceof com.voxel.entity.VillagerEntity) {
             com.voxel.entity.VillagerEntity v = (com.voxel.entity.VillagerEntity) e;
-            String prof = v.getProfession().name().toLowerCase().replace('_', ' ');
-            String name = prof.substring(0, 1).toUpperCase() + prof.substring(1);
+            // Shift-right-click trades (the profession's barter offers, filtered
+            // by career level). Plain right-click still just talks.
+            if (ctx.player != null && ctx.player.isSneaking()
+                    && com.voxel.game.VillagerTrades.trades(v.getProfession())) {
+                if (ctx.tradeOpen) com.voxel.game.VillagerTrading.close(ctx);
+                com.voxel.game.VillagerTrading.open(ctx, v);
+                return;
+            }
+            String name = v.getProfessionTitle();
             String dialogue = ctx.villagerAudioManager != null
                     ? ctx.villagerAudioManager.requestVillagerDialogue(v, ctx.worldTime)
                     : "Hmm...";
-            ctx.setStatus("Villager (" + name + ") — \"" + dialogue + "\"");
+            ctx.setStatus(name + " — \"" + dialogue + "\"");
             // Shot/reverse-shot conversation framing (MCSM dialogue style).
             if (ctx.cinematic != null) {
                 Vector3f vp = v.getPosition();

@@ -15,6 +15,7 @@ import com.voxel.entity.Entity;
 import villager.voice.ClipScript;
 import com.voxel.entity.EnemyEntity;
 import com.voxel.entity.VillagerEntity;
+import com.voxel.game.VillagerProfessions;
 import org.joml.Vector3f;
 import org.joml.Vector3i;
 
@@ -39,6 +40,8 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
 
     enum Action {
         IDLE, WANDER, PANIC_FLEE, ALERT_LOOK, GO_INDOORS, SOCIALIZE, GO_BUILD,
+        /** Working the villager's job site (farm, desk, stall, workbench). */
+        WORK,
         // ── dumb-human beats ──
         /** Struts toward danger acting tough (before the screaming starts). */
         STRUT,
@@ -57,6 +60,12 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
     }
 
     private static final float DECISION_INTERVAL = 0.25f;
+    /** Seconds between productive actions once a villager is at its job site. */
+    private static final float WORK_BEAT_SECONDS = 4f;
+    /** Radius (blocks) around a job site a profession works on. */
+    private static final int JOB_SITE_RADIUS = 4;
+    /** How often a jobless villager re-scans for a nearby job site. */
+    private static final float JOB_SCAN_INTERVAL = 5f;
     private static final float THREAT_SIGHT_RANGE = 16f;
     private static final float EARSHOT_RANGE = 22f;
     private static final long SCREAM_COOLDOWN_MILLIS = 9000L;
@@ -71,6 +80,8 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
     private float strutTime;
     private float strutLimit;
     private float buildWorkTime;
+    private float workTimer;
+    private float jobScanCooldown;
     private boolean congaFollowing;
     private final Vector3f distractPoint = new Vector3f();
     private boolean hasDistractPoint;
@@ -232,6 +243,7 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
         panicRemaining = Math.max(0f, panicRemaining - dt);
         alertRemaining = Math.max(0f, alertRemaining - dt);
         socialCooldown = Math.max(0f, socialCooldown - dt);
+        jobScanCooldown = Math.max(0f, jobScanCooldown - dt);
         actionElapsed += dt;
 
         // The threat episode is over: the next one may earn fresh bravado.
@@ -249,6 +261,14 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
                     nightTime, inWater,
                     owner.aiHasBuildWork(),
                     hasFriend && nearestFriendDist < 6f && socialCooldown <= 0f);
+            // Utility order: panic > shelter > build > work > social > wander.
+            // Work only redirects the low-priority plans, so a villager never
+            // abandons a panic or a queued build to go stand at a job site.
+            if (next == Action.WANDER || next == Action.SOCIALIZE || next == Action.IDLE) {
+                if (jobSiteReady()) {
+                    next = Action.WORK;
+                }
+            }
             // Confident-then-cowardly: strut at the danger first — the strut
             // resolves into PANIC_FLEE on its own once it gets too close.
             if (next == Action.PANIC_FLEE && action != Action.PANIC_FLEE) {
@@ -274,6 +294,69 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
 
         execute(dt);
         return true;
+    }
+
+    /**
+     * Whether this villager has a job to go do right now. A jobless villager
+     * (a nitwit, or one whose work site was broken) adopts the trade of the
+     * nearest job site instead — which is how a village's professions follow
+     * from the blocks standing in it.
+     */
+    private boolean jobSiteReady() {
+        if (nightTime) return false;
+        if (owner.aiHasJobSite() && !owner.aiWorkstationStillValid()) {
+            // Somebody broke the workbench: clock off and look for another.
+            owner.clearWorkstation();
+            jobScanCooldown = 0f;
+        }
+        if (owner.aiHasJobSite()) return true;
+        if (jobScanCooldown > 0f) return false;
+        jobScanCooldown = JOB_SCAN_INTERVAL;
+        return owner.aiAdoptJobSite() && owner.aiHasJobSite();
+    }
+
+    /** One productive action at the job site: earn a living, earn some XP. */
+    private void performJobBeat(Vector3i site) {
+        switch (owner.aiProfession()) {
+            case FARMER: {
+                int harvested = owner.aiHarvestRipeWheat(site, JOB_SITE_RADIUS);
+                if (harvested > 0) {
+                    emotes.play(Emote.TUG);
+                    say(ClipScript.Topic.SHINY);
+                    owner.aiAddProfessionXp(VillagerProfessions.XP_HARVEST * harvested);
+                    break;
+                }
+                int planted = owner.aiPlantWheat(site, JOB_SITE_RADIUS);
+                if (planted > 0) {
+                    emotes.play(Emote.NOD);
+                    owner.aiAddProfessionXp(VillagerProfessions.XP_PLANT * Math.min(planted, 4));
+                    break;
+                }
+                // Nothing to plant or pick: still on the clock (tending).
+                owner.aiAddProfessionXp(VillagerProfessions.XP_TEND);
+                if (rng.nextFloat() < 0.25f) say(ClipScript.Topic.SMALLTALK);
+                break;
+            }
+            case NEWS_ANCHOR:
+                emotes.play(Emote.POINT,
+                        new Vector3f(site.x + 0.5f, site.y + 0.8f, site.z + 0.5f));
+                say(ClipScript.Topic.GOSSIP);
+                owner.aiAddProfessionXp(VillagerProfessions.XP_BROADCAST);
+                break;
+            case SHOPKEEPER:
+                emotes.play(Emote.NOD);
+                if (rng.nextFloat() < 0.4f) say(ClipScript.Topic.SMALLTALK);
+                owner.aiAddProfessionXp(VillagerProfessions.XP_TEND);
+                break;
+            case BUILDER:
+                // Building itself is GO_BUILD; standing at the workbench is
+                // still workshop time.
+                emotes.play(Emote.HAMMER);
+                owner.aiAddProfessionXp(VillagerProfessions.XP_BUILD);
+                break;
+            default:
+                break;
+        }
     }
 
     private static boolean isComedyAction(Action action) {
@@ -409,6 +492,9 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
                 break;
             case GO_BUILD:
                 buildWorkTime = 0f;
+                break;
+            case WORK:
+                workTimer = 0f;
                 break;
             default:
                 break;
@@ -556,6 +642,33 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
                     }
                 }
                 break;
+
+            case WORK: {
+                Vector3i site = owner.aiWorkstationPos();
+                if (site == null || !owner.aiWorkstationStillValid()) {
+                    owner.clearWorkstation();
+                    transition(Action.WANDER);
+                    break;
+                }
+                Vector3f workPoint = new Vector3f(site.x + 0.5f, site.y + 0.6f, site.z + 0.5f);
+                Vector3f workStand = new Vector3f(site.x + 0.5f, owner.getPosY(), site.z + 0.5f);
+                gaze.lookAt(workPoint, 10f, 0.5f);
+                owner.aiAimHead(gaze.resolve(owner.eyePosition(), owner.rotation.y, dt));
+                if (workStand.distance(owner.getPosition()) > 2.2f) {
+                    owner.aiMoveToward(workStand, owner.aiWalkSpeed() * 0.9f, dt);
+                    break;
+                }
+                owner.aiFaceYaw((float) Math.toDegrees(Math.atan2(
+                        workPoint.x - owner.getPosX(), workPoint.z - owner.getPosZ())));
+                workTimer += dt;
+                if (workTimer < WORK_BEAT_SECONDS) {
+                    owner.aiStandAnim(dt);
+                    break;
+                }
+                workTimer = 0f;
+                performJobBeat(site);
+                break;
+            }
 
             case SOCIALIZE:
                 if (!hasFriend) {

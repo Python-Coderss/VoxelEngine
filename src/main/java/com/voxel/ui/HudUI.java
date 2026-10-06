@@ -69,6 +69,9 @@ public class HudUI {
     /** Live speech captions (villager/mob dialogue), revealed word by word. */
     public UILayer.UITextElement speechCaptionSpeaker, speechCaptionText;
     private float captionLastTime = -1f;
+    /** Villager trade panel: career title, offers, and the key hints. */
+    public UILayer.UITextElement tradePanelText;
+    public UILayer.UIElement tradePanelBackdrop;
     public UILayer.UITextElement cineSkipHint;      // "ESC to skip" during scenes
     private double lowHealthPulseTime = 0;
     private static final int CAPTION_WRAP_CHARS = 52;
@@ -318,6 +321,22 @@ public class HudUI {
         speechCaptionText.outlineColor = new Vector4f(0, 0, 0, 1);
         speechCaptionText.charLineLimit = CAPTION_WRAP_CHARS;
         dynamicLayer.addElement(speechCaptionText);
+
+        // Villager trade panel: a dark plate with the career title, the
+        // available barters, and the key hints. Text only — the numbers are
+        // the whole interface.
+        tradePanelBackdrop = new UILayer.UIElement(
+            new Vector2f(0, 0), new Vector2f(1, 1),
+            new Vector4f(0.05f, 0.05f, 0.08f, 0.72f));
+        tradePanelBackdrop.visible = false;
+        dynamicLayer.addElement(tradePanelBackdrop);
+        tradePanelText = new UILayer.UITextElement(
+            new Vector2f(0, 0), "", 1.5f,
+            new Vector4f(0.98f, 0.96f, 0.88f, 0), fontTextureId);
+        tradePanelText.visible = false;
+        tradePanelText.outlined = true;
+        tradePanelText.outlineColor = new Vector4f(0, 0, 0, 1);
+        dynamicLayer.addElement(tradePanelText);
 
         // Point-and-click prompts, MCSM-style: a hollow square on the target,
         // a 45° elbow line out of its corner, then a vertical stem running to
@@ -2476,6 +2495,47 @@ public class HudUI {
                 textY - 8f * speechCaptionSpeaker.scale - 4f);
         speechCaptionSpeaker.visible = true;
         speechCaptionText.visible = true;
+    }
+
+    /**
+     * Villager trade panel pass: renders the open barter session from
+     * {@link com.voxel.game.GameContext} state. Number keys are handled by
+     * Main; this only draws what the session already decided.
+     */
+    public void updateTradePanel() {
+        if (ctx == null || !ctx.tradeOpen || ctx.tradeOffers.isEmpty()) {
+            tradePanelText.visible = false;
+            tradePanelBackdrop.visible = false;
+            return;
+        }
+        StringBuilder text = new StringBuilder();
+        text.append(ctx.tradeTitle.isEmpty() ? "Villager" : ctx.tradeTitle)
+                .append(" offers");
+        int shown = Math.min(3, ctx.tradeOffers.size());
+        for (int i = 0; i < shown; i++) {
+            text.append('\n').append(i + 1).append(") ")
+                    .append(ctx.tradeOffers.get(i).label());
+        }
+        text.append("\n[1-").append(shown).append("] trade   [ESC] done");
+        tradePanelText.text = text.toString();
+        tradePanelText.textureId = fontTextureId;
+        tradePanelText.color.w = 1f;
+
+        float scale = tradePanelText.scale;
+        int widest = 0;
+        for (String line : text.toString().split("\n")) {
+            widest = Math.max(widest, line.length());
+        }
+        float width = widest * 8f * scale + 24f;
+        float height = (shown + 2) * 8f * scale + 20f;
+        float x = Math.max(8f, main.width / 2f - width / 2f);
+        float y = main.height * 0.58f;
+        tradePanelBackdrop.pos.set(x, y);
+        tradePanelBackdrop.size.set(width, height);
+        tradePanelBackdrop.color.set(0.05f, 0.05f, 0.08f, 0.72f);
+        tradePanelBackdrop.visible = true;
+        tradePanelText.pos.set(x + 12f, y + 10f);
+        tradePanelText.visible = true;
     }
 
     /** Widest line after the same greedy word wrap drawString applies. */

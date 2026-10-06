@@ -39,6 +39,7 @@ public class MapGenVillage {
     private static final int FENCE = 73; // oak fence
     private static final int WOOL_WHITE = 80;
     private static final int VILLAGER_TV = 274;
+    private static final int CHEST = 118;
 
     /** Last generated village center (for /locate command). */
     private static int lastVillageX = 0, lastVillageY = 0, lastVillageZ = 0;
@@ -130,49 +131,20 @@ public class MapGenVillage {
                 int bz = centerZ + (int)(Math.sin(angle) * dist);
                 village.buildingOrigins.add(new org.joml.Vector3i(bx, findSurfaceHeight(world, bx, bz), bz));
             }
-            // Spawn villagers and add them to the village's villager list
-            spawnVillagersForVillage(world, village, centerX, surfaceY + 1, centerZ, rand);
+            // Villagers are spawned by VillagerVillageManager once the terrain
+            // around the village is actually loaded. Spawning them here (during
+            // chunk generation) put them in columns that did not exist yet, so
+            // they fell out of the world before the player ever arrived.
+            villageManager.queueVillageSpawn(
+                    new org.joml.Vector3i(centerX, surfaceY + 1, centerZ),
+                    VILLAGE_SIZE, centerX * 31L + centerZ * 131L);
         } else {
-            // Fallback: spawn villagers without village registration
-            spawnVillagers(world, centerX, surfaceY + 1, centerZ, rand);
+            // Without a manager there is nothing to own the villagers; the
+            // village is still generated as scenery.
+            lastVillageGenerated = true;
         }
 
         return true;
-    }
-
-    /** Spawn 4-7 villagers around the village center. */
-    private void spawnVillagers(World world, int cx, int cy, int cz, Random rand) {
-        if (entityManager == null || textureManager == null) return;
-        int count = 4 + rand.nextInt(4); // 4-7 villagers
-        for (int i = 0; i < count; i++) {
-            float sx = cx + (rand.nextFloat() - 0.5f) * 10f;
-            float sz = cz + (rand.nextFloat() - 0.5f) * 10f;
-            int id = 60000 + (lastVillageX & 0xFFFF) * 100 + i;
-            VillagerEntity villager = new VillagerEntity(id, new Vector3f(sx, cy, sz), textureManager);
-            villager.setWorld(world);
-            villager.setVillage(new org.joml.Vector3i(cx, cy, cz), VILLAGE_SIZE);
-            entityManager.addEntity(villager);
-        }
-    }
-
-    /** Spawn villagers and add them to the village's registered villager list. */
-    private void spawnVillagersForVillage(World world, com.voxel.game.VillagerVillageManager.Village village,
-                                           int cx, int cy, int cz, Random rand) {
-        if (entityManager == null || textureManager == null) return;
-        int count = 4 + rand.nextInt(4); // 4-7 villagers
-        for (int i = 0; i < count; i++) {
-            float sx = cx + (rand.nextFloat() - 0.5f) * 10f;
-            float sz = cz + (rand.nextFloat() - 0.5f) * 10f;
-            int id = 60000 + (lastVillageX & 0xFFFF) * 100 + i;
-            VillagerEntity villager = new VillagerEntity(id, new Vector3f(sx, cy, sz), textureManager);
-            villager.setWorld(world);
-            villager.setVillage(new org.joml.Vector3i(cx, cy, cz), VILLAGE_SIZE);
-            entityManager.addEntity(villager);
-            // Add to village's villager list for TV gathering and population management
-            if (village != null) {
-                village.villagers.add(villager);
-            }
-        }
     }
 
     private void flattenArea(World world, int minX, int minZ, int maxX, int maxZ, int targetY) {
@@ -267,6 +239,9 @@ public class MapGenVillage {
             world.setVoxel(x + width - 3, y + 3, z + depth - 1, GLASS);
         }
 
+        // Shop stock: a chest in the corner is the shopkeeper's job site.
+        world.setVoxel(x + 1, y + 2, z + 1, CHEST);
+
         // Roof
         int roofY = y + height + 2;
         for (int dx = -1; dx < width + 1; dx++)
@@ -329,6 +304,9 @@ public class MapGenVillage {
             world.setVoxel(x, y + 3, z + 3, GLASS);
         }
 
+        // Shop stock: a chest in the corner is the shopkeeper's job site.
+        world.setVoxel(x + 1, y + 2, z + 1, CHEST);
+
         // A-frame roof
         int roofBase = y + height + 2;
         for (int dx = -1; dx < width + 1; dx++)
@@ -339,10 +317,18 @@ public class MapGenVillage {
     private void generateFarm(World world, int x, int y, int z, Random rand) {
         int size = 6 + rand.nextInt(3);
 
-        // Farmland
-        for (int dx = 1; dx < size - 1; dx++)
-            for (int dz = 1; dz < size - 1; dz++)
-                world.setVoxel(x + dx, y, z + dz, DIRT);
+        // Farmland with a half-planted crop: this plot is a farmer's job site,
+        // and FarmBlocks grows and hydrates it like any player-made farm.
+        for (int dx = 1; dx < size - 1; dx++) {
+            for (int dz = 1; dz < size - 1; dz++) {
+                world.setVoxel(x + dx, y, z + dz,
+                        com.voxel.game.FarmBlocks.BLOCK_FARMLAND_WET);
+                if ((dx + dz) % 2 == 0 && y + 1 < 128) {
+                    world.setVoxel(x + dx, y + 1, z + dz,
+                            com.voxel.game.FarmBlocks.BLOCK_WHEAT_0);
+                }
+            }
+        }
 
         // Fence around farm
         for (int dx = 0; dx < size; dx++) {
