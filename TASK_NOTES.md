@@ -227,7 +227,33 @@ melody.” Implemented:
 - `InteractionBillboardSystem` classifies 937 (“Tuning Stone”/“Play”).
 - Tests: `MelodyPortalTest` (5), `AncientCityTest` (4).
 
-## 7. MCSM / LEGENDS / DUNGEONS 1 & 2 CONTENT (PARTIAL / NOT STARTED)
+## 7. MCSM / LEGENDS / DUNGEONS 1 & 2 CONTENT (STRUCTURES DONE)
+
+DONE (structures):
+- `com.voxel.world.SiteShapes` — shared shape library (plaza, town, arena,
+  temple, keep, spire, canyon, swampHut, forge, outpost, riftHall, pumpkinField,
+  forestCamp, skyIsland) + `RecordingSink`. Deterministic + idempotent.
+- `McsmStructures` — Episodes 2–8 added: Redstonia, Boom Town, Sky City, Crown
+  Mesa, Wither Storm Arena, Order's Temple, Beacontown, Fred's Keep, Portal
+  Network (9 new sites; `ensureEpisodes`, `episodeSiteCount`).
+- `com.voxel.world.LegendsStructures` — Well of Fate, Great Hog Camp, Hero
+  Outpost, Defended Village.
+- `com.voxel.world.DungeonsStructures` — Dungeons 1: Creeper Woods, Pumpkin
+  Pastures, Soggy Swamp, Cacti Canyon, Desert Temple, Highblock Halls, Fiery
+  Forge, Obsidian Pinnacle, Island Realms; Dungeons 2: Rift Stop, Illager Keep.
+- `Main` stamps all three families lazily near the player; coordinates are
+  disjoint from the originals.
+- Tests: `SiteShapesTest` (4), `StoryContentSitesTest` (3).
+
+REMAINING (§7):
+- NEW MOBS for these families (Wither Storm, Great Hog/Horde, Arch-Illager,
+  Heart of Ender, dungeon variants) — none added yet.
+- STORY BEATS: `McsmStory` still covers only Episodes 1/…; no beats for the
+  Episodes 2–8 / Legends / Dungeons sites yet (dialogue, choices, boss summon).
+
+---
+
+## 7b. ORIGINAL CONTENT NOTES (for reference)
 
 Existing: `com.voxel.world.McsmStructures` (EnderCon Arena (128,0), Soren’s Building
 Site (-128,96), Pumpkin Hideout (0,-128)), `com.voxel.game.McsmStory` (episode beats,
@@ -329,6 +355,11 @@ Point & Click:
   (dormant rift, 7 tuning stones, `open()`), wired into `BlockInteraction` and
   `Main`; billboard classification for 937. `MelodyPortalTest` (5) +
   `AncientCityTest` (4); full suite green (465); committed.
+- 2026-10-05: **MCSM/LEGENDS/DUNGEONS structures** — `SiteShapes` library +
+  `McsmStructures` Episodes 2–8 (9 sites) + `LegendsStructures` (4) +
+  `DungeonsStructures` (11); wired into `Main`. `SiteShapesTest` (4) +
+  `StoryContentSitesTest` (3); full suite green (472); committed. NOTE: mobs and
+  story beats for these families are still TODO (§7).
 
 ## 11. DEFERRED — combat perspective + mechanics (user: “for later”)
 
