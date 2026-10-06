@@ -2800,6 +2800,16 @@ public class Main {
                 v.dimension = activeDimension;
                 v.setWorld(world);
                 entityManager.addEntity(v);
+                // The ancient-builder pedestal across from the villager: a
+                // voiceless guide who speaks only in the live captions.
+                com.voxel.entity.AncientBuilderEntity builder =
+                    new com.voxel.entity.AncientBuilderEntity(
+                        nextTutorialMobId++, new Vector3f(2.5f, demoG + 1, 4.5f), textureManager);
+                builder.setRole(com.voxel.entity.AncientBuilderEntity.Role.ARCHITECT);
+                builder.setHomeSite(new org.joml.Vector3i(0, demoG + 1, 0), "Demo Plaza");
+                builder.dimension = activeDimension;
+                builder.setWorld(world);
+                entityManager.addEntity(builder);
             }
 
             handleInput(dt);
@@ -2977,6 +2987,19 @@ public class Main {
                 // and populated with living builders.
                 com.voxel.world.AncientBuilderSites.ensure(world, chunkManager,
                         player.getPosition().x, player.getPosition().z);
+                // Reveal any site that was just stamped: an establishing orbit
+                // cut to a closer look, with a builder speaking in the captions.
+                for (com.voxel.world.AncientBuilderSites.Built built :
+                        com.voxel.world.AncientBuilderSites.consumeNewlyBuilt()) {
+                    if (ctx.cinematic != null) {
+                        ctx.cinematic.playStructureReveal(built.displayName,
+                                new org.joml.Vector3f(built.x + 0.5f, built.y, built.z + 0.5f),
+                                "Ancient Builder",
+                                com.voxel.ai.speech.AncientBuilderLines.pick(
+                                        com.voxel.ai.speech.AncientBuilderLines.Topic.GREETING,
+                                        new java.util.Random(built.name.hashCode())));
+                    }
+                }
                 com.voxel.game.McsmStory.tick(mcsmHost, window,
                         player.getPosition().x, player.getPosition().z, dt);
                 if (com.voxel.game.McsmStory.consumeBossSpawnRequest()) {

@@ -51,6 +51,21 @@ public class PointClickWorldGeneratorTest {
     }
 
     @Test
+    public void expandedPlazaStationsExist() {
+        int g = PointClickWorldAuthor.G;
+        // Villager TV beside the chest.
+        assertEquals("villager tv", 274, gen.getBlockType(2, g + 1, -4, g));
+        // Enchanting corner.
+        assertEquals("enchanting table", 458, gen.getBlockType(-8, g + 1, 2, g));
+        // Smithy anvil on its stone plinth.
+        assertEquals("anvil", 456, gen.getBlockType(6, g + 1, 2, g));
+        // Beacon on its gold plinth.
+        assertEquals("beacon", 457, gen.getBlockType(8, g + 2, 2, g));
+        // Ancient-builder pedestal mirrors the villager one.
+        assertEquals("builder pedestal", 138, gen.getBlockType(2, g + 1, 4, g));
+    }
+
+    @Test
     public void plazaFloorAndLampPostsRender() {
         int g = PointClickWorldAuthor.G;
         // Stone-brick plaza floor overrides the grass within +-10 of origin.

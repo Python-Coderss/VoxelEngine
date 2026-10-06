@@ -931,6 +931,21 @@ public class BlockInteraction {
                 ctx.cinematic.playActionBeat(com.voxel.cinematic.CinematicSystem.Beat.VILLAGER,
                     new Vector3f(vp.x, vp.y, vp.z), false);
             }
+        } else if (e instanceof com.voxel.entity.AncientBuilderEntity) {
+            com.voxel.entity.AncientBuilderEntity builder =
+                    (com.voxel.entity.AncientBuilderEntity) e;
+            // The ancient builders have no voice: their reply is caption-only.
+            String line = com.voxel.ai.speech.AncientBuilderLines.pick(
+                    com.voxel.ai.speech.AncientBuilderLines.Topic.GREETING,
+                    new java.util.Random(builder.id * 31L + (long) ctx.worldTime));
+            builder.aiSpeak(line);
+            ctx.setStatus(builder.getDisplayName() + " — \"" + line + "\"");
+            // Shot/reverse-shot framing, the same beat villagers get.
+            if (ctx.cinematic != null) {
+                Vector3f bp = builder.getPosition();
+                ctx.cinematic.playActionBeat(com.voxel.cinematic.CinematicSystem.Beat.VILLAGER,
+                    new Vector3f(bp.x, bp.y, bp.z), false);
+            }
         } else if (e instanceof com.voxel.entity.MinecartEntity) {
             com.voxel.entity.MinecartEntity cart = (com.voxel.entity.MinecartEntity) e;
             // Shift-right-click: empty the cart of dirt.

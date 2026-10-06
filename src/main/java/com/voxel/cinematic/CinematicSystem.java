@@ -2,11 +2,13 @@ package com.voxel.cinematic;
 
 import org.joml.Vector3f;
 
+import com.voxel.audio.LiveCaptions;
 import com.voxel.game.GameContext;
 import com.voxel.world.DimensionType;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Movie-mode director — MCSM-inspired shot direction on top of the cutscene
@@ -44,6 +46,8 @@ public class CinematicSystem {
     private int shotIndex = 0;
     private float shotTimer = 0f;
     private float sceneExtraHold = 0f;   // linger after the last shot
+    /** Timed dialogue for the active scene; published to the live captions. */
+    private CinematicScript script = new CinematicScript();
 
     // Sampled camera state for this tick (world coords)
     private final Vector3f camPos = new Vector3f();
@@ -442,7 +446,9 @@ public class CinematicSystem {
             drainQueuedScenes();
             return;
         }
+        float previousTimer = timer;
         timer += dt;
+        publishScript(previousTimer, timer);
 
         if (controlsCamera) {
             advanceShots(dt);
@@ -542,7 +548,13 @@ public class CinematicSystem {
     }
 
     private void beginScene(List<CameraShot> sequence, boolean takeCamera, float extraHold) {
+        beginScene(sequence, takeCamera, extraHold, null);
+    }
+
+    private void beginScene(List<CameraShot> sequence, boolean takeCamera, float extraHold,
+                            CinematicScript lines) {
         active = true;
+        script = lines == null ? new CinematicScript() : lines;
         controlsCamera = takeCamera;
         timer = 0f;
         sceneExtraHold = extraHold;
@@ -579,7 +591,71 @@ public class CinematicSystem {
         timer = 0f;
         duration = durationSec;
         shots.clear();
+        script = new CinematicScript();
         skipHintVisible = true;
+    }
+
+    /**
+     * Publish any dialogue lines whose time has just passed to the live
+     * captions. Caption-only: this never touches the audio stack, which is
+     * exactly how the ancient builders “speak”.
+     */
+    private void publishScript(float from, float to) {
+        if (script == null || script.isEmpty()) return;
+        for (CinematicScript.Line line : script.due(from, to)) {
+            LiveCaptions.show(line.speaker, line.text,
+                    LiveCaptions.estimateDuration(line.text, 1.0));
+        }
+    }
+
+    // ── Scripted scenes (shots + dialogue) ───────────────────────────────────
+
+    /**
+     * Play a shot sequence that carries timed dialogue. The lines are published
+     * to the live captions as the scene plays.
+     */
+    public void playScriptedScene(String titleText, String subText,
+                                  List<CameraShot> sequence, CinematicScript lines) {
+        if (active) {
+            queueScene(() -> playScriptedScene(titleText, subText, sequence, lines));
+            return;
+        }
+        beginScene(sequence, true, 0f, lines);
+        letterbox = Math.max(letterbox, 0.6f);
+        if (titleText != null && !titleText.isEmpty()) {
+            showTitle(titleText, subText == null ? "" : subText, 0.3f, 2.8f);
+        }
+    }
+
+    /**
+     * Reveal a structure the player has just found: a wide establishing orbit
+     * cut to a closer look, with a line of dialogue (usually an ancient
+     * builder speaking about their own work).
+     */
+    public void playStructureReveal(String siteName, Vector3f subject,
+                                    String speaker, String line) {
+        if (active) {
+            queueScene(() -> playStructureReveal(siteName, subject, speaker, line));
+            return;
+        }
+        if (ctx.player.isDead() || ctx.craftingCutsceneActive || ctx.furnaceCutsceneActive
+                || ctx.tvCutsceneActive || ctx.pauseMenuOpen || ctx.inventoryOpen
+                || ctx.commandMode) {
+            return;
+        }
+        Vector3f focus = new Vector3f(subject);
+        java.util.function.Supplier<Vector3f> track = () -> new Vector3f(focus);
+        List<CameraShot> seq = new ArrayList<>();
+        seq.add(CameraShot.wide(subject, 210, 330, 16f, 4.5f, 3.4f).tracking(track));
+        seq.add(CameraShot.closeUp(
+                new Vector3f(subject.x, subject.y + 2.5f, subject.z), 300, 5.0f, 1.0f, 2.6f)
+                .tracking(track));
+        CinematicScript lines = new CinematicScript();
+        if (line != null && !line.isEmpty()) lines.at(0.7f, speaker, line);
+        beginScene(seq, true, 0f, lines);
+        letterbox = Math.max(letterbox, 0.7f);
+        showTitle(siteName == null ? "" : siteName.toUpperCase(Locale.ROOT),
+                "A work of the ancient builders", 0.4f, 3.2f);
     }
 
     private void endScene() {

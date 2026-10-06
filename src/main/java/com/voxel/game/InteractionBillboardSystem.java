@@ -22,9 +22,10 @@ import com.voxel.entity.VillagerEntity;
  *
  * Interactable set:
  *  - Functional blocks: crafting table (115), furnace (116/117), chest (118),
- *    nether portal (19/128), aether portal (106/127). Scanned by a small raycast
- *    grid around the player rather than a full world walk.
- *  - Villager entities within range (the MCSM "talk to" targets).
+ *    villager TV (274), nether portal (19/128), aether portal (106/127).
+ *    Scanned by a small raycast grid around the player rather than a full
+ *    world walk.
+ *  - Talking entities within range: villagers and the ancient builders.
  */
 public class InteractionBillboardSystem {
     private final GameContext ctx;
@@ -59,6 +60,7 @@ public class InteractionBillboardSystem {
     private static final int B_PORTAL_NETHER_EW = 128;
     private static final int B_PORTAL_AETHER = 106;
     private static final int B_PORTAL_AETHER_EW = 127;
+    private static final int B_VILLAGER_TV = 274;
 
     public InteractionBillboardSystem(GameContext ctx, Main main) {
         this.ctx = ctx;
@@ -187,11 +189,17 @@ public class InteractionBillboardSystem {
         java.util.List<Entity> snap = em.getEntitiesSnapshot();
         for (Entity e : snap) {
             if (markerCount >= MAX_MARKERS) break;
-            if (!(e instanceof VillagerEntity)) continue;
             Vector3f ep = e.getPosition();
             float distSq = distanceSquared(p.x, p.y + 1.6f, p.z, ep.x, ep.y, ep.z);
             if (distSq > REACH * REACH) continue;
-            addMarker(ep.x, ep.y + 2.0f, ep.z, "Villager", "Talk", -1, -1, -1, e.id); // above villager head
+            if (e instanceof VillagerEntity) {
+                addMarker(ep.x, ep.y + 2.0f, ep.z, "Villager", "Talk", -1, -1, -1, e.id);
+            } else if (e instanceof com.voxel.entity.AncientBuilderEntity) {
+                com.voxel.entity.AncientBuilderEntity builder =
+                        (com.voxel.entity.AncientBuilderEntity) e;
+                addMarker(ep.x, ep.y + 2.2f, ep.z, builder.getDisplayName(), "Talk",
+                        -1, -1, -1, e.id);
+            }
         }
     }
 
@@ -216,19 +224,21 @@ public class InteractionBillboardSystem {
         markerCount++;
     }
 
-    private static boolean isInteractableBlock(int id) {
+    static boolean isInteractableBlock(int id) {
         return id == B_CRAFTING_TABLE || id == B_FURNACE || id == B_FURNACE_ON
-            || id == B_CHEST || id == B_PORTAL_NETHER || id == B_PORTAL_AETHER
+            || id == B_CHEST || id == B_VILLAGER_TV
+            || id == B_PORTAL_NETHER || id == B_PORTAL_AETHER
             || id == B_PORTAL_NETHER_EW || id == B_PORTAL_AETHER_EW;
     }
 
     /** Display name of an interactable block (shown in the MCSM prompt). */
-    private static String blockName(int id) {
+    static String blockName(int id) {
         switch (id) {
             case 115: return "Crafting Table";
             case 116:
             case 117: return "Furnace";
             case 118: return "Chest";
+            case 274: return "Villager TV";
             case 19:
             case 128: return "Nether Portal";
             case 106:
@@ -238,12 +248,13 @@ public class InteractionBillboardSystem {
     }
 
     /** The single action a block supports (the verb shown under its name). */
-    private static String blockAction(int id) {
+    static String blockAction(int id) {
         switch (id) {
             case 115: return "Craft";
             case 116:
             case 117: return "Smelt";
             case 118: return "Open";
+            case 274: return "Watch";
             case 19:
             case 106:
             case 127:

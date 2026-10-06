@@ -7,14 +7,28 @@
 
 ## 0. NEXT ACTION (keep this current)
 
-1. Write tests for the ancient-builder work already coded (see §4 “Done”):
-   `CaptionSpeechTest`, `AncientBuilderEntityTest`, `AncientBuilderBrainTest`,
-   `AncientBuilderSitesTest`, `AncientBuilderPopulationTest`.
-2. Run `./mvnw -o test` (must be green), then **commit + push** so progress persists.
-3. Then start **THE SIFT** (§5) — see the detailed design there.
-4. Then the **melody rift** in the ancient city portal (§6).
-5. Then the **MCSM / Legends / Dungeons 1 & 2** content expansion (§7).
-6. Keep `knowledge.md` + `CHANGELOG.md` updated per phase.
+**CURRENT PRIORITY (user): cutscenes + point-and-click first; then Sift; then
+MCSM/Legends/Dungeons.** Cutscene/P&C pass #1 is DONE (see §4b).
+Next: deepen cutscenes + P&C, then start **THE SIFT** (§5).
+
+1. Cutscene/P&C pass #1 **committed**: timed dialogue cues in scenes
+   (`CinematicScript` + `CinematicSystem.publishScript/playScriptedScene/
+   playStructureReveal`), a structure-reveal cutscene wired when an ancient-
+   builder site is first stamped, ancient-builder billboard markers + a
+   caption-only builder reply on interact, and an expanded Point & Click demo
+   plaza (TV, enchanting table, anvil, beacon, builder pedestal + builder).
+2. **Next**: more cutscene scenes (boss/dungeon/Nether/Sift reveals with
+   dialogue), and P&C pass #2 (multi-action markers, TV marker dispatch, click
+   ranges). Then **THE SIFT** (§5).
+3. Keep `knowledge.md` + `CHANGELOG.md` updated per phase; commit at each stable
+   point (local commit survives a cutoff; push if asked).
+
+### Already done / on disk
+- Ancient builders (§4) — **committed**.
+- Cutscenes + Point & Click pass #1 (§4b) — **committed** (full suite green:
+  429 tests). Confirm with `./mvnw -o test`.
+- Overhauls of existing generators (§4c) — NOT started.
+- THE SIFT (§5), melody rift (§6), MCSM/Legends/Dungeons (§7) — NOT started.
 
 ## 1. The user’s requests (verbatim intent, accumulate across sessions)
 
@@ -231,8 +245,37 @@ pattern and existing block palette:
 4. Do the **NEXT ACTION** at the top; update this file as you go (mark DONE, set a new
    NEXT ACTION); commit+push at every stable point so a cutoff cannot lose work.
 
+## 4b. DONE — cutscenes + point-and-click pass #1 (committed)
+
+Cutscenes:
+- `com.voxel.cinematic.CinematicScript` — pure timed dialogue (`at(sec,speaker,
+  text)`, `due(prev,now)`, `of(...)`). Time-0 cue fires on the first tick, then
+  never again; consecutive windows `(t1,t2]` fire each line exactly once.
+- `CinematicSystem` — scenes now carry a script; `publishScript` pushes due lines
+  to `LiveCaptions` (caption-only, no audio). New `playScriptedScene(title,sub,
+  shots,script)` and `playStructureReveal(siteName, subject, speaker, line)`
+  (wide orbit → close-up, title card, builder line).
+- `AncientBuilderSites.Built` + `consumeNewlyBuilt()` + `surfaceYAt(...)`; `Main`
+  calls `playStructureReveal` for each newly stamped site (speaker “Ancient
+  Builder”, line from `AncientBuilderLines`).
+- `CinematicScriptTest` (5 tests).
+
+Point & Click:
+- `InteractionBillboardSystem` now also marks **villager TV (274)** and
+  **AncientBuilderEntity** (“Talk”); `isInteractableBlock`/`blockName`/
+  `blockAction` made package-private for testing.
+- `BlockInteraction.interactWithEntity` handles `AncientBuilderEntity`: sets
+  status + `aiSpeak` (caption-only) + the VILLAGER reaction beat.
+- `PointClickWorldAuthor` plaza expanded: villager TV, enchanting table +
+  bookshelves, anvil on a plinth, beacon on a gold plinth, a mirrored
+  ancient-builder pedestal. `Main` spawns a demo ancient builder at (2.5, G+1,
+  4.5). Tests: `InteractionBillboardClassificationTest` (4),
+  `PointClickWorldGeneratorTest.expandedPlazaStationsExist`.
+
 ## 10. Progress log (append newest at the bottom)
 
-- 2026-10-05: Ancient-builder AI + caption speech + 6 new sites + population manager
-  coded and compiling; Main wired. Not yet tested or committed. NEXT: tests → green →
-  commit → start THE SIFT.
+- 2026-10-05: Ancient-builder AI + caption speech + 6 new sites + population
+  manager; Main wired; 29 new tests green; committed.
+- 2026-10-05: Cutscenes + Point & Click pass #1 (dialogue cues, structure-reveal
+  scene, builder/TV billboards, expanded demo plaza). Full suite green (429
+  tests); committed. NEXT: deepen cutscenes/P&C, then THE SIFT.
