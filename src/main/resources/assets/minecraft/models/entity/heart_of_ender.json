@@ -1,0 +1,221 @@
+{
+  "parts": [
+    {
+      "name": "tendril_a",
+      "from": [
+        -2,
+        0,
+        -2
+      ],
+      "size": [
+        4,
+        18,
+        4
+      ],
+      "absolute_offset": [
+        -4,
+        18,
+        0
+      ],
+      "texture": "heart_of_ender/heart_of_ender_tendrils",
+      "uv": [
+        0,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "tendril_b",
+      "from": [
+        -2,
+        0,
+        -2
+      ],
+      "size": [
+        4,
+        18,
+        4
+      ],
+      "absolute_offset": [
+        4,
+        18,
+        0
+      ],
+      "texture": "heart_of_ender/heart_of_ender_tendrils",
+      "uv": [
+        16,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "tendril_c",
+      "from": [
+        -2,
+        0,
+        -2
+      ],
+      "size": [
+        4,
+        18,
+        4
+      ],
+      "absolute_offset": [
+        0,
+        18,
+        -4
+      ],
+      "texture": "heart_of_ender/heart_of_ender_tendrils",
+      "uv": [
+        32,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "tendril_d",
+      "from": [
+        -2,
+        0,
+        -2
+      ],
+      "size": [
+        4,
+        18,
+        4
+      ],
+      "absolute_offset": [
+        0,
+        18,
+        4
+      ],
+      "texture": "heart_of_ender/heart_of_ender_tendrils",
+      "uv": [
+        48,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "tendril_e",
+      "from": [
+        -2,
+        2,
+        -2
+      ],
+      "size": [
+        4,
+        16,
+        4
+      ],
+      "absolute_offset": [
+        0,
+        18,
+        2
+      ],
+      "texture": "heart_of_ender/heart_of_ender_tendrils",
+      "uv": [
+        0,
+        22
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "orb_lower",
+      "from": [
+        -4,
+        8,
+        -4
+      ],
+      "size": [
+        8,
+        8,
+        8
+      ],
+      "absolute_offset": [
+        0,
+        12,
+        0
+      ],
+      "texture": "heart_of_ender/heart_of_ender",
+      "uv": [
+        32,
+        32
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "orb_main",
+      "from": [
+        -8,
+        14,
+        -8
+      ],
+      "size": [
+        16,
+        16,
+        16
+      ],
+      "absolute_offset": [
+        0,
+        22,
+        0
+      ],
+      "texture": "heart_of_ender/heart_of_ender",
+      "uv": [
+        0,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "orb_upper",
+      "from": [
+        -4,
+        30,
+        -4
+      ],
+      "size": [
+        8,
+        8,
+        8
+      ],
+      "absolute_offset": [
+        0,
+        34,
+        0
+      ],
+      "texture": "heart_of_ender/heart_of_ender",
+      "uv": [
+        0,
+        48
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "eye",
+      "from": [
+        -4,
+        18,
+        -10
+      ],
+      "size": [
+        8,
+        8,
+        8
+      ],
+      "absolute_offset": [
+        0,
+        22,
+        -6
+      ],
+      "texture": "heart_of_ender/heart_of_ender",
+      "uv": [
+        0,
+        32
+      ],
+      "texture_mapping": "cuboid_atlas",
+      "emissive": true
+    }
+  ]
+}

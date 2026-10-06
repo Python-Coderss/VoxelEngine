@@ -1,0 +1,245 @@
+{
+  "parts": [
+    {
+      "name": "robe",
+      "from": [
+        -5,
+        0,
+        -4
+      ],
+      "size": [
+        10,
+        18,
+        8
+      ],
+      "absolute_offset": [
+        0,
+        18,
+        0
+      ],
+      "texture": "arch_illager/arch_illager",
+      "uv": [
+        0,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body",
+      "from": [
+        -4,
+        14,
+        -3
+      ],
+      "size": [
+        8,
+        14,
+        6
+      ],
+      "absolute_offset": [
+        0,
+        21,
+        0
+      ],
+      "texture": "arch_illager/arch_illager",
+      "uv": [
+        36,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "hood",
+      "from": [
+        -6,
+        26,
+        -4
+      ],
+      "size": [
+        12,
+        10,
+        10
+      ],
+      "absolute_offset": [
+        0,
+        32,
+        0
+      ],
+      "texture": "arch_illager/arch_illager",
+      "uv": [
+        0,
+        26
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "head",
+      "from": [
+        -4,
+        28,
+        -4
+      ],
+      "size": [
+        8,
+        10,
+        8
+      ],
+      "absolute_offset": [
+        0,
+        33,
+        0
+      ],
+      "texture": "arch_illager/arch_illager",
+      "uv": [
+        0,
+        46
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "nose",
+      "from": [
+        -1,
+        30,
+        -6
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "absolute_offset": [
+        0,
+        32,
+        -4
+      ],
+      "texture": "arch_illager/arch_illager",
+      "uv": [
+        36,
+        20
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "arm_r",
+      "from": [
+        -8,
+        16,
+        -2
+      ],
+      "size": [
+        4,
+        10,
+        4
+      ],
+      "absolute_offset": [
+        -6,
+        26,
+        0
+      ],
+      "texture": "arch_illager/arch_illager",
+      "uv": [
+        44,
+        34
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "arm_l",
+      "from": [
+        4,
+        16,
+        -2
+      ],
+      "size": [
+        4,
+        10,
+        4
+      ],
+      "absolute_offset": [
+        6,
+        26,
+        0
+      ],
+      "texture": "arch_illager/arch_illager",
+      "uv": [
+        44,
+        20
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "crown",
+      "from": [
+        -4,
+        36,
+        -4
+      ],
+      "size": [
+        8,
+        4,
+        8
+      ],
+      "absolute_offset": [
+        0,
+        38,
+        0
+      ],
+      "texture": "arch_illager/arch_illager_staff",
+      "uv": [
+        0,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "staff_rod",
+      "from": [
+        -11,
+        4,
+        -1
+      ],
+      "size": [
+        3,
+        18,
+        3
+      ],
+      "absolute_offset": [
+        -9,
+        22,
+        0
+      ],
+      "texture": "arch_illager/arch_illager_staff",
+      "uv": [
+        0,
+        12
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "staff_orb",
+      "from": [
+        -13,
+        22,
+        -3
+      ],
+      "size": [
+        6,
+        6,
+        6
+      ],
+      "absolute_offset": [
+        -10,
+        25,
+        0
+      ],
+      "texture": "arch_illager/arch_illager_staff",
+      "uv": [
+        32,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas",
+      "emissive": true
+    }
+  ]
+}

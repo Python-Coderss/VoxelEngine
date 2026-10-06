@@ -136,9 +136,9 @@ public final class CampaignStory {
             new Beat("obsidian_pinnacle", "Obsidian Pinnacle", "The Arch-Illager",
                     "You climb to me at last. The Heart of Ender will finish this.",
                     46f, VILLAIN).withMob("arch_illager"),
-            new Beat("island_realms", "Island Realms", "Narrator",
+            new Beat("island_realms", "Island Realms", "The Heart of Ender",
                     "A floating outpost in the clouds, guarding a path to the Heart.",
-                    42f, NARRATOR),
+                    42f, VILLAIN).withMob("heart_of_ender"),
             // ── Minecraft Dungeons 2 (Sift-linked) ──
             new Beat("rift_stop", "The Rift Stop", "Narrator",
                     "A rift hums open. Beyond it lies the Sift, and the souls within.",

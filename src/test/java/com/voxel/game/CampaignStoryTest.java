@@ -91,7 +91,8 @@ public class CampaignStoryTest {
     @Test
     public void bossSitesNameAKnownMob() {
         java.util.Set<String> known = new java.util.HashSet<>(java.util.Arrays.asList(
-                "wither_storm", "great_hog", "arch_illager", "vindicator", "evoker"));
+                "wither_storm", "great_hog", "arch_illager", "heart_of_ender",
+                "vindicator", "evoker"));
         int withMob = 0;
         for (int i = 0; i < CampaignStory.beatCount(); i++) {
             String mob = CampaignStory.mobAt(i);
