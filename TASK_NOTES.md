@@ -258,7 +258,12 @@ Cutscenes:
 - `AncientBuilderSites.Built` + `consumeNewlyBuilt()` + `surfaceYAt(...)`; `Main`
   calls `playStructureReveal` for each newly stamped site (speaker “Ancient
   Builder”, line from `AncientBuilderLines`).
-- `CinematicScriptTest` (5 tests).
+- `CinematicScriptTest` (5 tests), `CameraShotTest` (5 tests).
+- `CinematicSystem` scene recipes: `playScriptedScene`, `playStructureReveal`,
+  `playBossIntro(name,taunt,subject)`, `playBossDefeat(name,line,subject)`,
+  `playDungeonArrival(name,line,subject)`, plus `canDirectScene()` gate.
+- `Main` wires boss scenes: White Pumpkin intro (spawnWhitePumpkinBoss),
+  White Pumpkin/Wither/Ender Dragon defeat scenes.
 
 Point & Click:
 - `InteractionBillboardSystem` now also marks **villager TV (274)** and
@@ -278,4 +283,8 @@ Point & Click:
   manager; Main wired; 29 new tests green; committed.
 - 2026-10-05: Cutscenes + Point & Click pass #1 (dialogue cues, structure-reveal
   scene, builder/TV billboards, expanded demo plaza). Full suite green (429
-  tests); committed. NEXT: deepen cutscenes/P&C, then THE SIFT.
+  tests); committed.
+- 2026-10-05: Cutscene pass #2 — boss intro/defeat + dungeon-arrival scene
+  recipes, wired to the White Pumpkin/Wither/Ender Dragon; `CameraShotTest`.
+  Full suite green (434 tests); committed. NEXT: deepen cutscenes/P&C (or
+  begin THE SIFT, §5).

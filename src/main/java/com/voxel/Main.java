@@ -1806,6 +1806,10 @@ public class Main {
         boss.setWorld(world);
         entityManager.addEntity(boss);
         setStatus("The White Pumpkin has risen!");
+        if (ctx.cinematic != null) {
+            ctx.cinematic.playBossIntro("THE WHITE PUMPKIN",
+                "You should not have followed me down here.", boss.getPosition());
+        }
     }
 
     /**
@@ -2961,6 +2965,10 @@ public class Main {
                         dragon.markDropped();
                         setStatus("The Ender Dragon has been slain");
                         needsWorldUpload = true;
+                        if (ctx.cinematic != null) {
+                            ctx.cinematic.playBossDefeat("THE ENDER DRAGON",
+                                "The End is quiet again.", dragon.getPosition());
+                        }
                     }
                 }
             }
@@ -3128,6 +3136,10 @@ public class Main {
                             w.markDropped();
                             setStatus("The Wither has been slain");
                             needsWorldUpload = true;
+                            if (ctx.cinematic != null) {
+                                ctx.cinematic.playBossDefeat("THE WITHER",
+                                    "The sky clears. For now.", w.getPosition());
+                            }
                         }
                     } else if (e instanceof com.voxel.entity.WhitePumpkinEntity) {
                         com.voxel.entity.WhitePumpkinEntity wp = (com.voxel.entity.WhitePumpkinEntity) e;
@@ -3136,6 +3148,10 @@ public class Main {
                             wp.markDropped();
                             setStatus("The White Pumpkin has been defeated!");
                             needsWorldUpload = true;
+                            if (ctx.cinematic != null) {
+                                ctx.cinematic.playBossDefeat("THE WHITE PUMPKIN",
+                                    "The lair falls silent at last.", wp.getPosition());
+                            }
                         }
                     }
                 }
