@@ -85,7 +85,7 @@ public class CommandProcessor {
 
     private void handleDimension(String[] parts) {
         if (parts.length < 2) {
-            ctx.setStatus("Usage: /dimension <overworld|nether|end|aether|error502|portal_hall>");
+            ctx.setStatus("Usage: /dimension <overworld|nether|end|aether|error502|portal_hall|sift>");
             return;
         }
         String dimName = parts[1].toLowerCase(Locale.ROOT);
@@ -98,6 +98,8 @@ public class CommandProcessor {
             case "portal_hall":
             case "portalhall":
             case "hall": target = DimensionType.PORTAL_HALL; break;
+            case "sift":
+            case "thesift": target = DimensionType.SIFT; break;
             default: target = DimensionType.OVERWORLD; break;
         }
         if (target == ctx.activeDimension) {
@@ -346,7 +348,7 @@ public class CommandProcessor {
         sb.append("\n  /spawn <mob> - Spawn a mob where you're looking (zombie, husk, skeleton, stray, wither_skeleton, spider, cave_spider, enderman, endermite, silverfish, bat, dragon, ghast, guardian, horse, llama, cat, parrot, polar_bear, rabbit, shulker, slime, magma_cube, squid, vex, witch, evoker, vindicator, wither, wolf, creeper, villager, iron_golem, snow_golem, snow_golem_sheared, blaze, pigman, pig, cow, mooshroom, chicken, sheep, sheep_sheared)");
         sb.append("\n  /tp <x> <y> <z> - Teleport to coordinates");
         sb.append("\n  /unstuck - Move upward until the player is clear");
-        sb.append("\n  /dimension <overworld|nether|end|aether|error502|portal_hall> - Switch dimension");
+        sb.append("\n  /dimension <overworld|nether|end|aether|error502|portal_hall|sift> - Switch dimension");
         sb.append("\n  /setuv <full|half|empty> <x> <y> [w] [h] - Adjust heart UVs");
         sb.append("\n  /camera <follow|orbit|fixed> - Set camera shot type");
         sb.append("\n  /locate <village|testing_facility> - Find a nearby structure");

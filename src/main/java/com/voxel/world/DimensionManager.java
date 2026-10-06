@@ -101,6 +101,10 @@ public class DimensionManager {
             generator = new BetaWorldGenerator(typeSeed, blockDataManager);
         } else if (type == DimensionType.PORTAL_HALL) {
             generator = new PortalHallGenerator(blockDataManager);
+        } else if (type == DimensionType.SIFT) {
+            // The Sift: soul-lit Meadow + Carapace terrain (Minecraft's fourth
+            // dimension). Own generator; same self-contained shape as the Aether.
+            generator = new SiftGenerator(typeSeed, blockDataManager);
         } else {
             generator = new DimensionWorldGenerator(type, blockDataManager);
             if (typeSeed != 0L && generator instanceof DimensionWorldGenerator) {
