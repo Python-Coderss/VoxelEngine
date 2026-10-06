@@ -236,8 +236,7 @@ public final class DialogueDirector {
         boolean question = authored.isQuestion();
 
         return new SpeechOptions(speed, pitch, volume, tone,
-                authored.getNaturalSourceMix(), emotion, authored.getSinging(),
-                sarcasm, question);
+                emotion, sarcasm, question);
     }
 
     /** Filter the pool by profession/period, mood, and no-repeat memory. */

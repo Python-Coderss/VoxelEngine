@@ -53,13 +53,13 @@ public final class McsmStory {
         }
     }
 
-    // Character voices (speed, pitch, volume, tone, naturalSourceMix, emotion, singing, sarcasm, question).
+    // Character voices (speed, pitch, volume, tone, emotion, sarcasm, question).
     private static final SpeechOptions GABRIEL =
-            new SpeechOptions(0.95, -2.5, 1.0, 0.25, 0.6, "happy", 0.0, 0.0, false);
+            new SpeechOptions(0.95, -2.5, 1.0, 0.25, "happy", 0.0, false);
     private static final SpeechOptions IVOR =
-            new SpeechOptions(1.08, 1.5, 1.0, -0.15, 0.6, "angry", 0.0, 0.7, false);
+            new SpeechOptions(1.08, 1.5, 1.0, -0.15, "angry", 0.7, false);
     private static final SpeechOptions PETRA =
-            new SpeechOptions(1.0, 0.5, 1.0, 0.1, 0.6, "scared", 0.0, 0.0, false);
+            new SpeechOptions(1.0, 0.5, 1.0, 0.1, "scared", 0.0, false);
 
     private static final Beat[] BEATS = {
         new Beat("endercon", "Episode 1 · The Order of the Stone", "Gabriel",

@@ -358,8 +358,13 @@ public class GameContext {
     public volatile Entity ridingMinecart = null;
     /** Set by Main: dismounts the player from the current cart. */
     public Runnable dismountMinecart = null;
-    /** Set by Main: spawns the named mob at the player's look target (/spawn <mob>). */
+    /** Set by Main: queues the named mob for spawning at the player's look target
+     *  (/spawn <mob>). The GL thread only records the request; Main's logic tick
+     *  drains it so entity/world state is only mutated from the logic thread. */
     public java.util.function.Consumer<String> spawnMobCommand = null;
+    /** Mob names requested by /spawn <mob>, drained by the logic thread. */
+    public final java.util.List<String> mobSpawnQueue =
+            java.util.Collections.synchronizedList(new java.util.ArrayList<>());
     /** Cart spawns requested by block interaction (GL thread) for the logic
      *  thread to consume — avoids mutating the EntityManager off-thread.
      *  Thread-safe list: the GL thread adds, the logic thread drains. */

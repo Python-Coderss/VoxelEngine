@@ -964,6 +964,18 @@ public class VillagerEntity extends Entity {
     public float aiWalkSpeed() { return moveSpeed; }
     public float aiFleeSpeed() { return fleeSpeed; }
 
+    /** Display name for live captions and dialogue ("Farmer", "Nitwit", ...). */
+    public String aiDisplayName() {
+        String name = profession.name().toLowerCase().replace('_', ' ').trim();
+        StringBuilder out = new StringBuilder();
+        for (String word : name.split("\\s+")) {
+            if (word.isEmpty()) continue;
+            if (out.length() > 0) out.append(' ');
+            out.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));
+        }
+        return out.length() == 0 ? "Villager" : out.toString();
+    }
+
     public Vector3f eyePosition() {
         return new Vector3f(getPosX(), getPosY() + 1.5f, getPosZ());
     }
@@ -1016,6 +1028,19 @@ public class VillagerEntity extends Entity {
 
     public boolean aiPlayEmote(Emote emote, Vector3f pointAt) {
         return emotePlayer.play(emote, pointAt);
+    }
+
+    /**
+     * The body-language layer applied by {@code applyEmoteOverlay}. Brains
+     * drive this exact instance so their emotes actually reach the model.
+     */
+    public EmotePlayer aiEmotePlayer() {
+        return emotePlayer;
+    }
+
+    /** Mark the current build task done (brain-driven building). */
+    public boolean aiCompleteBuildTarget() {
+        return buildQueue.poll() != null;
     }
 
     public boolean aiSpeak(String line) {

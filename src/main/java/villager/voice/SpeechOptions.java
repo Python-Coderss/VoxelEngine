@@ -1,80 +1,62 @@
 package villager.voice;
 
-/** Immutable per-line controls for the custom Java voice. */
+/**
+ * Immutable per-line playback controls for the recorded villager voice.
+ *
+ * <p>Only controls a recorded clip can actually honor are kept: speed, pitch,
+ * volume, mood/sarcasm coloring, and the interrogative ending. Everything the
+ * deleted synthesis stack needed (RVC retrieval weight, singing expression,
+ * the model's register lift) is gone with it.</p>
+ */
 public final class SpeechOptions {
     // Tone is a delivery mood: -1 is serious, 0 is neutral, +1 is joking.
-    // The fifth field is the RVC retrieval weight ("index rate", stored in the
-    // legacy naturalSourceMix JSON key): 0.55-0.6 keeps the villager timbre
-    // tight without the artifacts that set in beyond ~0.75.
     public static final SpeechOptions DEFAULT = new SpeechOptions(
-            1.0, 0.0, 1.0, 0.0, 0.60, "happy", 0.0, 0.0, false, true);
+            1.0, 0.0, 1.0, 0.0, "happy", 0.0, false, true);
 
     private final double speed;
     private final double pitchSemitones;
     private final double volume;
     private final double tone;
-    private final double naturalSourceMix;
     private final String emotion;
-    private final double singing;
     private final double sarcasm;
     private final boolean question;
     private final boolean automaticQuestionDetection;
 
     public SpeechOptions() {
-        this(1.0, 0.0, 1.0, 0.0, 0.60, "happy", 0.0, 0.0, false, true);
+        this(1.0, 0.0, 1.0, 0.0, "happy", 0.0, false, true);
     }
 
     /** Backwards-compatible constructor for callers that only set speed/pitch. */
     public SpeechOptions(double speed, double pitchSemitones) {
-        this(speed, pitchSemitones, 1.0, 0.0, 0.60, "happy", 0.0, 0.0, false, true);
+        this(speed, pitchSemitones, 1.0, 0.0, "happy", 0.0, false, true);
     }
 
-    /** Backwards-compatible constructor for the original editable profile. */
+    /** Speed, pitch, volume and mood only. */
     public SpeechOptions(double speed, double pitchSemitones, double volume,
-                         double tone, double naturalSourceMix) {
-        this(speed, pitchSemitones, volume, tone,
-                Math.max(0.45, naturalSourceMix),
-                "neutral", 0.0, 0.0, false, true);
-    }
-
-    /** Backwards-compatible complete profile before sarcasm/questions existed. */
-    public SpeechOptions(double speed, double pitchSemitones, double volume,
-                         double tone, double naturalSourceMix, String emotion,
-                         double singing) {
-        this(speed, pitchSemitones, volume, tone, naturalSourceMix,
-                emotion, singing, 0.0, false, true);
+                         double tone) {
+        this(speed, pitchSemitones, volume, tone, "neutral", 0.0, false, true);
     }
 
     /** Complete profile with mood, sarcasm, and explicit question delivery. */
     public SpeechOptions(double speed, double pitchSemitones, double volume,
-                         double tone, double naturalSourceMix, String emotion,
-                         double singing, double sarcasm, boolean question) {
-        this(speed, pitchSemitones, volume, tone, naturalSourceMix, emotion,
-                singing, sarcasm, question, false);
+                         double tone, String emotion, double sarcasm,
+                         boolean question) {
+        this(speed, pitchSemitones, volume, tone, emotion, sarcasm, question, false);
     }
 
     private SpeechOptions(double speed, double pitchSemitones, double volume,
-                         double tone, double naturalSourceMix, String emotion,
-                         double singing, double sarcasm, boolean question,
-                         boolean automaticQuestionDetection) {
+                         double tone, String emotion, double sarcasm,
+                         boolean question, boolean automaticQuestionDetection) {
         requireFinitePositive("speed", speed);
         requireFinite("pitchSemitones", pitchSemitones);
         requireRange("volume", volume, 0.0, 2.0);
         requireRange("tone", tone, -1.0, 1.0);
-        // Historically the natural-carrier mix (0-0.6); since the RVC artifact
-        // rework this field stores the RVC retrieval weight ("index rate",
-        // 0-0.75). The JSON key is unchanged so old presets/dialog catalogs
-        // round-trip; values in the old 0.36-0.6 range remain valid.
-        requireRange("naturalSourceMix", naturalSourceMix, 0.0, 0.75);
-        requireRange("singing", singing, 0.0, 1.0);
         requireRange("sarcasm", sarcasm, 0.0, 1.0);
         this.speed = speed;
         this.pitchSemitones = pitchSemitones;
         this.volume = volume;
         this.tone = tone;
-        this.naturalSourceMix = naturalSourceMix;
         this.emotion = normalizeEmotion(emotion);
-        this.singing = singing;
         this.sarcasm = sarcasm;
         this.question = question;
         this.automaticQuestionDetection = automaticQuestionDetection;
@@ -86,20 +68,7 @@ public final class SpeechOptions {
     public double getVolume() { return volume; }
     /** Delivery mood: -1 serious, 0 neutral, +1 joking. */
     public double getTone() { return tone; }
-    public double getNaturalSourceMix() { return naturalSourceMix; }
-    /**
-     * RVC retrieval weight ("index rate"): how strongly ContentVec frames
-     * blend toward the top-8 nearest villager training embeddings. 0 disables
-     * retrieval (pure base-TTS content); 0.6 is the default; beyond ~0.75 the
-     * short training dataset starts to inject its own artifacts. Stored in
-     * the legacy {@code naturalSourceMix} JSON field.
-     */
-    public double getEffectiveIndexRate() {
-        return Math.max(0.0, Math.min(0.75, naturalSourceMix));
-    }
     public String getEmotion() { return emotion; }
-    /** Singing expression from 0 (spoken) to 1 (strongly sung). */
-    public double getSinging() { return singing; }
     /** Dry/sardonic delivery from 0 (sincere) to 1 (strong sarcasm). */
     public double getSarcasm() { return sarcasm; }
     /** Whether the line should use a rising interrogative ending. */
@@ -110,17 +79,17 @@ public final class SpeechOptions {
 
     /** Return an equivalent profile with an explicit question flag. */
     public SpeechOptions withQuestion(boolean value) {
-        return new SpeechOptions(speed, pitchSemitones, volume, tone, naturalSourceMix,
-                emotion, singing, sarcasm, value, false);
+        return new SpeechOptions(speed, pitchSemitones, volume, tone,
+                emotion, sarcasm, value, false);
     }
 
     /** Mark a metadata profile as allowing automatic question punctuation. */
     public SpeechOptions withAutomaticQuestionDetection() {
-        return new SpeechOptions(speed, pitchSemitones, volume, tone, naturalSourceMix,
-                emotion, singing, sarcasm, question, true);
+        return new SpeechOptions(speed, pitchSemitones, volume, tone,
+                emotion, sarcasm, question, true);
     }
 
-    /** Effective duration after emotion, mood, sarcasm, and singing adjustments. */
+    /** Effective duration after emotion, mood, and sarcasm adjustments. */
     public double getEffectiveSpeed() {
         double multiplier = 1.0;
         if ("happy".equals(emotion)) multiplier = 1.08;
@@ -130,31 +99,10 @@ public final class SpeechOptions {
         // Joking delivery is lighter/faster; serious delivery is measured.
         multiplier *= 1.0 - tone * 0.08;
         multiplier *= 1.0 - sarcasm * 0.08;
-        if (singing > 0.0) multiplier *= 1.0 - singing * 0.12;
         return speed * multiplier;
     }
 
-    /**
-     * The villager timbre lives in Dan Lloyd's high register (TEAVSRP F0
-     * median ~180 Hz per voice/corpus/analysis.txt), while neural bases speak
-     * near 110 Hz. Without this lift the generator renders villager formants
-     * over an octave-too-low excitation, which reads as hoarse and robotic.
-     */
-    public static final double VILLAGER_REGISTER_SEMITONES = 8.0;
-
-    /** Effective RVC pitch offset after mood, emotion, sarcasm, and explicit pitch. */
-    public double getEffectivePitchSemitones() {
-        double offset = VILLAGER_REGISTER_SEMITONES + tone * 0.75;
-        if ("happy".equals(emotion)) offset += 1.0;
-        if ("sad".equals(emotion)) offset -= 1.5;
-        if ("angry".equals(emotion)) offset += 0.8;
-        if ("scared".equals(emotion)) offset += 2.0;
-        // Sarcasm is deliberately a little deadpan and lowered.
-        offset -= sarcasm * 0.8;
-        return pitchSemitones + offset;
-    }
-
-    /** Effective spectral tilt derived from mood; tone itself is no longer EQ. */
+    /** Effective spectral tilt derived from mood; tone itself is not EQ. */
     public double getEffectiveSpectralTilt() {
         double tilt = tone * 0.50;
         if ("happy".equals(emotion)) tilt += 0.12;
@@ -185,9 +133,9 @@ public final class SpeechOptions {
     /** Stable text used as part of generated-audio cache keys. */
     public String cacheKey() {
         return String.format(java.util.Locale.ROOT,
-                "v3;speed=%.6f;pitch=%.6f;volume=%.6f;tone=%.6f;natural=%.6f;emotion=%s;singing=%.6f;sarcasm=%.6f;question=%s",
-                speed, pitchSemitones, volume, tone, naturalSourceMix, emotion,
-                singing, sarcasm, question);
+                "v4;speed=%.6f;pitch=%.6f;volume=%.6f;tone=%.6f;emotion=%s;sarcasm=%.6f;question=%s",
+                speed, pitchSemitones, volume, tone, emotion,
+                sarcasm, question);
     }
 
     /** Conservative automatic punctuation rule used when metadata omits question. */

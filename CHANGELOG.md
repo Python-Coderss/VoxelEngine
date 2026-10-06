@@ -1,5 +1,115 @@
 # CHANGELOG
 
+## Ancient-Builder Modern Sites (Oct 4, 2026)
+
+### The final age before the wipeout
+- New `AncientBuilderModern`: the ancient builders' modern era, preserved
+  intact on the eve of their disappearance — a glass office tower, a tiled
+  metro hall, a marble research lab, and a civic plaza with a steel monument.
+  Unlike their stone-brick strongholds and Far Lands facilities, these sites
+  are precast concrete, office glass, and idle command-tech consoles.
+- Each site has 2-3 **layout variants** chosen deterministically from its name
+  (tower heights 10/14/18 floors with a setback crown; island vs side-platform
+  metro; lab with or without an archive annex; statue with raised arm vs
+  light-crowned obelisk), so sites are families of designs, not fixed copies.
+- Sites stamp lazily near the player at fixed map-discoverable coordinates
+  (same runtime approach as the MCSM sites, idempotent on reload); builders
+  write through a `VoxelSink` so layouts are unit-testable in memory.
+
+### New blocks (920-926)
+- `concrete`, `concrete_dark`, `steel_beam`, `ceiling_light` (emissive),
+  `tile_block`, `office_glass` (translucent), `marble` — with generated 16x16
+  textures (`tools/gen_modern_block_textures.py`) and cube models.
+
+### Tests
+- Full suite: 379 tests, 0 failures.
+
+## Dumb-Human AI, Clip Voice, Live Captions (Oct 4, 2026)
+
+### Comedic "dumb human" AI (villagers and mobs)
+- New shared psyche layer `ComedyMind` with a per-entity personality (boldness,
+  distractibility, drama, incompetence) derived from the entity id. Villagers
+  and hostile mobs run on the same mind, so a hunter and a farmer make the
+  same kinds of mistakes.
+- **Short attention span**: villagers abandon tasks to investigate shiny
+  things (`DISTRACTED`), forget what they were doing mid-task (`FORGOT`,
+  "Wait. What was I doing?"), and stand admiring nothing (`ADMIRE`). Mobs
+  break off chases because something else got interesting (`DISTRACT`).
+- **Confident then cowardly**: villagers strut toward danger acting tough
+  (`STRUT`, "I am not scared of you!") and scream the moment it crosses their
+  boldness-based coward distance ("Okay I am a LITTLE scared of you!"). Bold
+  hunters swagger in at walking speed taunting (`MOB_TAUNT`); timid ones cut
+  and run at the first hit (`MOB_COWARD`) regardless of health.
+- **Herd panic & contagion**: fleeing villagers follow whoever is ahead
+  instead of choosing an escape direction (conga lines), fear adopted from
+  neighbors amplifies with the chaos level, and hunters trail the nearest
+  packmate mid-chase instead of flanking.
+- **Job incompetence**: building is slapstick — proud "Nailed it." on
+  success, "Ow! My thumb!" on failure, and forgetting the job entirely,
+  scaled by the incompetence trait. Failures feed the chaos meter.
+- **Petty social drama**: pointless arguments (`ARGUE`), waves at the wrong
+  person (`WRONG_WAVE`), loitering after the player (`FOLLOW_PLAYER`), gossip
+  lines, and tripping over nothing while wandering.
+- **Escalating chaos** (`Chaos`, ticked from EntityManager): screams, crowds,
+  arguments, and blunders raise a village-wide meter that decays slowly. High
+  chaos makes comedy more frequent, panic stickier, and herds dumber.
+- All lines flow through the speech pipeline with delivery emotions and show
+  up in the live captions.
+
+### Voice: synthesis removed, recorded clips only
+- The ONNX synthesis stack is deleted (Coqui VITS, RVC v2, Kokoro, Misaki,
+  Rmvpe, model bundle/assembler, eval tools) along with the onnxruntime
+  dependency. Nothing synthesizes speech anymore.
+- **Purge completed end to end.** The 928 MB of tracked ONNX model parts
+  (`models/java/`) and their manifest/README are gone, the synthesis-only tools
+  (`export_coqui_vctk_onnx`, `dump_py_*`, `align_neural_to_reference`,
+  `compare_voice_pipeline`, `split_model_assets`, `prepare_java_*_assets`, the
+  comparison/sample renderers, …) are deleted, and `PYTHON_VOICE.md` (the
+  record of the Python TTS/RVC recipe) is removed with the pipeline it
+  documented.
+- **Synthesis-era Java is gone, not just unused.** `VillagerVoice` (the model
+  loading/synthesis wrapper), `TestWavCompare`, the vocoder comb-whine removal
+  (with its FFT/median/notch helpers), the RVC source-energy mask and unvoiced
+  source-boost mixers are deleted; `VillagerSynthesizer` is renamed
+  `VillagerVoiceRenderer` and no longer takes a model directory. The
+  `modelDirectory`/`--models` plumbing is removed from the game bridge, the CLI,
+  and all three editors.
+- **Profile fields a recording cannot honor are gone.** The RVC retrieval
+  weight (`naturalSourceMix`/index rate), the singing expression, the neural
+  register lift, and `getEffectivePitchSemitones` are removed from
+  `SpeechOptions`; old dialogue catalogs and presets that still carry
+  `naturalSourceMix`/`singing` keys load fine (the keys are ignored), and the
+  metadata cache key is bumped to v4. The editors' "Timbre strength" and
+  "Singing" controls went with them.
+- Villager voice now replays **recorded clips**: the Villager News addon voice
+  (2,229 transcribed Element Animation clips, `.ogg` decoded via stb_vorbis)
+  and the TEAVSRP corpus (17 transcript-named wavs). `ClipIndex` picks the
+  best transcript match for a line; unmatched lines fall back to vocalizations
+  instead of silence.
+- `tools/build_voice_clip_index.py` rebuilds
+  `src/main/resources/voice/clips_index.json` from the addon zip (sound
+  definitions + `ebi.js` subtitle cues + `en_US.lang`).
+- `VoiceMode` is now `clip` (default) or `reference`; `neural` is rejected
+  with a clear error. `voxel.voice.addon` points at the addon zip or an
+  extracted RP directory; `voxel.voice.corpus` at the TEAVSRP wav folder.
+
+### Live captions
+- New `LiveCaptions` queue: speaker name + word-by-word reveal timed to the
+  line, then hold and fade. Captions publish even when no audio device exists
+  or a clip fails to load, so the voice stack can no longer hide what villagers
+  say. The HUD renders the caption block bottom-center (outlined), and the
+  reveal re-syncs to the clip's real duration when playback starts.
+
+### Fixes along the way
+- Brain-driven emotes never reached the model (the brain and the entity each
+  owned a separate `EmotePlayer`); brains now drive the entity's layer.
+- Brain-driven building never completed a task (the queue only drained in the
+  legacy FSM); jobs now finish via `aiCompleteBuildTarget()` — or comically
+  fail.
+
+### Tests
+- Full suite: 359 tests, 0 failures.
+
 ## Hunter AI Rollout & Villager Gossip (Sep 5, 2026)
 
 ### Pack-hunter brain rollout

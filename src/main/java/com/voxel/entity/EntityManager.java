@@ -74,6 +74,8 @@ public class EntityManager {
 
     public void update(float dt) {
         com.voxel.ai.StimulusBus.GLOBAL.dispatch();
+        // The village-wide comedy meter decays once per logic tick.
+        com.voxel.ai.brain.Chaos.tick(dt);
         for (Entity entity : entities) {
             entity.update(dt);
         }

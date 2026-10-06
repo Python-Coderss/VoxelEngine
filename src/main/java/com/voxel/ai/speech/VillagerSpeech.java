@@ -2,6 +2,9 @@ package com.voxel.ai.speech;
 
 import com.voxel.audio.VillagerAudioManager;
 
+import villager.voice.ClipScript;
+import villager.voice.SpeechOptions;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -34,12 +37,40 @@ public final class VillagerSpeech {
 
     /** @return true when the line was actually queued (rate-limit allows). */
     public static boolean say(int villagerId, String line) {
+        return say(villagerId, "Villager", line);
+    }
+
+    /** Speak as a named speaker (shown in the live captions). */
+    public static boolean say(int villagerId, String speaker, String line) {
+        return say(villagerId, speaker, line, SpeechOptions.DEFAULT);
+    }
+
+    /** Speak with a full delivery profile. */
+    public static boolean say(int villagerId, String speaker, String line,
+                              SpeechOptions options) {
         if (audio == null || line == null || line.trim().isEmpty()) return false;
+        if (!allow(villagerId)) return false;
+        return audio.requestSpeech(line.trim(), options, speaker) != null;
+    }
+
+    /**
+     * Speak the recorded clip line that fits a situation. Only real clip
+     * transcripts are ever played and captioned.
+     *
+     * @return the spoken clip transcript, or null when rate-limited or silent
+     */
+    public static String sayTopic(int villagerId, String speaker,
+                                  ClipScript.Topic topic, SpeechOptions options) {
+        if (audio == null || topic == null) return null;
+        if (!allow(villagerId)) return null;
+        return audio.requestTopic(topic, options, speaker);
+    }
+
+    private static boolean allow(int villagerId) {
         long now = System.currentTimeMillis();
         Long last = lastSpoken.get(villagerId);
         if (last != null && now - last < MIN_INTERVAL_MILLIS) return false;
         lastSpoken.put(villagerId, now);
-        audio.requestSpeech(line.trim());
         return true;
     }
 }

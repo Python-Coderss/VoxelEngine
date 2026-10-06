@@ -17,7 +17,7 @@ public class DialogueCatalogTest {
         Path file = Files.createTempFile("dialogue-catalog", ".json");
         try {
             SpeechOptions options = new SpeechOptions(0.9, 2.0, 1.2, 0.3,
-                    0.2, "sad", 0.75, 0.65, true);
+                    "sad", 0.65, true);
             DialogueLine line = new DialogueLine("test_line", "Hello, friend.",
                     "FARMER", "EVENING", 4, options);
             new DialogueCatalog(Arrays.asList(line)).save(file);
@@ -32,7 +32,6 @@ public class DialogueCatalogTest {
             assertEquals(4, result.getVariant());
             assertEquals("sad", result.getOptions().getEmotion());
             assertEquals(2.0, result.getOptions().getPitchSemitones(), 0.000001);
-            assertEquals(0.75, result.getOptions().getSinging(), 0.000001);
             assertEquals(0.65, result.getOptions().getSarcasm(), 0.000001);
             assertTrue(result.getOptions().isQuestion());
         } finally {
@@ -55,7 +54,7 @@ public class DialogueCatalogTest {
         DialogueLine period = new DialogueLine("period", "Night", "*", "NIGHT", 0,
                 SpeechOptions.DEFAULT);
         DialogueLine exact = new DialogueLine("exact", "Farmer night?", "FARMER", "NIGHT", 0,
-                new SpeechOptions(1.0, 0.0, 1.0, 0.0, 0.36, "neutral", 0.0, 0.2, true));
+                new SpeechOptions(1.0, 0.0, 1.0, 0.0, "neutral", 0.2, true));
         DialogueCatalog catalog = new DialogueCatalog(Arrays.asList(global, period, exact));
         assertEquals("exact", catalog.choose("FARMER", "NIGHT", 0).getId());
     }

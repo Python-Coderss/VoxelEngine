@@ -3,7 +3,7 @@ package com.voxel.audio;
 import com.voxel.entity.VillagerEntity;
 import villager.voice.SpeechOptions;
 
-/** Selects short, repeatable villager lines for synthesis and cache keys. */
+/** Selects short, repeatable villager lines for clip lookup and cache keys. */
 public final class VillagerDialogue {
     private VillagerDialogue() {
     }

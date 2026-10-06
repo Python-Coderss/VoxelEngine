@@ -31,7 +31,8 @@ import java.nio.file.Paths;
  *
  * Double-click an empty grid cell to add a note. Drag a note to move it or
  * change pitch. Select a note and use the controls to edit duration, velocity,
- * and syllable. Preview renders the neural villager WAV, not a generic piano.
+ * and syllable. Preview renders the villager voice WAV (recorded clips fitted
+ * to each note), not a generic piano.
  */
 public final class MidiIntroEditor {
     private static final int MIN_PITCH = 36;
@@ -47,13 +48,11 @@ public final class MidiIntroEditor {
     private final JSpinner duration = new JSpinner(new SpinnerNumberModel(240, 1, 3840, 60));
     private final JSpinner velocity = new JSpinner(new SpinnerNumberModel(100, 1, 127, 1));
     private final javax.swing.JTextField syllable = new javax.swing.JTextField("da", 8);
-    private final Path modelDirectory;
     private MidiNoteSequence sequence;
     private MidiNoteSequence.Note selected;
     private Clip clip;
 
-    public MidiIntroEditor(Path modelDirectory) {
-        this.modelDirectory = modelDirectory;
+    public MidiIntroEditor() {
         try {
             sequence = MidiNoteSequence.loadDefault();
             bpm.setValue(sequence.getBpm());
@@ -65,9 +64,9 @@ public final class MidiIntroEditor {
         build();
     }
 
-    public static void launch(Path models) {
+    public static void launch() {
         javax.swing.SwingUtilities.invokeLater(() -> {
-            MidiIntroEditor editor = new MidiIntroEditor(models);
+            MidiIntroEditor editor = new MidiIntroEditor();
             editor.frame.setVisible(true);
         });
     }
@@ -160,7 +159,7 @@ public final class MidiIntroEditor {
 
     private void preview() {
         stopAudio();
-        status.setText("Rendering neural villager preview...");
+        status.setText("Rendering villager voice preview...");
         java.util.List<MidiNoteSequence.Note> copied = new java.util.ArrayList<MidiNoteSequence.Note>();
         for (MidiNoteSequence.Note note : sequence.getNotes()) {
             copied.add(new MidiNoteSequence.Note(note.getPitch(), note.getStartTick(),
@@ -171,12 +170,12 @@ public final class MidiIntroEditor {
         new SwingWorker<Path, Void>() {
             @Override protected Path doInBackground() throws Exception {
                 VillagerNewsIntro intro = VillagerNewsIntro.fromMidi(snapshot);
-                VillagerSynthesizer synthesizer = new VillagerSynthesizer(modelDirectory);
+                VillagerVoiceRenderer renderer = new VillagerVoiceRenderer();
                 try {
                     Path output = Paths.get("dev", "voice-editor", "midi-intro-preview.wav");
-                    intro.render(synthesizer, SpeechOptions.DEFAULT).write(output);
+                    intro.render(renderer, SpeechOptions.DEFAULT).write(output);
                     return output;
-                } finally { synthesizer.close(); }
+                } finally { renderer.close(); }
             }
             @Override protected void done() {
                 try { Path path = get(); play(path); status.setText("Preview: " + path); }

@@ -19,7 +19,7 @@ public class DialogueDirectorTest {
 
     private static final int VILLAGER_ID = 99;
     private final SpeechOptions neutralOptions = new SpeechOptions(
-            1.0, 0.0, 1.0, 0.0, 0.60, "neutral", 0.0, 0.0, false);
+            1.0, 0.0, 1.0, 0.0, "neutral", 0.0, false);
     private List<DialogueLine> catalog;
 
     @Before

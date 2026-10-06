@@ -154,9 +154,13 @@ public final class VillagerNewsIntro {
     public String getSourceUrl() { return sourceUrl; }
     public List<Note> getNotes() { return notes; }
 
-    /** This arrangement requires the neural backend's arbitrary-text voice. */
+    /**
+     * The arrangement renders through the clip voice: each note is fitted
+     * from the best-matching recorded clip. Reference mode replays exact
+     * transcripts only and cannot fill note syllables.
+     */
     public boolean supports(VoiceMode mode) {
-        return mode == VoiceMode.NEURAL;
+        return mode == VoiceMode.CLIP;
     }
 
     public double getEndBeat() {
@@ -177,52 +181,32 @@ public final class VillagerNewsIntro {
     }
 
     /**
-     * Render the arrangement with the existing neural/reference voice backend.
-     * Each note is fitted to its beat duration and staccato-gated before mixing.
+     * Render the arrangement with the recorded-clip voice. Each note is fitted
+     * to its beat duration and staccato-gated before mixing.
      */
-    public WavAudio render(VillagerSynthesizer synthesizer, SpeechOptions profile)
+    public WavAudio render(VillagerVoiceRenderer renderer, SpeechOptions profile)
             throws Exception {
-        if (synthesizer == null) {
-            throw new IllegalArgumentException("synthesizer must not be null");
+        if (renderer == null) {
+            throw new IllegalArgumentException("renderer must not be null");
         }
         if (profile == null) {
             throw new IllegalArgumentException("profile must not be null");
         }
-        if (!supports(synthesizer.getMode())) {
-            throw new IllegalStateException("Villager News intro requires neural mode; "
+        if (!supports(renderer.getMode())) {
+            throw new IllegalStateException("Villager News intro requires clip mode; "
                     + "reference mode has no matching note syllable clips");
         }
-        return renderNotes(profile, (text, options) -> synthesizer.render(text, options));
-    }
-
-    /** Render through the game-facing voice wrapper. */
-    public WavAudio render(VillagerVoice voice, SpeechOptions profile)
-            throws Exception {
-        if (voice == null) {
-            throw new IllegalArgumentException("voice must not be null");
-        }
-        if (profile == null) {
-            throw new IllegalArgumentException("profile must not be null");
-        }
-        if (!supports(voice.getMode())) {
-            throw new IllegalStateException("Villager News intro requires neural mode; "
-                    + "reference mode has no matching note syllable clips");
-        }
-        return renderNotes(profile, (text, options) -> {
-            VoiceClip clip = voice.speak(text, options);
-            return new WavAudio(clip.getSampleRate(), clip.getSamples());
-        });
+        return renderNotes(profile, (text, options) -> renderer.render(text, options));
     }
 
     private WavAudio renderNotes(SpeechOptions profile, NoteRenderer renderer)
             throws Exception {
-        int sampleRate = VillagerSynthesizer.DEFAULT_SAMPLE_RATE;
+        int sampleRate = VillagerVoiceRenderer.DEFAULT_SAMPLE_RATE;
         double playbackSpeed = profile.getEffectiveSpeed();
         double secondsPerBeat = 60.0 / (bpm * playbackSpeed);
         int totalSamples = Math.max(1, (int) Math.ceil(
                 getEndBeat() * secondsPerBeat * sampleRate + sampleRate * 0.18));
         float[] mixed = new float[totalSamples];
-        double singing = Math.max(0.85, profile.getSinging());
         for (Note note : notes) {
             if (note.isRest()) {
                 continue;
@@ -231,11 +215,10 @@ public final class VillagerNewsIntro {
             // relative to the D4 arrangement tonic, so D4 is zero semitones.
             double pitch = note.midi - REFERENCE_MIDI + profile.getPitchSemitones();
             // Preserve the written score pitches. The overall profile may
-            // adjust loudness/singing and an explicit global semitone offset,
-            // but emotion/mood prosody must not retune a notated melody.
+            // adjust loudness and an explicit global semitone offset, but
+            // emotion/mood prosody must not retune a notated melody.
             SpeechOptions noteOptions = new SpeechOptions(
-                    1.0, pitch, profile.getVolume(), 0.0, 0.0,
-                    "neutral", singing, 0.0, false)
+                    1.0, pitch, profile.getVolume(), 0.0, "neutral", 0.0, false)
                     .withQuestion(false);
             WavAudio rendered = renderer.render(note.text, noteOptions);
             float[] trimmed = trimSilence(rendered.samples);
@@ -325,7 +308,7 @@ public final class VillagerNewsIntro {
         while (first < samples.length && Math.abs(samples[first]) < threshold) first++;
         int last = samples.length - 1;
         while (last > first && Math.abs(samples[last]) < threshold) last--;
-        int padding = Math.min(samples.length / 100, VillagerSynthesizer.DEFAULT_SAMPLE_RATE / 200);
+        int padding = Math.min(samples.length / 100, VillagerVoiceRenderer.DEFAULT_SAMPLE_RATE / 200);
         first = Math.max(0, first - padding);
         last = Math.min(samples.length - 1, last + padding);
         float[] result = new float[last - first + 1];

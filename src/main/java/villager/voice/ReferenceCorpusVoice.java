@@ -67,7 +67,7 @@ public final class ReferenceCorpusVoice implements AutoCloseable {
                     + " (reference mode replays exact transcript-named clips only)");
         }
 
-        WavAudio source = WavAudio.read(clip).resampled(VillagerSynthesizer.DEFAULT_SAMPLE_RATE);
+        WavAudio source = WavAudio.read(clip).resampled(VillagerVoiceRenderer.DEFAULT_SAMPLE_RATE);
         float[] samples = source.samples.clone();
         double effectiveSpeed = options.getEffectiveSpeed();
         if (effectiveSpeed != 1.0) {
@@ -84,7 +84,7 @@ public final class ReferenceCorpusVoice implements AutoCloseable {
         AudioDsp.applyGain(samples, options.getEffectiveVolume());
         AudioDsp.normalizePeak(samples, 0.98f);
         AudioDsp.fadeEdges(samples, Math.min(source.sampleRate / 80, samples.length / 5));
-        return new WavAudio(VillagerSynthesizer.DEFAULT_SAMPLE_RATE, samples);
+        return new WavAudio(VillagerVoiceRenderer.DEFAULT_SAMPLE_RATE, samples);
     }
 
     private void load() throws IOException {
