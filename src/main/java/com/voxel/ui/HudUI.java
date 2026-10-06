@@ -66,8 +66,12 @@ public class HudUI {
     public UILayer.UIElement cineBarTop, cineBarBottom;
     public UILayer.UIElement cineFadeQuad;      // fullscreen black/red fade
     public UILayer.UITextElement cineTitleText, cineSubtitleText;
+    /** Live speech captions (villager/mob dialogue), revealed word by word. */
+    public UILayer.UITextElement speechCaptionSpeaker, speechCaptionText;
+    private float captionLastTime = -1f;
     public UILayer.UITextElement cineSkipHint;      // "ESC to skip" during scenes
     private double lowHealthPulseTime = 0;
+    private static final int CAPTION_WRAP_CHARS = 52;
 
     // ── MCSM interaction billboards ("click here" markers) ──
     // Procedurally generated exclamation-point glyph (white with glow).
@@ -296,6 +300,24 @@ public class HudUI {
             new Vector4f(0.8f, 0.8f, 0.8f, 0), fontTextureId);
         cineSkipHint.visible = false;
         dynamicLayer.addElement(cineSkipHint);
+
+        // Live speech captions: speaker name + revealed line, bottom center
+        // (above the hotbar), outlined so they read over any terrain.
+        speechCaptionSpeaker = new UILayer.UITextElement(
+            new Vector2f(0, 0), "", 1.2f,
+            new Vector4f(0.95f, 0.88f, 0.65f, 0), fontTextureId);
+        speechCaptionSpeaker.visible = false;
+        speechCaptionSpeaker.outlined = true;
+        speechCaptionSpeaker.outlineColor = new Vector4f(0, 0, 0, 1);
+        dynamicLayer.addElement(speechCaptionSpeaker);
+        speechCaptionText = new UILayer.UITextElement(
+            new Vector2f(0, 0), "", 1.6f,
+            new Vector4f(1, 1, 1, 0), fontTextureId);
+        speechCaptionText.visible = false;
+        speechCaptionText.outlined = true;
+        speechCaptionText.outlineColor = new Vector4f(0, 0, 0, 1);
+        speechCaptionText.charLineLimit = CAPTION_WRAP_CHARS;
+        dynamicLayer.addElement(speechCaptionText);
 
         // Point-and-click prompts, MCSM-style: a hollow square on the target,
         // a 45° elbow line out of its corner, then a vertical stem running to
@@ -2416,6 +2438,64 @@ public class HudUI {
                 cineFadeQuad.color.set(0.45f, 0f, 0f, pulse);
             }
         }
+    }
+
+    /**
+     * Live speech captions pass: advances the word-reveal clock and centers
+     * the caption block (speaker + line) at bottom center. Rendering only
+     * reports what {@link com.voxel.audio.LiveCaptions} decides.
+     */
+    public void updateSpeechCaptions(double time) {
+        if (captionLastTime < 0f) captionLastTime = (float) time;
+        float dt = (float) Math.min(0.25, Math.max(0.0, time - captionLastTime));
+        captionLastTime = (float) time;
+        com.voxel.audio.LiveCaptions.tick(dt);
+        com.voxel.audio.LiveCaptions.Snapshot snap = com.voxel.audio.LiveCaptions.current();
+        if (snap == null || snap.revealedText == null || snap.revealedText.isEmpty()) {
+            speechCaptionSpeaker.visible = false;
+            speechCaptionText.visible = false;
+            return;
+        }
+        speechCaptionText.text = snap.revealedText;
+        speechCaptionText.textureId = fontTextureId;
+        speechCaptionText.color.w = snap.alpha;
+        speechCaptionText.outlineColor.w = snap.alpha * 0.9f;
+        speechCaptionSpeaker.text = snap.speaker;
+        speechCaptionSpeaker.textureId = fontTextureId;
+        speechCaptionSpeaker.color.w = snap.alpha * 0.9f;
+        speechCaptionSpeaker.outlineColor.w = snap.alpha * 0.8f;
+
+        float textWidth = widestWrappedLine(snap.revealedText, CAPTION_WRAP_CHARS)
+                * 8f * speechCaptionText.scale;
+        float textY = main.height * 0.86f;
+        speechCaptionText.pos.set(
+                Math.max(8f, main.width / 2f - textWidth / 2f), textY);
+        float speakerWidth = snap.speaker.length() * 8f * speechCaptionSpeaker.scale;
+        speechCaptionSpeaker.pos.set(
+                Math.max(8f, main.width / 2f - speakerWidth / 2f),
+                textY - 8f * speechCaptionSpeaker.scale - 4f);
+        speechCaptionSpeaker.visible = true;
+        speechCaptionText.visible = true;
+    }
+
+    /** Widest line after the same greedy word wrap drawString applies. */
+    private static int widestWrappedLine(String text, int limit) {
+        int widest = 0;
+        for (String paragraph : text.split("\\n")) {
+            int line = 0;
+            for (String word : paragraph.split("\\s+")) {
+                if (word.isEmpty()) continue;
+                int add = line == 0 ? word.length() : word.length() + 1;
+                if (line > 0 && line + add > limit) {
+                    widest = Math.max(widest, line);
+                    line = word.length();
+                } else {
+                    line += add;
+                }
+            }
+            widest = Math.max(widest, line);
+        }
+        return widest;
     }
 
     /**

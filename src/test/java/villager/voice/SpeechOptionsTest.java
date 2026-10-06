@@ -10,7 +10,7 @@ public class SpeechOptionsTest {
     @Test
     public void toneRepresentsMoodAndNewFieldsAreStable() {
         SpeechOptions joking = new SpeechOptions(1.0, 0.0, 1.0, 1.0,
-                0.36, "happy", 0.0, 0.8, true);
+                "happy", 0.8, true);
         assertTrue(joking.getTone() > 0.0);
         assertTrue(joking.getSarcasm() > 0.0);
         assertTrue(joking.isQuestion());
@@ -27,8 +27,7 @@ public class SpeechOptionsTest {
 
     @Test
     public void oldConstructorsDefaultNewControls() {
-        SpeechOptions old = new SpeechOptions(1.0, 0.0, 1.0, 0.0, 0.36,
-                "neutral", 0.0);
+        SpeechOptions old = new SpeechOptions(1.0, 0.0, 1.0, 0.0);
         assertTrue(old.getSarcasm() == 0.0);
         assertFalse(old.isQuestion());
     }

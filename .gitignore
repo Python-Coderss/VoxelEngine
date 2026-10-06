@@ -5,10 +5,6 @@ dev/
 voice/corpus/
 target/
 *.log
-models/java/*.onnx
-models/java/espeak-ng.exe
-models/java/libespeak-ng.dll
-models/java/espeak-ng-data/
 __pycache__/
 *.pyc
 

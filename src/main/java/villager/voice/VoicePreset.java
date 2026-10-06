@@ -23,10 +23,10 @@ public final class VoicePreset {
 
     public void save(Path path) throws IOException {
         String json = String.format(Locale.ROOT,
-                "{\n  \"name\": \"%s\",\n  \"speed\": %.6f,\n  \"pitch\": %.6f,\n  \"volume\": %.6f,\n  \"tone\": %.6f,\n  \"naturalSourceMix\": %.6f,\n  \"emotion\": \"%s\",\n  \"singing\": %.6f,\n  \"sarcasm\": %.6f,\n  \"question\": %s\n}\n",
+                "{\n  \"name\": \"%s\",\n  \"speed\": %.6f,\n  \"pitch\": %.6f,\n  \"volume\": %.6f,\n  \"tone\": %.6f,\n  \"emotion\": \"%s\",\n  \"sarcasm\": %.6f,\n  \"question\": %s\n}\n",
                 escape(name), options.getSpeed(), options.getPitchSemitones(),
-                options.getVolume(), options.getTone(), options.getNaturalSourceMix(),
-                escape(options.getEmotion()), options.getSinging(), options.getSarcasm(),
+                options.getVolume(), options.getTone(),
+                escape(options.getEmotion()), options.getSarcasm(),
                 Boolean.toString(options.isQuestion()));
         Path parent = path.toAbsolutePath().getParent();
         if (parent != null) Files.createDirectories(parent);
@@ -40,15 +40,12 @@ public final class VoicePreset {
         double pitch = numberValue(json, "pitch", 0.0);
         double volume = numberValue(json, "volume", 1.0);
         double tone = numberValue(json, "tone", 0.0);
-        // Legacy key now carries the RVC retrieval weight; default matches
-        // SpeechOptions.DEFAULT (0.55 index rate).
-        double natural = numberValue(json, "naturalSourceMix", 0.55);
+        // Legacy "naturalSourceMix"/"singing" keys from old presets are ignored.
         String emotion = stringValue(json, "emotion", "neutral");
-        double singing = numberValue(json, "singing", 0.0);
         double sarcasm = numberValue(json, "sarcasm", 0.0);
         boolean question = booleanValue(json, "question", false);
-        return new VoicePreset(name, new SpeechOptions(speed, pitch, volume, tone, natural,
-                emotion, singing, sarcasm, question));
+        return new VoicePreset(name, new SpeechOptions(speed, pitch, volume, tone,
+                emotion, sarcasm, question));
     }
 
     private static String stringValue(String json, String key, String fallback) {

@@ -6,11 +6,15 @@ import org.lwjgl.openal.ALC;
 import org.lwjgl.openal.ALCCapabilities;
 import org.lwjgl.openal.ALC10;
 import com.voxel.entity.VillagerEntity;
+import villager.voice.ClipIndex;
+import villager.voice.ClipLibrary;
+import villager.voice.ClipScript;
+import villager.voice.ClipVoice;
 import villager.voice.SpeechOptions;
 import villager.voice.VillagerNewsIntro;
-import villager.voice.VillagerVoice;
+import villager.voice.VillagerVoiceRenderer;
 import villager.voice.VoiceMode;
-import villager.voice.VoiceClip;
+import villager.voice.WavAudio;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -25,23 +29,33 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Bridges the Java villager voice runtime to the engine's OpenAL context.
+ * Bridges the recorded villager voice to the engine's OpenAL context.
  *
- * Model loading and synthesis are CPU/native work and run on one worker thread.
- * OpenAL calls stay on the render thread: call {@link #update()} once per frame
- * after the OpenAL context has been initialized.
+ * Plays recorded villager clips (Villager News addon + TEAVSRP corpus). Clip
+ * decoding and playback shaping run on one worker thread; selection and the
+ * live caption publish synchronously so the caption always matches the clip.
+ * Nothing is ever synthesized. OpenAL calls stay on the render thread: call
+ * {@link #update()} once per frame after the OpenAL context has been
+ * initialized.
  */
 public final class VillagerAudioManager implements AutoCloseable {
-    private static final String DEFAULT_MODEL_DIRECTORY = "models/java";
     private static final String DEFAULT_LINE = "Hmm...";
+    private static final String DEFAULT_SPEAKER = "Villager";
+    private static final int RECENT_CLIPS = 6;
 
-    private final Path modelDirectory;
     private final VoiceCache cache;
+    // Clip selection state, guarded by clipLock (request threads).
+    private final Object clipLock = new Object();
+    private final java.util.Random clipRng = new java.util.Random();
+    private final java.util.List<String> recentClips = new java.util.ArrayList<String>();
+    private ClipVoice clipVoice;
+    private final ClipLibrary injectedClips;
+    private boolean clipsUnavailable;
     private final DialogueCatalog dialogueCatalog;
-    private final ExecutorService synthesisExecutor;
+    private final ExecutorService clipExecutor;
     private final ConcurrentLinkedQueue<PendingClip> pendingClips = new ConcurrentLinkedQueue<PendingClip>();
     private final ConcurrentHashMap<Integer, Integer> interactionCounts = new ConcurrentHashMap<Integer, Integer>();
-    private final AtomicBoolean synthesisPending = new AtomicBoolean(false);
+    private final AtomicBoolean clipPending = new AtomicBoolean(false);
     private volatile boolean closed;
     private volatile boolean openALReady;
 
@@ -51,27 +65,30 @@ public final class VillagerAudioManager implements AutoCloseable {
     private int source;
     private int currentBuffer;
 
-    // Only accessed by the synthesis worker after construction.
-    private VillagerVoice voice;
+    // Only accessed by the clip worker after construction.
+    private VillagerVoiceRenderer renderer;
 
     public VillagerAudioManager() {
-        this(Paths.get(System.getProperty("voxel.voice.models", DEFAULT_MODEL_DIRECTORY)),
-                Paths.get(System.getProperty("voxel.voice.cache", "dev/voice-cache")));
+        this(Paths.get(System.getProperty("voxel.voice.cache", "dev/voice-cache")), null);
     }
 
-    public VillagerAudioManager(Path modelDirectory) {
-        this(modelDirectory, Paths.get(System.getProperty("voxel.voice.cache", "dev/voice-cache")));
+    public VillagerAudioManager(Path cacheDirectory) {
+        this(cacheDirectory, null);
     }
 
-    public VillagerAudioManager(Path modelDirectory, Path cacheDirectory) {
-        if (modelDirectory == null) {
-            throw new IllegalArgumentException("modelDirectory must not be null");
+    /**
+     * Full constructor. {@code clipLibrary} is normally null (the standard
+     * locations are discovered on first use); tests inject a fixed library.
+     */
+    public VillagerAudioManager(Path cacheDirectory, ClipLibrary clipLibrary) {
+        this.injectedClips = clipLibrary;
+        if (clipLibrary != null) {
+            this.clipVoice = new ClipVoice(clipLibrary);
         }
-        this.modelDirectory = modelDirectory.toAbsolutePath().normalize();
         this.cache = new VoiceCache(cacheDirectory);
         this.dialogueCatalog = DialogueCatalog.loadDefault();
-        this.synthesisExecutor = Executors.newSingleThreadExecutor(runnable -> {
-            Thread thread = new Thread(runnable, "VillagerVoiceSynthesis");
+        this.clipExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "VillagerVoiceClips");
             thread.setDaemon(true);
             return thread;
         });
@@ -109,51 +126,118 @@ public final class VillagerAudioManager implements AutoCloseable {
         }
     }
 
-    /** Queue one line for synthesis; repeated requests while busy are coalesced. */
-    public void requestSpeech(String text) {
-        requestSpeech(text, SpeechOptions.DEFAULT);
+    /** Play one line; the text is a hint, the recording decides the words. */
+    public String requestSpeech(String text) {
+        return requestSpeech(text, SpeechOptions.DEFAULT, DEFAULT_SPEAKER);
     }
 
-    /** Queue one line with a complete voice profile. */
-    public void requestSpeech(String text, SpeechOptions options) {
-        if (closed || !openALReady || text == null || text.trim().isEmpty()
-                || options == null) {
-            return;
-        }
-        if (!synthesisPending.compareAndSet(false, true)) {
-            return;
-        }
-        synthesisExecutor.execute(() -> {
+    /** Play one line with a complete voice profile. */
+    public String requestSpeech(String text, SpeechOptions options) {
+        return requestSpeech(text, options, DEFAULT_SPEAKER);
+    }
+
+    /**
+     * Play one line for a named speaker. The request is resolved to a real
+     * recorded clip first; the live caption shows that clip's exact transcript
+     * (revealed on the recording's own subtitle-cue timing) and the audio is
+     * that same clip — text and sound can never drift apart. Nothing is ever
+     * synthesized or invented: no clip, no line.
+     *
+     * @return the captioned transcript, or null when the catalog has nothing
+     */
+    public String requestSpeech(String text, SpeechOptions options, String speaker) {
+        return speak(resolveClip(text), options, speaker);
+    }
+
+    /** Play the recorded clip that fits a situation (panicked, building, ...). */
+    public String requestTopic(ClipScript.Topic topic, SpeechOptions options,
+                               String speaker) {
+        return speak(resolveTopic(topic), options, speaker);
+    }
+
+    /** Lazily discover the clip catalog; null when no clips exist on disk. */
+    private synchronized ClipVoice clipVoiceOrNull() {
+        if (clipVoice == null && injectedClips == null && !closed && !clipsUnavailable) {
             try {
-                String line = text.trim();
-                AudioData cached = cache.load(line, options);
-                PendingClip clip;
+                clipVoice = new ClipVoice(ClipLibrary.openDefault());
+            } catch (Throwable error) {
+                clipsUnavailable = true;
+                System.err.println("VillagerAudioManager: no voice clips available: " + error);
+            }
+        }
+        return clipVoice;
+    }
+
+    /** Resolve a free-text hint to the best matching recorded clip. */
+    private ClipIndex.Clip resolveClip(String text) {
+        if (closed || text == null || text.trim().isEmpty()) return null;
+        synchronized (clipLock) {
+            return clipVoiceOrNull() == null ? null
+                    : clipVoice.library().index().bestMatch(text.trim(), clipRng, recentClips);
+        }
+    }
+
+    /** Resolve a situation to the best fitting recorded clip. */
+    private ClipIndex.Clip resolveTopic(ClipScript.Topic topic) {
+        if (closed || topic == null) return null;
+        synchronized (clipLock) {
+            return clipVoiceOrNull() == null ? null
+                    : ClipScript.pick(clipVoice.library().index(), topic, clipRng, recentClips);
+        }
+    }
+
+    /** Caption the clip transcript and queue that exact clip for playback. */
+    private String speak(ClipIndex.Clip chosen, SpeechOptions options, String speaker) {
+        if (closed || chosen == null || options == null || chosen.text.isEmpty()) {
+            return null;
+        }
+        float speed = (float) options.getEffectiveSpeed();
+        float reveal = Math.max(0.6f, chosen.duration / speed);
+        float[] cueTimes = null;
+        if (chosen.cueTimes.length > 0) {
+            cueTimes = new float[chosen.cueTimes.length];
+            for (int i = 0; i < cueTimes.length; i++) {
+                cueTimes[i] = chosen.cueTimes[i] / speed;
+            }
+        }
+        // Captions publish even when no audio device exists or the clip
+        // cannot be loaded, so the line is always readable on screen.
+        LiveCaptions.show(speaker, chosen.text, reveal, cueTimes, chosen.cueTexts);
+        synchronized (clipLock) {
+            recentClips.add(chosen.id);
+            while (recentClips.size() > RECENT_CLIPS) {
+                recentClips.remove(0);
+            }
+        }
+        if (!openALReady || !clipPending.compareAndSet(false, true)) {
+            return chosen.text;
+        }
+        final ClipIndex.Clip clip = chosen;
+        clipExecutor.execute(() -> {
+            try {
+                AudioData cached = cache.load(clip.id, options);
+                PendingClip pending;
                 if (cached != null) {
-                    clip = PendingClip.fromSamples(cached.samples, cached.sampleRate);
-                    System.out.println("VillagerAudioManager: cache hit for dialogue");
+                    pending = PendingClip.fromSamples(cached.samples, cached.sampleRate);
                 } else {
-                    if (voice == null) {
-                        voice = new VillagerVoice(modelDirectory);
-                        System.out.println("VillagerAudioManager: dialogue voice loaded (Coqui VITS + RVC, Java only)");
-                    }
-                    VoiceClip generated = voice.speak(line, options);
-                    cache.save(line, options, new AudioData(generated.getSamples(), 1,
-                            generated.getSampleRate()));
-                    clip = PendingClip.fromPcm(generated.getPcm16(), generated.getSampleRate());
-                    System.out.println("VillagerAudioManager: generated and cached dialogue");
+                    WavAudio rendered = clipVoice.render(clip, options);
+                    cache.save(clip.id, options, new AudioData(
+                            rendered.samples.clone(), 1, rendered.sampleRate));
+                    pending = PendingClip.fromSamples(rendered.samples, rendered.sampleRate);
                 }
                 // Keep only the newest pending line so an active player cannot
                 // accumulate a large queue during rapid interactions.
                 while (pendingClips.poll() != null) {
                     // PendingClip owns only heap/native PCM memory reclaimed by the JVM.
                 }
-                pendingClips.offer(clip);
+                pendingClips.offer(pending);
             } catch (Throwable error) {
-                System.err.println("VillagerAudioManager: speech synthesis failed: " + error);
+                System.err.println("VillagerAudioManager: clip playback failed: " + error);
             } finally {
-                synthesisPending.set(false);
+                clipPending.set(false);
             }
         });
+        return chosen.text;
     }
 
     /** Convenience method for the default villager greeting. */
@@ -173,32 +257,32 @@ public final class VillagerAudioManager implements AutoCloseable {
     /** Queue the news intro with an optional overall voice profile. */
     public void requestNewsIntro(SpeechOptions profile) {
         if (closed || !openALReady || profile == null
-                || !synthesisPending.compareAndSet(false, true)) {
+                || !clipPending.compareAndSet(false, true)) {
             return;
         }
-        synthesisExecutor.execute(() -> {
+        clipExecutor.execute(() -> {
             try {
                 VillagerNewsIntro intro = VillagerNewsIntro.loadDefault();
-                if (voice == null) {
-                    voice = new VillagerVoice(modelDirectory);
-                    System.out.println("VillagerAudioManager: dialogue voice loaded (Coqui VITS + RVC, Java only)");
+                if (renderer == null) {
+                    renderer = new VillagerVoiceRenderer();
+                    System.out.println("VillagerAudioManager: villager voice ready (recorded clips)");
                 }
-                if (!intro.supports(voice.getMode())) {
-                    throw new IllegalStateException("Villager News intro is available only in neural voice mode");
+                if (!intro.supports(renderer.getMode())) {
+                    throw new IllegalStateException("Villager News intro is available only in clip voice mode");
                 }
                 String cacheText = "[VNN_INTRO]" + intro.cacheKey(profile)
-                        + ";backend=" + voice.getMode().name();
+                        + ";backend=" + renderer.getMode().name();
                 AudioData cached = cache.load(cacheText, profile);
                 PendingClip clip;
                 if (cached != null) {
                     clip = PendingClip.fromSamples(cached.samples, cached.sampleRate);
                     System.out.println("VillagerAudioManager: Villager News intro cache hit");
                 } else {
-                    villager.voice.WavAudio rendered = intro.render(voice, profile);
+                    villager.voice.WavAudio rendered = intro.render(renderer, profile);
                     cache.save(cacheText, profile,
                             new AudioData(rendered.samples.clone(), 1, rendered.sampleRate));
                     clip = PendingClip.fromSamples(rendered.samples, rendered.sampleRate);
-                    System.out.println("VillagerAudioManager: generated and cached Villager News intro"
+                    System.out.println("VillagerAudioManager: rendered and cached Villager News intro"
                             + " (" + intro.getAttribution() + ")");
                 }
                 while (pendingClips.poll() != null) {
@@ -208,7 +292,7 @@ public final class VillagerAudioManager implements AutoCloseable {
             } catch (Throwable error) {
                 System.err.println("VillagerAudioManager: Villager News intro failed: " + error);
             } finally {
-                synthesisPending.set(false);
+                clipPending.set(false);
             }
         });
     }
@@ -227,10 +311,14 @@ public final class VillagerAudioManager implements AutoCloseable {
         // the editable catalog merged over the built-in lines.
         DialogueLine selected = DialogueDirector.choose(villager, period, count,
                 dialogueCatalog.getLines());
-        requestSpeech(selected.getText(), selected.getOptions());
+        // The catalog line is only a hint: what plays and captions is the
+        // chosen clip's exact transcript.
+        String spoken = requestSpeech(selected.getText(), selected.getOptions(),
+                villager.aiDisplayName());
+        String display = spoken != null ? spoken : selected.getText();
         // Expressive talk gesture + lip sync while the line plays
-        villager.startTalking(Math.max(1.2f, selected.getText().length() * 0.052f + 0.4f));
-        return selected.getText();
+        villager.startTalking(Math.max(1.2f, display.length() * 0.052f + 0.4f));
+        return display;
     }
 
     /**
@@ -255,11 +343,14 @@ public final class VillagerAudioManager implements AutoCloseable {
         if (clip == null) {
             return;
         }
+        // The clip is actually starting now: sync the live caption reveal to
+        // the recording's real length.
+        LiveCaptions.retimeCurrent(clip.durationSeconds());
         ByteBuffer pcm = clip.pcm.order(ByteOrder.LITTLE_ENDIAN);
         currentBuffer = AL10.alGenBuffers();
         AL10.alBufferData(currentBuffer, AL10.AL_FORMAT_MONO16, pcm, clip.sampleRate);
-        // Volume is already baked into the generated PCM; keep OpenAL at unity
-        // so cached and freshly generated clips behave identically.
+        // Volume is already baked into the rendered PCM; keep OpenAL at unity
+        // so cached and freshly shaped clips behave identically.
         AL10.alSourcef(source, AL10.AL_GAIN, 1.0f);
         AL10.alSourcei(source, AL10.AL_BUFFER, currentBuffer);
         AL10.alSourcePlay(source);
@@ -271,33 +362,33 @@ public final class VillagerAudioManager implements AutoCloseable {
             return;
         }
         closed = true;
-        synthesisExecutor.shutdown();
+        clipExecutor.shutdown();
         boolean workerStopped = false;
         try {
-            workerStopped = synthesisExecutor.awaitTermination(5, TimeUnit.SECONDS);
+            workerStopped = clipExecutor.awaitTermination(5, TimeUnit.SECONDS);
             if (!workerStopped) {
-                synthesisExecutor.shutdownNow();
-                // Do not release the native voice models while an inference task
-                // could still be running.
-                workerStopped = synthesisExecutor.awaitTermination(5, TimeUnit.SECONDS);
+                clipExecutor.shutdownNow();
+                // Do not release the clip library while a decode could still be
+                // running on the worker.
+                workerStopped = clipExecutor.awaitTermination(5, TimeUnit.SECONDS);
             }
         } catch (InterruptedException interrupted) {
-            synthesisExecutor.shutdownNow();
+            clipExecutor.shutdownNow();
             try {
-                workerStopped = synthesisExecutor.awaitTermination(5, TimeUnit.SECONDS);
+                workerStopped = clipExecutor.awaitTermination(5, TimeUnit.SECONDS);
             } catch (InterruptedException ignored) {
                 // Preserve the original interruption below.
             }
             Thread.currentThread().interrupt();
         }
-        if (voice != null && workerStopped) {
+        if (renderer != null && workerStopped) {
             try {
-                voice.close();
+                renderer.close();
             } catch (Exception error) {
                 System.err.println("VillagerAudioManager: voice shutdown failed: " + error);
             }
-        } else if (voice != null) {
-            System.err.println("VillagerAudioManager: synthesis worker did not stop; leaving native voice models allocated");
+        } else if (renderer != null) {
+            System.err.println("VillagerAudioManager: clip worker did not stop; leaving the clip library open");
         }
         pendingClips.clear();
         closeOpenAL();
@@ -310,6 +401,10 @@ public final class VillagerAudioManager implements AutoCloseable {
         private PendingClip(ByteBuffer pcm, int sampleRate) {
             this.pcm = pcm;
             this.sampleRate = sampleRate;
+        }
+
+        float durationSeconds() {
+            return sampleRate <= 0 ? 1f : (pcm.capacity() / 2f) / sampleRate;
         }
 
         private static PendingClip fromPcm(ByteBuffer pcm, int sampleRate) {

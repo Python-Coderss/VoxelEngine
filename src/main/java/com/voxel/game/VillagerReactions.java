@@ -248,11 +248,14 @@ public final class VillagerReactions {
         if (RNG.nextFloat() < rareLineChance && chattiness >= 2) {
             text = rareVariant(trigger, text);
         }
-        SpeechOptions options = new SpeechOptions(1.0, 0.0, 1.0, trigger.tone, 0.60,
-                trigger.emotion, 0.0, 0.0, text.indexOf('?') >= 0);
+        SpeechOptions options = new SpeechOptions(1.0, 0.0, 1.0, trigger.tone,
+                trigger.emotion, 0.0, text.indexOf('?') >= 0);
         speaker.startTalking(estimateDuration(text));
-        ctx.villagerAudioManager.requestSpeech(text, options);
-        return text;
+        // The handbook line is only a hint: what plays and captions is the
+        // chosen clip's exact transcript.
+        String spoken = ctx.villagerAudioManager.requestSpeech(
+                text, options, speaker.aiDisplayName());
+        return spoken != null ? spoken : text;
     }
 
     /** Tick down the pacing cooldowns; call once per frame. */

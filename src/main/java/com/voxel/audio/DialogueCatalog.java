@@ -184,16 +184,14 @@ public final class DialogueCatalog {
         boolean question = questionPresent
                 ? voice.optBoolean("question", false)
                 : SpeechOptions.looksLikeQuestion(text);
+        // Legacy "naturalSourceMix"/"singing" keys from the synthesis era are
+        // simply ignored if an old catalog still carries them.
         SpeechOptions options = new SpeechOptions(
                 voice.optDouble("speed", 1.0),
                 voice.optDouble("pitch", 0.0),
                 voice.optDouble("volume", 1.0),
                 voice.optDouble("tone", 0.0),
-                // Legacy key now carries the RVC retrieval weight; the default
-                // matches SpeechOptions.DEFAULT (0.55 index rate).
-                voice.optDouble("naturalSourceMix", 0.55),
                 voice.optString("emotion", "happy"),
-                voice.optDouble("singing", 0.0),
                 voice.optDouble("sarcasm", 0.0), question);
         return new DialogueLine(id, text, profession, period, variant,
                 questionPresent ? options : options.withAutomaticQuestionDetection());
@@ -206,9 +204,7 @@ public final class DialogueCatalog {
         voice.put("pitch", options.getPitchSemitones());
         voice.put("volume", options.getVolume());
         voice.put("tone", options.getTone());
-        voice.put("naturalSourceMix", options.getNaturalSourceMix());
         voice.put("emotion", options.getEmotion());
-        voice.put("singing", options.getSinging());
         voice.put("sarcasm", options.getSarcasm());
         voice.put("question", options.isQuestion());
 

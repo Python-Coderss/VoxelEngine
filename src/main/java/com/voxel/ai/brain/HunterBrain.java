@@ -39,10 +39,22 @@ import java.util.Random;
  *
  * <p>The decision function is pure and unit-tested; the instance is thin glue
  * over {@link EnemyEntity} hooks. Java 8 only.</p>
+ *
+ * <p>On top of that runs the shared dumb-human {@link ComedyMind}: hunters
+ * strut at their prey acting tough before getting scared, lose interest
+ * mid-chase ("squirrel!"), follow each other in conga lines instead of
+ * flanking, and cut and run with loud excuses. A rising {@link Chaos} level
+ * makes the whole pack dumber together.</p>
  */
 public final class HunterBrain implements MobBrain, StimulusBus.Listener {
 
-    enum Action { LURK, CHASE, SEARCH, RETREAT }
+    enum Action {
+        LURK, CHASE, SEARCH, RETREAT,
+        /** Swaggering approach at walking speed, taunting all the way. */
+        STRUT,
+        /** Mid-chase the brain wanders off to look at something else. */
+        DISTRACT
+    }
 
     static final float SIGHT_RANGE = 20f;
     static final float MEMORY_SECONDS = 8f;
@@ -62,8 +74,17 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
 
     private final EnemyEntity owner;
     private final Random rng;
+    private final ComedyMind mind;
 
     private Action action = Action.LURK;
+
+    // ── dumb-human layer ──
+    private float comedyHold;
+    private float strutTime;
+    private float strutLimit;
+    private final Vector3f congaLeader = new Vector3f();
+    private boolean hasCongaLeader;
+    private boolean congaFollowing;
 
     /** 0..1 hunt interest; refreshed to 1 on sight, shared calls give 0.65. */
     private float memory;
@@ -94,6 +115,7 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
     private HunterBrain(EnemyEntity owner) {
         this.owner = owner;
         this.rng = new Random(owner.id * 2654435761L + 3L);
+        this.mind = ComedyMind.forEntity(owner.id);
         StimulusBus.GLOBAL.subscribe(this);
     }
 
@@ -112,6 +134,13 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
             hasLastKnown = true;
             sinceSeen = 0f;
             memory = Math.max(memory, 0.8f);
+            // Confident-then-cowardly: timid hunters treat any hit as the cue
+            // for an extremely brave retreat.
+            if (mind.boldness < 0.35f && action != Action.RETREAT) {
+                mind.spook();
+                comedyHold = 2.5f + rng.nextFloat() * 2f;
+                transition(Action.RETREAT);
+            }
             return;
         }
         if (stimulus.type == Stimulus.Type.HUNT_CALL
@@ -130,11 +159,22 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
     public void perceive(Senses senses) {
         Senses.Visible best = null;
         float bestDist = Float.MAX_VALUE;
+        hasCongaLeader = false;
+        float leaderDist = Float.MAX_VALUE;
         for (int i = 0; i < senses.visibleEntities.size(); i++) {
             Senses.Visible v = senses.visibleEntities.get(i);
+            if (v.entity instanceof EnemyEntity) {
+                // Nearest packmate: the one a herd follower trails after.
+                float d = (float) Math.sqrt(v.distanceSquared);
+                if (d < leaderDist && d <= 10f) {
+                    leaderDist = d;
+                    congaLeader.set(v.entity.getPosition());
+                    hasCongaLeader = true;
+                }
+                continue;
+            }
             // Prey = anything that is not a hostile mob: villagers, the
             // player, passive animals. Hostiles do not hunt each other.
-            if (v.entity instanceof EnemyEntity) continue;
             if (v.distanceSquared >= bestDist) continue;
             if (v.distanceSquared > SIGHT_RANGE * SIGHT_RANGE) continue;
             if (!v.lineOfSight()) continue;
@@ -146,6 +186,9 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
             hasLastKnown = true;
             sinceSeen = 0f;
             memory = 1f;
+            if (action != Action.CHASE) {
+                mind.resetAttention();
+            }
             // Fresh spotting: rally the pack (rate-limited so a crowd of
             // hunters does not spam the bus every tick).
             if ((action == Action.LURK || action == Action.SEARCH)
@@ -165,6 +208,8 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
         sinceCall += dt;
         memory = Math.max(0f, memory - dt / MEMORY_SECONDS);
         actionElapsed += dt;
+        mind.tick(dt);
+        comedyHold = Math.max(0f, comedyHold - dt);
         if (hasPackTarget) {
             packTargetAge += dt;
             if (packTargetAge > MEMORY_SECONDS) hasPackTarget = false;
@@ -176,6 +221,7 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
             sinceDecision = 0f;
             Action next = chooseAction(healthFraction, sinceSeen, memory,
                     actionElapsed, hasLastKnown, hasPackTarget);
+            next = applyComedy(next);
             if (next != action) transition(next);
         }
 
@@ -189,10 +235,80 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
             case SEARCH:
                 search(dt);
                 return true;
+            case STRUT:
+                strut(dt);
+                return true;
+            case DISTRACT:
+                distract(dt);
+                return true;
             case LURK:
             default:
                 // Nothing to do: defer to the legacy FSM for idle wandering.
                 return false;
+        }
+    }
+
+    /**
+     * The dumb-human overlay: bravado, attention span, and pack stupidity.
+     * Low-health self-preservation always wins over comedy.
+     */
+    private Action applyComedy(Action planned) {
+        if (planned == Action.RETREAT && action != Action.RETREAT) {
+            return planned;
+        }
+        if (action == Action.RETREAT && comedyHold > 0f) {
+            return action; // still running away from something embarrassing
+        }
+        if (action == Action.DISTRACT && comedyHold > 0f) {
+            return action; // looking at the thing
+        }
+        if (action == Action.STRUT
+                && (planned == Action.CHASE || planned == Action.SEARCH)) {
+            return action; // the swagger resolves itself in strut()
+        }
+        if (planned == Action.CHASE) {
+            // Attention span of a golden retriever: the chase can simply end
+            // because something else got interesting.
+            if (mind.attentionExpired()
+                    && rng.nextFloat() < 0.45f + mind.distractibility * 0.4f) {
+                return Action.DISTRACT;
+            }
+            if (action != Action.CHASE && action != Action.STRUT
+                    && mind.shouldBluff(rng, Chaos.level())) {
+                return Action.STRUT;
+            }
+        }
+        return planned;
+    }
+
+    /** Swaggering approach at walking speed, taunting as it goes. */
+    private void strut(float dt) {
+        strutTime += dt;
+        Vector3f target = currentTarget();
+        float dist = owner.getPosition().distance(target);
+        if (dist < 5f || strutTime >= strutLimit) {
+            // Close enough to (pretend to) mean it: back to the real chase.
+            transition(Action.CHASE);
+            return;
+        }
+        owner.aiMoveToward(target, dt, ATTACK_WALK_SPEED);
+        if (strutTime > 0.8f && rng.nextFloat() < 0.012f) {
+            say(villager.voice.ClipScript.Topic.MOB_TAUNT);
+        }
+    }
+
+    /** Mid-chase distraction: stop, look around like the prey cheated. */
+    private void distract(float dt) {
+        owner.rotation.y += dt * 35f;
+        if (rng.nextFloat() < 0.004f) {
+            Vector3f step = new Vector3f(
+                    owner.getPosX() + (rng.nextFloat() - 0.5f) * 3f,
+                    owner.getPosY(),
+                    owner.getPosZ() + (rng.nextFloat() - 0.5f) * 3f);
+            owner.aiMoveToward(step, dt, SEARCH_SPEED * 0.5f);
+        }
+        if (comedyHold <= 0f && rng.nextFloat() < 0.02f) {
+            mind.resetAttention();
         }
     }
 
@@ -214,10 +330,42 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
         repathAccum = REPATH_INTERVAL; // repath immediately on state change
         path.clear();
         pathIndex = 0;
+        switch (next) {
+            case CHASE:
+                mind.resetAttention();
+                // Pack stupidity: some hunters trail the nearest packmate
+                // instead of the prey, forming a conga line.
+                congaFollowing = hasCongaLeader && mind.herdFollow(rng, Chaos.level());
+                break;
+            case STRUT:
+                strutTime = 0f;
+                strutLimit = mind.bluffSeconds(rng) + 1f;
+                say(villager.voice.ClipScript.Topic.MOB_TAUNT);
+                break;
+            case DISTRACT:
+                comedyHold = 1.5f + rng.nextFloat() * 2f;
+                say(villager.voice.ClipScript.Topic.HUNT_CONFUSED);
+                Chaos.raise(0.015f);
+                break;
+            case RETREAT:
+                if (comedyHold <= 0f) {
+                    comedyHold = 2f + rng.nextFloat() * 2f;
+                }
+                say(villager.voice.ClipScript.Topic.MOB_COWARD);
+                Chaos.raise(0.03f);
+                break;
+            default:
+                break;
+        }
     }
 
     private void chase(float dt) {
         Vector3f target = currentTarget();
+        // Conga line: trail the packmate ahead instead of the prey.
+        if (congaFollowing && hasCongaLeader) {
+            owner.aiMoveToward(congaLeader, dt, CHASE_SPEED * 0.9f);
+            return;
+        }
         float dist = owner.getPosition().distance(target);
         // Slow to a walk right before melee range so the wind-up telegraph
         // connects instead of overshooting a sprinting target.
@@ -329,6 +477,22 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
         } else {
             owner.aiMoveToward(target, dt, speed);
         }
+    }
+
+    /**
+     * Speak the recorded clip line that fits the moment, in this mob's name.
+     * Only real clip transcripts are ever played or captioned.
+     */
+    private void say(villager.voice.ClipScript.Topic topic) {
+        com.voxel.ai.speech.VillagerSpeech.sayTopic(owner.id, mobName(), topic,
+                new villager.voice.SpeechOptions(
+                        1.0, 0.0, 1.0, 0.0,
+                        villager.voice.ClipScript.emotionFor(topic), 0.0, false));
+    }
+
+    /** "ZombieEntity" -> "Zombie" for captions. */
+    private String mobName() {
+        return owner.getClass().getSimpleName().replace("Entity", "");
     }
 
     /** Forget the current prey (target died, despawned, or debug reset). */

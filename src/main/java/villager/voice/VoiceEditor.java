@@ -24,7 +24,9 @@ import java.nio.file.Paths;
 
 /**
  * Standalone editor for previewing and saving villager voice profiles.
- * It deliberately runs outside the game window so model iteration cannot launch VoxelEngine.
+ * It deliberately runs outside the game window so playback iteration cannot
+ * launch VoxelEngine. A preview resolves the line to its best-matching
+ * recorded clip and plays it back with the profile applied.
  */
 public final class VoiceEditor {
     private final JFrame frame = new JFrame("Villager Voice Editor");
@@ -35,26 +37,22 @@ public final class VoiceEditor {
     private final JSlider pitch = slider(-120, 120, 0);
     private final JSlider volume = slider(0, 200, 100);
     private final JSlider tone = slider(-100, 100, 0);
-    private final JSlider natural = slider(0, 75, 55);
-    private final JSlider singing = slider(0, 100, 0);
     private final JSlider sarcasm = slider(0, 100, 0);
     private final JCheckBox question = new JCheckBox("Question / rising ending");
     private final JComboBox<String> emotion = new JComboBox<>(
             new String[]{"neutral", "happy", "sad", "angry", "scared"});
-    private final Path modelDirectory;
     private final Path previewDirectory = Paths.get("dev", "voice-editor");
 
-    public VoiceEditor(Path modelDirectory) {
-        this.modelDirectory = modelDirectory;
+    public VoiceEditor() {
         build();
     }
 
     public static void main(String[] args) {
-        launch(args.length > 0 ? Paths.get(args[0]) : Paths.get("dev", "voice-models"));
+        launch();
     }
 
-    public static void launch(Path models) {
-        javax.swing.SwingUtilities.invokeLater(() -> new VoiceEditor(models).show());
+    public static void launch() {
+        javax.swing.SwingUtilities.invokeLater(() -> new VoiceEditor().show());
     }
 
     private void build() {
@@ -71,22 +69,16 @@ public final class VoiceEditor {
         textPanel.add(text, BorderLayout.CENTER);
         contentPanel.add(textPanel, BorderLayout.NORTH);
 
-        JPanel controls = new JPanel(new GridLayout(9, 1, 4, 4));
+        JPanel controls = new JPanel(new GridLayout(6, 1, 4, 4));
         controls.setBorder(BorderFactory.createTitledBorder("Voice parameters"));
         controls.add(row("Speed", speed, "%.2fx", 100.0,
-                "Speech rate. 0.50x is slow and deliberate; 2.00x is fast and energetic."));
+                "Playback rate. 0.50x is slow and deliberate; 2.00x is fast and energetic."));
         controls.add(row("Pitch", pitch, "%+.1f st", 10.0,
-                "Static pitch offset in semitones. 0 is the model default."));
+                "Playback pitch offset in semitones. 0 leaves the recording's own pitch alone."));
         controls.add(row("Volume", volume, "%.0f%%", 1.0,
                 "Output loudness. 100% is unchanged; it is normalized to avoid clipping."));
         controls.add(row("Mood", tone, "%+.1f", 100.0,
                 "Delivery mood: -1 serious/weighty, 0 neutral, +1 joking/playful."));
-        controls.add(row("Timbre strength", natural, "%.0f%%", 1.0,
-                "RVC retrieval weight (index rate): how strongly each frame blends toward "
-                + "real villager training segments. 0% pure base voice; higher sounds more "
-                + "like the villager, above ~75% artifacts return."));
-        controls.add(row("Singing", singing, "%.0f%%", 1.0,
-                "Musical vibrato and sustained pitch. 0% is spoken; 100% is strongly sung."));
         controls.add(row("Sarcasm", sarcasm, "%.0f%%", 1.0,
                 "Dry, deadpan delivery. Higher values flatten prosody and lower the voice."));
         JPanel emotionRow = new JPanel(new BorderLayout(8, 0));
@@ -96,9 +88,12 @@ public final class VoiceEditor {
         emotionRow.add(emotion, BorderLayout.CENTER);
         emotionRow.setToolTipText("Broad emotional color applied to timing, pitch, and loudness.");
         controls.add(emotionRow);
-        question.setToolTipText("Adds a smooth pitch rise at the end. Text ending in ? also enables this automatically when metadata omits the flag.");
-        controls.add(question);
         contentPanel.add(controls, BorderLayout.CENTER);
+
+        JPanel questionRow = new JPanel(new BorderLayout(8, 0));
+        question.setToolTipText("Adds a smooth pitch rise at the end. Text ending in ? also enables this automatically when metadata omits the flag.");
+        questionRow.add(question, BorderLayout.WEST);
+        contentPanel.add(questionRow, BorderLayout.SOUTH);
 
         JPanel bottom = new JPanel(new BorderLayout(6, 6));
         JPanel profile = new JPanel(new GridBagLayout());
@@ -112,7 +107,7 @@ public final class VoiceEditor {
         bottom.add(profile, BorderLayout.NORTH);
 
         JPanel buttons = new JPanel(new GridLayout(1, 4, 6, 0));
-        JButton preview = new JButton("Generate WAV");
+        JButton preview = new JButton("Preview WAV");
         preview.addActionListener(e -> generatePreview());
         JButton save = new JButton("Save preset");
         save.addActionListener(e -> savePreset());
@@ -164,9 +159,7 @@ public final class VoiceEditor {
                 pitch.getValue() / 10.0,
                 volume.getValue() / 100.0,
                 tone.getValue() / 100.0,
-                natural.getValue() / 100.0,
                 (String) emotion.getSelectedItem(),
-                singing.getValue() / 100.0,
                 sarcasm.getValue() / 100.0,
                 question.isSelected());
     }
@@ -177,19 +170,19 @@ public final class VoiceEditor {
             status.setText("Enter dialogue first");
             return;
         }
-        status.setText("Generating preview; the editor may take a moment...");
+        status.setText("Resolving the recorded clip...");
         setButtonsEnabled(false);
         final SpeechOptions previewOptions = options();
         new SwingWorker<Path, Void>() {
             @Override
             protected Path doInBackground() throws Exception {
-                VillagerSynthesizer synthesizer = new VillagerSynthesizer(modelDirectory);
+                VillagerVoiceRenderer renderer = new VillagerVoiceRenderer();
                 try {
                     Path output = previewDirectory.resolve("preview.wav");
-                    synthesizer.render(line, previewOptions).write(output);
+                    renderer.render(line, previewOptions).write(output);
                     return output;
                 } finally {
-                    synthesizer.close();
+                    renderer.close();
                 }
             }
 
@@ -239,8 +232,6 @@ public final class VoiceEditor {
         pitch.setValue((int) Math.round(options.getPitchSemitones() * 10.0));
         volume.setValue((int) Math.round(options.getVolume() * 100.0));
         tone.setValue((int) Math.round(options.getTone() * 100.0));
-        natural.setValue((int) Math.round(options.getEffectiveIndexRate() * 100.0));
-        singing.setValue((int) Math.round(options.getSinging() * 100.0));
         sarcasm.setValue((int) Math.round(options.getSarcasm() * 100.0));
         question.setSelected(options.isQuestion());
         emotion.setSelectedItem(options.getEmotion());

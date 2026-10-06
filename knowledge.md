@@ -209,6 +209,7 @@ drop their base log item.
 | 394 | blaze_burner (unlit) | 395 | blaze_burner_lit |
 | 396 | steam_engine (cold) | 397 | steam_engine_active |
 | 398-403 | copper_tank (levels 0-5) | 404-409 | tank level variants |
+| 916-917 | formidi_bomb, white_pumpkin | 920-926 | ancient-builder modern blocks (concrete 920, concrete_dark 921, steel_beam 922, ceiling_light 923, tile_block 924, office_glass 925, marble 926) |
 
 ## Kinetic Network (KineticManager)
 
@@ -282,11 +283,12 @@ drop their base log item.
 ## Villager System
 
 - **VillagerEntity.java** – peaceful NPC with own model (`villager.json`: big nose, robe, hat)
-- AI states: IDLE → WANDERING → BUILDING → FORTIFYING → FLEEING → WATCHING_TV
+- AI states: IDLE → WANDERING → BUILDING → FORTIFYING → FLEEING → WATCHING_TV (legacy FSM; `VillagerBrain` claims ticks by default and adds the dumb-human comedy layer: distractions, forgetfulness, bravado-then-panic, arguments, slapstick building — shared with mobs via `ComedyMind`, escalated by the village-wide `Chaos` meter)
 - Block place/break via `BuildTask` queue, builds houses (planks + cobblestone + glass + roof)
 - Village walls fortification, walks within village radius, crosses arms when idle
 - **VillagerVillageManager.java** – tracks villages, assigns building projects, manages TV gatherings
-- **Java villager voice (Java 8, no Python):** right-clicking a villager picks a profession/time-aware line for the HUD and synthesizes natural English speech in the Element Animation villager timbre: Coqui VCTK VITS base (`coqui-vctk-vits.onnx`) -> ContentVec (`vec-768-layer-12.onnx`) -> RVC v2 timbre model (`rvc-villager.onnx`, exported from the Dan Lloyd / Element Animation RVC checkpoint). All inference runs in Java via ONNX Runtime with a pure-Java cmudict frontend; no Python, eSpeak, subprocess, or network at runtime. The transcript-renamed TEAVSRP corpus in `voice/corpus/` is replayable with the CLI `--mode reference`.
+- **AncientBuilderModern.java** – the ancient builders' final (modern) era before they were wiped out: glass tower, metro hall, research lab, and builder plaza stamped near spawn like MCSM sites (lazy, idempotent), each with deterministic layout variants and its own 920-926 block set (concrete/steel/tile/glass/marble/light panels)
+- **Java villager voice (recorded clips, no synthesis):** speech synthesis was removed (Oct 2026). Right-clicking a villager picks a profession/time-aware line and plays the best-matching recorded clip: Villager News addon voice (`.ogg` via stb_vorbis) + transcript-renamed TEAVSRP corpus in `voice/corpus/`, indexed by `src/main/resources/voice/clips_index.json` (rebuild: `tools/build_voice_clip_index.py`). Unmatched lines fall back to vocalizations. `voxel.voice.mode`: `clip` (default) or `reference`. Live captions (`LiveCaptions`, HUD bottom-center) show every line word-by-word even without audio.
 - **VillagerTVSystem.java** – 4 channels:
   - 0: Static/Off-Air, 1: Villager Shopping Network, 2: Weather & Time, 3: VNN Villager News
 - TV block (ID 274): right-click = zoom cutscene, LEFT/RIGHT = cycle channels, ESC = exit

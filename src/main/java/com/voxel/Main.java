@@ -495,7 +495,7 @@ public class Main {
         bootMark.accept("first loading frame presented");
         bootMark.accept("GL capabilities ready");
 
-        // Initialize OpenAL on the render thread. Voice synthesis itself is queued
+        // Initialize OpenAL on the render thread. Voice clip playback is queued
         // asynchronously and never runs inside the game loop.
         villagerAudioManager = new com.voxel.audio.VillagerAudioManager();
         villagerAudioManager.initialize();
@@ -598,7 +598,9 @@ public class Main {
         ctx.updateCursorMode = this::updateCursorMode;
         ctx.dismountMinecart = () -> dismountMinecart(ctx.ridingMinecart);
         ctx.statusConsumer = this::setStatus;
-        ctx.spawnMobCommand = this::spawnMobAtLook;
+        // /spawn <mob> arrives on the GL thread; only record the request here so
+        // the logic thread does all entity/world mutation.
+        ctx.spawnMobCommand = type -> ctx.mobSpawnQueue.add(type);
         ctx.uiDirtyMarker = () -> { hud.inventoryUiDirty = true; };
         ctx.villagerAudioManager = villagerAudioManager;
         com.voxel.ai.speech.VillagerSpeech.bind(villagerAudioManager);
@@ -1254,8 +1256,31 @@ public class Main {
      * replaces the old startup auto-spawn: mobs now appear only when the player
      * asks for them via {@code /spawn <mob>}.
      */
+    /**
+     * Entry point for /spawn &lt;mob&gt; and the C debug creeper. Runs on the logic
+     * thread: the GL thread only enqueues the request. Any failure while building
+     * or adding the mob is reported on the status line instead of vanishing into
+     * the caller's exception handling.
+     */
     private void spawnMobAtLook(String type) {
-        Vector3f pos = spawnPosAtLook();
+        int before = entityManager.getEntityCount();
+        Vector3f pos;
+        try {
+            pos = spawnPosAtLook();
+            addMobAtLook(type, pos);
+        } catch (RuntimeException e) {
+            System.out.println("[spawn] " + type + " failed: " + e);
+            e.printStackTrace();
+            setStatus("Could not spawn " + type + ": " + e);
+            return;
+        }
+        if (entityManager.getEntityCount() > before) {
+            setStatus("Spawned " + type + " at " + (int) pos.x + ", " + (int) pos.y + ", " + (int) pos.z);
+        }
+    }
+
+    /** Builds the named mob at {@code pos} and adds it to the entity manager. */
+    private void addMobAtLook(String type, Vector3f pos) {
 
         com.voxel.entity.Entity mob;
         switch (type) {
@@ -1450,7 +1475,6 @@ public class Main {
 
         mob.dimension = activeDimension;
         entityManager.addEntity(mob);
-        setStatus("Spawned " + type);
     }
 
     /** Creates one of the source-model-only mobs with the shared hostile behavior. */
@@ -2055,6 +2079,17 @@ public class Main {
      */
     private void updateMinecarts(float dt) {
         if (ctx == null || entityManager == null || world == null) return;
+
+        // Mobs requested by /spawn <mob> (GL thread → logic thread).
+        if (!ctx.mobSpawnQueue.isEmpty()) {
+            java.util.List<String> mobs = ctx.mobSpawnQueue;
+            synchronized (mobs) {
+                for (String type : mobs) {
+                    spawnMobAtLook(type);
+                }
+                mobs.clear();
+            }
+        }
 
         // Spawn carts requested by block interaction (GL thread → logic thread).
         // The queue is a synchronized list: hold its lock while draining.
@@ -2927,6 +2962,10 @@ public class Main {
             //    episode beats (dialogue choices, boss summon) in the Overworld ──
             if (activeDimension == com.voxel.world.DimensionType.OVERWORLD && !ctx.initializing) {
                 com.voxel.world.McsmStructures.ensure(world, chunkManager,
+                        player.getPosition().x, player.getPosition().z);
+                // Ancient-builder modern-era sites (the final age before the
+                // wipeout): stamped lazily near the player like MCSM sites.
+                com.voxel.world.AncientBuilderModern.ensure(world, chunkManager,
                         player.getPosition().x, player.getPosition().z);
                 com.voxel.game.McsmStory.tick(mcsmHost, window,
                         player.getPosition().x, player.getPosition().z, dt);
@@ -3945,6 +3984,7 @@ public class Main {
             hud.updateTutorialPopup(glfwGetTime());
             hud.updateWindowTitle();
             if (ctx != null) hud.updateCinematic(glfwGetTime());
+            hud.updateSpeechCaptions(glfwGetTime());
             if (ctx != null) hud.updateBillboards(glfwGetTime());
 
             hud.uiManager.begin();
@@ -6855,6 +6895,41 @@ public class Main {
         blockDataManager.registerBlock(917, "white_pumpkin", textureManager, mcModels);
         blockDataManager.setHardness(917, 1.0f);
         com.voxel.game.FormidiBomb.configure(916);
+
+        // ── Ancient-builder modern era blocks (fixed IDs 920-926) ──
+        // The final-age building set: precast concrete, dark road concrete,
+        // steel girders, emissive light panels, white tile, office glass, and
+        // polished marble (see AncientBuilderModern for the sites using them).
+        blockRegistry.register("concrete", 920);
+        shaderBlockRegistry.register(920, 920);
+        blockDataManager.registerBlock(920, "concrete", textureManager, mcModels);
+        blockDataManager.setHardness(920, 1.8f);
+        blockRegistry.register("concrete_dark", 921);
+        shaderBlockRegistry.register(921, 921);
+        blockDataManager.registerBlock(921, "concrete_dark", textureManager, mcModels);
+        blockDataManager.setHardness(921, 1.8f);
+        blockRegistry.register("steel_beam", 922);
+        shaderBlockRegistry.register(922, 922);
+        blockDataManager.registerBlock(922, "steel_beam", textureManager, mcModels);
+        blockDataManager.setHardness(922, 3.0f);
+        blockRegistry.register("ceiling_light", 923);
+        shaderBlockRegistry.register(923, 923);
+        blockDataManager.registerBlock(923, "ceiling_light", textureManager, mcModels,
+                0, 0, 255, 255);
+        blockDataManager.setHardness(923, 0.6f);
+        blockRegistry.register("tile_block", 924);
+        shaderBlockRegistry.register(924, 924);
+        blockDataManager.registerBlock(924, "tile_block", textureManager, mcModels);
+        blockDataManager.setHardness(924, 1.5f);
+        blockRegistry.register("office_glass", 925);
+        shaderBlockRegistry.register(925, 925);
+        blockDataManager.registerBlock(925, "office_glass", textureManager, mcModels,
+                150, 50, 255);
+        blockDataManager.setHardness(925, 0.5f);
+        blockRegistry.register("marble", 926);
+        shaderBlockRegistry.register(926, 926);
+        blockDataManager.registerBlock(926, "marble", textureManager, mcModels);
+        blockDataManager.setHardness(926, 2.0f);
 
         int tntBase = blockRegistry.getId("tnt");
         com.voxel.game.TntBlock.configure(tntBase);
