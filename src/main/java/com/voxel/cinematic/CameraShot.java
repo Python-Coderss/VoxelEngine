@@ -194,6 +194,70 @@ public class CameraShot {
         return s;
     }
 
+    /**
+     * Two-shot: one composition framing BOTH subjects, the camera drifting
+     * sideways so neither speaker dominates the frame. The shot looks at the
+     * midpoint between the two, which keeps a dialogue exchange (villager or
+     * ancient builder) legible without cutting between faces.
+     */
+    public static CameraShot twoShot(Vector3f a, Vector3f b, float duration) {
+        CameraShot s = new CameraShot();
+        s.duration = duration;
+        Vector3f mid = new Vector3f(a).add(b).mul(0.5f);
+        Vector3f axis = new Vector3f(b).sub(a);
+        if (axis.lengthSquared() < 1e-4f) axis.set(1, 0, 0);
+        float span = axis.length();
+        axis.normalize();
+        // Camera sits off to one side, perpendicular to the line joining them.
+        Vector3f side = new Vector3f(-axis.z, 0, axis.x);
+        if (side.lengthSquared() < 1e-4f) side.set(0, 0, 1);
+        side.normalize();
+        float radius = Math.max(3.0f, span * 1.6f);
+        Vector3f eye = new Vector3f(mid).fma(radius, side).add(0, 1.4f, 0);
+        s.fromPos.set(eye);
+        s.toPos.set(new Vector3f(eye).fma(-radius * 0.25f, side));
+        s.lookFrom.set(mid);
+        s.lookTo.set(mid);
+        s.fromFov = s.toFov = 55.0f;
+        return s;
+    }
+
+    /**
+     * Crane: rise (or descend) vertically over the subject while keeping it
+     * framed. The classic reveal/reaction move — sweep up to show the scale of
+     * a structure or the drop beneath a ledge.
+     */
+    public static CameraShot crane(Vector3f subject, float azimuthDeg, float radius,
+                                   float fromHeight, float toHeight, float duration) {
+        CameraShot s = new CameraShot();
+        s.duration = duration;
+        s.fromPos.set(orbitPos(subject, azimuthDeg, radius, fromHeight));
+        s.toPos.set(orbitPos(subject, azimuthDeg, radius, toHeight));
+        s.lookFrom.set(subject);
+        s.lookTo.set(subject);
+        s.fromFov = s.toFov = 62.0f;
+        return s;
+    }
+
+    /**
+     * Push-in: a fast snap toward the subject that settles on a tighter lens —
+     * the MCSM "this matters now" emphasis. EASE_OUT so the motion lands hard.
+     */
+    public static CameraShot pushIn(Vector3f subject, float azimuthDeg,
+                                    float fromRadius, float toRadius,
+                                    float height, float duration) {
+        CameraShot s = new CameraShot();
+        s.duration = duration;
+        s.fromPos.set(orbitPos(subject, azimuthDeg, fromRadius, height));
+        s.toPos.set(orbitPos(subject, azimuthDeg, toRadius, height * 0.95f));
+        s.lookFrom.set(subject);
+        s.lookTo.set(subject);
+        s.fromFov = 70.0f;
+        s.toFov = 46.0f;
+        s.ease = Ease.EASE_OUT;
+        return s;
+    }
+
     /** Make this shot track a moving subject (the look-at follows it every tick). */
     public CameraShot tracking(Supplier<Vector3f> subject) {
         this.trackSubject = subject;

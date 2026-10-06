@@ -83,4 +83,37 @@ public final class CinematicScript {
     public static CinematicScript of(String speaker, String text) {
         return new CinematicScript().at(0f, speaker, text);
     }
+
+    /**
+     * A two-speaker exchange: {@code speakerA} opens at {@code start}, and
+     * {@code speakerB} answers {@code gap} seconds later (one beat after the
+     * first line has had time to be read). The shot/reverse-shot script for a
+     * boss taunt, a builder greeting, or a narrator framing a reveal.
+     */
+    public static CinematicScript exchange(float start, float gap,
+                                           String speakerA, String lineA,
+                                           String speakerB, String lineB) {
+        if (gap < 0.1f) gap = 0.1f; // never stack two lines on the same tick
+        return new CinematicScript()
+                .at(start, speakerA, lineA)
+                .at(start + gap, speakerB, lineB);
+    }
+
+    /**
+     * An alternating conversation: line {@code i} is spoken {@code gap} seconds
+     * after the previous one, alternating speakers (even = A, odd = B). Lines
+     * are handed to {@code LiveCaptions} in time order so a multi-line scene
+     * reads like a scripted exchange rather than a wall of text.
+     */
+    public static CinematicScript conversation(float start, float gap,
+                                               String speakerA, String speakerB,
+                                               String... lines) {
+        if (gap < 0.1f) gap = 0.1f;
+        CinematicScript s = new CinematicScript();
+        if (lines == null) return s;
+        for (int i = 0; i < lines.length; i++) {
+            s.at(start + i * gap, (i % 2 == 0) ? speakerA : speakerB, lines[i]);
+        }
+        return s;
+    }
 }

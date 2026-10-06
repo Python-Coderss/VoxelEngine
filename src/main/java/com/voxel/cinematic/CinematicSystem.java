@@ -647,11 +647,16 @@ public class CinematicSystem {
         java.util.function.Supplier<Vector3f> track = () -> new Vector3f(focus);
         List<CameraShot> seq = new ArrayList<>();
         seq.add(CameraShot.wide(subject, 210, 330, 16f, 4.5f, 3.4f).tracking(track));
+        // Crane up over the site so its scale reads before we cut in.
+        seq.add(CameraShot.crane(subject, 280f, 12f, 3f, 12f, 3.0f).tracking(track));
         seq.add(CameraShot.closeUp(
                 new Vector3f(subject.x, subject.y + 2.5f, subject.z), 300, 5.0f, 1.0f, 2.6f)
                 .tracking(track));
+        // Two builder lines: the call-out and the why behind the work.
         CinematicScript lines = new CinematicScript();
-        if (line != null && !line.isEmpty()) lines.at(0.7f, speaker, line);
+        String who = speaker == null || speaker.isEmpty() ? "Ancient Builder" : speaker;
+        if (line != null && !line.isEmpty()) lines.at(0.7f, who, line);
+        lines.at(3.2f, who, "We built it to outlast us — remember that.");
         beginScene(seq, true, 0f, lines);
         letterbox = Math.max(letterbox, 0.7f);
         showTitle(siteName == null ? "" : siteName.toUpperCase(Locale.ROOT),
@@ -670,8 +675,11 @@ public class CinematicSystem {
         List<CameraShot> seq = new ArrayList<>();
         seq.add(CameraShot.lowAngle(subject, 30, 4.5f, 1.8f));
         seq.add(CameraShot.wide(subject, 60, 110, 8.0f, 3.5f, 2.4f).tracking(() -> new Vector3f(focus)));
+        // Cut to the hero for their answer — the MCSM shot/reverse-shot beat.
+        seq.add(CameraShot.pushIn(heroPoint(), 200, 3.0f, 1.6f, 1.5f, 1.4f).tracking(this::heroPoint));
         CinematicScript lines = new CinematicScript();
         if (taunt != null && !taunt.isEmpty()) lines.at(0.8f, name, taunt);
+        lines.at(4.2f, "You", "Not today.");
         beginScene(seq, true, 0f, lines);
         letterbox = Math.max(letterbox, 0.8f);
         showTitle(name == null ? "" : name, "", 0.2f, 3.0f);
@@ -687,6 +695,7 @@ public class CinematicSystem {
         seq.add(CameraShot.closeUp(heroPoint(), 250, 2.2f, 0.9f, 1.4f).tracking(this::heroPoint));
         CinematicScript lines = new CinematicScript();
         if (line != null && !line.isEmpty()) lines.at(0.6f, name, line);
+        lines.at(3.2f, "Narrator", "The Overworld is a little safer tonight.");
         beginScene(seq, true, 0f, lines);
         letterbox = Math.max(letterbox, 0.6f);
         showTitle("VICTORY", name == null ? "" : name, 0.3f, 2.4f);
@@ -714,6 +723,30 @@ public class CinematicSystem {
         beginScene(seq, true, 0f, lines);
         letterbox = Math.max(letterbox, 0.65f);
         showTitle(name == null ? "" : name, "", 0.3f, 2.8f);
+    }
+
+    /**
+     * A scripted conversation: a two-shot of the player and the subject, cut to
+     * a close-up on the speaker, then back to the player for the reply. Use
+     * {@link CinematicScript#conversation} / {@link CinematicScript#exchange}
+     * to build the lines. Caption-only, so it fits the voiceless ancient
+     * builders perfectly.
+     */
+    public void playBuilderDialogue(String titleText, Vector3f subject, CinematicScript lines) {
+        if (active) { queueScene(() -> playBuilderDialogue(titleText, subject, lines)); return; }
+        if (!canDirectScene() || subject == null) return;
+        Vector3f focus = new Vector3f(subject);
+        List<CameraShot> seq = new ArrayList<>();
+        seq.add(CameraShot.twoShot(heroPoint(), subject, 3.0f));
+        seq.add(CameraShot.closeUp(
+                new Vector3f(subject.x, subject.y + 1.4f, subject.z), 250, 2.4f, 0.6f, 2.4f)
+                .tracking(() -> new Vector3f(focus)));
+        seq.add(CameraShot.medium(heroPoint(), 200, 3.0f, 1.2f, 1.8f).tracking(this::heroPoint));
+        beginScene(seq, true, 0f, lines);
+        letterbox = Math.max(letterbox, 0.7f);
+        if (titleText != null && !titleText.isEmpty()) {
+            showTitle(titleText, "", 0.3f, 2.6f);
+        }
     }
 
     /** True when a camera-owning scene is allowed to take over right now. */
