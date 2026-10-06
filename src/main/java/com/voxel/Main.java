@@ -1391,9 +1391,16 @@ public class Main {
                 mob = genericMob(pos, "illager.json");
                 break;
             case "wither":
+            case "wither_storm":
                 mob = new com.voxel.entity.WitherEntity(
                         nextSpawnCommandId++, pos, textureManager, entityManager);
                 ((com.voxel.entity.WitherEntity) mob).world = world;
+                break;
+            case "great_hog":
+                mob = genericMob(pos, "pigman.json");
+                break;
+            case "arch_illager":
+                mob = genericMob(pos, "illager.json");
                 break;
             case "wolf":
                 mob = genericMob(pos, "wolf.json");
@@ -3022,6 +3029,14 @@ public class Main {
                         player.getPosition().x, player.getPosition().z, dt);
                 if (com.voxel.game.McsmStory.consumeBossSpawnRequest()) {
                     spawnWhitePumpkinBoss();
+                }
+                // Story beats for the wider campaign map (Episodes 2-8,
+                // Legends, Dungeons 1 & 2) — same host, separate beat table.
+                com.voxel.game.CampaignStory.tick(mcsmHost, window,
+                        player.getPosition().x, player.getPosition().z, dt);
+                String campaignMob = com.voxel.game.CampaignStory.consumeSpawnRequest();
+                if (campaignMob != null) {
+                    spawnMobAtLook(campaignMob);
                 }
             }
 
