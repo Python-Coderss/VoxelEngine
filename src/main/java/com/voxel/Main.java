@@ -3291,6 +3291,12 @@ public class Main {
         worldTime += dt;
         ctx.worldTime = worldTime;
 
+        // The Sift's tide only advances inside the Sift (§Sift). The sifting
+        // block and the HUD both read its strength/phase.
+        if (ctx.siftTides != null && ctx.activeDimension == DimensionType.SIFT) {
+            ctx.siftTides.tick(dt);
+        }
+
         // Animate the selected chest independently of the inventory UI state. The
         // target is driven by chestOpen, while the closing branch continues after
         // the UI has cleared that flag so the lid eases fully shut.
@@ -5134,6 +5140,7 @@ public class Main {
             case 106: // aether portal (ns)
             case 127: // aether portal (ew)
             case 128: // nether portal (ew)
+            case 934: // the Sift rift
                 portalSystem.enterPortal(id);
                 return true;
             default:

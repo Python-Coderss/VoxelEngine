@@ -65,6 +65,9 @@ public class InteractionBillboardSystem {
     private static final int B_HAND_CRANK = 404;
     private static final int B_WINDMILL_BEARING = 405;
     private static final int B_ITEM_VAULT = 414;
+    // The Sift (§Sift): the sifting block and the rift portal.
+    private static final int B_SIFT_BED = 932;
+    private static final int B_SIFT_PORTAL = 934;
 
     public InteractionBillboardSystem(GameContext ctx, Main main) {
         this.ctx = ctx;
@@ -243,6 +246,7 @@ public class InteractionBillboardSystem {
         return id == B_CRAFTING_TABLE || id == B_FURNACE || id == B_FURNACE_ON
             || id == B_CHEST || id == B_VILLAGER_TV
             || id == B_HAND_CRANK || id == B_WINDMILL_BEARING || id == B_ITEM_VAULT
+            || id == B_SIFT_BED || id == B_SIFT_PORTAL
             || id == B_PORTAL_NETHER || id == B_PORTAL_AETHER
             || id == B_PORTAL_NETHER_EW || id == B_PORTAL_AETHER_EW
             // Levers/buttons are runtime-configured; before configure() this is
@@ -262,6 +266,8 @@ public class InteractionBillboardSystem {
             case 404: return "Hand Crank";
             case 405: return "Windmill Bearing";
             case 414: return "Item Vault";
+            case 932: return "Sift Bed";
+            case 934: return "Sift Rift";
             case 19:
             case 128: return "Nether Portal";
             case 106:
@@ -284,6 +290,8 @@ public class InteractionBillboardSystem {
             case 404: return "Crank";
             case 405: return "Inspect";
             case 414: return "Open";
+            case 932: return "Sift";
+            case 934: return "Enter";
             case 19:
             case 106:
             case 127:
