@@ -534,6 +534,7 @@ public class Main {
         entityManager = new com.voxel.entity.EntityManager();
         com.voxel.entity.EnemyEntity.setEntityManager(entityManager);
         com.voxel.entity.VillagerEntity.setEntityManager(entityManager);
+        com.voxel.entity.AncientBuilderEntity.setEntityManager(entityManager);
         com.voxel.world.structure.MapGenVillage.setEntityManager(entityManager);
         // Passive livestock (overworld farm animals + Aether wildlife) drop their
         // loot through the same item system enemies use. ctx is captured, so the
@@ -2971,6 +2972,11 @@ public class Main {
                 // wipeout): stamped lazily near the player like MCSM sites.
                 com.voxel.world.AncientBuilderModern.ensure(world, chunkManager,
                         player.getPosition().x, player.getPosition().z);
+                // Older ancient-builder works (archive, observatory, quarry,
+                // engine works, watch spire, monument garden): stamped lazily
+                // and populated with living builders.
+                com.voxel.world.AncientBuilderSites.ensure(world, chunkManager,
+                        player.getPosition().x, player.getPosition().z);
                 com.voxel.game.McsmStory.tick(mcsmHost, window,
                         player.getPosition().x, player.getPosition().z, dt);
                 if (com.voxel.game.McsmStory.consumeBossSpawnRequest()) {
@@ -3447,9 +3453,16 @@ public class Main {
         // Villages spawn their population once the terrain exists and the
         // player is close enough to see it (spawning during chunk generation
         // dropped villagers into ungenerated columns).
-        if (ctx.villageManager != null && ctx.chunkManager != null && player != null) {
+        if (player != null && ctx.chunkManager != null) {
             org.joml.Vector3f pp = player.getPosition();
-            ctx.villageManager.tick(ctx.world, pp.x, pp.z,
+            if (ctx.villageManager != null) {
+                ctx.villageManager.tick(ctx.world, pp.x, pp.z,
+                        com.voxel.world.structure.MapGenVillage.textureManager,
+                        entityManager);
+            }
+
+            // Ancient-builder sites raise their builders once the ground exists.
+            com.voxel.game.AncientBuilderPopulation.tick(ctx.world, pp.x, pp.z,
                     com.voxel.world.structure.MapGenVillage.textureManager,
                     entityManager);
         }
