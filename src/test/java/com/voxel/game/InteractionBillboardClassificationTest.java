@@ -16,7 +16,7 @@ public class InteractionBillboardClassificationTest {
 
     private static final int[] INTERACTABLE = {
             115, 116, 117, 118, 274, 19, 128, 106, 127,
-            404, 405, 414, 932, 934
+            404, 405, 414, 932, 934, 937
     };
 
     @Test
@@ -68,6 +68,8 @@ public class InteractionBillboardClassificationTest {
         assertEquals("Sift", InteractionBillboardSystem.blockAction(932));
         assertEquals("Sift Rift", InteractionBillboardSystem.blockName(934));
         assertEquals("Enter", InteractionBillboardSystem.blockAction(934));
+        assertEquals("Tuning Stone", InteractionBillboardSystem.blockName(937));
+        assertEquals("Play", InteractionBillboardSystem.blockAction(937));
     }
 
     @Test

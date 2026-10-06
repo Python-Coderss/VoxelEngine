@@ -11,8 +11,9 @@
 MCSM/Legends/Dungeons. Combat is explicitly deferred (§11).**
 Cutscene/P&C passes #1–#3 are DONE (see §4b and §10).
 **Sift slice 2 is DONE** (sifting mechanic + tide + rift travel — see §5).
-Next: **the melody rift (§6)**, then MCSM/Legends/Dungeons (§7), then the
-existing-generator overhauls (§4c).
+**The melody rift (§6) is DONE.**
+Next: **MCSM/Legends/Dungeons content (§7)**, then the existing-generator
+overhauls (§4c).
 
 1. Cutscene/P&C pass #1 **committed**: timed dialogue cues in scenes
    (`CinematicScript` + `CinematicSystem.publishScript/playScriptedScene/
@@ -205,19 +206,26 @@ DONE (slice 2):
 TODO (slice 3+):
 - Soul wisps: ambient drifting entity with caption-only whispers (no audio).
 - Carapace hazards (harmful blocks) + richer decorations.
-- Surface the tide `describe()`/phase in the HUD (currently only status/loot).
+- Surface the tide `describe()`/phase in the HUD (currently only status/loot).## 6. MELODY RIFT — DONE
 
-## 6. MELODY RIFT (NOT STARTED)
-
-“The Sift can also be accessed via the ancient city portal by playing the right melody.”
-- Need/locate an **Ancient City** structure (Deep Dark). Check whether one exists in
-  `com.voxel.world` (grep “ancient”). If not, add an `AncientCity` generator/site with a
-  portal frame + note blocks.
-- `com.voxel.game.MelodyPortal`: a fixed tune `int[] MELODY` (note-block pitch ids),
-  `static boolean playNote(int noteId)` accumulates a rolling window and validates;
-  correct melody → open `sift_rift` / switch to `DimensionType.SIFT`; wrong note → reset
-  (+ caption). Wire note-block right-click to `MelodyPortal.playNote`.
-- Captions: “the stones remember the tune” style lines, caption-only.
+“The Sift can also be accessed via the ancient city portal by playing the right
+melody.” Implemented:
+- Block **937** `note_block` (the tuning stone) + generated texture/model
+  (`tools/gen_sift_block_textures.py` now emits it too).
+- `com.voxel.game.MelodyPortal` — pure static melody lock: `MELODY = {0,2,4,6,4,2}`,
+  `NOTES = 7`, `playNote(pitch)` chains/resets and solves; `pitchAt(x,y,z)` maps a
+  stone's offset from the registered origin to a pitch; `setOrigin`; `resetForTest`.
+- `com.voxel.world.AncientCity` — lazy, idempotent site at (-384, 384), `BUILD_RANGE`
+  200: soul-slate plaza, stone-brick ring, a **dormant** rift gate (`rift_frame`,
+  interior left as air) and 7 tuning stones whose offsets map to pitches 0..6.
+  `open(ChunkManager)` fills the frame with `sift_portal` once solved; `PortalSystem`
+  then carries the player to the Sift on walk-in.
+- `BlockInteraction` right-click on 937 → `playNoteBlock(...)`: chains notes,
+  caption-only lines (“The stones remember the tune. The rift opens.”), and on solve
+  calls `AncientCity.open`.
+- `Main` stamps the city lazily near the player (alongside the other sites).
+- `InteractionBillboardSystem` classifies 937 (“Tuning Stone”/“Play”).
+- Tests: `MelodyPortalTest` (5), `AncientCityTest` (4).
 
 ## 7. MCSM / LEGENDS / DUNGEONS 1 & 2 CONTENT (PARTIAL / NOT STARTED)
 
@@ -317,6 +325,10 @@ Point & Click:
   inside the Sift, `sift_portal` rift travel via `PortalSystem` with a dungeon
   arrival scene, billboard classification for 932/934. `SiftSieveTest` (+6);
   full suite green (456); committed.
+- 2026-10-05: **MELODY RIFT** — note_block (937) + `MelodyPortal` + `AncientCity`
+  (dormant rift, 7 tuning stones, `open()`), wired into `BlockInteraction` and
+  `Main`; billboard classification for 937. `MelodyPortalTest` (5) +
+  `AncientCityTest` (4); full suite green (465); committed.
 
 ## 11. DEFERRED — combat perspective + mechanics (user: “for later”)
 

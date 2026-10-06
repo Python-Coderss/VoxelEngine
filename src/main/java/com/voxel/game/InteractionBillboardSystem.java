@@ -68,6 +68,8 @@ public class InteractionBillboardSystem {
     // The Sift (§Sift): the sifting block and the rift portal.
     private static final int B_SIFT_BED = 932;
     private static final int B_SIFT_PORTAL = 934;
+    // The Ancient City's tuning stone (§Melody rift).
+    private static final int B_NOTE_BLOCK = 937;
 
     public InteractionBillboardSystem(GameContext ctx, Main main) {
         this.ctx = ctx;
@@ -247,6 +249,7 @@ public class InteractionBillboardSystem {
             || id == B_CHEST || id == B_VILLAGER_TV
             || id == B_HAND_CRANK || id == B_WINDMILL_BEARING || id == B_ITEM_VAULT
             || id == B_SIFT_BED || id == B_SIFT_PORTAL
+            || id == B_NOTE_BLOCK
             || id == B_PORTAL_NETHER || id == B_PORTAL_AETHER
             || id == B_PORTAL_NETHER_EW || id == B_PORTAL_AETHER_EW
             // Levers/buttons are runtime-configured; before configure() this is
@@ -268,6 +271,7 @@ public class InteractionBillboardSystem {
             case 414: return "Item Vault";
             case 932: return "Sift Bed";
             case 934: return "Sift Rift";
+            case 937: return "Tuning Stone";
             case 19:
             case 128: return "Nether Portal";
             case 106:
@@ -292,6 +296,7 @@ public class InteractionBillboardSystem {
             case 414: return "Open";
             case 932: return "Sift";
             case 934: return "Enter";
+            case 937: return "Play";
             case 19:
             case 106:
             case 127:
