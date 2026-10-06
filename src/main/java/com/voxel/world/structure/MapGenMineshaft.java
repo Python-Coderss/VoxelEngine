@@ -4,8 +4,21 @@ import com.voxel.World;
 import java.util.Random;
 
 /**
- * Simple mineshaft structure generator ported from Minecraft 1.12.2.
- * Generates branching underground tunnels with supports and rails.
+ * Mineshaft structure generator (ported from Minecraft 1.12.2, overhauled).
+ *
+ * <p>Older versions carved bare 3x3 tunnels and declared rails, fences and
+ * torches that were never actually placed (the constants were {@code 0}). This
+ * version furnishes the shaft the way a real mineshaft reads:</p>
+ * <ul>
+ *   <li>wooden support frames at regular intervals, with cobblestone footings,</li>
+ *   <li>a rail line down the centre of every corridor, oriented to the tunnel,</li>
+ *   <li>torches on the support posts for lighting,</li>
+ *   <li>ore veins studding the corridor walls, and</li>
+ *   <li>treasure rooms at the branch ends, with a chest and a spawner.</li>
+ * </ul>
+ *
+ * <p>Deterministic for a given {@link Random}, and testable headlessly through
+ * the public {@code force} overload.</p>
  */
 public class MapGenMineshaft {
 
@@ -13,122 +26,148 @@ public class MapGenMineshaft {
     private static final int MAX_DEPTH = 40;
     private static final int MIN_DEPTH = 20;
 
-    private static final int PLANKS = 72;
-    private static final int FENCE = 0;
-    private static final int RAIL = 0;
-    private static final int TORCH = 0;
-    private static final int COBBLESTONE = 71;
     private static final int AIR = 0;
+    private static final int OAK_LOG = 5;
+    private static final int COBBLESTONE = 71;
+    private static final int PLANKS = 72;
+    private static final int TORCH = 211;
+    private static final int RAIL_NS = 391;
+    private static final int RAIL_EW = 392;
+    private static final int CHEST = 118;
+    private static final int SPAWNER = 258;
+    private static final int COAL_ORE = 61;
+    private static final int IRON_ORE = 81;
+    private static final int GOLD_ORE = 82;
+    private static final int DIAMOND_ORE = 83;
+
+    private static final int[] ORES = {COAL_ORE, IRON_ORE, GOLD_ORE, DIAMOND_ORE};
+
+    /** Attempts to generate a mineshaft in the given chunk. */
+    public boolean generate(World world, int cx, int cz, Random rand) {
+        return generate(world, cx, cz, rand, false);
+    }
 
     /**
-     * Attempts to generate a mineshaft in the given chunk.
+     * As {@link #generate(World, int, int, Random)}, but {@code force} skips the
+     * 1-in-{@value #MINESHAFT_CHANCE} roll so tests and tooling can stamp a
+     * shaft on demand.
      */
-    public boolean generate(World world, int cx, int cz, java.util.Random rand) {
-        if (rand.nextInt(MINESHAFT_CHANCE) != 0) return false;
+    public boolean generate(World world, int cx, int cz, Random rand, boolean force) {
+        if (world == null || rand == null) return false;
+        if (!force && rand.nextInt(MINESHAFT_CHANCE) != 0) return false;
 
         int centerX = (cx << 4) + 8;
         int centerZ = (cz << 4) + 8;
         int startY = MIN_DEPTH + rand.nextInt(MAX_DEPTH - MIN_DEPTH);
 
-        // Generate main corridor
+        // Main corridor.
         int length = 10 + rand.nextInt(20);
-        int direction = rand.nextInt(4); // 0=North, 1=East, 2=South, 3=West
-
+        int direction = rand.nextInt(4); // 0=N 1=E 2=S 3=W
         generateCorridor(world, centerX, startY, centerZ, direction, length, rand);
 
-        // Branch corridors
+        // Branch corridors, the first of which always ends in a treasure room.
         int branches = 2 + rand.nextInt(3);
         for (int i = 0; i < branches; i++) {
-            int branchDir = (direction + 1 + rand.nextInt(2)) % 4; // Perpendicular
-            int branchX = centerX + (direction == 1 ? rand.nextInt(length) * 3 : 0);
-            int branchZ = centerZ + (direction == 0 ? rand.nextInt(length) * 3 : 0);
+            int branchDir = (direction + 1 + rand.nextInt(2)) % 4;
+            int along = rand.nextInt(Math.max(1, length));
+            int branchX = centerX + (direction == 1 ? along * 3 : direction == 3 ? -along * 3 : 0);
+            int branchZ = centerZ + (direction == 0 ? -along * 3 : direction == 2 ? along * 3 : 0);
             int branchLen = 5 + rand.nextInt(10);
-
             generateCorridor(world, branchX, startY, branchZ, branchDir, branchLen, rand);
 
-            // Maybe add a room at the end
-            if (rand.nextBoolean()) {
-                generateRoom(world, branchX + (branchDir == 1 ? branchLen * 3 : 0),
-                    startY,
-                    branchZ + (branchDir == 0 ? branchLen * 3 : 0), rand);
+            if (i == 0 || rand.nextBoolean()) {
+                int ex = branchX + (branchDir == 1 ? branchLen * 3 : branchDir == 3 ? -branchLen * 3 : 0);
+                int ez = branchZ + (branchDir == 0 ? -branchLen * 3 : branchDir == 2 ? branchLen * 3 : 0);
+                generateRoom(world, ex, startY, ez, rand);
             }
         }
-
         return true;
     }
 
-    private void generateCorridor(World world, int startX, int startY, int startZ, int direction, int length, Random rand) {
+    private void generateCorridor(World world, int startX, int startY, int startZ,
+                                  int direction, int length, Random rand) {
         int dx = 0, dz = 0;
         switch (direction) {
-            case 0: dz = -1; break; // North
-            case 1: dx = 1; break;  // East
-            case 2: dz = 1; break;  // South
-            case 3: dx = -1; break; // West
+            case 0: dz = -1; break;
+            case 1: dx = 1; break;
+            case 2: dz = 1; break;
+            default: dx = -1; break;
         }
 
         int width = 3;
         int height = 3;
+        int railId = (dx != 0) ? RAIL_EW : RAIL_NS;
 
         for (int step = 0; step < length; step++) {
-            int cx = startX + dx * step;
-            int cz = startZ + dz * step;
+            int x = startX + dx * step;
+            int z = startZ + dz * step;
 
-            // Carve tunnel (3x3)
+            // Carve the 3x3 tunnel.
             for (int wx = -1; wx <= 1; wx++) {
                 for (int wz = -1; wz <= 1; wz++) {
                     for (int hy = 0; hy < height; hy++) {
-                        world.setVoxel(cx + wx, startY + hy, cz + wz, AIR);
+                        world.setVoxel(x + wx, startY + hy, z + wz, AIR);
                     }
+                    // Cobblestone / plank floor.
+                    world.setVoxel(x + wx, startY - 1, z + wz,
+                            (step % 3 == 0) ? COBBLESTONE : PLANKS);
                 }
             }
 
-            // Floor supports (planks)
-            for (int wx = -1; wx <= 1; wx++) {
-                world.setVoxel(cx + wx, startY - 1, cz, PLANKS);
-                world.setVoxel(cx + wx, startY - 1, cz, PLANKS); // Double line
-            }
+            // Rail line down the centre, oriented to the tunnel.
+            world.setVoxel(x, startY, z, railId);
 
-            // Wooden supports every 4 blocks
+            // Support frame every 4 blocks: posts, cross beam, cobble footing.
             if (step % 4 == 0 && step > 0 && step < length - 1) {
                 for (int hy = 0; hy < height; hy++) {
-                    world.setVoxel(cx + 1, startY + hy, cz, OAK_LOG);
-                    world.setVoxel(cx - 1, startY + hy, cz, OAK_LOG);
+                    world.setVoxel(x + 1, startY + hy, z, OAK_LOG);
+                    world.setVoxel(x - 1, startY + hy, z, OAK_LOG);
                 }
-                // Cross beam
-                world.setVoxel(cx + 1, startY + height, cz, OAK_LOG);
-                world.setVoxel(cx, startY + height, cz, OAK_LOG);
-                world.setVoxel(cx - 1, startY + height, cz, OAK_LOG);
+                world.setVoxel(x + 1, startY + height, z, OAK_LOG);
+                world.setVoxel(x, startY + height, z, OAK_LOG);
+                world.setVoxel(x - 1, startY + height, z, OAK_LOG);
+                // Torch on the post, alternating sides for even light.
+                world.setVoxel(x + ((step / 4) % 2 == 0 ? 1 : -1), startY + 2, z, TORCH);
+            }
+
+            // Ore vein in the tunnel wall, occasionally.
+            if (rand.nextInt(6) == 0) {
+                int side = rand.nextBoolean() ? 2 : -2;
+                int ore = ORES[rand.nextInt(ORES.length)];
+                int oy = startY + rand.nextInt(height);
+                if (dx == 0) world.setVoxel(x + side, oy, z, ore);
+                else world.setVoxel(x, oy, z + side, ore);
             }
         }
     }
-
-    private static final int OAK_LOG = 5;
 
     private void generateRoom(World world, int x, int y, int z, Random rand) {
         int roomWidth = 5 + rand.nextInt(4);
         int roomDepth = 5 + rand.nextInt(4);
         int roomHeight = 4;
+        int halfW = roomWidth / 2, halfD = roomDepth / 2;
 
-        // Carve room
-        for (int dx = -roomWidth/2; dx <= roomWidth/2; dx++) {
-            for (int dz = -roomDepth/2; dz <= roomDepth/2; dz++) {
+        // Carve.
+        for (int dx = -halfW; dx <= halfW; dx++) {
+            for (int dz = -halfD; dz <= halfD; dz++) {
                 for (int hy = 0; hy < roomHeight; hy++) {
                     world.setVoxel(x + dx, y + hy, z + dz, AIR);
                 }
-            }
-        }
-
-        // Floor
-        for (int dx = -roomWidth/2; dx <= roomWidth/2; dx++) {
-            for (int dz = -roomDepth/2; dz <= roomDepth/2; dz++) {
                 world.setVoxel(x + dx, y - 1, z + dz, PLANKS);
             }
         }
 
-        // Support pillars
-        world.setVoxel(x - roomWidth/4, y, z - roomDepth/4, OAK_LOG);
-        world.setVoxel(x + roomWidth/4, y, z + roomDepth/4, OAK_LOG);
-        world.setVoxel(x + roomWidth/4, y, z - roomDepth/4, OAK_LOG);
-        world.setVoxel(x - roomWidth/4, y, z + roomDepth/4, OAK_LOG);
+        // Corner pillars and a lit ceiling.
+        for (int[] c : new int[][]{{-halfW, -halfD}, {-halfW, halfD},
+                {halfW, -halfD}, {halfW, halfD}}) {
+            for (int hy = 0; hy < roomHeight; hy++) {
+                world.setVoxel(x + c[0], y + hy, z + c[1], OAK_LOG);
+            }
+        }
+        world.setVoxel(x, y + roomHeight - 1, z, TORCH);
+
+        // Treasure: a chest in one corner, and a spawner at the heart.
+        world.setVoxel(x + halfW - 1, y, z + halfD - 1, CHEST);
+        world.setVoxel(x, y, z, SPAWNER);
     }
 }
