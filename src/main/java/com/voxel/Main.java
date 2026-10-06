@@ -7014,6 +7014,55 @@ public class Main {
         blockDataManager.registerBlock(926, "marble", textureManager, mcModels);
         blockDataManager.setHardness(926, 2.0f);
 
+        // ── The Sift blocks (fixed IDs 927-936) ──
+        // Minecraft's fourth dimension: soul-lit terrain (sift_stone,
+        // meadow_grass, sift_soil), the Carapace shell (carapace and its glowing
+        // carapace_lamp), the sifting block (sift_bed), a rift gate
+        // (rift_frame + sift_portal) and the soul lamps/slate of the realm.
+        blockRegistry.register("sift_stone", 927);
+        shaderBlockRegistry.register(927, 927);
+        blockDataManager.registerBlock(927, "sift_stone", textureManager, mcModels);
+        blockDataManager.setHardness(927, 1.8f);
+        blockRegistry.register("meadow_grass", 928);
+        shaderBlockRegistry.register(928, 928);
+        blockDataManager.registerBlock(928, "meadow_grass", textureManager, mcModels);
+        blockDataManager.setHardness(928, 0.6f);
+        blockRegistry.register("sift_soil", 929);
+        shaderBlockRegistry.register(929, 929);
+        blockDataManager.registerBlock(929, "sift_soil", textureManager, mcModels);
+        blockDataManager.setHardness(929, 0.6f);
+        blockRegistry.register("carapace", 930);
+        shaderBlockRegistry.register(930, 930);
+        blockDataManager.registerBlock(930, "carapace", textureManager, mcModels);
+        blockDataManager.setHardness(930, 2.2f);
+        blockRegistry.register("carapace_lamp", 931);
+        shaderBlockRegistry.register(931, 931);
+        blockDataManager.registerBlock(931, "carapace_lamp", textureManager, mcModels,
+                0, 0, 255, 255);
+        blockDataManager.setHardness(931, 1.0f);
+        blockRegistry.register("sift_bed", 932);
+        shaderBlockRegistry.register(932, 932);
+        blockDataManager.registerBlock(932, "sift_bed", textureManager, mcModels);
+        blockDataManager.setHardness(932, 1.2f);
+        blockRegistry.register("rift_frame", 933);
+        shaderBlockRegistry.register(933, 933);
+        blockDataManager.registerBlock(933, "rift_frame", textureManager, mcModels);
+        blockDataManager.setHardness(933, 3.0f);
+        blockRegistry.register("sift_portal", 934);
+        shaderBlockRegistry.register(934, 934);
+        blockDataManager.registerBlock(934, "sift_portal", textureManager, mcModels,
+                160, 60, 220);
+        blockDataManager.setHardness(934, 0.4f);
+        blockRegistry.register("soul_lamp", 935);
+        shaderBlockRegistry.register(935, 935);
+        blockDataManager.registerBlock(935, "soul_lamp", textureManager, mcModels,
+                0, 0, 255, 255);
+        blockDataManager.setHardness(935, 0.8f);
+        blockRegistry.register("soul_slate", 936);
+        shaderBlockRegistry.register(936, 936);
+        blockDataManager.registerBlock(936, "soul_slate", textureManager, mcModels);
+        blockDataManager.setHardness(936, 1.6f);
+
         int tntBase = blockRegistry.getId("tnt");
         com.voxel.game.TntBlock.configure(tntBase);
         if (tntBase <= 0) {
