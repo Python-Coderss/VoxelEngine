@@ -2986,6 +2986,12 @@ public class Main {
             if (activeDimension == com.voxel.world.DimensionType.OVERWORLD && !ctx.initializing) {
                 com.voxel.world.McsmStructures.ensure(world, chunkManager,
                         player.getPosition().x, player.getPosition().z);
+                // Minecraft Legends and Minecraft Dungeons 1 & 2 campaign
+                // sites: same lazy stamping, spread out across the overworld.
+                com.voxel.world.LegendsStructures.ensure(world, chunkManager,
+                        player.getPosition().x, player.getPosition().z);
+                com.voxel.world.DungeonsStructures.ensure(world, chunkManager,
+                        player.getPosition().x, player.getPosition().z);
                 // Ancient-builder modern-era sites (the final age before the
                 // wipeout): stamped lazily near the player like MCSM sites.
                 com.voxel.world.AncientBuilderModern.ensure(world, chunkManager,

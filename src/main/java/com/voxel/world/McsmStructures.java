@@ -35,6 +35,60 @@ public final class McsmStructures {
     public static final int[] SORENS_SITE = {-128, 96};
     public static final int[] PUMPKIN_HIDEOUT = {0, -128};
 
+    // ── Episodes 2-8 (the wider MCSM map), stamped on the same lazy ring ──
+    public static final int[] REDSTONIA = {256, 256};
+    public static final int[] BOOM_TOWN = {-256, 256};
+    public static final int[] SKY_CITY = {256, -256};
+    public static final int[] CROWN_MESA = {-256, -256};
+    public static final int[] WITHER_STORM_ARENA = {384, 0};
+    public static final int[] ORDERS_TEMPLE = {0, 384};
+    public static final int[] BEACONTOWN = {-384, 0};
+    public static final int[] FREDS_KEEP = {0, -384};
+    public static final int[] PORTAL_NETWORK = {384, 384};
+
+    /** One post-Episode-1 site: a name, a map position and how it is shaped. */
+    private interface Shape {
+        void stamp(SiteShapes.Sink s, int cx, int cz, int base);
+    }
+
+    private static final class SiteDef {
+        final String name;
+        final int[] at;
+        final Shape shape;
+
+        SiteDef(String name, int[] at, Shape shape) {
+            this.name = name;
+            this.at = at;
+            this.shape = shape;
+        }
+    }
+
+    private static final java.util.List<SiteDef> EPISODES = java.util.Arrays.asList(
+            new SiteDef("redstonia", REDSTONIA,
+                    (s, cx, cz, b) -> SiteShapes.town(s, cx, cz, b, 10, 131, 72, 5, 17)),
+            new SiteDef("boom_town", BOOM_TOWN,
+                    (s, cx, cz, b) -> SiteShapes.town(s, cx, cz, b, 11, 91, 72, 5, 17)),
+            new SiteDef("sky_city", SKY_CITY,
+                    (s, cx, cz, b) -> SiteShapes.skyIsland(s, cx, cz, b, 13, 1, 13, 900, 17)),
+            new SiteDef("crown_mesa", CROWN_MESA,
+                    (s, cx, cz, b) -> {
+                        SiteShapes.plaza(s, cx, cz, b, 12, 135, 133);
+                        SiteShapes.spire(s, cx, cz, b + 1, 14, 135, 138, 17);
+                    }),
+            new SiteDef("wither_storm_arena", WITHER_STORM_ARENA,
+                    (s, cx, cz, b) -> SiteShapes.arena(s, cx, cz, b, 14, 905, 91, 17, 18)),
+            new SiteDef("orders_temple", ORDERS_TEMPLE,
+                    (s, cx, cz, b) -> SiteShapes.temple(s, cx, cz, b, 8, 131, 140, 457)),
+            new SiteDef("beacontown", BEACONTOWN,
+                    (s, cx, cz, b) -> {
+                        SiteShapes.town(s, cx, cz, b, 12, 131, 72, 5, 17);
+                        SiteShapes.spire(s, cx, cz, b + 1, 18, 131, 140, 457);
+                    }),
+            new SiteDef("freds_keep", FREDS_KEEP,
+                    (s, cx, cz, b) -> SiteShapes.keep(s, cx, cz, b, 10, 8, 131, 72, 17)),
+            new SiteDef("portal_network", PORTAL_NETWORK,
+                    (s, cx, cz, b) -> SiteShapes.riftHall(s, cx, cz, b, 11, 464, 16, 19, 17)));
+
     private static final Set<String> built = new HashSet<>();
 
     private McsmStructures() { }
@@ -55,11 +109,30 @@ public final class McsmStructures {
         buildIfNear(world, chunkManager, playerX, playerZ, "endercon", ENDERCON);
         buildIfNear(world, chunkManager, playerX, playerZ, "soren", SORENS_SITE);
         buildIfNear(world, chunkManager, playerX, playerZ, "pumpkin", PUMPKIN_HIDEOUT);
+        ensureEpisodes(world, chunkManager, playerX, playerZ);
+    }
+
+    /** Stamps any Episodes 2-8 site the player has come near. */
+    private static void ensureEpisodes(World world, ChunkManager chunkManager,
+                                       float px, float pz) {
+        for (SiteDef def : EPISODES) {
+            if (built.contains(def.name)) continue;
+            float dx = px - def.at[0], dz = pz - def.at[1];
+            if (dx * dx + dz * dz > BUILD_RANGE * BUILD_RANGE) continue;
+            built.add(def.name);
+            int base = surfaceY(world, def.at[0], def.at[1]);
+            def.shape.stamp(chunkManager::setVoxel, def.at[0], def.at[1], base);
+        }
     }
 
     /** True once the given site has been stamped this session. */
     public static boolean isBuilt(String site) {
         return built.contains(site);
+    }
+
+    /** Number of Episodes 2-8 sites (tests / tools). */
+    public static int episodeSiteCount() {
+        return EPISODES.size();
     }
 
     private static void buildIfNear(World world, ChunkManager chunkManager,
