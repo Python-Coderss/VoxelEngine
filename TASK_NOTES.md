@@ -247,11 +247,25 @@ DONE (structures):
   disjoint from the originals.
 - Tests: `SiteShapesTest` (4), `StoryContentSitesTest` (3).
 
+DONE (story beats + themed mobs):
+- `com.voxel.game.CampaignStory` — one beat per campaign site (24 beats:
+  Episodes 2–8, Legends, Dungeons 1 & 2), same `McsmStory.Host` surface
+  (popup + status + spoken line), numbered 1/2 choices, fires once per session.
+  `coordsOf(site)` maps every beat to its map column. `Main` ticks it with the
+  existing `mcsmHost`.
+- Boss beats summon a themed mob through the existing spawn switch
+  (`consumeSpawnRequest()` → `Main.spawnMobAtLook`): the Wither Storm arena
+  spawns a `wither_storm`, the Great Hog camp a `great_hog`, Highblock Halls a
+  `vindicator`, the Obsidian Pinnacle an `arch_illager`, the Illager Keep an
+  `evoker`.
+- New spawn aliases added to `Main.spawnMobAtLook`: `wither_storm` (reuses
+  `WitherEntity`), `great_hog` (`pigman.json`), `arch_illager` (`illager.json`).
+- Tests: `CampaignStoryTest` (9).
+
 REMAINING (§7):
-- NEW MOBS for these families (Wither Storm, Great Hog/Horde, Arch-Illager,
-  Heart of Ender, dungeon variants) — none added yet.
-- STORY BEATS: `McsmStory` still covers only Episodes 1/…; no beats for the
-  Episodes 2–8 / Legends / Dungeons sites yet (dialogue, choices, boss summon).
+- BESPOKE MOB MODELS for these families — the beats reuse existing entities
+  (wither, pigman, illager) rather than new Wither Storm / Great Hog /
+  Heart-of-Ender models. Adding those needs new entity models/textures + AI.
 
 ---
 
@@ -371,6 +385,11 @@ Point & Click:
   with a chest (118) + spawner (258); fixed the double floor write and the dead
   RAIL/TORCH/FENCE constants. Added a `force` overload. `MapGenMineshaftTest`
   (7); full suite green (479); committed.
+- 2026-10-05: **Campaign story beats + themed mobs** — `CampaignStory` (24 beats
+  with choices + boss summon requests) wired into `Main` with the existing
+  `mcsmHost`; spawn aliases `wither_storm`/`great_hog`/`arch_illager` added to
+  `Main.spawnMobAtLook`, drained from `consumeSpawnRequest()`. `CampaignStoryTest`
+  (9); full suite green (488); committed.
 
 REMAINING AFTER 2026-10-05 (next session's NEXT ACTION):
 1. **Mobs + story beats** for the new MCSM/Legends/Dungeons sites (§7).
