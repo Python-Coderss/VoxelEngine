@@ -34,6 +34,8 @@ public class BlockInteraction {
     private static final int BLOCK_TV = 274;
     /** The Sift's sifting block (§Sift slice 2). */
     private static final int BLOCK_SIFT_BED = 932;
+    /** The Ancient City's tuning stone (§Melody rift). */
+    private static final int BLOCK_NOTE_BLOCK = 937;
     private static final int BLOCK_HAND_CRANK = com.voxel.game.CreateMachineManager.BLOCK_HAND_CRANK;
     private static final int BLOCK_MECHANICAL_PRESS = com.voxel.game.CreateMachineManager.BLOCK_MECHANICAL_PRESS;
     private static final int BLOCK_MILLSTONE = com.voxel.game.CreateMachineManager.BLOCK_MILLSTONE;
@@ -74,6 +76,29 @@ public class BlockInteraction {
             com.voxel.audio.LiveCaptions.show("The Sift", line, 2.4f);
         } else {
             ctx.setStatus("Your pack is full -- the Sift keeps its " + loot.itemId);
+        }
+        return true;
+    }
+
+    /**
+     * Plays an Ancient City tuning stone. Correct notes chain toward
+     * {@link MelodyPortal#MELODY}; completing it tears the rift open so the
+     * frame can be walked through into the Sift (§Melody rift).
+     */
+    private boolean playNoteBlock(int[] hit) {
+        int pitch = MelodyPortal.pitchAt(hit[0], hit[1], hit[2]);
+        if (MelodyPortal.playNote(pitch)) {
+            com.voxel.world.AncientCity.open(ctx.chunkManager);
+            ctx.setStatus("The melody is answered -- the rift tears open!");
+            com.voxel.audio.LiveCaptions.show("The Ancient City",
+                    "The stones remember the tune. The rift opens.", 3.5f);
+        } else {
+            int step = MelodyPortal.progress();
+            com.voxel.audio.LiveCaptions.show("The Ancient City",
+                    "A note rings over the sunken city. (" + step + "/"
+                            + MelodyPortal.MELODY.length + ")", 1.6f);
+            ctx.setStatus("Note " + pitch + " -- melody " + step + "/"
+                    + MelodyPortal.MELODY.length);
         }
         return true;
     }
@@ -1251,6 +1276,11 @@ public class BlockInteraction {
         // The rising tide decides how rich the take is (SiftTides) — see §Sift.
         if (hitBlock == BLOCK_SIFT_BED && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
             return siftBed(hit);
+        }
+
+        // Ancient City tuning stone: play a note toward the rift melody.
+        if (hitBlock == BLOCK_NOTE_BLOCK && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
+            return playNoteBlock(hit);
         }
 
         // Right-click on furnace — walk-up cutscene, then the furnace UI opens

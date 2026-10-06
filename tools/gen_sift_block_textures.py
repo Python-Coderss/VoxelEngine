@@ -163,6 +163,26 @@ def soul_slate(rng):
     return img
 
 
+def note_block(rng):
+    """The Ancient City's tuning block: dark basalt with a glowing note glyph."""
+    img = Image.new("RGBA", (SIZE, SIZE), (58, 50, 72, 255))
+    noise(img, rng, 58, 8)
+    px = img.load()
+    for i in range(SIZE):  # beveled top/bottom edges
+        px[i, 0] = (44, 38, 56, 255)
+        px[i, SIZE - 1] = (44, 38, 56, 255)
+    # a light eighth-note: head (3x3) at lower-left, stem rising to the right
+    for dx in range(3):
+        for dy in range(3):
+            px[5 + dx, 10 + dy] = (150, 226, 255, 255)
+    for y in range(4, 12):
+        px[8, y] = (150, 226, 255, 255)
+    px[9, 4] = (150, 226, 255, 255)
+    px[10, 4] = (150, 226, 255, 255)
+    px[10, 5] = (150, 226, 255, 255)
+    return img
+
+
 GENERATORS = {
     "sift_stone": sift_stone,
     "meadow_grass": meadow_grass,
@@ -174,6 +194,7 @@ GENERATORS = {
     "sift_portal": sift_portal,
     "soul_lamp": soul_lamp,
     "soul_slate": soul_slate,
+    "note_block": note_block,
 }
 
 MODEL = ('{\n  "parent": "block/cube_all",\n  "textures": {\n'

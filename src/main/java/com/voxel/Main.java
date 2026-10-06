@@ -2995,6 +2995,10 @@ public class Main {
                 // and populated with living builders.
                 com.voxel.world.AncientBuilderSites.ensure(world, chunkManager,
                         player.getPosition().x, player.getPosition().z);
+                // The Ancient City and its melody-locked rift (§Melody rift):
+                // stamped lazily near the player.
+                com.voxel.world.AncientCity.ensure(world, chunkManager,
+                        player.getPosition().x, player.getPosition().z);
                 // Reveal any site that was just stamped: an establishing orbit
                 // cut to a closer look, with a builder speaking in the captions.
                 for (com.voxel.world.AncientBuilderSites.Built built :
@@ -7069,6 +7073,14 @@ public class Main {
         shaderBlockRegistry.register(936, 936);
         blockDataManager.registerBlock(936, "soul_slate", textureManager, mcModels);
         blockDataManager.setHardness(936, 1.6f);
+
+        // ── Ancient City tuning block (fixed ID 937) ──
+        // The melody-locked rift of the Ancient City is played on these note
+        // blocks; the correct tune opens a sift_portal (§Melody rift).
+        blockRegistry.register("note_block", 937);
+        shaderBlockRegistry.register(937, 937);
+        blockDataManager.registerBlock(937, "note_block", textureManager, mcModels);
+        blockDataManager.setHardness(937, 1.0f);
 
         int tntBase = blockRegistry.getId("tnt");
         com.voxel.game.TntBlock.configure(tntBase);
