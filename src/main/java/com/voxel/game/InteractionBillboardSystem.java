@@ -61,6 +61,10 @@ public class InteractionBillboardSystem {
     private static final int B_PORTAL_AETHER = 106;
     private static final int B_PORTAL_AETHER_EW = 127;
     private static final int B_VILLAGER_TV = 274;
+    // Create-mod machines with a real right-click handler in tryUseTarget.
+    private static final int B_HAND_CRANK = 404;
+    private static final int B_WINDMILL_BEARING = 405;
+    private static final int B_ITEM_VAULT = 414;
 
     public InteractionBillboardSystem(GameContext ctx, Main main) {
         this.ctx = ctx;
@@ -193,7 +197,12 @@ public class InteractionBillboardSystem {
             float distSq = distanceSquared(p.x, p.y + 1.6f, p.z, ep.x, ep.y, ep.z);
             if (distSq > REACH * REACH) continue;
             if (e instanceof VillagerEntity) {
-                addMarker(ep.x, ep.y + 2.0f, ep.z, "Villager", "Talk", -1, -1, -1, e.id);
+                VillagerEntity v = (VillagerEntity) e;
+                // A villager with a trade table supports a second action; the
+                // HUD lists both under the name (MCSM multi-choice prompt).
+                String[] acts = com.voxel.game.VillagerTrades.trades(v.getProfession())
+                        ? new String[]{"Talk", "Trade"} : new String[]{"Talk"};
+                addMarker(ep.x, ep.y + 2.0f, ep.z, "Villager", acts, -1, -1, -1, e.id);
             } else if (e instanceof com.voxel.entity.AncientBuilderEntity) {
                 com.voxel.entity.AncientBuilderEntity builder =
                         (com.voxel.entity.AncientBuilderEntity) e;
@@ -205,6 +214,11 @@ public class InteractionBillboardSystem {
 
     private void addMarker(float wx, float wy, float wz, String name, String action,
                            int bx, int by, int bz, int entityId) {
+        addMarker(wx, wy, wz, name, new String[]{action}, bx, by, bz, entityId);
+    }
+
+    private void addMarker(float wx, float wy, float wz, String name, String[] actionList,
+                           int bx, int by, int bz, int entityId) {
         int i = markerCount;
         if (i >= MAX_MARKERS) return;
         markers[i * 4] = 0f;       // filled by projectMarkers (screen space)
@@ -214,8 +228,9 @@ public class InteractionBillboardSystem {
         markers[i * 4 + 1] = 0f;
         markers[i * 4 + 2] = 0f;
         names[i] = name;
-        actions[i] = new String[]{action};
-        labels[i] = action;
+        actions[i] = (actionList == null || actionList.length == 0)
+                ? new String[]{""} : actionList.clone();
+        labels[i] = actions[i][0];
         highlighted[i] = false;
         markerBlockX[i] = bx;
         markerBlockY[i] = by;
@@ -227,8 +242,13 @@ public class InteractionBillboardSystem {
     static boolean isInteractableBlock(int id) {
         return id == B_CRAFTING_TABLE || id == B_FURNACE || id == B_FURNACE_ON
             || id == B_CHEST || id == B_VILLAGER_TV
+            || id == B_HAND_CRANK || id == B_WINDMILL_BEARING || id == B_ITEM_VAULT
             || id == B_PORTAL_NETHER || id == B_PORTAL_AETHER
-            || id == B_PORTAL_NETHER_EW || id == B_PORTAL_AETHER_EW;
+            || id == B_PORTAL_NETHER_EW || id == B_PORTAL_AETHER_EW
+            // Levers/buttons are runtime-configured; before configure() this is
+            // false, which keeps tests and early startup safe.
+            || com.voxel.game.RedstoneSwitches.isLever(id)
+            || com.voxel.game.RedstoneSwitches.isButton(id);
     }
 
     /** Display name of an interactable block (shown in the MCSM prompt). */
@@ -239,11 +259,17 @@ public class InteractionBillboardSystem {
             case 117: return "Furnace";
             case 118: return "Chest";
             case 274: return "Villager TV";
+            case 404: return "Hand Crank";
+            case 405: return "Windmill Bearing";
+            case 414: return "Item Vault";
             case 19:
             case 128: return "Nether Portal";
             case 106:
             case 127: return "Aether Portal";
-            default: return "";
+            default:
+                if (com.voxel.game.RedstoneSwitches.isLever(id)) return "Lever";
+                if (com.voxel.game.RedstoneSwitches.isButton(id)) return "Button";
+                return "";
         }
     }
 
@@ -255,11 +281,17 @@ public class InteractionBillboardSystem {
             case 117: return "Smelt";
             case 118: return "Open";
             case 274: return "Watch";
+            case 404: return "Crank";
+            case 405: return "Inspect";
+            case 414: return "Open";
             case 19:
             case 106:
             case 127:
             case 128: return "Enter";
-            default: return "";
+            default:
+                if (com.voxel.game.RedstoneSwitches.isLever(id)) return "Flip";
+                if (com.voxel.game.RedstoneSwitches.isButton(id)) return "Press";
+                return "";
         }
     }
 

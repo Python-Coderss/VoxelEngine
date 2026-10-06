@@ -8,8 +8,10 @@
 ## 0. NEXT ACTION (keep this current)
 
 **CURRENT PRIORITY (user): cutscenes + point-and-click first; then Sift; then
-MCSM/Legends/Dungeons.** Cutscene/P&C pass #1 is DONE (see §4b).
-Next: deepen cutscenes + P&C, then start **THE SIFT** (§5).
+MCSM/Legends/Dungeons. Combat is explicitly deferred (§11).**
+Cutscene/P&C passes #1–#3 are DONE (see §4b and §10).
+Next: **finish Sift slice 2** (`SiftSieve` is on disk but UNWIRED — see §5),
+then the melody rift (§6), then MCSM/Legends/Dungeons (§7).
 
 1. Cutscene/P&C pass #1 **committed**: timed dialogue cues in scenes
    (`CinematicScript` + `CinematicSystem.publishScript/playScriptedScene/
@@ -43,6 +45,9 @@ Next: deepen cutscenes + P&C, then start **THE SIFT** (§5).
 4. “This will be split across multiple sessions. But you will be cut off abruptly. So
    plan ahead for that. The later sessions will only get the command
    ‘Continue with the task’ with no additional context.”
+5. “The combat perspective and mechanics need improvement too, but that’s for later.”
+   → **DEFERRED.** Do not start until cutscenes/P&C, Sift, and MCSM/Legends/
+   Dungeons are done. Track it as §11 below so it is never lost.
 
 ## 2. Hard rules / conventions
 
@@ -290,3 +295,31 @@ Point & Click:
   recipes, wired to the White Pumpkin/Wither/Ender Dragon; `CameraShotTest`.
   Full suite green (434 tests); committed. NEXT: deepen cutscenes/P&C (or
   begin THE SIFT, §5).
+- 2026-10-05: Cutscene/P&C pass #3 — `CameraShot` twoShot/crane/pushIn;
+  `CinematicScript` exchange/conversation; multi-line reveal + boss scenes;
+  `playBuilderDialogue` (wired to builder interaction); billboards now list
+  villager Talk/Trade and classify hand crank/windmill bearing/item vault/
+  lever/button. 6 new tests. Full suite green (450 tests); committed.
+- 2026-10-05: User deferred **combat perspective + mechanics** to later (§11).
+
+## 11. DEFERRED — combat perspective + mechanics (user: “for later”)
+
+User asked (2026-10-05) to improve the **combat perspective and mechanics**.
+Explicitly deferred until after the current priority chain (cutscenes/P&C →
+Sift → melody rift → MCSM/Legends/Dungeons → structure overhauls).
+
+Ideas to evaluate when picked up (NOT started): third-person combat framing /
+over-the-shoulder aim; target lock / soft-lock on the block-or-entity under the
+cursor; attack wind-up + recovery timing; directional hit reactions and hit-stop
+tuning; a parry/block; weapon reach vs. pick-box consistency; and combat beats
+in `CinematicSystem` (already has `Beat.BOSS_SPAWN/BOSS_DEFEAT`). `Main` owns the
+combat loop; `BlockInteraction.raycastEntity` and `Player` health/attack live in
+`com.voxel`. Add tests where the logic is pure.
+
+### Pass #3 (current, cutscenes + P&C)
+- `CameraShot`: `twoShot`, `crane`, `pushIn` presets (pure, tested).
+- `CinematicScript`: `exchange`, `conversation` helpers (pure, tested).
+- `CinematicSystem`: richer multi-line reveal/boss scenes; `playBuilderDialogue`.
+- `InteractionBillboardSystem`: multi-action markers (villager Talk/Trade) and
+  more classified interactables (hand crank, windmill bearing, item vault,
+  lever/button).

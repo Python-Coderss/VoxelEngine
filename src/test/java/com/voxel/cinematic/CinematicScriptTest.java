@@ -55,6 +55,27 @@ public class CinematicScriptTest {
     }
 
     @Test
+    public void exchangeSpacesTheAnswerAfterTheCall() {
+        CinematicScript script = CinematicScript.exchange(
+                0.5f, 2f, "Boss", "You dare?", "You", "Always.");
+        assertEquals(2, script.size());
+        assertEquals("Boss", script.due(0.4f, 0.6f).get(0).speaker);
+        // The gap window between the two lines fires nothing.
+        assertTrue(script.due(0.6f, 2.4f).isEmpty());
+        assertEquals("You", script.due(2.4f, 2.6f).get(0).speaker);
+    }
+
+    @Test
+    public void conversationAlternatesSpeakersOnAFixedCadence() {
+        CinematicScript script = CinematicScript.conversation(
+                0f, 1f, "Builder", "Villager", "First.", "Second.", "Third.");
+        assertEquals(3, script.size());
+        assertEquals("Builder", script.due(-0.1f, 0f).get(0).speaker);
+        assertEquals("Villager", script.due(0.9f, 1.0f).get(0).speaker);
+        assertEquals("Builder", script.due(1.9f, 2.0f).get(0).speaker);
+    }
+
+    @Test
     public void emptyScriptFiresNothing() {
         CinematicScript script = new CinematicScript();
         assertTrue(script.isEmpty());

@@ -940,11 +940,17 @@ public class BlockInteraction {
                     new java.util.Random(builder.id * 31L + (long) ctx.worldTime));
             builder.aiSpeak(line);
             ctx.setStatus(builder.getDisplayName() + " — \"" + line + "\"");
-            // Shot/reverse-shot framing, the same beat villagers get.
+            // A caption-only dialogue scene: two-shot of the player and the
+            // builder, then the reply. No audio — the caption is the performance.
             if (ctx.cinematic != null) {
                 Vector3f bp = builder.getPosition();
-                ctx.cinematic.playActionBeat(com.voxel.cinematic.CinematicSystem.Beat.VILLAGER,
-                    new Vector3f(bp.x, bp.y, bp.z), false);
+                com.voxel.cinematic.CinematicScript lines =
+                        com.voxel.cinematic.CinematicScript.exchange(
+                                1.2f, 2.4f,
+                                "You", "Speak, builder.",
+                                builder.getDisplayName(), line);
+                ctx.cinematic.playBuilderDialogue(builder.getDisplayName(),
+                        new Vector3f(bp.x, bp.y, bp.z), lines);
             }
         } else if (e instanceof com.voxel.entity.MinecartEntity) {
             com.voxel.entity.MinecartEntity cart = (com.voxel.entity.MinecartEntity) e;

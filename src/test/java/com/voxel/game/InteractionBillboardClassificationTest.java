@@ -15,7 +15,8 @@ import static org.junit.Assert.assertTrue;
 public class InteractionBillboardClassificationTest {
 
     private static final int[] INTERACTABLE = {
-            115, 116, 117, 118, 274, 19, 128, 106, 127
+            115, 116, 117, 118, 274, 19, 128, 106, 127,
+            404, 405, 414
     };
 
     @Test
@@ -57,5 +58,26 @@ public class InteractionBillboardClassificationTest {
         assertEquals("Watch", InteractionBillboardSystem.blockAction(274));
         assertEquals("Nether Portal", InteractionBillboardSystem.blockName(128));
         assertEquals("Enter", InteractionBillboardSystem.blockAction(19));
+        assertEquals("Hand Crank", InteractionBillboardSystem.blockName(404));
+        assertEquals("Crank", InteractionBillboardSystem.blockAction(404));
+        assertEquals("Windmill Bearing", InteractionBillboardSystem.blockName(405));
+        assertEquals("Inspect", InteractionBillboardSystem.blockAction(405));
+        assertEquals("Item Vault", InteractionBillboardSystem.blockName(414));
+        assertEquals("Open", InteractionBillboardSystem.blockAction(414));
+    }
+
+    @Test
+    public void configuredLeversAndButtonsAreClassified() {
+        // Runtime ids are assigned by Main after content registration; mimic that.
+        RedstoneSwitches.configure(711, 712, 713, 714, 715, 716, 717, 718, 719, 720);
+        assertTrue(InteractionBillboardSystem.isInteractableBlock(711)); // lever off
+        assertTrue(InteractionBillboardSystem.isInteractableBlock(712)); // lever on
+        assertTrue(InteractionBillboardSystem.isInteractableBlock(713)); // stone button
+        assertEquals("Lever", InteractionBillboardSystem.blockName(711));
+        assertEquals("Flip", InteractionBillboardSystem.blockAction(711));
+        assertEquals("Button", InteractionBillboardSystem.blockName(713));
+        assertEquals("Press", InteractionBillboardSystem.blockAction(713));
+        // Pressure plates are stepped on, not clicked — never a billboard.
+        assertFalse(InteractionBillboardSystem.isInteractableBlock(717));
     }
 }

@@ -58,6 +58,41 @@ public class CameraShotTest {
     }
 
     @Test
+    public void twoShotFramesBothSubjectsFromOffAxis() {
+        Vector3f a = new Vector3f(0, 1, 0);
+        Vector3f b = new Vector3f(4, 1, 0);
+        CameraShot shot = CameraShot.twoShot(a, b, 2f);
+        CameraShot.Sample s = shot.sample(0.5f);
+        // Looks at the midpoint between the two speakers.
+        assertEquals(2f, s.lookAt.x, 1e-3f);
+        assertEquals(0f, s.lookAt.z, 1e-3f);
+        // Camera sits off the line joining them and far enough back to frame both.
+        assertTrue("camera must be off the subject axis", Math.abs(s.pos.z) > 1f);
+        assertTrue("camera must frame the whole pair",
+                s.pos.distance(new Vector3f(2, 1, 0)) >= 3f);
+    }
+
+    @Test
+    public void craneRisesWhileKeepingTheSubjectFramed() {
+        Vector3f subject = new Vector3f(1, 2, 3);
+        CameraShot shot = CameraShot.crane(subject, 0f, 6f, 0f, 8f, 2f);
+        assertEquals(2f, shot.sample(0f).pos.y, 1e-3f);
+        assertEquals(10f, shot.sample(1f).pos.y, 1e-3f);
+        assertEquals(1f, shot.sample(0.5f).lookAt.x, 1e-3f);
+        assertEquals(3f, shot.sample(0.5f).lookAt.z, 1e-3f);
+    }
+
+    @Test
+    public void pushInTightensDistanceAndLens() {
+        Vector3f subject = new Vector3f(0, 0, 0);
+        CameraShot shot = CameraShot.pushIn(subject, 0f, 8f, 2f, 1f, 1.5f);
+        assertTrue("push-in must close the distance",
+                shot.sample(1f).pos.distance(subject) < shot.sample(0f).pos.distance(subject));
+        assertTrue("push-in must tighten the lens",
+                shot.sample(1f).fov < shot.sample(0f).fov);
+    }
+
+    @Test
     public void orbitPathsAroundTheCenterAtTheGivenRadius() {
         Vector3f center = new Vector3f(10, 5, -4);
         CameraShot shot = CameraShot.orbit(center, 8f, 2f, 0f, 180f, 2f);
