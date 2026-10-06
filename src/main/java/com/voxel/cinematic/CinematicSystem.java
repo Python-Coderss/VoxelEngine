@@ -658,6 +658,71 @@ public class CinematicSystem {
                 "A work of the ancient builders", 0.4f, 3.2f);
     }
 
+    /**
+     * Boss arrival: a low-angle hero shot of the challenger cut to a wide, with
+     * its taunt spoken in the captions. The MCSM "the villain has entered"
+     * beat.
+     */
+    public void playBossIntro(String name, String taunt, Vector3f subject) {
+        if (active) { queueScene(() -> playBossIntro(name, taunt, subject)); return; }
+        if (!canDirectScene() || subject == null) return;
+        Vector3f focus = new Vector3f(subject);
+        List<CameraShot> seq = new ArrayList<>();
+        seq.add(CameraShot.lowAngle(subject, 30, 4.5f, 1.8f));
+        seq.add(CameraShot.wide(subject, 60, 110, 8.0f, 3.5f, 2.4f).tracking(() -> new Vector3f(focus)));
+        CinematicScript lines = new CinematicScript();
+        if (taunt != null && !taunt.isEmpty()) lines.at(0.8f, name, taunt);
+        beginScene(seq, true, 0f, lines);
+        letterbox = Math.max(letterbox, 0.8f);
+        showTitle(name == null ? "" : name, "", 0.2f, 3.0f);
+    }
+
+    /** Boss defeat: a victory wide cut to the hero, with a closing line. */
+    public void playBossDefeat(String name, String line, Vector3f subject) {
+        if (active) { queueScene(() -> playBossDefeat(name, line, subject)); return; }
+        if (!canDirectScene() || subject == null) return;
+        Vector3f focus = new Vector3f(subject);
+        List<CameraShot> seq = new ArrayList<>();
+        seq.add(CameraShot.wide(subject, 140, 205, 7.5f, 3.0f, 2.4f).tracking(() -> new Vector3f(focus)));
+        seq.add(CameraShot.closeUp(heroPoint(), 250, 2.2f, 0.9f, 1.4f).tracking(this::heroPoint));
+        CinematicScript lines = new CinematicScript();
+        if (line != null && !line.isEmpty()) lines.at(0.6f, name, line);
+        beginScene(seq, true, 0f, lines);
+        letterbox = Math.max(letterbox, 0.6f);
+        showTitle("VICTORY", name == null ? "" : name, 0.3f, 2.4f);
+    }
+
+    /**
+     * Dungeon arrival: a slow push through the entrance to a wide reveal of the
+     * room, with a narrated line. Used when the player first enters a dungeon.
+     */
+    public void playDungeonArrival(String name, String line, Vector3f subject) {
+        if (active) { queueScene(() -> playDungeonArrival(name, line, subject)); return; }
+        if (!canDirectScene() || subject == null) return;
+        Vector3f eye = heroPoint();
+        Vector3f dir = new Vector3f(subject).sub(eye);
+        if (dir.lengthSquared() < 1e-4f) dir.set(1, 0, 0);
+        dir.normalize();
+        CameraShot push = CameraShot.dolly(
+                new Vector3f(eye).fma(-1.5f, dir), new Vector3f(subject), subject, 70f, 3.2f);
+        push.ease = CameraShot.Ease.SMOOTH;
+        List<CameraShot> seq = new ArrayList<>();
+        seq.add(push);
+        seq.add(CameraShot.orbit(subject, 9f, 3.5f, -20f, 40f, 3.0f));
+        CinematicScript lines = new CinematicScript();
+        if (line != null && !line.isEmpty()) lines.at(0.7f, "Narrator", line);
+        beginScene(seq, true, 0f, lines);
+        letterbox = Math.max(letterbox, 0.65f);
+        showTitle(name == null ? "" : name, "", 0.3f, 2.8f);
+    }
+
+    /** True when a camera-owning scene is allowed to take over right now. */
+    private boolean canDirectScene() {
+        return !ctx.player.isDead() && !ctx.craftingCutsceneActive
+                && !ctx.furnaceCutsceneActive && !ctx.tvCutsceneActive
+                && !ctx.pauseMenuOpen && !ctx.inventoryOpen && !ctx.commandMode;
+    }
+
     private void endScene() {
         if (controlsCamera) {
             // Hand control back exactly where the player left it
