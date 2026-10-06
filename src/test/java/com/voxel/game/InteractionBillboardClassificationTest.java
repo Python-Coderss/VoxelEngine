@@ -16,7 +16,7 @@ public class InteractionBillboardClassificationTest {
 
     private static final int[] INTERACTABLE = {
             115, 116, 117, 118, 274, 19, 128, 106, 127,
-            404, 405, 414
+            404, 405, 414, 932, 934
     };
 
     @Test
@@ -64,6 +64,10 @@ public class InteractionBillboardClassificationTest {
         assertEquals("Inspect", InteractionBillboardSystem.blockAction(405));
         assertEquals("Item Vault", InteractionBillboardSystem.blockName(414));
         assertEquals("Open", InteractionBillboardSystem.blockAction(414));
+        assertEquals("Sift Bed", InteractionBillboardSystem.blockName(932));
+        assertEquals("Sift", InteractionBillboardSystem.blockAction(932));
+        assertEquals("Sift Rift", InteractionBillboardSystem.blockName(934));
+        assertEquals("Enter", InteractionBillboardSystem.blockAction(934));
     }
 
     @Test

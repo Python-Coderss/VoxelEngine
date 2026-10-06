@@ -167,6 +167,9 @@ public class GameContext {
     public CameraMode cameraMode = CameraMode.FIRST_PERSON;
     public boolean cutsceneActive = false;
     public float worldTime = 720.0f;
+    /** The Sift's shifting tide — the dimension's defining mechanic (§Sift).
+     *  Advanced every logic tick; consulted by the sifting block and the HUD. */
+    public final com.voxel.world.SiftTides siftTides = new com.voxel.world.SiftTides();
     public boolean combatMode = false;
     public boolean inventoryOpen = false;
 

@@ -16,6 +16,7 @@ public class PortalSystem {
     private static final int PORTAL_NETHER_EW = 128;  // nether portal, ew faces
     private static final int PORTAL_AETHER = 106;     // aether portal, ns faces
     private static final int PORTAL_AETHER_EW = 127;  // aether portal, ew faces
+    private static final int PORTAL_SIFT = 934;       // the Sift rift (§Sift)
 
     private final GameContext ctx;
     private final BlockInteraction blockInteraction;
@@ -33,14 +34,18 @@ public class PortalSystem {
         return id == PORTAL_AETHER || id == PORTAL_AETHER_EW;
     }
 
+    private static boolean isSiftPortal(int id) {
+        return id == PORTAL_SIFT;
+    }
+
     public void checkTeleport() {
         if (ctx.player.isDead()) return;
         Vector3f pos = ctx.player.getPosition();
         int px = (int) Math.floor(pos.x), py = (int) Math.floor(pos.y), pz = (int) Math.floor(pos.z);
         int vFeet = ctx.world.getVoxel(px, py, pz);
         int vBody = ctx.world.getVoxel(px, py + 1, pz);
-        int voxel = isNetherPortal(vFeet) || isAetherPortal(vFeet) ? vFeet :
-                    isNetherPortal(vBody) || isAetherPortal(vBody) ? vBody : 0;
+        int voxel = isNetherPortal(vFeet) || isAetherPortal(vFeet) || isSiftPortal(vFeet) ? vFeet :
+                    isNetherPortal(vBody) || isAetherPortal(vBody) || isSiftPortal(vBody) ? vBody : 0;
         if (voxel == 0) return;
 
         double now = System.currentTimeMillis() / 1000.0;
@@ -57,6 +62,8 @@ public class PortalSystem {
             else target = DimensionType.OVERWORLD;
         } else if (isNetherPortal(voxel)) {
             target = ctx.activeDimension == DimensionType.NETHER ? DimensionType.OVERWORLD : DimensionType.NETHER;
+        } else if (isSiftPortal(voxel)) {
+            target = ctx.activeDimension == DimensionType.SIFT ? DimensionType.OVERWORLD : DimensionType.SIFT;
         } else {
             target = ctx.activeDimension == DimensionType.AETHER ? DimensionType.OVERWORLD : DimensionType.AETHER;
         }
@@ -64,8 +71,20 @@ public class PortalSystem {
 
         ctx.switchToDimension(target);
         ctx.lastPortalTeleportTime = now;
-        if (ctx.cinematic != null) ctx.cinematic.playPortalTravel();
+        playTravelScene(target);
         ctx.setStatus("Teleported to " + target.name);
+    }
+
+    /** Plays the arrival flourish appropriate to the destination dimension. */
+    private void playTravelScene(DimensionType target) {
+        if (ctx.cinematic == null) return;
+        if (target == DimensionType.SIFT) {
+            ctx.cinematic.playDungeonArrival("The Sift",
+                    "The rift folds shut behind you. Souls drift past like slow rain.",
+                    new Vector3f(ctx.player.getPosition()));
+        } else {
+            ctx.cinematic.playPortalTravel();
+        }
     }
 
     /** True while teleport is on cooldown (shared with walk-in detection). */
@@ -79,7 +98,7 @@ public class PortalSystem {
      * action; hall portals are position-keyed and are ignored here.
      */
     public void enterPortal(int portalBlockId) {
-        if (!(isNetherPortal(portalBlockId) || isAetherPortal(portalBlockId))) return;
+        if (!(isNetherPortal(portalBlockId) || isAetherPortal(portalBlockId) || isSiftPortal(portalBlockId))) return;
         if (ctx.activeDimension == DimensionType.PORTAL_HALL) return;
         double now = System.currentTimeMillis() / 1000.0;
         if (onCooldown(now)) return;
@@ -87,6 +106,8 @@ public class PortalSystem {
         DimensionType target;
         if (isNetherPortal(portalBlockId)) {
             target = ctx.activeDimension == DimensionType.NETHER ? DimensionType.OVERWORLD : DimensionType.NETHER;
+        } else if (isSiftPortal(portalBlockId)) {
+            target = ctx.activeDimension == DimensionType.SIFT ? DimensionType.OVERWORLD : DimensionType.SIFT;
         } else {
             target = ctx.activeDimension == DimensionType.AETHER ? DimensionType.OVERWORLD : DimensionType.AETHER;
         }
@@ -94,7 +115,7 @@ public class PortalSystem {
 
         ctx.switchToDimension(target);
         ctx.lastPortalTeleportTime = now;
-        if (ctx.cinematic != null) ctx.cinematic.playPortalTravel();
+        playTravelScene(target);
         ctx.setStatus("Teleported to " + target.name);
     }
 

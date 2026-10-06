@@ -32,6 +32,8 @@ public class BlockInteraction {
     private static final int BLOCK_FURNACE_ON = 117;
     private static final int BLOCK_CHEST = 118;
     private static final int BLOCK_TV = 274;
+    /** The Sift's sifting block (§Sift slice 2). */
+    private static final int BLOCK_SIFT_BED = 932;
     private static final int BLOCK_HAND_CRANK = com.voxel.game.CreateMachineManager.BLOCK_HAND_CRANK;
     private static final int BLOCK_MECHANICAL_PRESS = com.voxel.game.CreateMachineManager.BLOCK_MECHANICAL_PRESS;
     private static final int BLOCK_MILLSTONE = com.voxel.game.CreateMachineManager.BLOCK_MILLSTONE;
@@ -45,6 +47,36 @@ public class BlockInteraction {
     private static final int BLOCK_WATER_FLOWING_MIN = 150;
     private static final int BLOCK_WATER_FLOWING_MAX = 156;
     private static final int BLOCK_LAVA = 21;
+
+    /**
+     * The Sift's sifting mechanic: roll loot scaled by the current tide into the
+     * player's inventory, rate-limited per block so a held right-click cannot
+     * strip a whole sift-bed field at once.
+     *
+     * @return true (always consumes the click).
+     */
+    private boolean siftBed(int[] hit) {
+        long now = System.currentTimeMillis();
+        if (SiftSieve.isOnCooldown(hit[0], hit[1], hit[2], now)) {
+            float remaining = SiftSieve.cooldownRemaining(hit[0], hit[1], hit[2], now);
+            ctx.setStatus(String.format("The bed is still settling... (%.1fs)", remaining));
+            return true;
+        }
+        java.util.Random rng = new java.util.Random(now
+                ^ ((long) hit[0] * 341873128712L) ^ ((long) hit[1] * 132897987541L)
+                ^ ((long) hit[2] * 2654435761L));
+        SiftSieve.Loot loot = SiftSieve.roll(ctx.siftTides, rng);
+        SiftSieve.markSifted(hit[0], hit[1], hit[2], now);
+        if (ctx.playerInventory.addItem(loot.itemId, loot.count)) {
+            String line = (loot.rare ? "The tide surrenders something rare: " : "Sifting turns up ")
+                    + loot.count + "x " + loot.itemId;
+            ctx.setStatus(line);
+            com.voxel.audio.LiveCaptions.show("The Sift", line, 2.4f);
+        } else {
+            ctx.setStatus("Your pack is full -- the Sift keeps its " + loot.itemId);
+        }
+        return true;
+    }
 
     /** Opens the furnace UI for the given block position. */
     public void openFurnace(int x, int y, int z) {
@@ -1213,6 +1245,12 @@ public class BlockInteraction {
         if (hitBlock == BLOCK_TV && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
             startTVCutscene(hit);
             return true;
+        }
+
+        // Right-click a sift bed: strain buried material out of the Sift's soil.
+        // The rising tide decides how rich the take is (SiftTides) — see §Sift.
+        if (hitBlock == BLOCK_SIFT_BED && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
+            return siftBed(hit);
         }
 
         // Right-click on furnace — walk-up cutscene, then the furnace UI opens

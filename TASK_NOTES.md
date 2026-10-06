@@ -10,8 +10,9 @@
 **CURRENT PRIORITY (user): cutscenes + point-and-click first; then Sift; then
 MCSM/Legends/Dungeons. Combat is explicitly deferred (§11).**
 Cutscene/P&C passes #1–#3 are DONE (see §4b and §10).
-Next: **finish Sift slice 2** (`SiftSieve` is on disk but UNWIRED — see §5),
-then the melody rift (§6), then MCSM/Legends/Dungeons (§7).
+**Sift slice 2 is DONE** (sifting mechanic + tide + rift travel — see §5).
+Next: **the melody rift (§6)**, then MCSM/Legends/Dungeons (§7), then the
+existing-generator overhauls (§4c).
 
 1. Cutscene/P&C pass #1 **committed**: timed dialogue cues in scenes
    (`CinematicScript` + `CinematicSystem.publishScript/playScriptedScene/
@@ -186,15 +187,25 @@ DONE (slice 1):
 - `/dimension sift` (and `thesift`) added to `CommandProcessor`.
 - Tests: `SiftGeneratorTest` (5), `SiftTidesTest` (5).
 
-TODO (slice 2+):
-- `com.voxel.game.SiftSieve`: right-click `sift_bed` at a tide-scaled yield →
-  loot into the inventory (`BlockInteraction`), with a small caption/flavor.
-- Rift travel: make `sift_portal` teleport (or `rift_frame`+portal frame);
-  arrival scene via `CinematicSystem.playDungeonArrival`.
-- Drive a `SiftTides` instance in `Main` (field on `GameContext`) and surface its
-  `describe()` + hazard state in the HUD/status.
+DONE (slice 2):
+- `com.voxel.game.SiftSieve` — tide-scaled loot table (6 common / 6 rare) +
+  per-bed cooldown. Wired into `BlockInteraction.tryUseTarget` (block 932):
+  right-click rolls `SiftSieve.roll(ctx.siftTides, rng)`, adds to the inventory
+  via `addItem`, shows a status + a `LiveCaptions` line, and respects the
+  cooldown. `SiftSieveTest` (6).
+- `GameContext.siftTides` field; `Main` ticks it each logic tick while in
+  `DimensionType.SIFT`.
+- `sift_portal` (934) is now a working rift: `PortalSystem` treats it like the
+  Nether/Aether portals (walk-in and click-to-enter), and entering the Sift
+  plays a `CinematicSystem.playDungeonArrival` scene. `Main.performBillboardAction`
+  routes id 934 to `enterPortal`.
+- `InteractionBillboardSystem` classifies `sift_bed` ("Sift Bed"/"Sift") and
+  `sift_portal` ("Sift Rift"/"Enter").
+
+TODO (slice 3+):
 - Soul wisps: ambient drifting entity with caption-only whispers (no audio).
-- Carapace hazards (harmful blocks) and richer decorations.
+- Carapace hazards (harmful blocks) + richer decorations.
+- Surface the tide `describe()`/phase in the HUD (currently only status/loot).
 
 ## 6. MELODY RIFT (NOT STARTED)
 
@@ -301,6 +312,11 @@ Point & Click:
   villager Talk/Trade and classify hand crank/windmill bearing/item vault/
   lever/button. 6 new tests. Full suite green (450 tests); committed.
 - 2026-10-05: User deferred **combat perspective + mechanics** to later (§11).
+- 2026-10-05: **THE SIFT slice 2** — `SiftSieve` wired into `BlockInteraction`
+  (sift_bed loot + cooldown + caption), `GameContext.siftTides` ticked in `Main`
+  inside the Sift, `sift_portal` rift travel via `PortalSystem` with a dungeon
+  arrival scene, billboard classification for 932/934. `SiftSieveTest` (+6);
+  full suite green (456); committed.
 
 ## 11. DEFERRED — combat perspective + mechanics (user: “for later”)
 
