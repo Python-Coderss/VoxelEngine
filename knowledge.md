@@ -337,3 +337,28 @@ drop their base log item.
 **Cutscenes:** ESC skips cinematic scenes (+HUD "ESC to skip"); level-up queue no longer swallowed; nightfall guards UI/death/cutscenes; directed cameras lift out of terrain; crafting/furnace walk targets validate walkable sides; TV camera sits player-side and aims at the screen.
 
 **Chest model + hinge animation (in progress):** chest.json elements (body+lid+latch), isFullBlock=false forced for chest, hasHinge bit = d3.w bit 7, shader rotates lid ray around back-hinge by CPU-ticked uniform angle.
+
+## The Sift, the Melody Rift & the Story Map (2026-10-05)
+
+- **The Sift** (`DimensionType.SIFT`, base height 72) is `com.voxel.world.SiftGenerator`
+  (Meadow / Carapace biomes) with `SiftTides` (240s low→high→low swell). `GameContext.siftTides`
+  ticks only while the player is in the dimension.
+- **Sifting:** `com.voxel.game.SiftSieve` is a pure loot table + per-block cooldown.
+  `BlockInteraction.siftBed` right-clicks block 932, rolls `SiftSieve.roll(tides, rng)`, adds the
+  item and shows a `LiveCaptions` line. Rare chance 8% (low tide) → 55% (high tide).
+- **Rift travel:** `PortalSystem` treats `sift_portal` (934) like the Nether/Aether portals;
+  entering the Sift plays `CinematicSystem.playDungeonArrival`. `Main.performBillboardAction`
+  routes id 934 to `enterPortal`.
+- **Melody rift:** block `note_block` (937). `com.voxel.game.MelodyPortal` is a pure static
+  melody lock (`MELODY = {0,2,4,6,4,2}`, `NOTES = 7`); `pitchAt(x,y,z)` maps a stone's offset
+  from the registered origin to a pitch. `com.voxel.world.AncientCity` (-384, 384) stamps a
+  soul-slate plaza, a dormant `rift_frame` gate and seven tuning stones; `AncientCity.open`
+  fills the gate with `sift_portal` once the tune is played. `BlockInteraction.playNoteBlock`
+  drives it.
+- **Story map:** `com.voxel.world.SiteShapes` is a shared shape library (plaza, town, arena,
+  temple, keep, spire, canyon, swampHut, forge, outpost, riftHall, pumpkinField, forestCamp,
+  skyIsland) with a `RecordingSink` for headless tests. `McsmStructures` now also stamps
+  Episodes 2-8; `LegendsStructures` and `DungeonsStructures` add the Legends campaign and both
+  Dungeons journeys. Every site is lazy, deterministic and idempotent, stamped from `Main`'s
+  Overworld logic tick.
+- **Note:** the new story sites have structures only — their mobs and story beats are still TODO.

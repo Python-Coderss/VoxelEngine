@@ -24,8 +24,9 @@ overhauls (§4c).
 2. **Next**: more cutscene scenes (boss/dungeon/Nether/Sift reveals with
    dialogue), and P&C pass #2 (multi-action markers, TV marker dispatch, click
    ranges). Then **THE SIFT** (§5).
-3. Keep `knowledge.md` + `CHANGELOG.md` updated per phase; commit at each stable
-   point (local commit survives a cutoff; push if asked).
+3. `knowledge.md` + `CHANGELOG.md` are **updated** for the Sift / melody rift /
+   story map (2026-10-05). Commit at each stable point (local commit survives a
+   cutoff; push if asked).
 
 ### Already done / on disk
 - Ancient builders (§4) — **committed**.
@@ -360,6 +361,15 @@ Point & Click:
   `DungeonsStructures` (11); wired into `Main`. `SiteShapesTest` (4) +
   `StoryContentSitesTest` (3); full suite green (472); committed. NOTE: mobs and
   story beats for these families are still TODO (§7).
+- 2026-10-05: **Docs** — `knowledge.md` (+ a Sift/Melody/Story-map section) and
+  `CHANGELOG.md` (+ a 2026-10-05 entry) updated for all of this session's work.
+  Committed.
+
+REMAINING AFTER 2026-10-05 (next session's NEXT ACTION):
+1. **Mobs + story beats** for the new MCSM/Legends/Dungeons sites (§7).
+2. **Overhaul existing generators** (§4c).
+3. Optional Sift slice 3 (soul wisps, carapace hazards, HUD tide readout).
+4. Combat perspective/mechanics (§11, user-deferred).
 
 ## 11. DEFERRED — combat perspective + mechanics (user: “for later”)
 
