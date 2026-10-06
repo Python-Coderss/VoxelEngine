@@ -1,5 +1,45 @@
 # CHANGELOG
 
+## The Sift, the Melody Rift, and the Story Map (Oct 5, 2026)
+
+### THE SIFT is playable
+- The Sift dimension gained its defining mechanic: right-click a **sift bed** to
+  strain buried material out of the dimension's soil. `SiftSieve` rolls a loot
+  table (six common, six rare) whose rare chance climbs from 8% at low tide to
+  55% at high tide, with a short per-block cooldown so a held click cannot strip
+  a whole field at once.
+- **Shifting tides:** `GameContext.siftTides` (`SiftTides`) advances only while
+  the player is in the Sift, cycling low -> high -> low every 240s. The tide
+  drives sifting richness and flags the realm hazardous at high water.
+- **Rift travel:** the `sift_portal` block is a working rift — walk into it or
+  click it to travel between the Overworld and the Sift, with a dungeon-arrival
+  cutscene on entry.
+
+### The Ancient City and the melody-locked rift
+- New block **note_block** (937), the tuning stone.
+- `MelodyPortal` is a pure melody lock: the seven tuning stones of the Ancient
+  City play pitches 0..6 derived from their position, and playing
+  `{0,2,4,6,4,2}` in order tears the dormant rift open. A wrong note clears the
+  run (a note that starts the tune begins a fresh attempt).
+- `AncientCity` stamps a soul-slate plaza with a dormant `rift_frame` gate; on a
+  correct tune the gate fills with a live `sift_portal`, so the tune is a real
+  key rather than a lever.
+
+### MCSM / Legends / Dungeons campaign map
+- `SiteShapes` — a shared, deterministic, idempotent shape library (town, arena,
+  temple, keep, spire, canyon, swamp hut, forge, outpost, rift hall, pumpkin
+  field, forest camp, sky island).
+- MCSM Episodes 2-8 added: Redstonia, Boom Town, Sky City, Crown Mesa, the
+  Wither Storm Arena, the Order's Temple, Beacontown, Fred's Keep and the Portal
+  Network.
+- Minecraft Legends: the Well of Fate, the Great Hog's camp, a hero outpost and
+  a defended village.
+- Minecraft Dungeons 1: Creeper Woods through the Obsidian Pinnacle and the
+  Island Realms. Dungeons 2: a Sift-linked Rift Stop and an Illager Keep.
+- All stamped lazily near the player, the same pattern as the original sites.
+
+Verification: `./mvnw -o test` -> 472 tests, 0 failures.
+
 ## Villager Professions (Oct 5, 2026)
 
 ### Professions are real jobs now
