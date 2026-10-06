@@ -2,8 +2,12 @@ package com.voxel.ai.brain;
 
 import com.voxel.ai.MobBrain;
 import com.voxel.entity.AncientBuilderEntity;
+import com.voxel.entity.ArchIllagerEntity;
 import com.voxel.entity.EnemyEntity;
+import com.voxel.entity.GreatHogEntity;
+import com.voxel.entity.HeartOfEnderEntity;
 import com.voxel.entity.VillagerEntity;
+import com.voxel.entity.WitherStormEntity;
 import org.joml.Vector3f;
 
 import java.lang.reflect.Method;
@@ -37,6 +41,26 @@ public final class Brains {
     /** @return the predator brain for a hostile mob, or null when disabled. */
     public static MobBrain newHunterBrain(EnemyEntity owner) {
         return ENABLED ? HunterBrain.attach(owner) : null;
+    }
+
+    /** @return the Wither Storm boss brain, or null when brains are disabled. */
+    public static MobBrain newWitherStormBrain(WitherStormEntity owner) {
+        return ENABLED ? new WitherStormBrain(owner) : null;
+    }
+
+    /** @return the Great Hog boss brain, or null when brains are disabled. */
+    public static MobBrain newGreatHogBrain(GreatHogEntity owner) {
+        return ENABLED ? new GreatHogBrain(owner) : null;
+    }
+
+    /** @return the Arch-Illager boss brain, or null when brains are disabled. */
+    public static MobBrain newArchIllagerBrain(ArchIllagerEntity owner) {
+        return ENABLED ? new ArchIllagerBrain(owner) : null;
+    }
+
+    /** @return the Heart of Ender boss brain, or null when brains are disabled. */
+    public static MobBrain newHeartOfEnderBrain(HeartOfEnderEntity owner) {
+        return ENABLED ? new HeartOfEnderBrain(owner) : null;
     }
 
     /**

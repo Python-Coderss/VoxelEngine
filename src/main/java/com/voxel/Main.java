@@ -1391,17 +1391,43 @@ public class Main {
                 mob = genericMob(pos, "illager.json");
                 break;
             case "wither":
-            case "wither_storm":
                 mob = new com.voxel.entity.WitherEntity(
                         nextSpawnCommandId++, pos, textureManager, entityManager);
                 ((com.voxel.entity.WitherEntity) mob).world = world;
                 break;
-            case "great_hog":
-                mob = genericMob(pos, "pigman.json");
+            case "wither_storm": {
+                com.voxel.entity.WitherStormEntity storm =
+                        new com.voxel.entity.WitherStormEntity(
+                                nextSpawnCommandId++, pos, textureManager, player, entityManager);
+                storm.setWorld(world);
+                mob = storm;
                 break;
-            case "arch_illager":
-                mob = genericMob(pos, "illager.json");
+            }
+            case "great_hog": {
+                com.voxel.entity.GreatHogEntity hog =
+                        new com.voxel.entity.GreatHogEntity(
+                                nextSpawnCommandId++, pos, textureManager, player, entityManager);
+                hog.setWorld(world);
+                mob = hog;
                 break;
+            }
+            case "arch_illager": {
+                com.voxel.entity.ArchIllagerEntity arch =
+                        new com.voxel.entity.ArchIllagerEntity(
+                                nextSpawnCommandId++, pos, textureManager, player, entityManager);
+                arch.setWorld(world);
+                mob = arch;
+                break;
+            }
+            case "heart_of_ender":
+            case "heart": {
+                com.voxel.entity.HeartOfEnderEntity heart =
+                        new com.voxel.entity.HeartOfEnderEntity(
+                                nextSpawnCommandId++, pos, textureManager, player, entityManager);
+                heart.setWorld(world);
+                mob = heart;
+                break;
+            }
             case "wolf":
                 mob = genericMob(pos, "wolf.json");
                 break;
@@ -1481,12 +1507,44 @@ public class Main {
                 ((com.voxel.entity.FarmAnimalEntity) mob).setWorld(world);
                 break;
             default:
-                setStatus("Unknown mob: " + type + ". Try: zombie, husk, skeleton, stray, wither_skeleton, spider, cave_spider, enderman, endermite, silverfish, bat, dragon, ghast, guardian, horse, llama, cat, parrot, polar_bear, rabbit, shulker, slime, magma_cube, squid, vex, witch, evoker, vindicator, wither, wolf, creeper, villager, iron_golem, snow_golem, snow_golem_sheared, blaze, pigman, pig, cow, mooshroom, chicken, sheep, sheep_sheared.");
+                setStatus("Unknown mob: " + type + ". Try: zombie, husk, skeleton, stray, wither_skeleton, spider, cave_spider, enderman, endermite, silverfish, bat, dragon, ghast, guardian, horse, llama, cat, parrot, polar_bear, rabbit, shulker, slime, magma_cube, squid, vex, witch, evoker, vindicator, wither, wither_storm, great_hog, arch_illager, heart_of_ender, wolf, creeper, villager, iron_golem, snow_golem, snow_golem_sheared, blaze, pigman, pig, cow, mooshroom, chicken, sheep, sheep_sheared.");
                 return;
         }
 
         mob.dimension = activeDimension;
         entityManager.addEntity(mob);
+    }
+
+    /**
+     * Cutscene intro for a campaign boss summoned by a story beat. Bosses get a
+     * title card + a taunt; anonymous summons stay quiet.
+     */
+    private void playCampaignBossIntro(String mob) {
+        if (ctx == null || ctx.cinematic == null || mob == null) return;
+        String title;
+        String taunt;
+        switch (mob) {
+            case "wither_storm":
+                title = "THE WITHER STORM";
+                taunt = "You cannot kill what the sky already owns.";
+                break;
+            case "great_hog":
+                title = "THE GREAT HOG";
+                taunt = "My horde will bury your little rebellion.";
+                break;
+            case "arch_illager":
+                title = "THE ARCH-ILLAGER";
+                taunt = "The Heart of Ender will finish this.";
+                break;
+            case "heart_of_ender":
+                title = "THE HEART OF ENDER";
+                taunt = "All that you are will end.";
+                break;
+            default:
+                return;
+        }
+        Vector3f at = player != null ? player.getPosition() : new Vector3f();
+        ctx.cinematic.playBossIntro(title, taunt, at);
     }
 
     /** Creates one of the source-model-only mobs with the shared hostile behavior. */
@@ -3037,6 +3095,7 @@ public class Main {
                 String campaignMob = com.voxel.game.CampaignStory.consumeSpawnRequest();
                 if (campaignMob != null) {
                     spawnMobAtLook(campaignMob);
+                    playCampaignBossIntro(campaignMob);
                 }
             }
 
@@ -3176,6 +3235,59 @@ public class Main {
                             if (ctx.cinematic != null) {
                                 ctx.cinematic.playBossDefeat("THE WHITE PUMPKIN",
                                     "The lair falls silent at last.", wp.getPosition());
+                            }
+                        }
+                    } else if (e instanceof com.voxel.entity.WitherStormEntity) {
+                        com.voxel.entity.WitherStormEntity storm =
+                                (com.voxel.entity.WitherStormEntity) e;
+                        if (storm.isDead() && !storm.markedDropped()) {
+                            storm.dropLoot(ctx.droppedItemManager);
+                            storm.markDropped();
+                            setStatus("The Wither Storm is undone!");
+                            needsWorldUpload = true;
+                            if (ctx.cinematic != null) {
+                                ctx.cinematic.playBossDefeat("THE WITHER STORM",
+                                    "The sky clears over the arena.", storm.getPosition());
+                            }
+                        }
+                    } else if (e instanceof com.voxel.entity.GreatHogEntity) {
+                        com.voxel.entity.GreatHogEntity hog =
+                                (com.voxel.entity.GreatHogEntity) e;
+                        if (hog.isDead() && !hog.markedDropped()) {
+                            hog.dropLoot(ctx.droppedItemManager);
+                            hog.markDropped();
+                            setStatus("The Great Hog has fallen!");
+                            needsWorldUpload = true;
+                            if (ctx.cinematic != null) {
+                                ctx.cinematic.playBossDefeat("THE GREAT HOG",
+                                    "The horde scatters without its master.", hog.getPosition());
+                            }
+                        }
+                    } else if (e instanceof com.voxel.entity.ArchIllagerEntity) {
+                        com.voxel.entity.ArchIllagerEntity arch =
+                                (com.voxel.entity.ArchIllagerEntity) e;
+                        if (arch.isDead() && !arch.markedDropped()) {
+                            arch.dropLoot(ctx.droppedItemManager);
+                            arch.markDropped();
+                            setStatus("The Arch-Illager is defeated!");
+                            needsWorldUpload = true;
+                            if (ctx.cinematic != null) {
+                                ctx.cinematic.playBossDefeat("THE ARCH-ILLAGER",
+                                    "The crown is cast down.", arch.getPosition());
+                            }
+                        }
+                    } else if (e instanceof com.voxel.entity.HeartOfEnderEntity) {
+                        com.voxel.entity.HeartOfEnderEntity heart =
+                                (com.voxel.entity.HeartOfEnderEntity) e;
+                        if (heart.isDead() && !heart.markedDropped()) {
+                            heart.dropLoot(ctx.droppedItemManager);
+                            heart.markDropped();
+                            setStatus("The Heart of Ender is stilled!");
+                            needsWorldUpload = true;
+                            if (ctx.cinematic != null) {
+                                ctx.cinematic.playBossDefeat("THE HEART OF ENDER",
+                                    "The orb goes dark. The End is quiet again.",
+                                    heart.getPosition());
                             }
                         }
                     }

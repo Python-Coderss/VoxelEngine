@@ -1,0 +1,269 @@
+{
+  "parts": [
+    {
+      "name": "tentacle_a",
+      "from": [
+        -2,
+        2,
+        -2
+      ],
+      "size": [
+        5,
+        16,
+        5
+      ],
+      "absolute_offset": [
+        -2,
+        18,
+        0
+      ],
+      "texture": "wither_storm/wither_storm_tentacles",
+      "uv": [
+        0,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "tentacle_b",
+      "from": [
+        -2,
+        2,
+        -2
+      ],
+      "size": [
+        5,
+        16,
+        5
+      ],
+      "absolute_offset": [
+        2,
+        18,
+        0
+      ],
+      "texture": "wither_storm/wither_storm_tentacles",
+      "uv": [
+        20,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "tentacle_c",
+      "from": [
+        -2,
+        2,
+        -2
+      ],
+      "size": [
+        5,
+        16,
+        5
+      ],
+      "absolute_offset": [
+        0,
+        18,
+        -2
+      ],
+      "texture": "wither_storm/wither_storm_tentacles",
+      "uv": [
+        40,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "tentacle_d",
+      "from": [
+        -2,
+        4,
+        -2
+      ],
+      "size": [
+        5,
+        12,
+        5
+      ],
+      "absolute_offset": [
+        0,
+        18,
+        2
+      ],
+      "texture": "wither_storm/wither_storm_tentacles",
+      "uv": [
+        0,
+        21
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body_lower",
+      "from": [
+        -7,
+        14,
+        -5
+      ],
+      "size": [
+        14,
+        12,
+        10
+      ],
+      "absolute_offset": [
+        0,
+        20,
+        0
+      ],
+      "texture": "wither_storm/wither_storm_body",
+      "uv": [
+        0,
+        22
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "body_upper",
+      "from": [
+        -10,
+        24,
+        -6
+      ],
+      "size": [
+        20,
+        10,
+        12
+      ],
+      "absolute_offset": [
+        0,
+        29,
+        0
+      ],
+      "texture": "wither_storm/wither_storm_body",
+      "uv": [
+        0,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "core_glow",
+      "from": [
+        -4,
+        26,
+        -4
+      ],
+      "size": [
+        8,
+        8,
+        8
+      ],
+      "absolute_offset": [
+        0,
+        30,
+        0
+      ],
+      "texture": "wither_storm/wither_storm_body",
+      "uv": [
+        0,
+        44
+      ],
+      "texture_mapping": "cuboid_atlas",
+      "emissive": true
+    },
+    {
+      "name": "neck",
+      "from": [
+        -4,
+        32,
+        -4
+      ],
+      "size": [
+        8,
+        10,
+        8
+      ],
+      "absolute_offset": [
+        0,
+        37,
+        0
+      ],
+      "texture": "wither_storm/wither_storm_heads",
+      "uv": [
+        0,
+        24
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "head_center",
+      "from": [
+        -6,
+        38,
+        -6
+      ],
+      "size": [
+        12,
+        12,
+        12
+      ],
+      "absolute_offset": [
+        0,
+        44,
+        0
+      ],
+      "texture": "wither_storm/wither_storm_heads",
+      "uv": [
+        0,
+        0
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "head_left",
+      "from": [
+        -16,
+        40,
+        -4
+      ],
+      "size": [
+        8,
+        8,
+        8
+      ],
+      "absolute_offset": [
+        -12,
+        44,
+        0
+      ],
+      "texture": "wither_storm/wither_storm_heads",
+      "uv": [
+        32,
+        24
+      ],
+      "texture_mapping": "cuboid_atlas"
+    },
+    {
+      "name": "head_right",
+      "from": [
+        8,
+        40,
+        -4
+      ],
+      "size": [
+        8,
+        8,
+        8
+      ],
+      "absolute_offset": [
+        12,
+        44,
+        0
+      ],
+      "texture": "wither_storm/wither_storm_heads",
+      "uv": [
+        32,
+        40
+      ],
+      "texture_mapping": "cuboid_atlas"
+    }
+  ]
+}

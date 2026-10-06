@@ -1,5 +1,37 @@
 # CHANGELOG
 
+## Bespoke Campaign Bosses (Oct 6, 2026)
+
+### Four bosses now have their own models and AI
+Previously the campaign story beats summoned placeholder mobs (a reused wither,
+`pigman.json`, `illager.json`). Each family now has a hand-built boss:
+
+- **The Wither Storm** (400 HP) — three heads, a glowing command core and
+trailing tentacles. `WitherStormBrain` stalks at range, hurls wither skulls, and
+calls wither skeletons up from the ground, escalating into a permanent enrage
+once wounded.
+- **The Great Hog** (320 HP) — a hoglin brute in bronze wargear with a hammer.
+`GreatHogBrain` charges, telegraphs and slams a heavy pound, and rallies the
+horde on a timer.
+- **The Arch-Illager** (280 HP) — a crowned, hovering caster. `ArchIllagerBrain`
+keeps its distance, rakes the player with fang lines, blinks out of melee, and
+whistles up vexes.
+- **The Heart of Ender** (360 HP) — a segmented ender orb crowned by a burning
+eye. `HeartOfEnderBrain` drifts, discharges nova pulses and disgorges endermites.
+
+Every brain sits behind the existing `Brains.ENABLED` gate, so
+`-Dvoxel.ai.brains.off=true` still restores the legacy FSM. Bosses have title-card
+intro scenes, loot drops and defeat scenes wired into `Main`; the Island Realms
+story beat now summons the Heart of Ender.
+
+### Asset generation
+`tools/gen_campaign_entity_textures.py` sweeps deterministic pixel-art skins into
+standard Minecraft box-UV nets and packs each texture group into a 64x64 entity
+layer, writing the model JSON and the PNG together so geometry and art can never
+drift apart. `tools/check_entity_uv_space.py` verifies every UV extent fits.
+
+Verification: `./mvnw -o test` -> 505 tests, 0 failures.
+
 ## The Sift, the Melody Rift, and the Story Map (Oct 5, 2026)
 
 ### THE SIFT is playable
