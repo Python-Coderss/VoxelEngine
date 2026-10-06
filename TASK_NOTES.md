@@ -13,7 +13,7 @@ Cutscene/P&C passes #1–#3 are DONE (see §4b and §10).
 **Sift slice 2 is DONE** (sifting mechanic + tide + rift travel — see §5).
 **The melody rift (§6) is DONE.**
 Next: **MCSM/Legends/Dungeons content (§7)**, then the existing-generator
-overhauls (§4c).
+overhauls (§4c, mineshaft done).
 
 1. Cutscene/P&C pass #1 **committed**: timed dialogue cues in scenes
    (`CinematicScript` + `CinematicSystem.publishScript/playScriptedScene/
@@ -32,7 +32,8 @@ overhauls (§4c).
 - Ancient builders (§4) — **committed**.
 - Cutscenes + Point & Click pass #1 (§4b) — **committed** (full suite green:
   429 tests). Confirm with `./mvnw -o test`.
-- Overhauls of existing generators (§4c) — NOT started.
+- Overhauls of existing generators (§4c) — **MapGenMineshaft done**;
+  MapGenFortress/Stronghold/Village/AncientBuilderFacility/Modern still as-is.
 - THE SIFT (§5), melody rift (§6), MCSM/Legends/Dungeons (§7) — NOT started.
 
 ## 1. The user’s requests (verbatim intent, accumulate across sessions)
@@ -364,10 +365,18 @@ Point & Click:
 - 2026-10-05: **Docs** — `knowledge.md` (+ a Sift/Melody/Story-map section) and
   `CHANGELOG.md` (+ a 2026-10-05 entry) updated for all of this session's work.
   Committed.
+- 2026-10-05: **Generator overhaul (§4c), first pass** — `MapGenMineshaft`
+  rewritten: rails (391/392) down every corridor, torches on the support frames,
+  cobblestone footings, ore veins (61/81/82/83) in the walls, and treasure rooms
+  with a chest (118) + spawner (258); fixed the double floor write and the dead
+  RAIL/TORCH/FENCE constants. Added a `force` overload. `MapGenMineshaftTest`
+  (7); full suite green (479); committed.
 
 REMAINING AFTER 2026-10-05 (next session's NEXT ACTION):
 1. **Mobs + story beats** for the new MCSM/Legends/Dungeons sites (§7).
-2. **Overhaul existing generators** (§4c).
+2. **Overhaul the remaining existing generators** (§4c): MapGenFortress,
+   MapGenStronghold, MapGenVillage, AncientBuilderFacility, AncientBuilderModern,
+   McsmStructures (MapGenMineshaft is done).
 3. Optional Sift slice 3 (soul wisps, carapace hazards, HUD tide readout).
 4. Combat perspective/mechanics (§11, user-deferred).
 
