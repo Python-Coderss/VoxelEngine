@@ -57,17 +57,72 @@ public class VillagerVillageManager {
     private static final int SPAWN_RADIUS = 160;
     /** Sample ring used to confirm the terrain around a village is loaded. */
     private static final int LOAD_SAMPLE_OFFSET = 8;
+    /** Radius given to a village record rebuilt around a restored villager. */
+    private static final int DEFAULT_VILLAGE_RADIUS = 48;
 
     private final Map<String, Village> villages = new java.util.concurrent.ConcurrentHashMap<>();
     private final List<PendingVillage> pendingSpawns = new ArrayList<>();
     private int nextVillagerId = 40000;
 
-    /** Register a village at the given position. */
+    /**
+     * Register a village at the given position, or return the existing record
+     * when one already occupies the same coarse cell. Re-registration must
+     * merge rather than replace: a reloaded world re-registers its villages as
+     * chunks generate, and overwriting here used to drop every villager that
+     * had already rejoined.
+     */
     public Village registerVillage(Vector3i center, int radius) {
         String key = villageKey(center.x, center.z);
+        Village existing = villages.get(key);
+        if (existing != null) {
+            if (radius > 0) existing.radius = radius;
+            return existing;
+        }
         Village v = new Village(center, radius);
         villages.put(key, v);
         return v;
+    }
+
+    /**
+     * Re-attach a villager restored from a save to a village so it resumes its
+     * life. Village membership is not persisted (villages are rebuilt as chunks
+     * generate), so it is reconstructed from the villager's position: the
+     * village the villager stands in, else the nearest village within range,
+     * else a fresh record centred on the villager. It then takes a trade from
+     * the job sites standing around it, exactly like a freshly spawned villager,
+     * so work and the barter panel come back immediately.
+     *
+     * @return the village the villager joined
+     */
+    public Village bindRestoredVillager(VillagerEntity villager, World world) {
+        if (villager == null) return null;
+        if (world != null) villager.setWorld(world);
+
+        float x = villager.getPosX();
+        float z = villager.getPosZ();
+        Village village = findVillageAt(x, z);
+        if (village == null) {
+            Village nearest = findNearestVillage(x, z);
+            if (nearest != null) {
+                // Only adopt a village close enough to be this villager's home;
+                // a village on the far side of the map is not.
+                float dx = nearest.center.x - x;
+                float dz = nearest.center.z - z;
+                float reach = nearest.radius * 2f;
+                if (dx * dx + dz * dz <= reach * reach) village = nearest;
+            }
+        }
+        if (village == null) {
+            village = registerVillage(new Vector3i(
+                    (int) Math.floor(x), (int) Math.floor(villager.getPosY()),
+                    (int) Math.floor(z)), DEFAULT_VILLAGE_RADIUS);
+        }
+        villager.setVillage(village.center, village.radius);
+        if (!village.villagers.contains(villager)) village.villagers.add(villager);
+        // Staff from the job sites the village actually has, unless the villager
+        // already holds a workstation.
+        if (!villager.hasWorkstation()) villager.assignJobSiteIfAny();
+        return village;
     }
 
     /**

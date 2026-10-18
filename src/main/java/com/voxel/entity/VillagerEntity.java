@@ -6,6 +6,7 @@ import com.voxel.ai.body.EmotePlayer;
 import com.voxel.ai.body.GazeController;
 import com.voxel.ai.brain.Brains;
 import com.voxel.utils.FixedPoint;
+import com.voxel.world.DecorBlocks;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
 import org.joml.Vector3i;
@@ -302,9 +303,13 @@ public class VillagerEntity extends Entity {
                 queueBuild(new Vector3i(origin.x + width - 1, origin.y + h, origin.z + dz), 71, true);
             }
         }
+        // The north wall runs along X, so the doorway takes the rotated panel —
+        // a real two-block door rather than a bare gap.
         int doorX = origin.x + width / 2;
-        queueBuild(new Vector3i(doorX, origin.y + 1, origin.z), 0, true);
-        queueBuild(new Vector3i(doorX, origin.y + 2, origin.z), 0, true);
+        queueBuild(new Vector3i(doorX, origin.y + 1, origin.z),
+                DecorBlocks.OAK_DOOR_LOWER_EW, true);
+        queueBuild(new Vector3i(doorX, origin.y + 2, origin.z),
+                DecorBlocks.OAK_DOOR_UPPER_EW, true);
         for (int dx = -1; dx < width + 1; dx++)
             for (int dz = -1; dz < depth + 1; dz++)
                 queueBuild(new Vector3i(origin.x + dx, origin.y + height + 1, origin.z + dz), 72, true);

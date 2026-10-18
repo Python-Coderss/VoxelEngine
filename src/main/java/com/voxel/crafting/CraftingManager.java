@@ -232,12 +232,22 @@ public class CraftingManager {
             {"cobblestone", "cobblestone"}
         }, "stone_brick", 4);
 
-        // Bookshelf: 3 planks + 3 books (simplified: oak_log = book)
+        // Bookshelf: 3 planks + 3 books
         addRecipe3x3(new String[][]{
             {"oak_planks", "oak_planks", "oak_planks"},
-            {"oak_log", "oak_log", "oak_log"},
+            {"book", "book", "book"},
             {"oak_planks", "oak_planks", "oak_planks"}
         }, "bookshelf", 1);
+
+        // Book: 3 reeds (parchment) + 1 plank binding
+        addRecipe3x3(new String[][]{
+            {"reeds", "reeds", "reeds"},
+            {null, "oak_planks", null},
+            {null, null, null}
+        }, "book", 1);
+
+        // Book and Quill: a book inked with coal
+        addShapeless3x3("writable_book", 1, "book", "coal");
 
         // Metal blocks compact from SMELTED ingots / mined gems (not raw ore)
         addShapeless3x3("iron_block", 1,

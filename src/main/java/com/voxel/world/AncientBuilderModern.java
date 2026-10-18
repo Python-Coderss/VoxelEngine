@@ -153,9 +153,12 @@ public final class AncientBuilderModern {
                 for (int dz = -half; dz <= half; dz++) {
                     boolean edge = Math.max(Math.abs(dx), Math.abs(dz)) == half;
                     boolean corner = Math.abs(dx) == half && Math.abs(dz) == half;
-                    // Slab ceiling of this floor, lit from below.
-                    if (f > 0 && ((dx + dz) & 3) == 0) {
-                        s.set(cx + dx, y0, cz + dz, CEILING_LIGHT);
+                    // Solid slab ceiling of this floor, lit from below. Every
+                    // cell is written, so the floors are real decks rather than
+                    // a ring of lights over open air.
+                    if (f > 0) {
+                        s.set(cx + dx, y0, cz + dz,
+                                ((dx + dz) & 3) == 0 ? CEILING_LIGHT : CONCRETE);
                     }
                     if (!edge) continue;
                     int wall = corner ? STEEL_BEAM
@@ -166,18 +169,26 @@ public final class AncientBuilderModern {
             }
         }
 
-        // Entrance: a two-block opening on the south facade with a steel lintel.
+        // Entrance: a three-wide opening on the south facade with a steel
+        // lintel. The two outer bays carry two-block door leaves (an open
+        // double door) and the centre bay stays clear as the threshold.
         for (int dx = -1; dx <= 1; dx++) {
             s.set(cx + dx, base + 1, cz - 5, 0);
             s.set(cx + dx, base + 2, cz - 5, 0);
             s.set(cx + dx, base + 3, cz - 5, STEEL_BEAM);
         }
+        for (int dx : new int[] {-1, 1}) {
+            s.set(cx + dx, base + 1, cz - 5, DecorBlocks.DARK_OAK_DOOR_LOWER_EW);
+            s.set(cx + dx, base + 2, cz - 5, DecorBlocks.DARK_OAK_DOOR_UPPER_EW);
+        }
         s.set(cx, base + 1, cz, CHEST); // lobby desk, left as it was
 
-        // Rooftop: slab, beacon light, antenna mast.
+        // Rooftop: a slab that spans the top floor (so the setback floors are
+        // not left open), a beacon light and an antenna mast.
         int roofY = base + floors * floorH;
-        for (int dx = -5; dx <= 5; dx++) {
-            for (int dz = -5; dz <= 5; dz++) s.set(cx + dx, roofY, cz + dz, CONCRETE);
+        int topHalf = setback ? 4 : 5;
+        for (int dx = -topHalf; dx <= topHalf; dx++) {
+            for (int dz = -topHalf; dz <= topHalf; dz++) s.set(cx + dx, roofY, cz + dz, CONCRETE);
         }
         s.set(cx, roofY + 1, cz, CEILING_LIGHT);
         for (int y = roofY + 1; y <= roofY + 4; y++) s.set(cx + 3, y, cz + 3, STEEL_BEAM);
@@ -214,9 +225,10 @@ public final class AncientBuilderModern {
             }
         }
 
-        // Steel girder rows holding the roof.
+        // Steel girder rows holding the roof. They run down to the
+        // platform/rail course so no girder is left hanging over the trench.
         for (int dz = -12; dz <= 12; dz += 6) {
-            for (int y = base + 1; y <= base + 4; y++) {
+            for (int y = base - 1; y <= base + 4; y++) {
                 s.set(cx - 3, y, cz + dz, STEEL_BEAM);
                 s.set(cx + 3, y, cz + dz, STEEL_BEAM);
             }
@@ -231,8 +243,20 @@ public final class AncientBuilderModern {
                 s.set(cx + dx, y, cz + 15, block);
             }
         }
+        // Each end gets a tiled threshold and a pair of two-leaf doors flanking
+        // the clear centre, so the openings are real doorways, not bare holes.
+        for (int z : new int[] {cz - 15, cz + 15}) {
+            for (int dx = -2; dx <= 2; dx++) s.set(cx + dx, base, z, TILE_BLOCK);
+            for (int dx : new int[] {-2, -1, 1, 2}) {
+                s.set(cx + dx, base + 1, z, DecorBlocks.SPRUCE_DOOR_LOWER_EW);
+                s.set(cx + dx, base + 2, z, DecorBlocks.SPRUCE_DOOR_UPPER_EW);
+            }
+        }
 
-        // Arrival console: idle command tech from their final years.
+        // Arrival console: idle command tech from their final years, standing
+        // on a tiled deck laid across the centre trench.
+        s.set(cx, base, cz - 14, TILE_BLOCK);
+        s.set(cx + 1, base, cz - 14, TILE_BLOCK);
         s.set(cx, base + 1, cz - 14, REPEATING);
         s.set(cx + 1, base + 1, cz - 14, CHEST);
     }
@@ -245,8 +269,9 @@ public final class AncientBuilderModern {
     private static void buildResearchLab(VoxelSink s, int cx, int cz, int base, int variant) {
         for (int dx = -8; dx <= 8; dx++) {
             for (int dz = -6; dz <= 6; dz++) {
-                boolean edge = Math.max(Math.abs(dx), Math.abs(dz)) == 8
-                        || Math.max(Math.abs(dx), Math.abs(dz)) == 6;
+                // Only the four outer walls are shell; the old test also
+                // matched |dx| == 6 and raised a second wall down the middle.
+                boolean edge = Math.abs(dx) == 8 || Math.abs(dz) == 6;
                 s.set(cx + dx, base, cz + dz, MARBLE);
                 for (int y = 1; y <= 5; y++) {
                     if (!edge) {
@@ -263,10 +288,15 @@ public final class AncientBuilderModern {
             }
         }
 
-        // South entrance with a steel frame.
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int y = 1; y <= 3; y++) s.set(cx + dx, base + y, cz - 6, 0);
+        // South entrance: a two-wide double door under a steel lintel. The
+        // third bay stays walled, so the doorway is a framed opening.
+        for (int dx = -1; dx <= 0; dx++) {
+            s.set(cx + dx, base + 3, cz - 6, 0);
             s.set(cx + dx, base + 4, cz - 6, STEEL_BEAM);
+        }
+        for (int dx = -1; dx <= 0; dx++) {
+            s.set(cx + dx, base + 1, cz - 6, DecorBlocks.SPRUCE_DOOR_LOWER_EW);
+            s.set(cx + dx, base + 2, cz - 6, DecorBlocks.SPRUCE_DOOR_UPPER_EW);
         }
 
         // Glass partitions: two rooms and a specimen plinth.
@@ -280,21 +310,28 @@ public final class AncientBuilderModern {
         s.set(cx + 2, base + 3, cz, CEILING_LIGHT);
         for (int dx = -7; dx <= 7; dx += 2) s.set(cx + dx, base + 4, cz, CEILING_LIGHT);
 
-        // Variant 1: an east annex wing (archive stacks).
+        // Variant 1: an east annex wing (archive stacks), walled and roofed
+        // like the main wing and joined to it by a framed doorway. The old
+        // perimeter test only caught |dz| == 3/4, leaving both ends open.
         if (variant == 1) {
             for (int dx = 9; dx <= 15; dx++) {
                 for (int dz = -4; dz <= 4; dz++) {
-                    boolean edge = Math.max(Math.abs(dx - 12), Math.abs(dz)) == 4
-                            || Math.abs(dz) == 3;
+                    boolean wall = Math.abs(dz) == 4 || dx == 15;
                     s.set(cx + dx, base, cz + dz, TILE_BLOCK);
                     for (int y = 1; y <= 4; y++) {
-                        boolean windowBand = y == 2 && Math.abs(dz) == 3;
-                        int block = y == 4 ? CONCRETE
-                                : windowBand ? OFFICE_GLASS : TILE_BLOCK;
-                        if (edge) s.set(cx + dx, base + y, cz + dz, block);
+                        if (y == 4) {
+                            s.set(cx + dx, base + y, cz + dz, CONCRETE);
+                        } else if (wall) {
+                            boolean windowBand = y == 2 && Math.abs(dz) == 3;
+                            s.set(cx + dx, base + y, cz + dz,
+                                    windowBand ? OFFICE_GLASS : TILE_BLOCK);
+                        }
                     }
                 }
             }
+            // Doorway through the wing's east wall into the annex.
+            s.set(cx + 8, base + 1, cz, DecorBlocks.DARK_OAK_DOOR_LOWER_EW);
+            s.set(cx + 8, base + 2, cz, DecorBlocks.DARK_OAK_DOOR_UPPER_EW);
         }
     }
 

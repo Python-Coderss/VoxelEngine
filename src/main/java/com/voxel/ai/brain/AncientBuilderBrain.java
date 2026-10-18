@@ -41,8 +41,9 @@ import java.util.Random;
  *       site's last defenders would.</li>
  * </ul>
  *
- * <p>All speech is caption-only through
- * {@link com.voxel.ai.speech.CaptionSpeech} (via the entity's {@code aiSpeak}).</p>
+ * <p>Speech is voiced through
+ * {@link com.voxel.ai.speech.CharacterVoice} in the ancient-builder profile via
+ * the entity's {@code aiSpeakLine}.</p>
  */
 public final class AncientBuilderBrain implements MobBrain, StimulusBus.Listener {
 
@@ -569,7 +570,7 @@ public final class AncientBuilderBrain implements MobBrain, StimulusBus.Listener
         }
     }
 
-    /** Speak a line in the builder's voice — caption-only, never audio. */
+    /** Speak a line in the builder's voice. */
     private void say(AncientBuilderLines.Topic topic) {
         owner.aiSpeak(AncientBuilderLines.pick(topic, rng));
     }

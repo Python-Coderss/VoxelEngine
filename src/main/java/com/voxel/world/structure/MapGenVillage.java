@@ -2,6 +2,7 @@ package com.voxel.world.structure;
 
 import com.voxel.World;
 import com.voxel.entity.VillagerEntity;
+import com.voxel.world.DecorBlocks;
 import org.joml.Vector3f;
 import org.joml.Vector3i;
 import java.util.Random;
@@ -228,10 +229,11 @@ public class MapGenVillage {
             }
         }
 
-        // Door
+        // Door: a real two-tall oak door in the north wall. That wall runs
+        // along X (fixed z), so it uses the east-west panel variant.
         int doorX = x + width / 2;
-        world.setVoxel(doorX, y + 2, z, 0);
-        world.setVoxel(doorX, y + 3, z, 0);
+        world.setVoxel(doorX, y + 2, z, DecorBlocks.OAK_DOOR_LOWER_EW);
+        world.setVoxel(doorX, y + 3, z, DecorBlocks.OAK_DOOR_UPPER_EW);
 
         // Windows with glass
         if (width > 5) {
@@ -292,10 +294,12 @@ public class MapGenVillage {
             world.setVoxel(x + width - 1, y + h, z + depth - 1, OAK_LOG);
         }
 
-        // Double door
+        // Double door: two leaves in the north wall, which runs along X.
         int doorX = x + width / 2;
-        world.setVoxel(doorX, y + 2, z, 0);
-        world.setVoxel(doorX, y + 3, z, 0);
+        for (int i = 0; i <= 1; i++) {
+            world.setVoxel(doorX + i, y + 2, z, DecorBlocks.DARK_OAK_DOOR_LOWER_EW);
+            world.setVoxel(doorX + i, y + 3, z, DecorBlocks.DARK_OAK_DOOR_UPPER_EW);
+        }
 
         // Windows
         world.setVoxel(x + 2, y + 3, z + depth - 1, GLASS);
@@ -340,9 +344,9 @@ public class MapGenVillage {
             world.setVoxel(x + size - 1, y + 1, z + dz, OAK_LOG);
         }
 
-        // Water source in center
+        // Water source in the centre of the plot (tile the irrigation from).
         int cx = x + size / 2, cz = z + size / 2;
-        world.setVoxel(cx, y, z + cz, WATER);
+        world.setVoxel(cx, y, cz, WATER);
     }
 
     private void generateWorkshop(World world, int x, int y, int z, Random rand) {
@@ -372,9 +376,10 @@ public class MapGenVillage {
             }
         }
 
-        // Door
-        world.setVoxel(x + width / 2, y + 2, z, 0);
-        world.setVoxel(x + width / 2, y + 3, z, 0);
+        // Door: the workshop's north wall runs along X → east-west panels.
+        int doorX = x + width / 2;
+        world.setVoxel(doorX, y + 2, z, DecorBlocks.SPRUCE_DOOR_LOWER_EW);
+        world.setVoxel(doorX, y + 3, z, DecorBlocks.SPRUCE_DOOR_UPPER_EW);
 
         // Roof
         int roofY = y + height + 2;
@@ -438,6 +443,11 @@ public class MapGenVillage {
             world.setVoxel(x0 + 8, by + h, z0, OAK_LOG);
             world.setVoxel(x0 + 8, by + h, z0 + 6, OAK_LOG);
         }
+
+        // Studio front door, filling the glass-band opening. The west wall
+        // runs along Z (fixed x), so it takes the vanilla panel variant.
+        world.setVoxel(x0, by + 2, z0 + 3, DecorBlocks.OAK_DOOR_LOWER);
+        world.setVoxel(x0, by + 3, z0 + 3, DecorBlocks.OAK_DOOR_UPPER);
 
         // Roof (with overhang) — two glowstone ceiling lights
         for (int dx = -1; dx < 10; dx++)

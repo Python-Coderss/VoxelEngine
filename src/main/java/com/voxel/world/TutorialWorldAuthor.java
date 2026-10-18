@@ -298,17 +298,23 @@ public final class TutorialWorldAuthor {
                 }
             }
 
-            // Four gates + drawbridges (N/S/E/W).
-            for (int g = -1; g <= 1; g++) for (int h = 1; h <= 3; h++) set(x + g, G + h, zz - 13, 0);
+            // Four gates, each a two-wide, two-tall opening filled with a real
+            // oak double door, plus a three-wide drawbridge over the moat. The
+            // wall course above each opening stays, so every gate has a lintel.
+            for (int g = 0; g <= 1; g++) for (int h = 1; h <= 2; h++) set(x + g, G + h, zz - 13, 0);
+            doubleDoorX(x, G + 1, zz - 13, DecorBlocks.OAK_DOOR_LOWER_EW, DecorBlocks.OAK_DOOR_UPPER_EW);
             place(x, G + 4, zz - 13, GLOWSTONE);
             for (int g = -1; g <= 1; g++) for (int s = 1; s <= 3; s++) place(x + g, G + 1, zz - 13 - s, PLANKS);
-            for (int g = -1; g <= 1; g++) for (int h = 1; h <= 3; h++) set(x + g, G + h, zz + 13, 0);
+            for (int g = 0; g <= 1; g++) for (int h = 1; h <= 2; h++) set(x + g, G + h, zz + 13, 0);
+            doubleDoorX(x, G + 1, zz + 13, DecorBlocks.OAK_DOOR_LOWER_EW, DecorBlocks.OAK_DOOR_UPPER_EW);
             place(x, G + 4, zz + 13, GLOWSTONE);
             for (int g = -1; g <= 1; g++) for (int s = 1; s <= 3; s++) place(x + g, G + 1, zz + 13 + s, PLANKS);
-            for (int g = -1; g <= 1; g++) for (int h = 1; h <= 3; h++) set(x + 13, G + h, zz + g, 0);
+            for (int g = 0; g <= 1; g++) for (int h = 1; h <= 2; h++) set(x + 13, G + h, zz + g, 0);
+            doubleDoorZ(x + 13, G + 1, zz, DecorBlocks.OAK_DOOR_LOWER, DecorBlocks.OAK_DOOR_UPPER);
             place(x + 13, G + 4, zz, GLOWSTONE);
             for (int g = -1; g <= 1; g++) for (int s = 1; s <= 3; s++) place(x + 13 + s, G + 1, zz + g, PLANKS);
-            for (int g = -1; g <= 1; g++) for (int h = 1; h <= 3; h++) set(x - 13, G + h, zz + g, 0);
+            for (int g = 0; g <= 1; g++) for (int h = 1; h <= 2; h++) set(x - 13, G + h, zz + g, 0);
+            doubleDoorZ(x - 13, G + 1, zz, DecorBlocks.OAK_DOOR_LOWER, DecorBlocks.OAK_DOOR_UPPER);
             place(x - 13, G + 4, zz, GLOWSTONE);
             for (int g = -1; g <= 1; g++) for (int s = 1; s <= 3; s++) place(x - 13 - s, G + 1, zz + g, PLANKS);
 
@@ -336,7 +342,11 @@ public final class TutorialWorldAuthor {
             hollow(kx0, G, kz0, kx1, G + 8, kz1, STONE_BRICK);
             for (int c = kx0; c <= kx1; c += 2) { place(c, G + 9, kz0, STONE_BRICK); place(c, G + 9, kz1, STONE_BRICK); }
             for (int c = kz0; c <= kz1; c += 2) { place(kx0, G + 9, c, STONE_BRICK); place(kx1, G + 9, c, STONE_BRICK); }
-            for (int g = -1; g <= 1; g++) for (int h = 1; h <= 3; h++) set(x + g, G + h, kz1, 0);
+            // South door: a two-wide opening with a dark-oak double door and a
+            // lamp over the lintel (the keep's only way in).
+            for (int g = 0; g <= 1; g++) for (int h = 1; h <= 2; h++) set(x + g, G + h, kz1, 0);
+            doubleDoorX(x, G + 1, kz1, DecorBlocks.DARK_OAK_DOOR_LOWER_EW, DecorBlocks.DARK_OAK_DOOR_UPPER_EW);
+            place(x, G + 3, kz1, GLOWSTONE);
             place(x - 3, G + 1, kz0 + 1, GOLD_BLOCK); place(x - 2, G + 1, kz0 + 1, GOLD_BLOCK);
             place(x + 2, G + 1, kz0 + 1, GOLD_BLOCK); place(x + 3, G + 1, kz0 + 1, GOLD_BLOCK);
             place(x - 3, G + 2, kz0 + 1, GOLD_BLOCK); place(x + 3, G + 2, kz0 + 1, GOLD_BLOCK);
@@ -434,8 +444,16 @@ public final class TutorialWorldAuthor {
             place(x + 7, G + 1, zz + 5, FAN, 5);
 
             stamp(BARN, x - 14, G, zz + 2);
-            for (int fx = x - 14; fx <= x + 14; fx += 4) { place(fx, G + 1, zz - 10, ANDESITE); place(fx, G + 1, zz + 10, ANDESITE); }
-            for (int fz = zz - 10; fz <= zz + 10; fz += 4) { place(x - 14, G + 1, fz, ANDESITE); place(x + 14, G + 1, fz, ANDESITE); }
+            // Andesite edging around the pad. It must never displace a built wall,
+            // so each post is only placed on bare ground.
+            for (int fx = x - 14; fx <= x + 14; fx += 4) {
+                if (sink.get(fx, G + 1, zz - 10) == 0) place(fx, G + 1, zz - 10, ANDESITE);
+                if (sink.get(fx, G + 1, zz + 10) == 0) place(fx, G + 1, zz + 10, ANDESITE);
+            }
+            for (int fz = zz - 10; fz <= zz + 10; fz += 4) {
+                if (sink.get(x - 14, G + 1, fz) == 0) place(x - 14, G + 1, fz, ANDESITE);
+                if (sink.get(x + 14, G + 1, fz) == 0) place(x + 14, G + 1, fz, ANDESITE);
+            }
         }
 
         private void buildRedstoneLab(Zone z) {
@@ -444,6 +462,9 @@ public final class TutorialWorldAuthor {
             set(x, G + 1, zz - 10, 0); set(x, G + 2, zz - 10, 0);
             for (int w = 0; w < 4; w++) { set(x - 12 + w * 4, G + 2, zz - 10, GLASS); set(x - 12 + w * 4, G + 3, zz - 10, GLASS); }
             for (int w = 0; w < 4; w++) { set(x - 12 + w * 4, G + 2, zz + 10, GLASS); set(x - 12 + w * 4, G + 3, zz + 10, GLASS); }
+            // The door goes in *after* the window band: the band's last column
+            // lands on the doorway, and the door must win.
+            singleDoorX(x, G + 1, zz - 10, DecorBlocks.OAK_DOOR_LOWER_EW, DecorBlocks.OAK_DOOR_UPPER_EW);
 
             // ── Display wall: all 16 lamp colors, each sitting on a redstone
             //    block so the whole spectrum stays lit.
@@ -589,9 +610,14 @@ public final class TutorialWorldAuthor {
             stamp(STALL, x + 3, G, zz + 2);
             stamp(BARN, x - 12, G, zz - 6);
             place(x - 2, G + 1, zz + 15, TV);
+            // Lamps ring the hamlet *outside* every footprint. The old ±12 ring
+            // punched log posts straight through the cottages, the well and the
+            // barn, so it now runs on the pavement edge at ±16 instead.
             for (int t = -12; t <= 12; t += 6) {
-                lampPost(x + t, G, zz - 12); lampPost(x + t, G, zz + 12);
-                lampPost(x - 12, G, zz + t); lampPost(x + 12, G, zz + t);
+                lampPost(x + t, G, zz - 16); lampPost(x + t, G, zz + 16);
+            }
+            for (int t = -16; t <= 16; t += 8) {
+                lampPost(x - 16, G, zz + t); lampPost(x + 16, G, zz + t);
             }
         }
 
@@ -709,6 +735,7 @@ public final class TutorialWorldAuthor {
             int x = z.cx, zz = z.cz;
             hollow(x - 10, G, zz - 10, x + 10, G + 7, zz + 10, STONE_BRICK);
             set(x, G + 1, zz - 10, 0); set(x, G + 2, zz - 10, 0);
+            singleDoorX(x, G + 1, zz - 10, DecorBlocks.DARK_OAK_DOOR_LOWER_EW, DecorBlocks.DARK_OAK_DOOR_UPPER_EW);
             for (int w = -8; w <= 8; w += 4) { set(x + w, G + 2, zz + 10, GLASS); set(x + w, G + 3, zz + 10, GLASS); }
             for (int dx = -8; dx <= 8; dx += 4) for (int dz = -8; dz <= 8; dz += 4) {
                 if (dx == 0 && dz == 0) continue;
@@ -734,6 +761,7 @@ public final class TutorialWorldAuthor {
             int x = z.cx, zz = z.cz;
             hollow(x - 10, G, zz - 10, x + 10, G + 6, zz + 10, BRICK);
             set(x, G + 1, zz - 10, 0); set(x, G + 2, zz - 10, 0);
+            singleDoorX(x, G + 1, zz - 10, DecorBlocks.SPRUCE_DOOR_LOWER_EW, DecorBlocks.SPRUCE_DOOR_UPPER_EW);
             for (int i = 0; i < 5; i++) place(x - 8 + i * 4, G + 1, zz - 8, FURNACE);
             for (int i = 0; i < 4; i++) {
                 int bx = x - 6 + i * 4;
@@ -756,7 +784,11 @@ public final class TutorialWorldAuthor {
             int x = z.cx, zz = z.cz;
             int kx0 = x - 10, kx1 = x + 10, kz0 = zz - 10, kz1 = zz + 10;
             hollow(kx0, G, kz0, kx1, G + 11, kz1, STONE_BRICK);
-            for (int gx = -1; gx <= 1; gx++) for (int h = 1; h <= 3; h++) set(x + gx, G + h, kz1, 0);
+            // Grand south entrance: a two-wide dark-oak double door with a lamp
+            // above it — the castle keep needs a real door, not a bare hole.
+            for (int gx = 0; gx <= 1; gx++) for (int h = 1; h <= 2; h++) set(x + gx, G + h, kz1, 0);
+            doubleDoorX(x, G + 1, kz1, DecorBlocks.DARK_OAK_DOOR_LOWER_EW, DecorBlocks.DARK_OAK_DOOR_UPPER_EW);
+            place(x, G + 3, kz1, GLOWSTONE);
             for (int c = kx0; c <= kx1; c += 2) { place(c, G + 12, kz0, STONE_BRICK); place(c, G + 12, kz1, STONE_BRICK); }
             for (int c = kz0; c <= kz1; c += 2) { place(kx0, G + 12, c, STONE_BRICK); place(kx1, G + 12, c, STONE_BRICK); }
             tower(kx0, kz0, G + 11, 6, COBBLE);
@@ -913,21 +945,37 @@ public final class TutorialWorldAuthor {
 
         /** One boss hall. tier: 0 = bronze (Slider), 1 = silver (Valkyrie Queen), 2 = gold (Sun Spirit). */
         private void buildDungeonHall(int hx, int hz, int tier) {
-            int wall, floorB, trim;
-            if (tier == 0) { wall = MOSSY; floorB = STONE_BRICK; trim = STONE_BRICK; }
-            else if (tier == 1) { wall = STONE_BRICK; floorB = STONE_BRICK; trim = IRON_BLOCK; }
-            else { wall = NETHER_BRICKS; floorB = NETHERRACK; trim = GOLD_BLOCK; }
+            int wall, floorB, trim, doorLower, doorUpper;
+            if (tier == 0) {
+                wall = MOSSY; floorB = STONE_BRICK; trim = STONE_BRICK;
+                doorLower = DecorBlocks.OAK_DOOR_LOWER_EW;
+                doorUpper = DecorBlocks.OAK_DOOR_UPPER_EW;
+            } else if (tier == 1) {
+                wall = STONE_BRICK; floorB = STONE_BRICK; trim = IRON_BLOCK;
+                doorLower = DecorBlocks.DARK_OAK_DOOR_LOWER_EW;
+                doorUpper = DecorBlocks.DARK_OAK_DOOR_UPPER_EW;
+            } else {
+                wall = NETHER_BRICKS; floorB = NETHERRACK; trim = GOLD_BLOCK;
+                doorLower = DecorBlocks.SPRUCE_DOOR_LOWER_EW;
+                doorUpper = DecorBlocks.SPRUCE_DOOR_UPPER_EW;
+            }
             int r = 8, h = 7;
 
-            // Shell: floor, four walls with a 3-wide south doorway, roof.
+            // Shell: floor, four walls with a two-wide, two-tall south doorway
+            // (the wall continues above it, so the hall is not slit open to the
+            // sky), ceiling.
             floor(hx - r, hz - r, hx + r, hz + r, G, floorB);
             for (int dx = -r; dx <= r; dx++) {
                 for (int dz = -r; dz <= r; dz++) {
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
-                    if (dz == r && Math.abs(dx) <= 1) continue; // doorway
-                    for (int py = 1; py <= h; py++) place(hx + dx, G + py, hz + dz, wall);
+                    boolean doorCell = dz == r && (dx == -1 || dx == 0);
+                    for (int py = 1; py <= h; py++) {
+                        if (doorCell && py <= 2) continue; // doorway
+                        place(hx + dx, G + py, hz + dz, wall);
+                    }
                 }
             }
+            doubleDoorX(hx - 1, G + 1, hz + r, doorLower, doorUpper);
             floor(hx - r, hz - r, hx + r, hz + r, G + h + 1, wall); // ceiling
             for (int[] c : new int[][]{{-r, -r}, {r, -r}, {-r, r}, {r, r}}) {
                 for (int py = 1; py <= h; py++) place(hx + c[0], G + py, hz + c[1], trim);
@@ -995,8 +1043,12 @@ public final class TutorialWorldAuthor {
             hollow(x - 12, G, zz - 8, x + 12, G + 8, zz + 8, STONE_BRICK);
             floor(x - 11, zz - 7, x + 11, zz + 7, G, PLANKS);
 
-            // Glazed south entrance + side windows.
-            for (int h = 1; h <= 3; h++) for (int dx = -1; dx <= 1; dx++) set(x + dx, G + h, zz + 8, 0);
+            // Glazed south entrance: a two-wide birch double door with a glazed
+            // transom over it, plus side windows.
+            for (int h = 1; h <= 2; h++) for (int dx = 0; dx <= 1; dx++) set(x + dx, G + h, zz + 8, 0);
+            set(x, G + 3, zz + 8, GLASS);
+            set(x + 1, G + 3, zz + 8, GLASS);
+            doubleDoorX(x, G + 1, zz + 8, DecorBlocks.BIRCH_DOOR_LOWER_EW, DecorBlocks.BIRCH_DOOR_UPPER_EW);
             for (int dz = -4; dz <= 4; dz += 4) {
                 for (int py = 3; py <= 5; py++) {
                     set(x - 12, G + py, zz + dz, GLASS);
@@ -1062,9 +1114,14 @@ public final class TutorialWorldAuthor {
             }
             for (int dx = -3; dx <= 3; dx++) place(x + dx, G + 5, zz + 8, (dx & 1) == 0 ? WOOL : STONE_BRICK);
 
-            // Director's tower with a glowstone lamp.
-            for (int py = 1; py <= 5; py++) place(x - 11, G + py, zz + 7, OAK_LOG);
+            // Director's tower: four corner posts carry the deck (it used to hang
+            // off a single post with no way up), a ladder climbs to it, and the
+            // rail keeps the deck from reading as a floating slab.
+            for (int[] p : new int[][]{{-13, 5}, {-9, 5}, {-13, 9}, {-9, 9}, {-13, 7}}) {
+                for (int py = 1; py <= 4; py++) place(x + p[0], G + py, zz + p[1], OAK_LOG);
+            }
             floor(x - 13, zz + 5, x - 9, zz + 9, G + 5, PLANKS);
+            for (int py = 1; py <= 5; py++) place(x - 12, G + py, zz + 7, DecorBlocks.LADDER);
             for (int dz = 5; dz <= 9; dz += 2) place(x - 13, G + 6, zz + dz, STONE_BRICK);
             place(x - 11, G + 6, zz + 7, GLOWSTONE);
 
@@ -1281,7 +1338,7 @@ public final class TutorialWorldAuthor {
             if (Math.floorMod(h, 4) == 0) {
                 int rx = x + 4 + (rng(s) % (FILL_CELL - 8));
                 int rz = z + 4 + (rng(s) % (FILL_CELL - 8));
-                set(rx, G + 1, rz, MOSSY); // mossy boulder
+                if (sink.get(rx, G + 1, rz) == 0) set(rx, G + 1, rz, MOSSY); // mossy boulder
             }
             if (Math.floorMod(h >> 2, 5) == 0) {
                 int bx = x + 4 + (rng(s) % (FILL_CELL - 8));
@@ -1375,18 +1432,26 @@ public final class TutorialWorldAuthor {
             int[] s = { h ^ 0x51AB0F3 };
             int mx = x + 16, mz = z + 16;
             int depth = 6 + rng(s) % 3; // 6..8 blocks down
-            // Timber frame around the entrance.
-            for (int dx = -1; dx <= 1; dx++) {
-                for (int dz = -1; dz <= 1; dz++) {
-                    if (dx == 0 && dz == 0) continue;
-                    place(mx + dx, G + 1, mz + dz, OAK_LOG);
-                    place(mx + dx, G + 2, mz + dz, OAK_LOG);
+            // Timber portal around the entrance: two posts either side, a closed
+            // back wall and a lintel over the approach. It is open to the south
+            // (+z) — the old frame ringed all eight neighbours, walling the shaft
+            // in behind a two-high log fence that could not be walked through.
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int py = 1; py <= 2; py++) {
+                    place(mx - 1, G + py, mz + dz, OAK_LOG);
+                    place(mx + 1, G + py, mz + dz, OAK_LOG);
                 }
             }
-            set(mx, G + 1, mz, 0); set(mx, G + 2, mz, 0); // opening
-            // Shaft: rungs against one wall, torches on the other.
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int py = 1; py <= 2; py++) place(mx + dx, G + py, mz - 1, OAK_LOG);
+            }
+            for (int dx = -1; dx <= 1; dx++) place(mx + dx, G + 3, mz + 1, OAK_LOG); // lintel
+            set(mx, G + 1, mz, 0); set(mx, G + 2, mz, 0); // shaft head
+            // Shaft: a full ladder column down the middle, with timber lining on
+            // one side and torches on the other, so the hole is climbable rather
+            // than a bare drop.
             for (int d = 1; d <= depth; d++) {
-                set(mx, G + 1 - d, mz, 0);
+                set(mx, G + 1 - d, mz, DecorBlocks.LADDER);
                 if ((d & 1) == 1) place(mx, G + 1 - d, mz + 1, OAK_LOG);
                 else place(mx, G + 1 - d, mz - 1, TORCH);
             }
@@ -1567,17 +1632,49 @@ public final class TutorialWorldAuthor {
                 case 'C': return CHEST;
                 case 't': return CRAFT_TABLE;
                 case 'z': return COAL_ORE;
+                case 'w': return WATER;
                 default: return 0;
             }
         }
 
+        /**
+         * Stamps a building blueprint.
+         *
+         * <p>Two characters place real doors instead of plain blocks. {@code D}
+         * is a leaf in a wall that runs along X (a blueprint row), so it uses the
+         * rotated {@code _ew} panel; {@code V} is a leaf in a wall that runs along
+         * Z (a blueprint column) and uses the vanilla panel.</p>
+         *
+         * <p>The <em>upper</em> half of a door is the occurrence with the same
+         * character directly beneath it in the previous layer, so a two-tall
+         * opening is authored by writing the character in two consecutive
+         * layers — exactly how the door halves are baked. A lone {@code D}/{@code V}
+         * therefore silently degrades to a one-block lower leaf rather than
+         * producing a door with a floating head.</p>
+         */
         private void stamp(String[] layers, int x, int y, int z) {
             for (int ly = 0; ly < layers.length; ly++) {
                 String[] rows = layers[ly].split("\\n", -1);
+                String[] belowRows = ly > 0 ? layers[ly - 1].split("\\n", -1) : null;
                 for (int r = 0; r < rows.length; r++) {
                     String row = rows[r];
                     for (int c = 0; c < row.length(); c++) {
-                        int b = blockFor(row.charAt(c));
+                        char ch = row.charAt(c);
+                        if (ch == 'D' || ch == 'V') {
+                            boolean upper = belowRows != null && r < belowRows.length
+                                    && c < belowRows[r].length() && belowRows[r].charAt(c) == ch;
+                            int door;
+                            if (ch == 'D') {
+                                door = upper ? DecorBlocks.OAK_DOOR_UPPER_EW
+                                        : DecorBlocks.OAK_DOOR_LOWER_EW;
+                            } else {
+                                door = upper ? DecorBlocks.OAK_DOOR_UPPER
+                                        : DecorBlocks.OAK_DOOR_LOWER;
+                            }
+                            set(x + c, y + ly, z + r, door);
+                            continue;
+                        }
+                        int b = blockFor(ch);
                         if (b != 0) set(x + c, y + ly, z + r, b);
                     }
                 }
@@ -1588,8 +1685,8 @@ public final class TutorialWorldAuthor {
 
         private static final String[] COTTAGE = {
             "ccccccccc\ncoooooooc\ncoooooooc\ncoooooooc\ncoooooooc\ncoooooooc\nccccccccc",
-            "loooooool\no.t.F...o\ng.......g\no.C.B...o\ng.......g\noWWWWWWWo\nlooo.oool",
-            "loooooool\no.......o\no.......o\no.......o\no.......o\no.......o\nlooo.oool",
+            "loooooool\no.t.F...o\ng.......g\no.C.B...o\ng.......g\noWWWWWWWo\nloooDoool",
+            "loooooool\no.......o\no.......o\no.......o\no.......o\no.......o\nloooDoool",
             "ooooooooo\nooooooooo\nooooooooo\nooooooooo\nooooooooo\nooooooooo\nooooooooo",
             "ooooooooo\nooooooooo\nooooooooo\nooooooooo\nooooooooo\nooooooooo\nooooooooo",
             ".........\n..ooooo..\n..ooooo..\n..ooooo..\n..ooooo..\n..ooooo..\n.........",
@@ -1597,25 +1694,29 @@ public final class TutorialWorldAuthor {
 
         private static final String[] HOUSE = {
             "sssssss\nsooooos\nsooooos\nsooooos\nsooooos\nsooooos\nsssssss",
-            "l.....l\ns.t...s\ng.....g\ns.....s\ng.....g\ns.C...s\nsss.sss",
-            "l.....l\ns.....s\ns.....s\ns.....s\ns.....s\ns.....s\nsss.sss",
+            "lllllll\ns.t...s\ng.....g\ns.....s\ng.....g\ns.C...s\nsssDsss",
+            "lllllll\ns.....s\ns.....s\ns.....s\ns.....s\ns.....s\nsssDsss",
             "sssssss\nsssssss\nsssssss\nsssssss\nsssssss\nsssssss\nsssssss",
         };
 
+        // A proper square tower: a solid base, two ring floors joined by a real
+        // door, then windowed ring floors under a roof.
         private static final String[] WATCHTOWER = {
-            "ccccc\ncc.cc\nccccc\nccccc\nccccc",
-            "ccccc\ncc.cc\nccccc\nccccc\nccccc",
-            "c.g.c\n.....\n.....\n.....\nc.g.c",
-            "c...c\n.....\n.....\n.....\nc...c",
-            "c.g.c\n.....\n.....\n.....\nc.g.c",
-            "c...c\n.....\n.....\n.....\nc...c",
-            "c.g.c\n.....\n.....\n.....\nc.g.c",
-            "c...c\n.....\n.....\n.....\nc...c",
-            "ccccc\nc.G.c\nccccc\nc...c\nccccc",
+            "ccccc\nccccc\nccccc\nccccc\nccccc",
+            "ccccc\nc...c\nc...c\nc...c\nccDcc",
+            "ccccc\nc...c\nc...c\nc...c\nccDcc",
+            "ccccc\nc.g.c\nc...c\nc.g.c\nccccc",
+            "ccccc\nc...c\nc...c\nc...c\nccccc",
+            "ccccc\nc.g.c\nc...c\nc.g.c\nccccc",
+            "ccccc\nc...c\nc...c\nc...c\nccccc",
+            "ccccc\nc...c\nc...c\nc...c\nccccc",
+            "ccccc\nc.G.c\nccccc\nccccc\nccccc",
         };
 
+        // A cobble well: a water-filled basin ringed at ground level, a low
+        // parapet, four corner posts and a plank canopy resting on them.
         private static final String[] WELL = {
-            "ccccc\nc...c\nc...c\nc...c\nccccc",
+            "ccccc\ncwwwc\ncwwwc\ncwwwc\nccccc",
             "ccccc\nc...c\nc...c\nc...c\nccccc",
             "c...c\n.....\n.....\n.....\nc...c",
             "ooooo\nooooo\nooooo\nooooo\nooooo",
@@ -1623,19 +1724,19 @@ public final class TutorialWorldAuthor {
 
         private static final String[] BARN = {
             "ooooooooo\nocoooooco\nocoooooco\nocoooooco\nooooooooo",
-            "lllllllll\nlo.....ol\nlo.....ol\nlo.....ol\nlllll.lll",
-            "ooooooooo\no.......o\no.......o\no.......o\nooooooooo",
+            "lllllllll\nlo.....ol\nlo.....ol\nlo.....ol\nlllllDlll",
+            "ooooooooo\no.......o\no.......o\no.......o\noooooDooo",
             "ooooooooo\nooooooooo\nooooooooo\nooooooooo\nooooooooo",
             "ooooooooo\n.ooooo...\n.ooooo...\n.ooooo...\n.........",
         };
 
         private static final String[] WINDMILL = {
             "sssss\nsssss\nsssss\nsssss\nsssss",
+            "sssss\ns...s\ns...s\ns...s\nssDss",
+            "sssss\ns...s\ns...s\ns...s\nssDss",
             "sssss\ns...s\ns...s\ns...s\nsssss",
             "sssss\ns...s\ns...s\ns...s\nsssss",
-            "s...s\n.....\n.....\n.....\ns...s",
-            "s...s\n.....\n.....\n.....\ns...s",
-            "s...s\n.....\n.....\n.....\ns...s",
+            "sssss\ns...s\ns...s\ns...s\nsssss",
             "sssss\ns.G.s\nsssss\nsssss\nsssss",
         };
 
@@ -1669,8 +1770,8 @@ public final class TutorialWorldAuthor {
 
         private static final String[] CHAPEL = {
             "#######\n#######\n#######\n#######\n#######\n#######\n#######",
-            "#######\n#.....#\n#..b..#\n#..q..#\n#..b..#\n#.....#\n##g#g##",
-            "#######\n#.g.g.#\n#.....#\n#..G..#\n#.....#\n#.g.g.#\n##.#.##",
+            "#######\n#.....#\n#..b..#\n#..q..#\n#..b..#\n#.....#\n##gDg##",
+            "#######\n#.g.g.#\n#.....#\n#..G..#\n#.....#\n#.g.g.#\n##gDg##",
             "#######\n#######\n#######\n#######\n#######\n#######\n#######",
             ".......\n.......\n.......\n.......\n..###..\n..#.#..\n..###..",
             ".......\n.......\n.......\n.......\n..###..\n..#G#..\n..###..",
@@ -1714,6 +1815,40 @@ public final class TutorialWorldAuthor {
             for (int x = x0; x <= x1; x++) for (int z = z0; z <= z1; z++) set(x, y1, z, b);
             for (int y = y0; y <= y1; y++) for (int z = z0; z <= z1; z++) { set(x0, y, z, b); set(x1, y, z, b); }
             for (int y = y0; y <= y1; y++) for (int x = x0; x <= x1; x++) { set(x, y, z0, b); set(x, y, z1, b); }
+        }
+
+        /**
+         * A two-leaf double door filling a two-wide, two-tall opening through a
+         * wall that runs along X (constant z). Leaves sit at (x, z) and (x+1, z)
+         * and use the rotated {@code _ew} panel, so the pair reads as one door in
+         * that wall.
+         */
+        private void doubleDoorX(int x, int y, int z, int lower, int upper) {
+            for (int i = 0; i <= 1; i++) {
+                set(x + i, y, z, lower);
+                set(x + i, y + 1, z, upper);
+            }
+        }
+
+        /**
+         * A two-leaf double door filling a two-wide, two-tall opening through a
+         * wall that runs along Z (constant x). Leaves sit at (x, z) and (x, z+1)
+         * and use the vanilla panel.
+         */
+        private void doubleDoorZ(int x, int y, int z, int lower, int upper) {
+            for (int i = 0; i <= 1; i++) {
+                set(x, y, z + i, lower);
+                set(x, y + 1, z + i, upper);
+            }
+        }
+
+        /**
+         * A single-leaf door filling a one-wide, two-tall opening through a wall
+         * that runs along X (constant z), using the rotated {@code _ew} panel.
+         */
+        private void singleDoorX(int x, int y, int z, int lower, int upper) {
+            set(x, y, z, lower);
+            set(x, y + 1, z, upper);
         }
 
         private void tower(int x, int z, int baseY, int height, int wall) {

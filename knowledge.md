@@ -290,11 +290,13 @@ drop their base log item.
 - **Villager professions (`VillagerProfessions`, `VillagerTrades`, `VillagerTrading`):** each trade owns a job site built from blocks villages already place (FARMER → farmland/wheat, BUILDER → crafting_table 115, SHOPKEEPER → chest 118, NEWS_ANCHOR → villager_tv 274). `assignJobSiteIfAny()` is called at spawn: the nearest job site sets the profession, so a village staffs the buildings it actually contains instead of rolling random trades (the V key and `/spawn villager` do the same). Job XP (tend 2, plant 3, harvest 5, build 4, broadcast 3, trade 6) promotes through five levels of titles (`Novice Farmer` … `Master Farmer`; a promotion is announced as a spoken line). `VillagerBrain` has a `WORK` action in the utility order (panic > shelter > build > work > socialize > wander): the villager walks to its work site and works it — farmers harvest ripe wheat (loot drops through `VillagerEntity.droppedItemManager`) and plant bare farmland, anchors broadcast at the desk, traders tend the stall, builders keep at the workbench between builds; a broken workbench sends them looking for a new one. Shift-right-click a villager with a trade to open the barter panel (offers filtered by career level, `1`-`3` to buy, `ESC` to close; trades pay job XP).
 - **MapGenVillage**: villages queue their population instead of spawning entities during chunk generation; farms are real farmland + planted wheat and every house holds a chest, so the new job sites exist to be found.
 - **AncientBuilderModern.java** – the ancient builders' final (modern) era before they were wiped out: glass tower, metro hall, research lab, and builder plaza stamped near spawn like MCSM sites (lazy, idempotent), each with deterministic layout variants and its own 920-926 block set (concrete/steel/tile/glass/marble/light panels)
-- **Java villager voice (recorded clips, no synthesis):** speech synthesis was removed (Oct 2026). Right-clicking a villager picks a profession/time-aware line and plays the best-matching recorded clip: Villager News addon voice (`.ogg` via stb_vorbis) + transcript-renamed TEAVSRP corpus in `voice/corpus/`, indexed by `src/main/resources/voice/clips_index.json` (rebuild: `tools/build_voice_clip_index.py`). Unmatched lines fall back to vocalizations. `voxel.voice.mode`: `clip` (default) or `reference`. Live captions (`LiveCaptions`, HUD bottom-center) show every line word-by-word even without audio.
-- **VillagerTVSystem.java** – 4 channels:
-  - 0: Static/Off-Air, 1: Villager Shopping Network, 2: Weather & Time, 3: VNN Villager News
+- **Villager voice (recorded clips):** right-clicking a villager picks a profession/time-aware line and plays the best-matching recorded clip: Villager News addon voice (`.ogg` via stb_vorbis) + transcript-renamed TEAVSRP corpus in `voice/corpus/`, indexed by `src/main/resources/voice/clips_index.json` (rebuild: `tools/build_voice_clip_index.py`). Unmatched lines fall back to vocalizations. `voxel.voice.mode`: `clip` (default) or `reference`. Live captions (`LiveCaptions`, HUD bottom-center) show every line word-by-word even without audio.
+- **Character voices for authored dialogue (`CharacterVoice`, `VoiceProfile`, `WindowsSapiTts`):** ancient builders, the player ("You"), the narrator and bosses speak their written lines through a local operating-system voice (Windows SAPI / `System.Speech`, driven from PowerShell with SSML rate+pitch). Each role has its own register (`ANCIENT_BUILDER`, `PLAYER`, `NARRATOR`, `BOSS`); renders are cached as WAVs under `dev/voice-cache/tts/characters` and played through `VillagerAudioManager.playRendered`, while the caption shows the exact authored text. No model is bundled and no service is called. If no local voice exists (or `-Dvoxel.voice.tts=off`), the bridge falls back to the recorded clip corpus and finally to caption-only, so every character still shows what it says. Villager labels stay on their add-on clips. `CharacterVoice.speak*` rate-limits conversations (7 s), never rate-limits cutscene beats, and suppresses an identical line from the same speaker inside 4 s. Headless/audioless behaviour is pinned by `AudiolessVoiceTest` (captions + cache without an OpenAL device), `DecorationModelsHeadlessTest` (every decoration model binds textures that exist on disk, no GL), and `CharacterVoiceTest` (no local voice → recorded clips → captions; `-Dvoxel.voice.tts=off` never probes).
+- **VillagerTVSystem.java** – 8 channels, driven by the written schedule in `src/main/resources/voice/tv_guide.json` (`TvGuide` parses it; `TvMusicCue` holds the sung cues):
+  - 0 Static/Off-Air, 1 VSN Shopping, 2 WX Weather & Time, 3 VNN Villager News, 4 VMC Music, 5 NAT Geographic, 6 KITCH Hrmm Kitchen, 7 SPORT Sports. Channels 0-3 keep their old numbers, so `/tv` and saved worlds still mean what they meant.
+  - The station broadcasts from **one** collection only: the `kind="addon"` Villager News 1.0 Add-On takes (`VillagerAudioManager.TV_CLIP_KIND`, `ClipIndex.restrictedToKind`). Every scripted line is a real take and is pinned to it by `tools/bind_tv_clips.py` (`--check` verifies); captions are never paraphrases.
 - TV block (ID 274): right-click = zoom cutscene, LEFT/RIGHT = cycle channels, ESC = exit
-- `/locate village` – find nearest village; `/tv <0-3>` – change TV channel
+- `/locate village` – find nearest village; `/tv <0-7>` – change TV channel
 - **MapGenVillage improved**: log corners, glass windows, roof overhangs, cobblestone plaza, gravel paths, glowstone light posts, perimeter walls, workshops with crafting tables
 
 ### 2×2 Shaped Recipes on the 3×3 Crafting Table
@@ -312,6 +314,60 @@ drop their base log item.
 ## Texture Generation
 
 - `tools/gen_nether_create_textures.py` — generates all nether/Create textures: blaze entity, zombie pigman skin, fireball, blaze burner (lit/unlit), steam engine (cold/active), copper tank (6 frames + full), plus item textures (gunpowder, blaze_rod, blaze_powder, fire_charge). Use Pillow (`pip install Pillow`). Rerun after editing the generator to refresh all textures.
+
+## Music Library & Soundtrack Pools
+
+- **MusicLibrary** discovers every bundled track in one pass: the MCSM albums
+  under `src/resources/music` (episodes 01-08, `main` only), the Aether
+  soundtrack under `src/main/resources/assets/aether/sounds/music`, and any
+  `minecraft/` or `fanmade/` folder added under `src/main/resources/music`.
+  It skips `unused/`, files under 700 KB (stings/risers), and classified
+  junk. The shipped install resolves 257 tracks.
+- **Pools:** menu, calm, night, danger, combat, boss, cave, nether, end,
+  aether, sift, tutorial, village, story. Classification is keyword/path based
+  (`MusicLibrary.classify`), with explicit mood folders overriding keywords.
+  Empty pools fall back mood-preservingly (danger -> cave -> night -> story).
+- **MusicDirector.contextForScene(...)** picks the pool from dimension,
+  underground-ness, hostiles, night, boss proximity, tutorial/showcase and
+  village proximity. Legacy `contextFor(near, close, night)` is retained.
+- **MusicPlayer** plays MP3 and OGG, decodes on a daemon worker (never on the
+  render thread), crossfades context changes, and exposes `/music`
+  (`auto|off|on|next|list|<pool>`).
+
+## Guided Tutorial
+
+- **TutorialProgress** tracks six goals (mine, craft, smelt, forge iron gear,
+  portal, dungeon loot) from real action hooks in BlockInteraction,
+  PlayerInventory, HudUI's furnace output and PortalSystem. The HUD draws a
+  persistent top-left tracker; Main consumes completion events one at a time
+  and shows a step-complete card.
+- The bundled `src/main/resources/tutorial_world` template is regenerated by
+  `TutorialWorldExporter.exportTo` (also a runtime fallback when the template
+  is missing). `TutorialWorldTemplateTest` guards doors, zone builds, spawn and
+  the starter kit against staleness.
+
+## Multiblocks
+
+- **Doors** are a registered two-cell multiblock. `DecorBlocks` owns the id
+  layout (`lower, upper, lower_ew, upper_ew` per wood) plus `doorPartner`,
+  `doorToggle` and `doorLowerForWall`; `DoorColumn` performs the actual voxel
+  transitions (place the upper half, toggle both halves with the
+  `DOOR_OPEN_BIT` in extra data, remove the partner on break). `BlockInteraction`
+  only adds the player/entity checks and status text. The `_ew` pair is the
+  same panel rotated 90°, so "open" is an id swap and needs no extra models.
+- **Beds** (`BedPair`, `DecorBlocks.Bed*`): a foot cell plus a head cell one
+  step along the facing. `bedFootForFacing` / `bedHeadForFoot` / `bedPartner`
+  plus `bedPartnerDx/Dz` give the pair math; `BedPair.place` stamps the head and
+  `BedPair.removePartner` clears the opposite cell only when it is exactly the
+  expected partner id. Models for all four facings come from
+  `tools/gen_bed_banner_models.py` (oak frame, white mattress, red blanket).
+- **Standing banners** (`BannerColumn`, `DecorBlocks.Banner*`): a lower plus an
+  upper cell, with two cloth planes (NS and EW) sharing geometry. Placement
+  needs solid ground and a free cell above; breaking either half removes the
+  other; every half drops the one `banner` item.
+- Every two-cell family routes writes through `ChunkManager` and uses the same
+  own-half/partner checks as doors: never delete a mismatched neighbour, and
+  let only the clicked cell drop the item.
 
 ## Important Patterns
 

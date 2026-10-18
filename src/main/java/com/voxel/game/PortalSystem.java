@@ -71,6 +71,9 @@ public class PortalSystem {
 
         ctx.switchToDimension(target);
         ctx.lastPortalTeleportTime = now;
+        if (ctx.tutorialWorld && ctx.tutorialProgress != null) {
+            ctx.tutorialProgress.complete(com.voxel.game.TutorialProgress.PORTAL);
+        }
         playTravelScene(target);
         ctx.setStatus("Teleported to " + target.name);
     }
@@ -115,6 +118,9 @@ public class PortalSystem {
 
         ctx.switchToDimension(target);
         ctx.lastPortalTeleportTime = now;
+        if (ctx.tutorialWorld && ctx.tutorialProgress != null) {
+            ctx.tutorialProgress.complete(com.voxel.game.TutorialProgress.PORTAL);
+        }
         playTravelScene(target);
         ctx.setStatus("Teleported to " + target.name);
     }

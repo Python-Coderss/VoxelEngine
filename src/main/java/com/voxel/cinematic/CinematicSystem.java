@@ -2,7 +2,6 @@ package com.voxel.cinematic;
 
 import org.joml.Vector3f;
 
-import com.voxel.audio.LiveCaptions;
 import com.voxel.game.GameContext;
 import com.voxel.world.DimensionType;
 
@@ -79,13 +78,16 @@ public class CinematicSystem {
     private boolean netherRevealed = false;
     private boolean lowHealthWarned = false;
     private boolean levelUpSeen = false;
+    /** Dusk scenes are a flourish, not a cutscene every night. */
+    private int nightfallSeen = 0;
+    private static final int MAX_NIGHTFALL_SCENES = 3;
 
     // --- Scene queue (so a flourish doesn't stomp a reveal mid-play) ---
     private final java.util.ArrayDeque<Runnable> pendingScenes = new java.util.ArrayDeque<>();
 
     // --- Action beat throttling (routine beats shouldn't spam) ---
     private double beatCooldownUntil = -1.0;
-    private static final double BEAT_COOLDOWN_SECONDS = 12.0;
+    private static final double BEAT_COOLDOWN_SECONDS = 8.0;
 
     // --- First-of-kind tracking (milestone beats) ---
     private final java.util.Set<String> firstsSeen = new java.util.HashSet<>();
@@ -147,9 +149,77 @@ public class CinematicSystem {
         showTitle("A NEW WORLD", "Your story begins", 1.2f, 5.2f);
     }
 
+    /**
+     * An opening scene tailored to the Tutorial World: an establishing orbit
+     * of the castle, a crane over the guided-station arc, then a close-up and
+     * an over-the-shoulder look toward the east gate. Narration names the tour
+     * so a first-time player knows the world is teaching, not just decorating.
+     */
+    public void playTutorialIntro() {
+        if (introPlayed || active) return;
+        introPlayed = true;
+        java.util.function.Supplier<Vector3f> hero = this::heroPoint;
+        Vector3f start = hero.get();
+        List<CameraShot> seq = new ArrayList<>();
+        seq.add(CameraShot.wide(start, 205, 250, 26f, 9f, 3.2f).tracking(hero));
+        seq.add(CameraShot.crane(start, 250f, 20f, 3f, 15f, 3.4f).tracking(hero));
+        seq.add(CameraShot.closeUp(start, 300, 2.6f, 1.1f, 2.2f).tracking(hero));
+        Vector3f gate = new Vector3f(start.x + 18f, start.y + 1.2f, start.z + 6f);
+        seq.add(CameraShot.overTheShoulder(start, gate, 2.6f).tracking(hero));
+        CinematicScript lines = new CinematicScript()
+                .at(1.0f, "Narrator", "This world was built to teach you everything it can do.")
+                .at(4.6f, "Narrator", "Six stations circle the castle. Follow the gold markers.")
+                .at(8.2f, "Narrator", "Mine, craft, smelt, forge, travel — then raid the dungeon hall.");
+        beginScene(seq, true, 0f, lines);
+        letterbox = Math.max(letterbox, 0.8f);
+        startFade(1.0f, 0.0f, 1.6f);
+        showTitle("THE TUTORIAL", "Six steps from your first block to your first raid", 1.0f, 5.4f);
+    }
+
+    /** A short, confident establishing pass over the creative Showcase hub. */
+    public void playShowcaseIntro() {
+        if (introPlayed || active) return;
+        introPlayed = true;
+        java.util.function.Supplier<Vector3f> hero = this::heroPoint;
+        Vector3f start = hero.get();
+        List<CameraShot> seq = new ArrayList<>();
+        seq.add(CameraShot.wide(start, 190, 240, 24f, 10f, 3.0f).tracking(hero));
+        seq.add(CameraShot.crane(start, 240f, 14f, 2f, 11f, 3.0f).tracking(hero));
+        seq.add(CameraShot.medium(start, 310, 3.4f, 1.2f, 2.2f).tracking(hero));
+        CinematicScript lines = new CinematicScript()
+                .at(0.8f, "Narrator", "Creative mode. Every block, every machine, every dimension.")
+                .at(4.0f, "Narrator", "The gateway holds a lit portal for each realm. Pick one.");
+        beginScene(seq, true, 0f, lines);
+        letterbox = Math.max(letterbox, 0.75f);
+        startFade(1.0f, 0.0f, 1.4f);
+        showTitle("SHOWCASE WORLD", "Every feature, one hub", 0.9f, 4.6f);
+    }
+
+    /** Point & Click demo: show the plaza stations before handing over control. */
+    public void playPointClickIntro() {
+        if (introPlayed || active) return;
+        introPlayed = true;
+        java.util.function.Supplier<Vector3f> hero = this::heroPoint;
+        Vector3f start = hero.get();
+        List<CameraShot> seq = new ArrayList<>();
+        seq.add(CameraShot.crane(start, 225f, 9f, 2f, 7f, 2.8f).tracking(hero));
+        seq.add(CameraShot.medium(start, 300, 3.2f, 1.0f, 2.0f).tracking(hero));
+        seq.add(CameraShot.overTheShoulder(start,
+                new Vector3f(start.x, start.y, start.z - 8f), 2.2f).tracking(hero));
+        CinematicScript lines = new CinematicScript()
+                .at(0.6f, "Narrator", "Point at anything. The world answers with a billboard.")
+                .at(3.2f, "Narrator", "Four paths leave the plaza: workshop, market, quarry, farm.");
+        beginScene(seq, true, 0f, lines);
+        letterbox = Math.max(letterbox, 0.7f);
+        startFade(1.0f, 0.0f, 1.2f);
+        showTitle("POINT & CLICK", "Click the world. It clicks back.", 0.6f, 3.6f);
+    }
+
     /** Dusk moment: a low-angle glance up at the darkening sky as night falls. */
     public void playNightfall() {
         if (active) return;
+        if (nightfallSeen >= MAX_NIGHTFALL_SCENES) return;
+        nightfallSeen++;
         // Never yank the camera out of a UI screen, a manual cutscene, or
         // death — nightfall recurs every cycle, missing one beat is fine.
         if (ctx.inventoryOpen || ctx.commandMode || ctx.player.isDead()
@@ -402,6 +472,7 @@ public class CinematicSystem {
         lowHealthWarned = false;
         levelUpSeen = false;
         introPlayed = false;
+        nightfallSeen = 0;
         pendingScenes.clear();
     }
 
@@ -596,15 +667,15 @@ public class CinematicSystem {
     }
 
     /**
-     * Publish any dialogue lines whose time has just passed to the live
-     * captions. Caption-only: this never touches the audio stack, which is
-     * exactly how the ancient builders “speak”.
+     * Speak any dialogue lines whose time has just passed. Every speaker gets a
+     * voice: the player ("You"), the narrator, builders and bosses are spoken
+     * through their character profile, and villager labels keep the recorded
+     * clip voice. Captions always carry the line that was actually spoken.
      */
     private void publishScript(float from, float to) {
         if (script == null || script.isEmpty()) return;
         for (CinematicScript.Line line : script.due(from, to)) {
-            LiveCaptions.show(line.speaker, line.text,
-                    LiveCaptions.estimateDuration(line.text, 1.0));
+            com.voxel.ai.speech.CharacterVoice.speakScripted(line.speaker, line.text);
         }
     }
 
@@ -729,8 +800,7 @@ public class CinematicSystem {
      * A scripted conversation: a two-shot of the player and the subject, cut to
      * a close-up on the speaker, then back to the player for the reply. Use
      * {@link CinematicScript#conversation} / {@link CinematicScript#exchange}
-     * to build the lines. Caption-only, so it fits the voiceless ancient
-     * builders perfectly.
+     * to build the lines; each one is voiced in its speaker's profile.
      */
     public void playBuilderDialogue(String titleText, Vector3f subject, CinematicScript lines) {
         if (active) { queueScene(() -> playBuilderDialogue(titleText, subject, lines)); return; }

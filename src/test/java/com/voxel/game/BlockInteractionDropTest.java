@@ -22,4 +22,21 @@ public class BlockInteractionDropTest {
         assertNull(BlockInteraction.dropItemForBlock(1));
         assertNull(BlockInteraction.dropItemForBlock(71));
     }
+
+    @Test
+    public void everyMultiblockHalfDropsTheOneItemThatPlacedIt() {
+        for (int foot : new int[]{com.voxel.world.DecorBlocks.BED_FOOT_NORTH,
+                com.voxel.world.DecorBlocks.BED_FOOT_SOUTH,
+                com.voxel.world.DecorBlocks.BED_FOOT_EAST,
+                com.voxel.world.DecorBlocks.BED_FOOT_WEST}) {
+            assertEquals("bed foot drops the bed", "bed",
+                    BlockInteraction.dropItemForBlock(foot));
+            assertEquals("bed head drops the bed", "bed",
+                    BlockInteraction.dropItemForBlock(foot + 1));
+        }
+        assertEquals("banner drops the banner", "banner",
+                BlockInteraction.dropItemForBlock(com.voxel.world.DecorBlocks.BANNER_LOWER_NS));
+        assertEquals("banner top drops the banner", "banner",
+                BlockInteraction.dropItemForBlock(com.voxel.world.DecorBlocks.BANNER_UPPER_EW));
+    }
 }

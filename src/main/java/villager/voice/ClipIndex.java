@@ -157,6 +157,32 @@ public final class ClipIndex {
     public List<Clip> vocalClips() { return vocal; }
     public int size() { return clips.size(); }
 
+    /**
+     * A view of this index holding only clips of one {@code kind} — for example
+     * {@code "addon"} to broadcast strictly from the Villager News addon
+     * recordings and never fall back to another collection.
+     */
+    public ClipIndex restrictedToKind(String kind) {
+        List<Clip> filtered = new ArrayList<>();
+        if (kind != null) {
+            for (Clip clip : clips) {
+                if (kind.equals(clip.kind)) filtered.add(clip);
+            }
+        }
+        return new ClipIndex(filtered);
+    }
+
+    /** Kinds present in the index, with how many clips each contributes. */
+    public java.util.Map<String, Integer> kindCounts() {
+        java.util.Map<String, Integer> counts = new java.util.TreeMap<>();
+        for (Clip clip : clips) {
+            String kind = clip.kind == null ? "unknown" : clip.kind;
+            Integer previous = counts.get(kind);
+            counts.put(kind, previous == null ? 1 : previous + 1);
+        }
+        return counts;
+    }
+
     /** Exact transcript hit (normalized), or null. */
     public Clip exact(String text) {
         String key = normalize(text);

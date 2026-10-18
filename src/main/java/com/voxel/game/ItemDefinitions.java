@@ -233,6 +233,11 @@ public class ItemDefinitions {
         registerBlock("diorite", "Diorite", 134, "stone_diorite");
         registerBlock("granite", "Granite", 135, "stone_granite");
         registerBlock("bookshelf", "Bookshelf", 136, "bookshelf");
+        // --- Books: real items backed by 3D models with a spine (block IDs 940-947) ---
+        registerItemBlock("book", "Book", "book_normal", 940, 941, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("writable_book", "Book and Quill", "book_writable", 942, 943, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("written_book", "Written Book", "book_written", 944, 945, ToolType.HAND, 1.0f, 64, 0);
+        registerItemBlock("enchanted_book", "Enchanted Book", "book_enchanted", 946, 947, ToolType.HAND, 1.0f, 64, 0);
         registerBlock("iron_block", "Iron Block", 137, "iron_block");
         registerBlock("gold_block", "Gold Block", 138, "gold_block");
         registerBlock("diamond_block", "Diamond Block", 139, "diamond_block");
@@ -355,6 +360,29 @@ public class ItemDefinitions {
         registerBlock("sandstone_slab", "Sandstone Slab", 210, "sandstone_top");
         // --- Torch ---
         registerBlock("torch", "Torch", 211, "torch_on");
+        // --- Decorative building blocks (ids live in com.voxel.world.DecorBlocks) ---
+        // Both halves and both wall orientations of a door share one item, so the
+        // inventory and creative picker show a single entry per door.
+        registerDoorItem("oak", "Oak Door", com.voxel.world.DecorBlocks.OAK_DOOR_LOWER,
+                com.voxel.world.DecorBlocks.OAK_DOOR_UPPER,
+                com.voxel.world.DecorBlocks.OAK_DOOR_LOWER_EW,
+                com.voxel.world.DecorBlocks.OAK_DOOR_UPPER_EW, "door_wood_lower");
+        registerDoorItem("spruce", "Spruce Door", com.voxel.world.DecorBlocks.SPRUCE_DOOR_LOWER,
+                com.voxel.world.DecorBlocks.SPRUCE_DOOR_UPPER,
+                com.voxel.world.DecorBlocks.SPRUCE_DOOR_LOWER_EW,
+                com.voxel.world.DecorBlocks.SPRUCE_DOOR_UPPER_EW, "door_spruce_lower");
+        registerDoorItem("birch", "Birch Door", com.voxel.world.DecorBlocks.BIRCH_DOOR_LOWER,
+                com.voxel.world.DecorBlocks.BIRCH_DOOR_UPPER,
+                com.voxel.world.DecorBlocks.BIRCH_DOOR_LOWER_EW,
+                com.voxel.world.DecorBlocks.BIRCH_DOOR_UPPER_EW, "door_birch_lower");
+        registerDoorItem("dark_oak", "Dark Oak Door", com.voxel.world.DecorBlocks.DARK_OAK_DOOR_LOWER,
+                com.voxel.world.DecorBlocks.DARK_OAK_DOOR_UPPER,
+                com.voxel.world.DecorBlocks.DARK_OAK_DOOR_LOWER_EW,
+                com.voxel.world.DecorBlocks.DARK_OAK_DOOR_UPPER_EW, "door_dark_oak_lower");
+        registerBlock("oak_trapdoor", "Oak Trapdoor", com.voxel.world.DecorBlocks.OAK_TRAPDOOR, "trapdoor");
+        registerBlock("iron_trapdoor", "Iron Trapdoor", com.voxel.world.DecorBlocks.IRON_TRAPDOOR, "iron_trapdoor");
+        registerBlock("ladder", "Ladder", com.voxel.world.DecorBlocks.LADDER, "ladder");
+        registerBlock("flower_pot", "Flower Pot", com.voxel.world.DecorBlocks.FLOWER_POT, "flower_pot");
         // --- End Update blocks (fixed IDs 900+, registered in Main) ---
         registerBlock("purpur_block", "Purpur Block", 900, "purpur_block");
         registerBlock("purpur_pillar", "Purpur Pillar", 901, "purpur_pillar");
@@ -432,6 +460,20 @@ public class ItemDefinitions {
         blockItemByBlockId.put(88, "grass");
         blockItemByBlockId.put(89, "grass");
         blockItemByBlockId.put(90, "grass");
+    }
+
+    /**
+     * Registers one door item backed by four blocks: the lower and upper halves
+     * of both wall orientations. Only the lower, Z-wall half carries the item;
+     * the other three map back to it so breaking any part returns the door.
+     */
+    private void registerDoorItem(String wood, String displayName, int lower, int upper,
+                                  int lowerEw, int upperEw, String textureName) {
+        String itemId = wood + "_door_lower";
+        registerBlock(itemId, displayName, lower, textureName);
+        blockItemByBlockId.put(upper, itemId);
+        blockItemByBlockId.put(lowerEw, itemId);
+        blockItemByBlockId.put(upperEw, itemId);
     }
 
     private void registerBlock(String itemId, String displayName, int blockId, String textureName) {

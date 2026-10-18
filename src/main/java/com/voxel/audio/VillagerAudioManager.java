@@ -155,6 +155,39 @@ public final class VillagerAudioManager implements AutoCloseable {
         return speak(resolveTopic(topic), options, speaker);
     }
 
+    /**
+     * Publish a line that a local synthetic voice is about to speak. The
+     * caption carries the exact authored text, so the subtitle and the audio
+     * (rendered from the same text) can never disagree.
+     */
+    public void announceLine(String text, String speaker, float revealSeconds) {
+        if (closed || text == null || text.trim().isEmpty()) return;
+        LiveCaptions.show(speaker, text.trim(), revealSeconds);
+    }
+
+    /**
+     * Queue already-rendered speech (local TTS, an injected test voice, or any
+     * other PCM source). The newest line wins, exactly like clip playback, and
+     * the caption reveal is retimed to the real audio in {@link #update()}.
+     */
+    public void playRendered(WavAudio rendered, double volume) {
+        if (closed || !openALReady || rendered == null || rendered.samples.length == 0) {
+            return;
+        }
+        float gain = (float) Math.max(0.0, Math.min(2.0, volume));
+        float[] samples = rendered.samples;
+        if (gain != 1.0f) {
+            samples = samples.clone();
+            for (int i = 0; i < samples.length; i++) {
+                samples[i] = Math.max(-1.0f, Math.min(1.0f, samples[i] * gain));
+            }
+        }
+        while (pendingClips.poll() != null) {
+            // Keep only the newest requested line.
+        }
+        pendingClips.offer(PendingClip.fromSamples(samples, rendered.sampleRate));
+    }
+
     /** Lazily discover the clip catalog; null when no clips exist on disk. */
     private synchronized ClipVoice clipVoiceOrNull() {
         if (clipVoice == null && injectedClips == null && !closed && !clipsUnavailable) {
@@ -238,6 +271,129 @@ public final class VillagerAudioManager implements AutoCloseable {
             }
         });
         return chosen.text;
+    }
+
+    /**
+     * Play one scripted Villager TV line.
+     *
+     * <p>The guide decides the voice: an exact recorded clip when the script
+     * names one ({@code clip}), otherwise the best recorded match for the
+     * caption, otherwise the closest clip for the line's situation
+     * ({@code topic}). The caption is always the chosen recording's own
+     * transcript, so a TV line can never show different words than it speaks.
+     *</p>
+     *
+     * @return the captioned transcript, or null when nothing could be spoken
+     */
+    public String requestTvLine(com.voxel.game.TvGuide.Line line, String speaker) {
+        if (line == null || !line.isSpoken()) return null;
+        SpeechOptions options = new SpeechOptions(line.speed, line.pitch, 1.0, 0.0,
+                line.emotion, 0.0, SpeechOptions.looksLikeQuestion(line.text));
+        return speak(resolveTvClip(line), options,
+                speaker == null || speaker.trim().isEmpty() ? DEFAULT_SPEAKER : speaker);
+    }
+
+    /**
+     * The only clip collection the Villager TV broadcasts from: the Villager
+     * News 1.0 Add-On recordings ({@link ClipIndex.Clip#kind} {@code "addon"};
+     * see {@code sources} in {@code voice/clips_index.json}). The TV must never
+     * pull a line out of any other corpus, so every lookup below runs against a
+     * kind-restricted view of the index, including the caption and situation
+     * fallbacks — not just the explicitly pinned clips.
+     */
+    public static final String TV_CLIP_KIND = "addon";
+
+    private ClipIndex tvIndex;
+    private ClipVoice tvIndexOwner;
+
+    /** Addon-only view of the catalog, rebuilt if the clip voice is replaced. */
+    private ClipIndex tvIndexOrNull() {
+        ClipVoice voice = clipVoiceOrNull();
+        if (voice == null) return null;
+        if (tvIndex == null || tvIndexOwner != voice) {
+            tvIndex = voice.library().index().restrictedToKind(TV_CLIP_KIND);
+            tvIndexOwner = voice;
+        }
+        return tvIndex;
+    }
+
+    /** Resolve a scripted TV line to the recorded clip that should speak it. */
+    private ClipIndex.Clip resolveTvClip(com.voxel.game.TvGuide.Line line) {
+        if (closed) return null;
+        synchronized (clipLock) {
+            ClipIndex index = tvIndexOrNull();
+            if (index == null || index.size() == 0) return null;
+            if (line.clipId != null) {
+                for (ClipIndex.Clip clip : index.clips()) {
+                    if (line.clipId.equals(clip.id)) return clip;
+                }
+            }
+            if (line.topic != null) {
+                try {
+                    ClipScript.Topic topic = ClipScript.Topic.valueOf(
+                            line.topic.toUpperCase(java.util.Locale.ROOT));
+                    return ClipScript.pick(index, topic, clipRng, recentClips);
+                } catch (IllegalArgumentException unknownTopic) {
+                    // Fall through to a caption match.
+                }
+            }
+            return index.bestMatch(line.text, clipRng, recentClips);
+        }
+    }
+
+    /**
+     * Queue a Villager TV music cue. Cues are rendered through the same
+     * clip-voice arrangement as the Villager News intro, so a theme or sting
+     * is sung in villager syllables rather than played by an instrument. The
+     * cue's notes are fingerprinted into the cache key, so editing the score
+     * in the guide always produces fresh audio.
+     */
+    public void requestTvMusicCue(com.voxel.game.TvMusicCue cue) {
+        if (closed || cue == null || !openALReady
+                || !clipPending.compareAndSet(false, true)) {
+            return;
+        }
+        final com.voxel.game.TvMusicCue queued = cue;
+        clipExecutor.execute(() -> {
+            try {
+                if (renderer == null) {
+                    renderer = new VillagerVoiceRenderer();
+                }
+                SpeechOptions profile = SpeechOptions.DEFAULT;
+                VillagerNewsIntro arrangement = queued.toIntro();
+                if (!arrangement.supports(renderer.getMode())) {
+                    throw new IllegalStateException("TV cues need clip voice mode");
+                }
+                String cacheText = "[TV_CUE]" + queued.getId() + ";" + queued.cacheKey()
+                        + ";backend=" + renderer.getMode().name();
+                AudioData cached = cache.load(cacheText, profile);
+                PendingClip clip;
+                if (cached != null) {
+                    clip = PendingClip.fromSamples(cached.samples, cached.sampleRate);
+                } else {
+                    WavAudio rendered = arrangement.render(renderer, profile);
+                    float[] scaled = rendered.samples.clone();
+                    float gain = queued.getGain();
+                    if (gain != 1.0f) {
+                        for (int i = 0; i < scaled.length; i++) {
+                            scaled[i] = Math.max(-1.0f, Math.min(1.0f, scaled[i] * gain));
+                        }
+                    }
+                    cache.save(cacheText, profile,
+                            new AudioData(scaled.clone(), 1, rendered.sampleRate));
+                    clip = PendingClip.fromSamples(scaled, rendered.sampleRate);
+                }
+                while (pendingClips.poll() != null) {
+                    // Keep only the newest requested clip.
+                }
+                pendingClips.offer(clip);
+            } catch (Throwable error) {
+                System.err.println("VillagerAudioManager: TV cue '" + queued.getId()
+                        + "' failed: " + error);
+            } finally {
+                clipPending.set(false);
+            }
+        });
     }
 
     /** Convenience method for the default villager greeting. */

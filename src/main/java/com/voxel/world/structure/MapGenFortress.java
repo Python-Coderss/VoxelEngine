@@ -1,6 +1,7 @@
 package com.voxel.world.structure;
 
 import com.voxel.World;
+import com.voxel.world.DecorBlocks;
 
 import java.util.Random;
 
@@ -22,6 +23,11 @@ public class MapGenFortress {
     private static final int SLAB = 210;
     private static final int LAVA = 21;
     private static final int GLOWSTONE = 17;
+    /** Real doors for the tower rooms (registered by Main.registerDecorativeBlocks). */
+    private static final int DOOR_LOWER_Z = DecorBlocks.DARK_OAK_DOOR_LOWER;
+    private static final int DOOR_UPPER_Z = DecorBlocks.DARK_OAK_DOOR_UPPER;
+    private static final int DOOR_LOWER_X = DecorBlocks.DARK_OAK_DOOR_LOWER_EW;
+    private static final int DOOR_UPPER_X = DecorBlocks.DARK_OAK_DOOR_UPPER_EW;
     /** Block id of the mob spawner block. Main registers this as id 258. */
     private static final int SPAWNER = 258;
 
@@ -56,6 +62,9 @@ public class MapGenFortress {
             // spawn-loop run by Main.tick picks up the spawn type from
             // this chunk's meta channel.
             if (rand.nextInt(8) == 0) {
+                // A brick plinth under the spawner so the block is supported
+                // rather than floating in mid-air.
+                set(world, slot, 7, baseLy + 1, 7, BRICK);
                 set(world, slot, 7, baseLy + 2, 7, SPAWNER);
             }
         } else if (nsCorridor) {
@@ -65,7 +74,12 @@ public class MapGenFortress {
         }
     }
 
-    /** A 10x10 tower room with brick walls, corner pillars, lava pool and a doorway. */
+    /**
+     * A 10x10 tower room with brick walls, corner pillars, a walled lava basin
+     * and two real two-block doors — one on the north wall (facing the N-S
+     * corridor) and one on the west wall (facing the E-W corridor) — so the
+     * room is neither sealed shut nor an open hole in the fortress shell.
+     */
     private void generateTower(World world, int slot, Random rand, int baseLy) {
         int x0 = 3, x1 = 12, z0 = 3, z1 = 12;
         int wallTop = baseLy + 4;      // 4-tall walls
@@ -89,42 +103,76 @@ public class MapGenFortress {
                 }
             }
         }
-        // Corner pillars above the parapet.
+        // Corner pillars run from the wall top up past the parapet, so the
+        // cap never floats above a gap.
         for (int[] c : new int[][]{{x0, z0}, {x0, z1}, {x1, z0}, {x1, z1}}) {
-            set(world, slot, c[0], parapet, c[1], BRICK);
-            set(world, slot, c[0], parapet + 1, c[1], GLOWSTONE);
+            for (int ly = wallTop; ly <= parapet + 1; ly++) {
+                set(world, slot, c[0], ly, c[1], BRICK);
+            }
+            set(world, slot, c[0], parapet + 2, c[1], GLOWSTONE);
         }
-        // Lava pool in one corner of the floor, with a step up to reach it.
-        int lx = x0 + 1, lz = z1 - 1;
-        set(world, slot, lx, baseLy + 1, lz, LAVA);
-        set(world, slot, lx + 1, baseLy + 1, lz, LAVA);
-        set(world, slot, lx, baseLy + 1, lz - 1, LAVA);
-        // Stair entrance on the north wall.
-        set(world, slot, x0 + 4, baseLy + 1, z0, STAIRS);
+        // Recessed 2x2 lava basin in the south-west corner. A solid brick lip
+        // rings it on every side so the lava cannot crawl across the floor.
+        int lax = x0 + 2, laz = z1 - 2;
+        for (int dx = -1; dx <= 2; dx++)
+            for (int dz = -1; dz <= 2; dz++)
+                set(world, slot, lax + dx, baseLy + 1, laz + dz, BRICK);
+        for (int dx = 0; dx <= 1; dx++)
+            for (int dz = 0; dz <= 1; dz++)
+                set(world, slot, lax + dx, baseLy + 1, laz + dz, LAVA);
+
+        // Two-wide double doors. The north wall runs along X so it takes the
+        // *_ew panels; the west wall runs along Z and takes the plain panels.
+        doorAlongX(world, slot, 7, baseLy, z0);
+        doorAlongX(world, slot, 8, baseLy, z0);
+        doorAlongZ(world, slot, x0, baseLy, 7);
+        doorAlongZ(world, slot, x0, baseLy, 8);
+        // A slab apron outside each doorway so a step out of the room is not a
+        // drop into the void.
+        for (int dx = 6; dx <= 9; dx++) set(world, slot, dx, baseLy, z0 - 1, SLAB);
+        for (int dz = 6; dz <= 9; dz++) set(world, slot, x0 - 1, baseLy, dz, SLAB);
+    }
+
+    /** Two-tall door in a wall that runs along X (fixed z, opening spanning x). */
+    private void doorAlongX(World world, int slot, int x, int baseLy, int z) {
+        set(world, slot, x, baseLy + 1, z, DOOR_LOWER_X);
+        set(world, slot, x, baseLy + 2, z, DOOR_UPPER_X);
+    }
+
+    /** Two-tall door in a wall that runs along Z (fixed x, opening spanning z). */
+    private void doorAlongZ(World world, int slot, int x, int baseLy, int z) {
+        set(world, slot, x, baseLy + 1, z, DOOR_LOWER_Z);
+        set(world, slot, x, baseLy + 2, z, DOOR_UPPER_Z);
     }
 
     /** A 3-wide corridor along the N-S (z) or E-W (x) axis with low brick walls. */
     private void generateCorridor(World world, int slot, Random rand, int baseLy, boolean northSouth) {
         int wallTop = baseLy + 3;
-        for (int ly = baseLy; ly < wallTop; ly++) {
-            for (int i = 0; i < 16; i++) {
-                int a = i; // along-axis coordinate
-                if (northSouth) {
-                    // floor
-                    set(world, slot, 7, ly == baseLy ? baseLy : ly, a, ly == baseLy ? SLAB : 0);
-                    set(world, slot, 9, ly == baseLy ? baseLy : ly, a, ly == baseLy ? SLAB : 0);
-                    // side walls at lx=6 and lx=10
-                    if (ly > baseLy) {
-                        set(world, slot, 6, ly, a, BRICK);
-                        set(world, slot, 10, ly, a, BRICK);
-                    }
-                } else {
-                    set(world, slot, a, ly == baseLy ? baseLy : ly, 7, ly == baseLy ? SLAB : 0);
-                    set(world, slot, a, ly == baseLy ? baseLy : ly, 9, ly == baseLy ? SLAB : 0);
-                    if (ly > baseLy) {
-                        set(world, slot, a, ly, 6, BRICK);
-                        set(world, slot, a, ly, 10, BRICK);
-                    }
+        for (int i = 0; i < 16; i++) {
+            if (northSouth) {
+                // Three-wide walk: a floor under every cell (the middle lane
+                // used to have none, so the corridor had a hole down the
+                // centre), brick side walls and clear head height.
+                set(world, slot, 7, baseLy, i, SLAB);
+                set(world, slot, 8, baseLy, i, SLAB);
+                set(world, slot, 9, baseLy, i, SLAB);
+                for (int ly = baseLy + 1; ly < wallTop; ly++) {
+                    set(world, slot, 7, ly, i, 0);
+                    set(world, slot, 8, ly, i, 0);
+                    set(world, slot, 9, ly, i, 0);
+                    set(world, slot, 6, ly, i, BRICK);
+                    set(world, slot, 10, ly, i, BRICK);
+                }
+            } else {
+                set(world, slot, i, baseLy, 7, SLAB);
+                set(world, slot, i, baseLy, 8, SLAB);
+                set(world, slot, i, baseLy, 9, SLAB);
+                for (int ly = baseLy + 1; ly < wallTop; ly++) {
+                    set(world, slot, i, ly, 7, 0);
+                    set(world, slot, i, ly, 8, 0);
+                    set(world, slot, i, ly, 9, 0);
+                    set(world, slot, i, ly, 6, BRICK);
+                    set(world, slot, i, ly, 10, BRICK);
                 }
             }
         }

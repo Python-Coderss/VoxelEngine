@@ -10,24 +10,37 @@ import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.IntBuffer;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
- * Background music player. Plays a folder of MP3 files (decoded by the
- * project's existing JLayer-based {@link Mp3Decoder}) through its own
- * OpenAL source, one track at a time in filename order, looping the
- * playlist forever.
+ * Background music player.
  *
- * <p>Files are downmixed to mono before upload ({@code AL_FORMAT_MONO16}) —
- * the game only needs a single speaker and mono halves both decode work and
- * the source audio size. Decoding happens on the caller's thread when a track
- * starts, so keep individual tracks short or accept the one-time hitch.
+ * <p>Two modes share one OpenAL source:</p>
+ * <ul>
+ *   <li><b>Library mode</b> (the game): a {@link MusicLibrary} groups every
+ *       bundled MCSM / Aether / Minecraft / fanmade track into mood pools, and
+ *       {@link #playContext(String)} crossfades between them.</li>
+ *   <li><b>Folder mode</b> (tests and legacy callers): a directory of MP3s is
+ *       scanned and played in path order.</li>
+ * </ul>
+ *
+ * <p>Decoding is asynchronous. The old player decoded the next track inline on
+ * the render thread, so every track change dropped frames for as long as the
+ * decoder took (seconds for a 3-minute MP3). A single daemon worker decodes the
+ * next track while the current one is still playing; the render thread only
+ * uploads the finished PCM.</p>
  *
  * <p>OpenAL is initialized lazily and defensively: on machines without an
  * audio device the player silently disables itself, so the game and the
- * headless test suite never depend on audio.
+ * headless test suite never depend on audio.</p>
  */
 public final class MusicPlayer implements AutoCloseable {
 
@@ -43,23 +56,42 @@ public final class MusicPlayer implements AutoCloseable {
     private boolean openALReady;
     private boolean closed;
 
-    /** Playlist of real MP3 files, sorted by path. */
+    /** Playlist of real files (folder mode), sorted by path. */
     private final List<File> playlist = new ArrayList<>();
     /** Files named *.mp3 that are not actually MP3s (HTML placeholders). */
     private final List<File> pending = new ArrayList<>();
-    /** Music root; context subfolders hang off it (see {@link #playContext}). */
+    /** Classified library (library mode). Null in folder mode. */
+    private MusicLibrary library;
+
+    /** Music root; context subfolders hang off it (folder mode). */
     private File rootDir;
     private String currentContext = "";
     private int trackIndex;
     private boolean trackQueued;   // a decoded track is loaded into the source
-    private float gain = 0.6f;
+    private float gain = 0.55f;
 
-    /**
-     * Joins the engine's OpenAL context. Prefers the context another manager
-     * (the dialogue system) already made current — sharing one context keeps
-     * LWJGL's single global capability set valid. Only when no context exists
-     * yet (standalone use) does this open its own device/context.
-     */
+    // ── Crossfade ────────────────────────────────────────────────────────────
+    private float fade = 0f;          // current fade level 0..1
+    private float fadeTarget = 0f;
+    private float appliedGain = -1f;
+
+    // ── Async decode ─────────────────────────────────────────────────────────
+    private ExecutorService decoder;
+    private volatile AudioData decodedAudio;
+    private volatile File decodedFile;
+    private volatile boolean decoding;
+    private volatile long decodeToken;
+    private final Set<File> badFiles = new HashSet<>();
+    private final ArrayDeque<File> recent = new ArrayDeque<>();
+    private final Random random = new Random();
+    private File currentFile;
+    private File swapFile;
+    private AudioData swapAudio;
+
+    /** Joins the engine's OpenAL context. Prefers the context another manager
+     *  (the dialogue system) already made current — sharing one context keeps
+     *  LWJGL's single global capability set valid. Only when no context exists
+     *  yet (standalone use) does this open its own device/context. */
     public void initialize() {
         if (closed || openALReady) return;
         try {
@@ -81,7 +113,7 @@ public final class MusicPlayer implements AutoCloseable {
                 ownsDevice = true;
             }
             source = AL10.alGenSources();
-            AL10.alSourcef(source, AL10.AL_GAIN, gain);
+            AL10.alSourcef(source, AL10.AL_GAIN, 0f);
             currentBuffer = 0;
             openALReady = true;
         } catch (Throwable error) {
@@ -90,8 +122,9 @@ public final class MusicPlayer implements AutoCloseable {
         }
     }
 
-    /** Number of real MP3 tracks found in the playlist folder. */
+    /** Number of playable tracks (library size, or folder playlist size). */
     public int trackCount() {
+        if (library != null) return library.size();
         return playlist.size();
     }
 
@@ -104,18 +137,30 @@ public final class MusicPlayer implements AutoCloseable {
         return openALReady && !closed;
     }
 
-    /**
-     * Scans a folder (recursively — subfolders like episodes/scenes are
-     * fine) for *.mp3 files and resets the playlist to the first track.
-     * Tracks play in path order, so prefix filenames with 01_, 02_, ... to
-     * force an order.
-     */
-    /**
-     * Points the player at the music root. The root's own files form the
-     * default ({@code calm}) pool and its subfolders are the per-context
-     * pools named by {@link MusicDirector}.
-     */
+    public String currentContext() {
+        return currentContext;
+    }
+
+    /** Title of the track currently playing (or empty). */
+    public String currentTrackName() {
+        return currentFile == null ? "" : currentFile.getName();
+    }
+
+    /** Installs a classified library and leaves folder mode. */
+    public void setLibrary(MusicLibrary lib) {
+        this.library = lib;
+        this.playlist.clear();
+        this.pending.clear();
+        this.currentContext = "";
+        this.trackQueued = false;
+        this.currentFile = null;
+        this.decoding = false;
+        this.decodeToken++;
+    }
+
+    /** Points the player at a legacy folder-of-MP3s root (folder mode). */
     public void setRoot(File dir) {
+        library = null;
         rootDir = dir;
         currentContext = "";
         setFolder(dir);
@@ -123,14 +168,19 @@ public final class MusicPlayer implements AutoCloseable {
 
     /**
      * Switches the playing pool to a game context (see {@link MusicDirector}).
-     * Tracks continue uninterrupted when the context has not changed. A
-     * context with no real tracks yet falls back to the root pool, so an
-     * unorganized folder keeps playing instead of going silent.
+     * In library mode the next track is chosen from that pool (with fallbacks)
+     * and the change is crossfaded. Tracks continue uninterrupted when the
+     * context has not changed.
      */
     public void playContext(String context) {
         String want = context == null ? "" : context;
-        if (want.equals(currentContext) && trackQueued) return;
+        if (want.equals(currentContext) && (trackQueued || decoding || swapAudio != null)) return;
         currentContext = want;
+        if (library != null) {
+            if (library.isEmpty()) return;
+            requestLibraryTrack();
+            return;
+        }
         if (rootDir == null || !rootDir.isDirectory()) return;
         File pool = want.isEmpty() ? rootDir : new File(rootDir, want);
         setFolder(pool);
@@ -140,6 +190,7 @@ public final class MusicPlayer implements AutoCloseable {
         }
     }
 
+    /** Scans a folder for *.mp3 files (folder mode). */
     public void setFolder(File dir) {
         playlist.clear();
         pending.clear();
@@ -191,40 +242,164 @@ public final class MusicPlayer implements AutoCloseable {
 
     public void setGain(float g) {
         gain = Math.max(0.0f, Math.min(1.0f, g));
-        if (openALReady) AL10.alSourcef(source, AL10.AL_GAIN, gain);
+        appliedGain = -1f; // force reapply
     }
 
     /** Skips to the next track (queued the next time {@link #update()} runs). */
     public void nextTrack() {
+        if (library != null) {
+            requestLibraryTrack();
+            return;
+        }
         if (playlist.isEmpty()) return;
         trackIndex = (trackIndex + 1) % playlist.size();
         trackQueued = false;
+        requestFolderTrack();
     }
 
     /**
-     * Called once per frame after the OpenAL context exists: starts the first
-     * track, then advances to the next file whenever the current one ends.
+     * Called once per frame after the OpenAL context exists: fades, swaps in a
+     * decoded track, and starts the next one when the current ends.
      */
     public void update() {
-        if (!openALReady || closed || playlist.isEmpty()) return;
+        if (closed) return;
+        advanceFade();
+        if (!openALReady) return;
+
+        // A finished decode is waiting: let the current track fade out, then
+        // swap it in. The upload itself is a single memcpy.
+        if (swapAudio == null && decodedAudio != null) {
+            swapAudio = decodedAudio;
+            swapFile = decodedFile;
+            decodedAudio = null;
+            decodedFile = null;
+            fadeTarget = 0f;
+        }
+        if (swapAudio != null && fade <= 0.03f) {
+            stopSource();
+            uploadAndPlay(swapAudio, swapFile);
+            swapAudio = null;
+            swapFile = null;
+            fadeTarget = 1f;
+        }
+
         if (!trackQueued) {
-            loadCurrent();
+            if (library != null) {
+                if (!decoding && swapAudio == null) requestLibraryTrack();
+            } else if (!decoding && swapAudio == null && !playlist.isEmpty()) {
+                requestFolderTrack();
+            }
             return;
         }
+
         int state = AL10.alGetSourcei(source, AL10.AL_SOURCE_STATE);
-        if (state == AL10.AL_PLAYING) return;
-        // The track finished: move to the next file (looping the playlist).
-        nextTrack();
-        loadCurrent();
+        if (state != AL10.AL_PLAYING && fadeTarget > 0.5f) {
+            // The track finished: move on, crossfading from silence.
+            trackQueued = false;
+            fadeTarget = 0f;
+            if (library != null) requestLibraryTrack();
+            else nextPlaylistIndex();
+        }
     }
 
-    /** Decodes the current playlist file to mono and starts playing it. */
-    private void loadCurrent() {
+    // ── decode worker ────────────────────────────────────────────────────────
+
+    private void requestLibraryTrack() {
+        if (library == null || library.isEmpty()) return;
+        long token = ++decodeToken;
+        decoding = true;
+        File chosen = chooseLibraryFile();
+        if (chosen == null) {
+            decoding = false;
+            return;
+        }
+        submitDecode(chosen, token);
+    }
+
+    private File chooseLibraryFile() {
+        // Prefer a track from the requested pool, avoiding recent repeats.
+        Set<File> avoid = new HashSet<>(recent);
+        MusicLibrary.Track pick = library.pick(currentContext, random, avoid);
+        if (pick == null || badFiles.contains(pick.file)) {
+            // The single pick may be a bad file; walk the whole library once.
+            for (MusicLibrary.Track t : library.tracks()) {
+                if (!badFiles.contains(t.file)) {
+                    pick = t;
+                    break;
+                }
+            }
+        }
+        return pick == null ? null : pick.file;
+    }
+
+    private void requestFolderTrack() {
         if (playlist.isEmpty()) return;
+        long token = ++decodeToken;
+        decoding = true;
         File file = playlist.get(trackIndex);
+        if (badFiles.contains(file)) {
+            nextPlaylistIndex();
+            file = playlist.get(trackIndex);
+        }
+        submitDecode(file, token);
+    }
+
+    private void nextPlaylistIndex() {
+        if (playlist.isEmpty()) return;
+        trackIndex = (trackIndex + 1) % playlist.size();
+    }
+
+    private void submitDecode(File file, long token) {
+        if (decoder == null) {
+            decoder = Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "music-decode");
+                t.setDaemon(true);
+                return t;
+            });
+        }
+        decoder.submit(() -> {
+            AudioData data = null;
+            try {
+                data = file.getName().toLowerCase().endsWith(".ogg")
+                        ? OggDecoder.decode(file)
+                        : Mp3Decoder.decode(file);
+                if (data == null || data.samples.length == 0) {
+                    throw new IllegalStateException("decoded to zero samples");
+                }
+            } catch (Throwable error) {
+                System.err.println("[music] skipping broken track " + file.getName() + ": " + error);
+                badFiles.add(file);
+                data = null;
+            }
+            if (token != decodeToken) {
+                return; // superseded by a newer request
+            }
+            if (data != null) {
+                decodedAudio = data;
+                decodedFile = file;
+            }
+            decoding = false;
+        });
+    }
+
+    // ── OpenAL helpers ───────────────────────────────────────────────────────
+
+    private void advanceFade() {
+        float step = 1f / 30f; // ~1s fade at 30fps
+        if (fade < fadeTarget) fade = Math.min(fadeTarget, fade + step);
+        else if (fade > fadeTarget) fade = Math.max(fadeTarget, fade - step);
+        if (openALReady) {
+            float value = gain * fade;
+            if (Math.abs(value - appliedGain) > 0.01f) {
+                AL10.alSourcef(source, AL10.AL_GAIN, value);
+                appliedGain = value;
+            }
+        }
+    }
+
+    private void uploadAndPlay(AudioData data, File file) {
         try {
-            AudioData data = Mp3Decoder.decode(file);
-            float[] mono = (data.channels <= 1) ? data.samples : data.toMono();
+            float[] mono = data.channels <= 1 ? data.samples : data.toMono();
             if (currentBuffer != 0) {
                 AL10.alSourcei(source, AL10.AL_BUFFER, 0);
                 AL10.alDeleteBuffers(currentBuffer);
@@ -233,21 +408,34 @@ public final class MusicPlayer implements AutoCloseable {
             ByteBuffer pcm = toMono16(mono);
             currentBuffer = AL10.alGenBuffers();
             AL10.alBufferData(currentBuffer, AL10.AL_FORMAT_MONO16, pcm, data.sampleRate);
-            AL10.alSourcef(source, AL10.AL_GAIN, gain);
             AL10.alSourcei(source, AL10.AL_BUFFER, currentBuffer);
             AL10.alSourcePlay(source);
             trackQueued = true;
-            System.out.println("[music] playing " + file.getName()
-                    + " (" + (mono.length / (float) data.sampleRate / 60.0f) + " min, mono "
-                    + data.sampleRate + " Hz)");
+            currentFile = file;
+            remember(file);
+            System.out.println("[music] " + MusicDirector.displayName(currentContext)
+                    + " — " + file.getName() + " ("
+                    + Math.round(data.durationSeconds()) + "s)");
         } catch (Throwable error) {
-            // A real MP3 that fails to decode is removed so it is not retried
-            // every frame; placeholders never reach this point (sniffed out).
-            System.err.println("[music] skipping broken track " + file.getName() + ": " + error);
-            playlist.remove(file);
+            System.err.println("[music] upload failed for " + file.getName() + ": " + error);
             trackQueued = false;
-            nextTrack();
         }
+    }
+
+    private void stopSource() {
+        if (!openALReady) return;
+        try {
+            AL10.alSourceStop(source);
+        } catch (Throwable ignored) {
+        }
+        trackQueued = false;
+    }
+
+    private void remember(File file) {
+        if (file == null) return;
+        recent.remove(file);
+        recent.addFirst(file);
+        while (recent.size() > 6) recent.removeLast();
     }
 
     /** float mono samples in [-1, 1] → little-endian 16-bit PCM buffer. */
@@ -266,6 +454,7 @@ public final class MusicPlayer implements AutoCloseable {
     public void close() {
         if (closed) return;
         closed = true;
+        if (decoder != null) decoder.shutdownNow();
         closeOpenAL();
     }
 

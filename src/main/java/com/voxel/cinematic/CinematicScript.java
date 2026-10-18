@@ -10,9 +10,9 @@ import java.util.List;
  *
  * <p>Each line has a scene-relative time, a speaker and its text. As the scene
  * plays, {@link CinematicSystem} asks for the lines whose time has just passed
- * and publishes them to the live captions (word-by-word, exactly like villager
- * speech). Ancient-builder lines have no audio behind them — the caption is the
- * performance.</p>
+ * and speaks them through {@link com.voxel.ai.speech.CharacterVoice}: the
+ * player, narrator, builders and bosses each get their own voice, and the
+ * caption is always the text that was actually spoken.</p>
  *
  * <p>Pure and allocation-light so it is unit-tested directly without a GL
  * context.</p>

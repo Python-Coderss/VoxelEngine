@@ -163,6 +163,10 @@ public class HudUI {
     public UILayer.UIElement tutorialPopupBg;
     public UILayer.UITextElement tutorialTitleElement;
     public UILayer.UITextElement tutorialSubtitleElement;
+    // Persistent guided-objective tracker (top-left, tutorial world only).
+    public UILayer.UIElement tutorialTrackerBg;
+    public UILayer.UITextElement tutorialTrackerTitle;
+    public UILayer.UITextElement tutorialTrackerHint;
 
     // ── Map overlay elements ──
     public UILayer.UIElement mapPanelBg;
@@ -718,14 +722,17 @@ public class HudUI {
             layer.addElement(playerHearts[i]);
         }
 
-        // Food bar icons (right of the hearts, same row). Icons are applied at
-        // refresh time from the item atlas (cooked_chicken = drumstick look).
+        // Hunger bar icons: sit on the same row as the hearts, immediately to
+        // their right (vanilla layout). Sampled from the ui.png atlas at
+        // refresh time — UIConstants.HUNGER_EMPTY/HALF/FULL — instead of
+        // borrowing the cooked_chicken item icon from the item atlas.
         for (int i = 0; i < 10; i++) {
             foodIcons[i] = new UILayer.UIElement(
-                new Vector2f(Main.HOTBAR_X + 10 * 30 + 18 + i * 30, Main.HOTBAR_Y - 30),
+                new Vector2f(Main.HOTBAR_X + 10 * 30 + 10 + i * 30, Main.HOTBAR_Y - 30),
                 new Vector2f(21, 21),
                 new Vector4f(1, 1, 1, 1)
             );
+            foodIcons[i].textureId = uiTextureId;
             foodIcons[i].visible = false;
             layer.addElement(foodIcons[i]);
 
@@ -883,6 +890,28 @@ public class HudUI {
         tutorialSubtitleElement.charLineLimit = 55;
         tutorialSubtitleElement.visible = false;
         layer.addElement(tutorialSubtitleElement);
+
+        // ── Guided objective tracker ──
+        tutorialTrackerBg = new UILayer.UIElement(
+            new Vector2f(18, 18),
+            new Vector2f(470, 74),
+            new Vector4f(0.05f, 0.07f, 0.11f, 0.68f)
+        );
+        tutorialTrackerBg.visible = false;
+        tutorialTrackerBg.onClick = null;
+        layer.addElement(tutorialTrackerBg);
+
+        tutorialTrackerTitle = new UILayer.UITextElement(
+            new Vector2f(30, 28), "", 1.7f, new Vector4f(1f, 0.86f, 0.34f, 1f), fontTextureId);
+        tutorialTrackerTitle.charLineLimit = 48;
+        tutorialTrackerTitle.visible = false;
+        layer.addElement(tutorialTrackerTitle);
+
+        tutorialTrackerHint = new UILayer.UITextElement(
+            new Vector2f(30, 54), "", 1.15f, new Vector4f(0.82f, 0.9f, 1f, 1f), fontTextureId);
+        tutorialTrackerHint.charLineLimit = 66;
+        tutorialTrackerHint.visible = false;
+        layer.addElement(tutorialTrackerHint);
 
         // Goggles overlay: machine name + power state under the crosshair.
         gogglesOverlayElement = new UILayer.UITextElement(new Vector2f(main.width / 2f - 200, main.height / 2f + 14), "", 1.5f, new Vector4f(0.4f, 1, 0.9f, 1), fontTextureId);
@@ -1304,6 +1333,9 @@ public class HudUI {
                 } else if (carried.itemId.equals(state.output.itemId) && carried.count + state.output.count <= 64) {
                     carried.count += state.output.count;
                     state.output = null;
+                }
+                if (state.output == null && ctx.tutorialWorld && ctx.tutorialProgress != null) {
+                    ctx.tutorialProgress.complete(com.voxel.game.TutorialProgress.SMELT);
                 }
             }
             return;
@@ -2026,21 +2058,24 @@ public class HudUI {
         float foodBar = main.player.getHunger();
         int armorBar = main.player.getArmorPoints();
 
-        // Hunger bar (10 drumstick icons, 2 food points each)
-        ItemDefinition foodDef = itemDefinitions.getDefinition("cooked_chicken");
+        // Hunger bar (10 drumstick icons, 2 food points each, drawn from the
+        // ui.png atlas). Always visible so the empty drumsticks frame the bar
+        // exactly like vanilla; the row sits beside the hearts.
         for (int i = 0; i < 10; i++) {
             float foodValue = foodBar - (i * 2);
             UILayer.UIElement food = foodIcons[i];
-            if (foodValue < 1.0f || foodDef == null || foodDef.iconLayer < 0) {
-                food.visible = false;
-                continue;
-            }
             food.visible = !main.commandMode;
-            applyItemIcon(food, foodDef);
-            // Full icons are bright; the half drumstick is dimmed like
-            // Minecraft's half-hunger icon.
+            if (!food.visible) continue;
+            food.textureId = uiTextureId;
             food.color.set(1, 1, 1, 1);
-            if (foodValue < 2.0f) food.color.set(0.55f, 0.55f, 0.55f, 1.0f);
+            food.pos.set(Main.HOTBAR_X + 10 * 30 + 10 + i * 30, main.height - 40);
+            Vector4f uv = foodValue >= 2.0f ? UIConstants.HUNGER_FULL
+                    : (foodValue >= 1.0f ? UIConstants.HUNGER_HALF : UIConstants.HUNGER_EMPTY);
+            float fw = uiTextureSize.x;
+            float fh = uiTextureSize.y;
+            // Inset the UV by half a pixel to avoid atlas bleeding (as hearts do).
+            food.uvOffset.set((uv.x + 0.5f) / fw, (uv.y + 0.5f) / fh);
+            food.uvScale.set((uv.z - 1.0f) / fw, (uv.w - 1.0f) / fh);
         }
 
         // Armor bar (10 chestplate icons, 2 armor points each; hidden when bare)
@@ -2098,7 +2133,7 @@ public class HudUI {
      *  - Runtime (spawn generation): a compact toast panel in the top-right
      *    corner, leaving the world visible behind it.
      */
-    /** Shows/hides the Tutorial World zone title-card popup. */
+    /** Shows/hides the Tutorial World zone title-card popup and objective tracker. */
     public void updateTutorialPopup(double time) {
         boolean visible = time < main.tutorialPopupUntil && !main.tutorialPopupTitle.isEmpty();
         tutorialPopupBg.visible = visible;
@@ -2111,6 +2146,20 @@ public class HudUI {
             tutorialPopupBg.color.w = 0.72f * alpha;
             tutorialTitleElement.color.w = alpha;
             tutorialSubtitleElement.color.w = alpha;
+        }
+
+        // Guided objectives: persistent while the tutorial runs, never in the
+        // creative showcase or other worlds.
+        com.voxel.game.TutorialProgress progress = ctx.tutorialProgress;
+        boolean tracked = ctx.tutorialWorld && progress != null
+                && !progress.isComplete() && ctx.menuScreen == GameContext.MenuScreen.IN_GAME
+                && !ctx.pauseMenuOpen && !ctx.inventoryOpen && !ctx.commandMode;
+        tutorialTrackerBg.visible = tracked;
+        tutorialTrackerTitle.visible = tracked;
+        tutorialTrackerHint.visible = tracked;
+        if (tracked) {
+            tutorialTrackerTitle.text = progress.headline();
+            tutorialTrackerHint.text = progress.hintLine();
         }
     }
 
@@ -2126,8 +2175,9 @@ public class HudUI {
         if (inMenu) {
             switch (ctx.menuScreen) {
                 case MAIN:
-                    labels = new String[] { "NEW WORLD", "TUTORIAL WORLD", "POINT & CLICK DEMO", "LOAD SAVE", "OPTIONS", "", "", "" };
-                    count = 5;
+                    labels = new String[] { "NEW WORLD", "SHOWCASE WORLD", "TUTORIAL WORLD",
+                        "POINT & CLICK DEMO", "LOAD SAVE", "OPTIONS", "", "" };
+                    count = 6;
                     menuSubtitle.text = "A small voxel world with big ideas";
                     menuHint.text = "ARROWS / WHEEL select   ENTER / CLICK confirm   ESC back";
                     break;
@@ -2374,8 +2424,11 @@ public class HudUI {
         tvContentText.visible = showTV;
         tvInstructionsText.visible = showTV;
         if (showTV) {
+            // Callsign for the banner, station name for the strapline — the same
+            // shape a real broadcast uses, and it stays readable at TV size.
+            String callsign = ctx.tvSystem.getChannelCallsign(ctx.tvChannel);
             String channelName = ctx.tvSystem.getChannelName(ctx.tvChannel);
-            tvChannelNameText.text = "[" + channelName + "]";
+            tvChannelNameText.text = "[" + callsign + "]  " + channelName;
             String display = ctx.tvSystem.getChannelDisplay(ctx.tvChannel, worldTime);
             tvContentText.text = display;
             // Pulse the instructions text
