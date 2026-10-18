@@ -32,7 +32,6 @@ layout(location = 18) uniform vec3 u_Ambient;
 layout(std430, binding = 1) buffer readonly restrict IndirectionTable { uint chunkSlots[]; };
 layout(std430, binding = 2) buffer readonly restrict ChunkPool { uint voxelPool[]; };
 layout(std430, binding = 3) buffer readonly restrict BitmaskPool { uint bitmasks[]; };
-layout(std430, binding = 4) buffer readonly restrict OcclusionPool { uint occlusionPool[]; };
 
 // Block light propagation: Minecraft packed format [sky(0-3)|block(4-7)] per voxel
 layout(std430, binding = 9) buffer readonly restrict LightPool { uint lightPool[]; };
@@ -86,7 +85,7 @@ layout(location = 24) uniform vec3 u_ShadowRight;    // ACTIVE SUN pool right ba
 layout(location = 25) uniform vec3 u_ShadowUp;       // ACTIVE SUN pool up basis (unit length)
 layout(location = 26) uniform vec3 u_ShadowSunDir;   // ACTIVE SUN pool light direction
 layout(location = 27) uniform vec2 u_ShadowExtent;   // (half-extent blocks, depth blocks)
-layout(location = 30) uniform float u_ShadowMapSize; // 1.0 / pool resolution
+
 layout(location = 31) uniform sampler2D u_SunPoolTex;
 layout(location = 32) uniform sampler2D u_MoonPoolTex;
 layout(location = 33) uniform vec3 u_MoonPoolOrigin; // ACTIVE MOON pool near-plane origin
@@ -98,6 +97,8 @@ layout(location = 38) uniform int u_LargeCogPresent;  // 1 when any large cogwhe
 
 // Semi-transparent block placement preview (ghost). Buffer-relative target cell
 // (39), block id (40, -1 = off), and facing (41) for directional blocks.
+// Facing is currently unread here, but Main.java still writes location 41 by
+// number (glProgramUniform1i(computeProgram, 41, ...)), so the slot stays reserved.
 layout(location = 39) uniform ivec3 u_PreviewPos;
 layout(location = 40) uniform int u_PreviewBlock;
 layout(location = 41) uniform int u_PreviewFacing;
@@ -167,73 +168,16 @@ uniform sampler2D u_UITexture;
 uniform sampler2D u_UISource;
 uniform sampler2DArray u_DestroyStages;
 
-
-
+// Kept although currently unread by the shader: Main.java writes the heart UVs as
+// locHeartUVs, locHeartUVs+1, locHeartUVs+2. Dropping this declaration would make
+// glGetUniformLocation return -1 and those offsets would silently write locations
+// 0 and 1 (_camFrac, camForward). Retire it together with the Java writes, not before.
 layout(location = 7) uniform vec4 u_HeartUVs[3]; // [0]=Full, [1]=Half, [2]=Empty
 
 const int WORLD_SIZE = 2048;
 const uint EMPTY = 0xFFFFFFFF;
-const float PI = 3.14159265359;
 
 struct Atmosphere { vec3 sunDir, moonDir, sunColor, moonColor, skyZenith, skyHorizon, ambient; };
-
-// Dimension IDs
-const int DIM_OVERWORLD = 0;
-const int DIM_NETHER = 1;
-const int DIM_END = 2;
-const int DIM_AETHER = 3;
-
-Atmosphere GetAtmosphere(float t) {
-    Atmosphere at;
-    
-    if (u_DimensionID == DIM_NETHER) {
-        // Nether: No day/night cycle, red/orange fog
-        at.sunDir = normalize(vec3(0.0, -0.5, 0.0));
-        at.moonDir = normalize(vec3(0.0, 0.5, 0.0));
-        at.skyZenith = vec3(0.3, 0.05, 0.02);
-        at.skyHorizon = vec3(0.5, 0.15, 0.05);
-        at.sunColor = vec3(0.6, 0.2, 0.05);
-        at.moonColor = vec3(0.0);
-        at.ambient = vec3(0.08, 0.03, 0.01);
-        return at;
-    }
-    
-    if (u_DimensionID == DIM_END) {
-        // End: Dark with purple fog, no sun
-        at.sunDir = normalize(vec3(0.0, 1.0, 0.0));
-        at.moonDir = normalize(vec3(0.0, -1.0, 0.0));
-        at.skyZenith = vec3(0.01, 0.0, 0.05);
-        at.skyHorizon = vec3(0.05, 0.02, 0.1);
-        at.sunColor = vec3(0.1, 0.05, 0.15);
-        at.moonColor = vec3(0.0);
-        at.ambient = vec3(0.02, 0.01, 0.04);
-        return at;
-    }
-    
-    if (u_DimensionID == DIM_AETHER) {
-        // Aether: Bright, always daytime
-        at.sunDir = normalize(vec3(0.0, 1.0, 0.3));
-        at.moonDir = -at.sunDir;
-        at.skyZenith = vec3(0.4, 0.7, 0.95);
-        at.skyHorizon = vec3(0.7, 0.85, 0.95);
-        at.sunColor = vec3(1.0, 0.98, 0.9);
-        at.moonColor = vec3(0.0);
-        at.ambient = vec3(0.3, 0.35, 0.4);
-        return at;
-    }
-    
-    // Overworld (default): Day/night cycle
-    float cycle = fract(t / 1440.0);
-    float angle = cycle * 2.0 * PI - (PI * 0.5);
-    at.sunDir = normalize(vec3(cos(angle), sin(angle), 0.3)); at.moonDir = -at.sunDir;
-    float h = at.sunDir.y;
-    at.skyZenith = mix(vec3(0.01, 0.02, 0.05), vec3(0.1, 0.35, 0.75), smoothstep(-0.15, 0.15, h));
-    at.skyHorizon = mix(vec3(0.02, 0.03, 0.08), mix(vec3(0.9, 0.4, 0.2), vec3(0.5, 0.7, 0.9), smoothstep(0.0, 0.3, h)), smoothstep(-0.15, 0.1, h));
-    at.sunColor = mix(vec3(1.0, 0.5, 0.2), vec3(1.0, 0.98, 0.9), smoothstep(0.0, 0.4, h)) * smoothstep(-0.1, 0.1, h);
-    at.moonColor = vec3(0.2, 0.25, 0.4) * smoothstep(-0.1, 0.1, -h);
-    at.ambient = mix(vec3(0.02, 0.03, 0.07), at.skyZenith * 0.4, smoothstep(-0.2, 0.2, h));
-    return at;
-}
 
 vec3 ACESFilm(vec3 x) { return clamp((x*(2.51*x + 0.03))/(x*(2.43*x + 0.59) + 0.14), 0.0, 1.0); }
 
@@ -302,12 +246,12 @@ vec3 GetSky(vec3 rd, Atmosphere at) {
 }
 
 // Volumetric haze: banded sky color with a sun-facing scattering boost so
-// light beams read as glowing air (cartoon volumetric atmosphere).
-vec3 hazeColor(vec3 rd, Atmosphere at) {
-    vec3 haze = GetSky(rd, at);
+// light beams read as glowing air (cartoon volumetric atmosphere). Takes the
+// already-evaluated sky so GetSky() runs once per pixel — the miss path reuses
+// the same sky instead of re-running the banding math.
+vec3 hazeFromSky(vec3 sky, vec3 rd, Atmosphere at) {
     float sunF = pow(max(0.0, dot(rd, at.sunDir)), 3.0);
-    haze = mix(haze, at.sunColor + at.skyHorizon, sunF * 0.35);
-    return haze;
+    return mix(sky, at.sunColor + at.skyHorizon, sunF * 0.35);
 }
 
 bool intersectAABB(vec3 ro, vec3 rd, vec3 bMin, vec3 bMax, out float tn, out float tf) {
@@ -499,14 +443,6 @@ vec2 entityVirtualCuboidAtlasUv(vec3 localPos, vec3 localNormal, vec3 halfSize, 
     return entityCuboidAtlasUvScaled(localPos, localNormal, halfSize, part, 128.0);
 }
 
-// ── Chunk-entry skip: compute world-space chunk AABB from packed origin coords ──
-// Used by main() to jump DDA to the rasterized chunk entry point
-void getChunkAABB(uint packedv, out vec3 bMin, out vec3 bMax) {
-    ivec3 chunkCoord = ivec3(int(packedv & 0xFFu), int((packedv >> 8) & 0xFFu), int((packedv >> 16) & 0xFFu));
-    bMin = vec3(chunkCoord) * 16.0;
-    bMax = bMin + 16.0;
-}
-
 int advanceDDA(inout ivec3 mp, inout vec3 sd, vec3 dd, ivec3 s) {
     int side = (sd.x < sd.y) ? (sd.x < sd.z ? 0 : 2) : (sd.y < sd.z ? 1 : 2);
     if (side == 0) { sd.x += dd.x; mp.x += s.x; }
@@ -525,48 +461,6 @@ int skipChunk(inout ivec3 mp, inout vec3 sd, vec3 dd, ivec3 s) {
     else if (side == 1) { sd.y = tE.y + dd.y; mp.y += s.y * cells.y; }
     else { sd.z = tE.z + dd.z; mp.z += s.z * cells.z; }
     return side;
-}
-
-// Solid bit is packed as bit 31 of the voxel value in chunkPool
-// Eliminates the separate bitmask SSBO read
-bool isBitSolid(uint slot, ivec3 p) {
-    int bi = (p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8);
-    uint raw = voxelPool[(slot << 12) | bi];
-    return (raw >> 31) != 0u;
-}
-
-// Sample chunk-level directional SDF (in voxel units) for a chunk slot.
-// dirIdx: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z.
-// Layout: 2 packed uints per slot (8 bytes).
-//   uint 0 low 8 = +X, next 8 = -X, next 8 = +Y, top 8 = -Y
-//   uint 1 low 8 = +Z, next 8 = -Z (top 16 unused)
-// Encoding (see ChunkManager.computeChunkDirSDF): byte 255 = the whole section is
-// CPU-certified all-air — every solid write through World.setVoxelInPool revokes it,
-// so it can never go stale. Any other value = legacy per-direction clearance in
-// voxels*8; 0 = no SDF available (per-voxel DDA fallback).
-float getChunkDirSDF(uint slot, uint dirIdx) {
-    uint pack0 = sdfPool[slot << 1u];
-    uint pack1 = sdfPool[(slot << 1u) | 1u];
-    uint raw;
-    if (dirIdx == 0u)      raw = pack0 & 0xFFu;          // +X
-    else if (dirIdx == 1u) raw = (pack0 >> 8u)  & 0xFFu;  // -X
-    else if (dirIdx == 2u) raw = (pack0 >> 16u) & 0xFFu;  // +Y
-    else if (dirIdx == 3u) raw = (pack0 >> 24u) & 0xFFu;  // -Y
-    else if (dirIdx == 4u) raw = pack1 & 0xFFu;           // +Z
-    else                   raw = (pack1 >> 8u)  & 0xFFu;  // -Z
-    return float(raw) / 8.0; // 0 = no SDF, max 16 voxels (= 31.875 encoded)
-}
-
-uint getVoxelOcclusion(ivec3 p) {
-    ivec3 relChunk = p >> 4;
-    // Single fused bounds test: min(x, 127-x) < 0 iff x < 0 || x >= 128
-    if (any(lessThan(min(relChunk, ivec3(127) - relChunk), ivec3(0)))) return 0x3FFFu;
-    uint slot = chunkSlots[relChunk.x | (relChunk.y << 7) | (relChunk.z << 14)];
-    if (slot == EMPTY) return 0x3FFFu;
-    int voxelIdx = (p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8);
-    uint uintIdx = (slot << 11u) | uint(voxelIdx >> 1);
-    uint packedv = occlusionPool[uintIdx];
-    return (voxelIdx & 1) == 0 ? (packedv & 0xFFFFu) : (packedv >> 16);
 }
 
 // True when the voxel at buffer-relative p is liquid water (not lava). Uses the
@@ -594,8 +488,8 @@ bool isWaterVoxel(vec3 p) {
 // Cached solidity probe for AO neighborhoods. Semantics are IDENTICAL to the
 // old per-probe path (voxelPool bit 31); the memoized chunk-slot lookup saves
 // up to 7 redundant chunkSlots SSBO loads out of 8 probes.
-bool aoSolidCached(ivec3 p, inout uint cKey, inout uint cSlot) {
-    if (any(lessThan(min(p, ivec3(WORLD_SIZE) - 1 - p), ivec3(0)))) return false;
+bool aoSolidCached(ivec3 p, bool checkBounds, inout uint cKey, inout uint cSlot) {
+    if (checkBounds && any(lessThan(min(p, ivec3(WORLD_SIZE) - 1 - p), ivec3(0)))) return false;
     int ci = (p.x >> 4) | ((p.y >> 4) << 7) | ((p.z >> 4) << 14);
     uint slot;
     if (uint(ci) == cKey) {
@@ -643,16 +537,22 @@ float computeAmbientOcclusion(vec3 hp, vec3 n) {
         c3 = blockPos + ivec3(-1, 1, ns.z);  c4 = blockPos + ivec3(1, 1, ns.z);
     }
 
+    // Every probe is blockPos + ns plus one step on each of the other two axes,
+    // so the whole 3x3 plane spans exactly [blockPos+ns-1, blockPos+ns+1]. One
+    // bounds test on that plane replaces the 8 identical per-probe tests.
+    ivec3 planeC = blockPos + ns;
+    bool planeInBounds = all(greaterThanEqual(min(planeC, ivec3(WORLD_SIZE) - 1 - planeC), ivec3(1)));
+
     // Probe order groups neighbors that share chunks so the slot cache hits.
     uint cKey = 0xFFFFFFFFu; uint cSlot = 0xFFFFFFFFu;
-    float s1f = float(aoSolidCached(s1, cKey, cSlot));
-    float s3f = float(aoSolidCached(s3, cKey, cSlot));
-    float c1f = float(aoSolidCached(c1, cKey, cSlot));
-    float s2f = float(aoSolidCached(s2, cKey, cSlot));
-    float c2f = float(aoSolidCached(c2, cKey, cSlot));
-    float s4f = float(aoSolidCached(s4, cKey, cSlot));
-    float c3f = float(aoSolidCached(c3, cKey, cSlot));
-    float c4f = float(aoSolidCached(c4, cKey, cSlot));
+    float s1f = float(aoSolidCached(s1, planeInBounds, cKey, cSlot));
+    float s3f = float(aoSolidCached(s3, planeInBounds, cKey, cSlot));
+    float c1f = float(aoSolidCached(c1, planeInBounds, cKey, cSlot));
+    float s2f = float(aoSolidCached(s2, planeInBounds, cKey, cSlot));
+    float c2f = float(aoSolidCached(c2, planeInBounds, cKey, cSlot));
+    float s4f = float(aoSolidCached(s4, planeInBounds, cKey, cSlot));
+    float c3f = float(aoSolidCached(c3, planeInBounds, cKey, cSlot));
+    float c4f = float(aoSolidCached(c4, planeInBounds, cKey, cSlot));
 
     // Per-vertex occlusion (identical math to the classic 12-sample pattern:
     // each vertex sums its 2 side + 1 corner neighbor, 1/3 reduction per solid)
@@ -702,9 +602,11 @@ float fastShadow(vec3 ro, vec3 rd, float maxDist) {
         uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
         if (slot == EMPTY) { skipChunk(mp, sd, dd, s); }
         else {
-            if (isBitSolid(slot, mp)) {
-                int bi = (mp.x&15)|((mp.y&15)<<4)|((mp.z&15)<<8);
-                uint rawVoxel = voxelPool[(slot << 12) | bi];
+            // One SSBO read serves both the solidity bit and the block id — the old
+            // isBitSolid() + re-fetch pair cost two dependent loads per cell.
+            int bi = (mp.x&15)|((mp.y&15)<<4)|((mp.z&15)<<8);
+            uint rawVoxel = voxelPool[(slot << 12) | bi];
+            if ((rawVoxel >> 31) != 0u) {
                 uint v = rawVoxel & 0xFFFFu;
                 ivec4 d1 = texelFetch(u_BlockData, int(v) * 4 + 1);
                 if (((d1.w >> 9) & 1) == 1) return 0.0; // Full block occludes
@@ -740,15 +642,6 @@ bool isKineticBlock(int id) {
     return (id >= 291 && id <= 296) || (id >= 422 && id <= 437)
         || id == 353 || id == 354 || id == 355 || id == 356
         || id == 406 || (id >= 408 && id <= 411) || id == 413;
-}
-
-// Raw packed voxel at a world position (0 when out of bounds or unloaded).
-uint worldRawVoxel(ivec3 p) {
-    if (any(lessThan(min(p, ivec3(WORLD_SIZE) - 1 - p), ivec3(0)))) return 0u;
-    uint slot = chunkSlots[(p.x >> 4) | ((p.y >> 4) << 7) | ((p.z >> 4) << 14)];
-    if (slot == EMPTY) return 0u;
-    int bi = (p.x & 15) | ((p.y & 15) << 4) | ((p.z & 15) << 8);
-    return voxelPool[(slot << 12) | bi];
 }
 
 // Texture index for a block face (0=down,1=up,2=north,3=south,4=west,5=east).
@@ -817,6 +710,13 @@ int remapGearFace(int face, int axis, int modelAxis) {
         }
     }
     return face;
+}
+
+// Cheap id gate for getGear(): it can only ever return true for the orientable
+// gear ids (291-296) and their multiblock parts (422-437). Every other block pays
+// two integer compares instead of getGear()'s twelve-branch walk.
+bool isGearBlockId(int id) {
+    return (id >= 291 && id <= 296) || (id >= 422 && id <= 437);
 }
 
 // Kept in sync with the Java mirror in KineticManager.gearDescriptor.
@@ -1272,7 +1172,8 @@ bool traceWorld(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediu
                         // the prism is clipped to the owning cell (gT < cell exit),
                         // and UVs are centered on the multiblock's true center.
                         ivec3 gCenterOff; int gAxis, gModelAxis; float gOuter, gHalf; int gSides;
-                        bool isGear = getGear(int(voxelType), int(facingVox), gCenterOff, gAxis, gModelAxis, gOuter, gSides, gHalf);
+                        bool isGear = isGearBlockId(int(voxelType))
+                                && getGear(int(voxelType), int(facingVox), gCenterOff, gAxis, gModelAxis, gOuter, gSides, gHalf);
                         if (isGear) {
                             const float P = 1.0 / 16.0;
                             vec3 gCenter = vec3(mp + gCenterOff) + 0.5;
@@ -1529,9 +1430,13 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumT
     // it, or already hit something closer than it can skip every OBB test for
     // this entity — in mob-dense scenes most entities fail one of these.
     for(int i=0; i<u_EntityCount; i++) {
-        float entR = entities[i].padding;
+        // One SSBO read serves the radius, the position and the copy used below —
+        // the field-by-field `entities[i].x` reads were three separate dependent
+        // fetches of the same 64-byte record.
+        EntityData ent = entities[i];
+        float entR = ent.padding;
         if (entR <= 0.0) entR = 8.0; // safety net if CPU left the radius unset
-        vec3 entPos = entities[i].position;
+        vec3 entPos = ent.position;
         vec3 roToEnt = entPos - ro;
         float entDistSq = dot(roToEnt, roToEnt);
         // Keep the absolute range cap: the CPU may upload entities up to ~64
@@ -1544,8 +1449,11 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumT
         float perpSq = entDistSq - projT * projT;
         if (perpSq > entR * entR) continue;
 
-        EntityData ent = entities[i];
-        mat3 entRotation = rotationMatrix(ent.rotation);
+        // Built on first surviving part (see below) — most entities that pass the
+        // sphere test are still missed part-by-part, and the Euler build is the
+        // expensive part of the OBB path.
+        mat3 entRotation = mat3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+        bool entRotReady = false;
 
         // Health Bar Check (Billboarded)
         if (ent.maxHealth > 0.001 && ent.health > 0.0) {
@@ -1571,7 +1479,21 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumT
             vec3 halfSize = part.size / 32.0;
             vec3 pivot = part.absoluteOffset / 16.0;
             vec3 geomCenter = (part.offset / 16.0) + halfSize;
-            
+
+            // Rotation-invariant bound: |localRot*v| == |v|, so the part's centre is
+            // always within (|pivot| + |geomCenter-pivot|) of the entity origin no
+            // matter how the part is posed, and the box never reaches further than
+            // |halfSize| past its centre. A sphere of that radius therefore encloses
+            // the part for every pose, so failing it proves the OBB cannot be hit —
+            // and we skip the two Euler matrix builds and the OBB test. The test
+            // itself is pure adds/dots, far cheaper than what it guards, and reuses
+            // roToEnt/projT/entDistSq from the entity sphere test above.
+            float partBound = length(pivot) + length(geomCenter - pivot) + length(halfSize);
+            if (projT < -partBound) continue;
+            if (projT - partBound > resT) continue;
+            if (entDistSq - projT * projT > partBound * partBound) continue;
+
+            if (!entRotReady) { entRotation = rotationMatrix(ent.rotation); entRotReady = true; }
             mat3 localRot = rotationMatrix(part.rotation);
             vec3 localCenter = pivot + localRot * (geomCenter - pivot);
             
@@ -1614,12 +1536,28 @@ bool traceAll(vec3 ro, vec3 rd, bool skipFirst, ivec3 airVoxel, uint lastMediumT
         float halfScale = scale * 0.5;
         float spinAngle = craftingItems[i].blockInfo.y;
 
+        // Conservative bounding-sphere reject BEFORE the AABB texel-fetch storm.
+        // Block AABBs are NOT confined to the unit cube (models like
+        // create_water_wheel reach 1.27 blocks from centre, and a posed sub-box
+        // swells further), so the radius is sized from the worst model actually
+        // shipped: 1.69 * scale, with 2.0 leaving headroom. Both paths below keep
+        // every vertex within that radius of `pos`:
+        //   static   -> pos + (bMin/bMax - 0.5) * scale
+        //   spinning -> centre offset |(bMin+bMax)/2 - 0.5| + half extent |bMax-bMin|/2
+        // All three tests are conservative, so no item that could ever produce a
+        // hit is dropped: behind the ray, off the ray, or past the hit we have.
+        vec3 toItem = pos - ro;
+        float itemProj = dot(toItem, rd);
+        float itemCullR = 2.0 * scale + 1e-3;
+        if (itemProj < -itemCullR) continue;
+        if (dot(toItem, toItem) - itemProj * itemProj > itemCullR * itemCullR) continue;
+        if (itemProj - itemCullR > resT) continue;
+
         // Cost control: spinning dropped items cost ~10-15 GPU ops per OBB test, and a full
         // crafting grid has up to 64 dropped items. Skip items outside a reasonable view
         // distance. Crafting grid items are always nearby (radius ~2 from player at table)
         // so the distance test only meaningfully affects dropped items.
         if (spinAngle != 0.0) {
-            vec3 toItem = pos - ro;
             float distSq = dot(toItem, toItem);
             if (distSq > maxDroppedItemDist * maxDroppedItemDist) continue;
         }
@@ -1749,9 +1687,10 @@ float poolDepth(vec3 ro) {
         uint slot = chunkSlots[(rel.x >> 4) | ((rel.y >> 4) << 7) | ((rel.z >> 4) << 14)];
         if (slot == EMPTY) { skipChunk(mp, sd, dd, s); }
         else {
-            if (isBitSolid(slot, mp)) {
-                int bi = (mp.x & 15) | ((mp.y & 15) << 4) | ((mp.z & 15) << 8);
-                uint rawVoxel = voxelPool[(slot << 12) | bi];
+            // Single SSBO read for solidity + block id (was isBitSolid + re-fetch).
+            int bi = (mp.x & 15) | ((mp.y & 15) << 4) | ((mp.z & 15) << 8);
+            uint rawVoxel = voxelPool[(slot << 12) | bi];
+            if ((rawVoxel >> 31) != 0u) {
                 uint v = rawVoxel & 0xFFFFu;
                 ivec4 d1 = texelFetch(u_BlockData, int(v) * 4 + 1);
                 if (((d1.w >> 9) & 1) == 1) return clamp(max(cellEnter, 0.0) * invDepth, 0.0, 1.0);
@@ -1786,20 +1725,6 @@ void genLightPool() {
     vec3 ro = u_ShadowOrigin + u_ShadowRight * (ndc.x * u_ShadowExtent.x)
                               + u_ShadowUp * (ndc.y * u_ShadowExtent.x);
     imageStore(u_ShadowMapOut, px, vec4(poolDepth(ro), 0.0, 0.0, 1.0));
-}
-
-// Sample the ACTIVE sun or moon pool at world point p: 1.0 if light from the pool's
-// direction reaches p (depth test in the pool's ortho space), 0.0 if terrain blocks.
-// inBounds is set when p projects inside the pool's ortho plane — used by the shaft
-// march to early-out once both pools are out of coverage.
-float poolVis(vec3 p, vec3 origin, vec3 right, vec3 up, vec3 dir, sampler2D tex, out bool inBounds) {
-    vec3 d = p - origin;
-    vec2 uvw = vec2(dot(d, right) / (2.0 * u_ShadowExtent.x) + 0.5,
-                    dot(d, up) / (2.0 * u_ShadowExtent.x) + 0.5);
-    inBounds = (uvw.x >= 0.0 && uvw.y >= 0.0 && uvw.x <= 1.0 && uvw.y <= 1.0);
-    if (!inBounds) return 0.0;
-    float pDepth = -dot(d, dir) / u_ShadowExtent.y;
-    return (pDepth <= texture(tex, uvw).r + 0.004) ? 1.0 : 0.0;
 }
 
 // TEMP probe scratch (headless panorama diagnostics only).
@@ -1893,6 +1818,8 @@ vec3 marchLightShafts(vec3 ro, vec3 rd, float tMax, Atmosphere at) {
 vec3 pointLightContrib(vec3 p, vec3 n) {
     vec3 acc = vec3(0.0);
     gDbgPoint = vec3(0.0);
+    if (numPointLights <= 0) return acc;
+    vec3 shadowOrigin = p + n * 0.02;
     // Defense in depth: clamp the count so a corrupt/oversized header can never
     // drive this loop to billions of iterations (GPU hang / frozen screen).
     int npl = min(numPointLights, 16);
@@ -1905,11 +1832,12 @@ vec3 pointLightContrib(vec3 p, vec3 n) {
         vec3 ldir = toL / d;
         float ndl = max(0.0, dot(n, ldir));
         float att = 1.0 - d / L.radius; att *= att;
-        // Skip the shadow-ray DDA entirely for faces that would receive nothing
-        // (backfacing or fully attenuated) — the old code traced fastShadow
-        // unconditionally for every light in range.
-        if (ndl <= 0.0 || att <= 0.0) continue;
-        if (fastShadow(p + n * 0.02, ldir, d) > 0.5) {
+        // Skip the shadow-ray DDA entirely for faces that would receive nothing.
+        // The gate is the SHADING ramp itself, not ndl>0: smoothstep(0.15,0.4,ndl)
+        // is exactly 0 below ndl==0.15, so a grazing light adds nothing to `acc`
+        // whether or not it is shadowed — tracing it was pure cost.
+        if (ndl <= 0.15 || att <= 0.0 || L.intensity <= 0.0) continue;
+        if (fastShadow(shadowOrigin, ldir, d) > 0.5) {
             // Cartoon 2-tone point light: lit face = full color, grazing/shadowed
             // faces = nothing (soft shadows from fastShadow are preserved; both
             // transitions are smooth so the light never "pops" or fries).
@@ -1964,7 +1892,8 @@ void main() {
     vec3 godRd = rd; float godT = 96.0; // primary ray for god-ray marching
     // Fog/haze color is constant per pixel (rd and `at` never change across
     // bounces) — hoisted so the full GetSky() evaluation runs once, not per bounce.
-    vec3 haze = hazeColor(rd, at);
+    vec3 sky = GetSky(rd, at);
+    vec3 haze = hazeFromSky(sky, rd, at);
     uint lastMediumTag = 0xFFFFFFFFu; // Track last translucent medium tag to skip same-medium faces
 
     // ── Semi-transparent placement preview (ghost) ──
@@ -2026,7 +1955,7 @@ void main() {
             // Map preview: a downward ray that fell through unloaded chunks shows the
             // simplified biome view instead of sky; beyond the world border the
             // preview texel is void so the map stops working there.
-            final += throu * (gMapPreviewValid ? gMapPreviewCol : GetSky(rd, at));
+            final += throu * (gMapPreviewValid ? gMapPreviewCol : sky);
             break;
         }
         int waterEff = (blockData1.w >> 10) & 0xF;
@@ -2180,7 +2109,8 @@ void main() {
             int tex;
             vec2 uv;
             int gAxis = 0, gModelAxis = 0; float gOuter = 0.0, gHalf = 0.0; int gSides = 0; ivec3 gCOff = ivec3(0);
-            if (getGear(int(voxel), int(facing), gCOff, gAxis, gModelAxis, gOuter, gSides, gHalf)) {
+            if (isGearBlockId(int(voxel))
+                    && getGear(int(voxel), int(facing), gCOff, gAxis, gModelAxis, gOuter, gSides, gHalf)) {
                 // Non-AABB gear prism (shafts/cogs/wheel). Flat faces lie perpendicular
                 // to the spin axis; the rim wraps around it. gearOrigin is the owning
                 // block, so multi-block large cogs sample against their true center.
