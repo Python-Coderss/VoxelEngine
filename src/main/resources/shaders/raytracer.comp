@@ -86,6 +86,10 @@ layout(location = 25) uniform vec3 u_ShadowUp;       // ACTIVE SUN pool up basis
 layout(location = 26) uniform vec3 u_ShadowSunDir;   // ACTIVE SUN pool light direction
 layout(location = 27) uniform vec2 u_ShadowExtent;   // (half-extent blocks, depth blocks)
 
+// Currently unread, but Main.java writes location 30 every frame via
+// LOC_SHADOW_MAP_SIZE; removing it would make those glProgramUniform1f calls
+// generate GL_INVALID_OPERATION.
+layout(location = 30) uniform float u_ShadowMapSize; // 1.0 / pool resolution
 layout(location = 31) uniform sampler2D u_SunPoolTex;
 layout(location = 32) uniform sampler2D u_MoonPoolTex;
 layout(location = 33) uniform vec3 u_MoonPoolOrigin; // ACTIVE MOON pool near-plane origin
