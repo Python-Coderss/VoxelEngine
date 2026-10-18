@@ -30,6 +30,8 @@ public final class McsmStructures {
             PLANKS = 72, CRAFT_TABLE = 115, STONE_BRICK = 131, MOSSY = 132, GOLD_BLOCK = 138;
     /** MCSM content blocks (registered in Main). */
     private static final int FORMIDI_BOMB = 916, WHITE_PUMPKIN = 917;
+    /** Decorative blocks ({@link DecorBlocks}, registered at ids 950-969). */
+    private static final int LADDER = DecorBlocks.LADDER;
 
     public static final int[] ENDERCON = {128, 0};
     public static final int[] SORENS_SITE = {-128, 96};
@@ -193,11 +195,14 @@ public final class McsmStructures {
         floor(m, cx - 3, cz - 3, cx + 3, cz + 3, b + 1, END_STONE);
         box(m, cx - 1, b + 2, cz - 1, cx + 1, b + 2, cz + 1, END_STONE);
         m.setVoxel(cx, b + 3, cz, GOLD_BLOCK);
-        // Entry arch (south side).
+        // Entry arch (south side), closed by a two-block arena door: only the
+        // centre column of the ring wall is actually solid at z = cz + r.
         for (int y = 1; y <= 4; y++) {
             for (int i = -2; i <= 2; i++) m.setVoxel(cx + i, b + y, cz + r, 0);
         }
         for (int x = cx - 3; x <= cx + 3; x++) m.setVoxel(x, b + 5, cz + r, OAK_LOG);
+        m.setVoxel(cx, b + 1, cz + r, DecorBlocks.OAK_DOOR_LOWER_EW);
+        m.setVoxel(cx, b + 2, cz + r, DecorBlocks.OAK_DOOR_UPPER_EW);
     }
 
     /**
@@ -218,6 +223,15 @@ public final class McsmStructures {
                     m.setVoxel(cx + dx, b + y, cz + dz, window ? GLASS : WOOL);
                 }
             }
+        }
+        // Ground-floor entrance: a two-wide double door in the south wall (the
+        // z = +4 wall runs along X, so it takes the _ew door panels), framed by
+        // a log lintel at the first course above the opening.
+        m.setVoxel(cx - 1, b + 4, cz + 4, OAK_LOG);
+        m.setVoxel(cx, b + 4, cz + 4, OAK_LOG);
+        for (int dx = -1; dx <= 0; dx++) {
+            m.setVoxel(cx + dx, b + 1, cz + 4, DecorBlocks.DARK_OAK_DOOR_LOWER_EW);
+            m.setVoxel(cx + dx, b + 2, cz + 4, DecorBlocks.DARK_OAK_DOOR_UPPER_EW);
         }
         // Scaffolding: log poles and plank walkways.
         for (int[] p : new int[][]{{-7, -7}, {7, -7}, {-7, 7}, {7, 7}}) {
@@ -255,12 +269,26 @@ public final class McsmStructures {
         // The lair below: a mossy stone room.
         box(m, cx - 8, b - 8, cz - 8, cx + 8, b - 2, cz + 8, MOSSY);
         box(m, cx - 7, b - 7, cz - 7, cx + 7, b - 3, cz + 7, 0);
-        for (int y = b - 7; y <= b + 1; y++) {
-            for (int i = -1; i <= 1; i++) {
-                m.setVoxel(cx + i, y, cz, 0); // entry shaft
-                m.setVoxel(cx, y, cz + i, 0);
+        // Entry: a one-wide ladder shaft in the north-east corner of the room,
+        // clear of the pedestal. The old centre shaft ran straight through the
+        // white-pumpkin plinth, so the lair had no usable way in.
+        int sx = cx + 7, sz = cz + 6;
+        for (int y = b - 3; y <= b; y++) m.setVoxel(sx, y, sz, 0);
+        for (int y = b - 7; y <= b - 1; y++) m.setVoxel(sx, y, sz, LADDER);
+        // A stone-brick entry hut shelters the shaft, with a real door on its
+        // south face.
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                m.setVoxel(sx + dx, b + 4, sz + dz, STONE_BRICK); // roof
+                if (Math.abs(dx) == 1 || Math.abs(dz) == 1) {
+                    for (int y = 1; y <= 3; y++) {
+                        m.setVoxel(sx + dx, b + y, sz + dz, STONE_BRICK);
+                    }
+                }
             }
         }
+        m.setVoxel(sx, b + 1, sz + 1, DecorBlocks.OAK_DOOR_LOWER_EW);
+        m.setVoxel(sx, b + 2, sz + 1, DecorBlocks.OAK_DOOR_UPPER_EW);
         // Pedestal with the white pumpkin — the story's boss trigger.
         box(m, cx - 2, b - 7, cz - 2, cx + 2, b - 7, cz + 2, STONE_BRICK);
         box(m, cx - 1, b - 6, cz - 1, cx + 1, b - 6, cz + 1, STONE_BRICK);

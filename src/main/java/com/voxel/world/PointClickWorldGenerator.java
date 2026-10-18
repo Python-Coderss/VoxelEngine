@@ -64,8 +64,12 @@ public class PointClickWorldGenerator extends WorldGenerator {
             public void set(int x, int y, int z, int type, int extra) {
                 int lx = x - DEMO_MIN, lz = z - DEMO_MIN;
                 if (y < 0 || y >= DEMO_H || lx < 0 || lx >= DEMO_W || lz < 0 || lz >= DEMO_W) return;
-                if (type == 0) return;
-                types[(y * DEMO_W + lx) * DEMO_W + lz] = (short) type;
+                // Air writes are meaningful: the author carves tunnel mouths and
+                // doorways after raising walls, and dropping those calls left the
+                // runtime-regenerated world solid where the bundled map was open.
+                // -1 marks "authored air" so the flat fallback below cannot fill
+                // an underground room back in with stone.
+                types[(y * DEMO_W + lx) * DEMO_W + lz] = (short) (type == 0 ? -1 : type);
             }
         }, new com.voxel.game.ChestManager());
         demoTypes = types;
@@ -95,9 +99,15 @@ public class PointClickWorldGenerator extends WorldGenerator {
     }
 
     private int demoVoxel(int x, int y, int z) {
+        int raw = demoRaw(x, y, z);
+        return raw == -1 ? 0 : (raw & 0xFFFF);
+    }
+
+    /** -1 = authored air, 0 = untouched, otherwise a block id. */
+    private int demoRaw(int x, int y, int z) {
         int lx = x - DEMO_MIN, lz = z - DEMO_MIN;
         if (y < 0 || y >= DEMO_H || lx < 0 || lx >= DEMO_W || lz < 0 || lz >= DEMO_W) return 0;
-        return demoTypes[(y * DEMO_W + lx) * DEMO_W + lz] & 0xFFFF;
+        return demoTypes[(y * DEMO_W + lx) * DEMO_W + lz];
     }
 
     /**
@@ -133,8 +143,8 @@ public class PointClickWorldGenerator extends WorldGenerator {
                 && x >= DEMO_MIN && x < DEMO_MIN + DEMO_W
                 && z >= DEMO_MIN && z < DEMO_MIN + DEMO_W;
         if (inDemo) {
-            int t = demoVoxel(x, y, z);
-            if (t != 0) return t;
+            int raw = demoRaw(x, y, z);
+            if (raw != 0) return raw == -1 ? 0 : (raw & 0xFFFF);
         }
         if (y > GROUND) return 0;
         if (y == GROUND) return grassId;

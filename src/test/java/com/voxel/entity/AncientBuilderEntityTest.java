@@ -35,6 +35,8 @@ public class AncientBuilderEntityTest {
     public void reset() {
         LiveCaptions.clear();
         CaptionSpeech.resetForTest();
+        // Unbound voice: no OS process is spawned, the line is captioned.
+        com.voxel.ai.speech.CharacterVoice.resetForTest();
     }
 
     @Test

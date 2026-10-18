@@ -99,8 +99,15 @@ public final class AncientBuilderFacility {
         for (int x = x0 - 6; x <= x0 + 6; x++) {
             for (int z = z0 - 5; z <= z0 + 5; z++) setVoxel(world, x, y0 + 8, z, bricks, minY, maxY);
         }
-        // Survival entrance through the front wall, with observation windows above.
-        for (int y = y0 + 1; y <= y0 + 3; y++) setVoxel(world, x0, y, z0 - 5, 0, minY, maxY);
+        // Survival entrance through the front wall: a two-tall opening with a
+        // real door under a stone lintel, and observation windows above.
+        setVoxel(world, x0, y0 + 1, z0 - 5, 0, minY, maxY);
+        setVoxel(world, x0, y0 + 2, z0 - 5, 0, minY, maxY);
+        setVoxel(world, x0, y0 + 3, z0 - 5, stone, minY, maxY);
+        setVoxel(world, x0, y0 + 1, z0 - 5,
+                DecorBlocks.DARK_OAK_DOOR_LOWER_EW, minY, maxY);
+        setVoxel(world, x0, y0 + 2, z0 - 5,
+                DecorBlocks.DARK_OAK_DOOR_UPPER_EW, minY, maxY);
         for (int x = x0 - 3; x <= x0 + 3; x += 2) setVoxel(world, x, y0 + 4, z0 - 5, glass, minY, maxY);
 
         // Four consoles: portal hall, Nether, End, and Aether. The chain block

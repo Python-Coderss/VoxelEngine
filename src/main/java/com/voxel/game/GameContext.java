@@ -85,6 +85,8 @@ public class GameContext {
     public volatile boolean tutorialWorld = false;
     /** True when the Point & Click demo world was chosen from the menu. */
     public volatile boolean pointClickWorld = false;
+    /** True when the creative Showcase World was chosen from the menu. */
+    public volatile boolean showcaseWorld = false;
     /** Last seed parsed from the menu (0 = random). */
     public volatile long menuSeed = 0L;
     /** True when the menu was told to use a random seed. */
@@ -355,6 +357,19 @@ public class GameContext {
     // --- Villager TV ---
     public VillagerTVSystem tvSystem;
     public VillagerVillageManager villageManager;
+
+    // ── Music ────────────────────────────────────────────────────────────────
+    /** Live player, published so /music can report and steer it. */
+    public com.voxel.audio.MusicPlayer musicPlayer;
+    /** Classified library currently installed (may be empty on a silent box). */
+    public com.voxel.audio.MusicLibrary musicLibrary;
+    /** When non-null, /music pinned a pool and the director stops overriding it. */
+    public volatile String musicOverride = null;
+    /** Muted by /music off (the player keeps decoding, gain drops to zero). */
+    public volatile boolean musicMuted = false;
+
+    /** Guided tutorial goals (only meaningful in the Tutorial World). */
+    public TutorialProgress tutorialProgress = new TutorialProgress();
     public boolean tvCutsceneActive = false;
     public float tvCutsceneTimer = 0.0f;
     public static final float TV_CUTSCENE_DURATION = 1.0f;

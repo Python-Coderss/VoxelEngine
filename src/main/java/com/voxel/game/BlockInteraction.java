@@ -150,6 +150,9 @@ public class BlockInteraction {
         ctx.inventoryOpen = true;
         ctx.activeUI = GameContext.ActiveUI.CHEST;
         ctx.setStatus("Chest");
+        if (ctx.tutorialWorld && ctx.tutorialProgress != null) {
+            ctx.tutorialProgress.complete(com.voxel.game.TutorialProgress.LOOT);
+        }
         if (ctx.cinematic != null) {
             ctx.cinematic.playActionBeat(com.voxel.cinematic.CinematicSystem.Beat.CHEST,
                 new Vector3f(x, y, z), false);
@@ -467,9 +470,28 @@ public class BlockInteraction {
             breakWaterWheel(x, y, z, blockId, collectDrop);
             return;
         }
+        // Doors are a two-block multiblock: knocking out either half must take
+        // the whole column with it, or a floating top/bottom is left behind.
+        // The door item is dropped below for the clicked cell only, so the
+        // column still yields exactly one item.
+        if (com.voxel.world.DecorBlocks.isDoor(blockId)) {
+            removeDoorColumn(x, y, z, blockId);
+        }
+        // Beds are a two-cell horizontal multiblock and standing banners are a
+        // two-cell column; clearing either half clears its partner, and the
+        // clicked cell drops the single item below.
+        if (com.voxel.world.DecorBlocks.isBed(blockId)) {
+            removeBed(x, y, z, blockId);
+        }
+        if (com.voxel.world.DecorBlocks.isBanner(blockId)) {
+            removeBanner(x, y, z, blockId);
+        }
         // Piston base: derive facing direction from directional block ID before clearing
         int pistonDir = getPistonDirection(blockId);
         if (!ctx.chunkManager.setVoxel(x, y, z, 0)) return;
+        if (ctx.tutorialWorld && ctx.tutorialProgress != null) {
+            ctx.tutorialProgress.complete(com.voxel.game.TutorialProgress.MINE);
+        }
         // Striking ore earns a cutaway close-up on the vein (first of each kind
         // is a milestone beat; later strikes are throttled).
         if (ctx.cinematic != null && isOreBlock(blockId)) {
@@ -614,6 +636,139 @@ public class BlockInteraction {
                 ctx.droppedItemManager.spawn(dropItem, dropCount, x, y, z);
             }
         }
+    }
+
+    /** Routes door writes through ChunkManager so lighting/dirty slots stay in sync. */
+    private com.voxel.world.DoorColumn.Setter doorSetter() {
+        return (x, y, z, id, extra) -> ctx.chunkManager.setVoxelWithData(x, y, z, id, extra);
+    }
+
+    /**
+     * Places the top half of a door above the lower block. The lower cell has
+     * already been checked for replaceability; this checks that the cell above
+     * is free and that the door does not grow through the player or an entity.
+     * Returns false (leaving the world untouched) when the door does not fit.
+     */
+    private boolean placeDoor(int x, int y, int z, int lowerId) {
+        int above = ctx.world.getVoxel(x, y + 1, z);
+        boolean replaceable = above == 0 || isWaterBlock(above) || above == BLOCK_LAVA;
+        if (!replaceable) {
+            ctx.setStatus("Not enough room for the door");
+            return false;
+        }
+        if (intersectsPlayer(x, y + 1, z)) return false;
+        if (intersectsEntity(x, y + 1, z)) return false;
+        if (!com.voxel.world.DoorColumn.placeUpper(doorSetter(), x, y, z, lowerId)) {
+            return false;
+        }
+        notifyManagersOfBlockChange(x, y + 1, z);
+        return true;
+    }
+
+    /**
+     * Clears the other half of a door column so the two blocks are never
+     * orphaned. Only the clicked cell drops the item (see breakBlock).
+     */
+    private void removeDoorColumn(int x, int y, int z, int blockId) {
+        int partnerY = y + (com.voxel.world.DecorBlocks.isDoorLower(blockId) ? 1 : -1);
+        if (com.voxel.world.DoorColumn.removePartner(ctx.world, doorSetter(), x, y, z, blockId)) {
+            notifyManagersOfBlockChange(x, partnerY, z);
+        }
+    }
+
+    /**
+     * Clears the opposite bed cell when it really is this bed's partner. A
+     * mismatched neighbour (half broken, different facing) is left alone rather
+     * than deleting someone else's block.
+     */
+    private void removeBed(int x, int y, int z, int blockId) {
+        int partnerX = x + com.voxel.world.DecorBlocks.bedPartnerDx(blockId);
+        int partnerZ = z + com.voxel.world.DecorBlocks.bedPartnerDz(blockId);
+        if (com.voxel.world.BedPair.removePartner(ctx.world, bedSetter(), x, y, z, blockId)) {
+            notifyManagersOfBlockChange(partnerX, y, partnerZ);
+        }
+    }
+
+    /** Clears the other half of a standing banner column. */
+    private void removeBanner(int x, int y, int z, int blockId) {
+        int partnerY = y + (com.voxel.world.DecorBlocks.isBannerLower(blockId) ? 1 : -1);
+        if (com.voxel.world.BannerColumn.removePartner(ctx.world, bannerSetter(),
+                x, y, z, blockId)) {
+            notifyManagersOfBlockChange(x, partnerY, z);
+        }
+    }
+
+    /** Bed writes go through ChunkManager so dirty slots/lighting stay in sync. */
+    private com.voxel.world.BedPair.Setter bedSetter() {
+        return (x, y, z, id, extra) -> ctx.chunkManager.setVoxelWithData(x, y, z, id, extra);
+    }
+
+    /** Banner writes go through ChunkManager for the same reason. */
+    private com.voxel.world.BannerColumn.Setter bannerSetter() {
+        return (x, y, z, id, extra) -> ctx.chunkManager.setVoxelWithData(x, y, z, id, extra);
+    }
+
+    /**
+     * Places the head cell of a bed beside an already-validated foot cell.
+     * The head must be free and must not grow through the player or an entity;
+     * on failure nothing is written and the caller leaves the foot unplaced.
+     */
+    private boolean placeBed(int x, int y, int z, int footId) {
+        int headX = x + com.voxel.world.DecorBlocks.bedPartnerDx(footId);
+        int headZ = z + com.voxel.world.DecorBlocks.bedPartnerDz(footId);
+        int headCell = ctx.world.getVoxel(headX, y, headZ);
+        if (!(headCell == 0 || isWaterBlock(headCell) || headCell == BLOCK_LAVA)) {
+            ctx.setStatus("Not enough room for the bed");
+            return false;
+        }
+        if (intersectsPlayer(headX, y, headZ)) return false;
+        if (intersectsEntity(headX, y, headZ)) return false;
+        if (!com.voxel.world.BedPair.place(ctx.world, bedSetter(), x, y, z, footId)) {
+            return false;
+        }
+        notifyManagersOfBlockChange(headX, y, headZ);
+        return true;
+    }
+
+    /**
+     * Places the upper half of a standing banner above an already-validated
+     * lower cell. Banners need solid ground and a free cell above.
+     */
+    private boolean placeBanner(int x, int y, int z, int lowerId) {
+        int below = ctx.world.getVoxel(x, y - 1, z);
+        if (below == 0 || ctx.blockDataManager.isLiquid(below)) {
+            ctx.setStatus("Banners need a solid block below");
+            return false;
+        }
+        int above = ctx.world.getVoxel(x, y + 1, z);
+        if (!(above == 0 || isWaterBlock(above) || above == BLOCK_LAVA)) {
+            ctx.setStatus("Not enough room for the banner");
+            return false;
+        }
+        if (intersectsPlayer(x, y + 1, z)) return false;
+        if (intersectsEntity(x, y + 1, z)) return false;
+        if (!com.voxel.world.BannerColumn.placeUpper(ctx.world, bannerSetter(),
+                x, y, z, lowerId)) {
+            return false;
+        }
+        notifyManagersOfBlockChange(x, y + 1, z);
+        return true;
+    }
+
+    /**
+     * Right-click on a door: swing both halves to the other orientation and
+     * flip the open bit in the extra data. A half-missing door is repaired by
+     * refusing to open just half of it.
+     */
+    private void toggleDoor(int x, int y, int z, int blockId) {
+        Boolean open = com.voxel.world.DoorColumn.toggle(ctx.world, doorSetter(), x, y, z, blockId);
+        if (open == null) {
+            ctx.setStatus("This door is missing a half");
+            return;
+        }
+        notifyManagersOfBlockChange(x, y, z);
+        notifyManagersOfBlockChange(x, y + (com.voxel.world.DecorBlocks.isDoorLower(blockId) ? 1 : -1), z);
+        ctx.setStatus(open ? "Opened the door" : "Closed the door");
     }
 
     /**
@@ -825,6 +980,9 @@ public class BlockInteraction {
         // Proper progression: coal and diamond ores drop their material, not the block
         if (blockId == 61) return "coal";
         if (blockId == 83) return "diamond";
+        // Every half of a multiblock yields the one item that placed it.
+        if (com.voxel.world.DecorBlocks.isBed(blockId)) return "bed";
+        if (com.voxel.world.DecorBlocks.isBanner(blockId)) return "banner";
         return null;
     }
 
@@ -991,14 +1149,14 @@ public class BlockInteraction {
         } else if (e instanceof com.voxel.entity.AncientBuilderEntity) {
             com.voxel.entity.AncientBuilderEntity builder =
                     (com.voxel.entity.AncientBuilderEntity) e;
-            // The ancient builders have no voice: their reply is caption-only.
             String line = com.voxel.ai.speech.AncientBuilderLines.pick(
                     com.voxel.ai.speech.AncientBuilderLines.Topic.GREETING,
                     new java.util.Random(builder.id * 31L + (long) ctx.worldTime));
-            builder.aiSpeak(line);
-            ctx.setStatus(builder.getDisplayName() + " — \"" + line + "\"");
-            // A caption-only dialogue scene: two-shot of the player and the
-            // builder, then the reply. No audio — the caption is the performance.
+            String spoken = builder.aiSpeakLine(line);
+            ctx.setStatus(builder.getDisplayName() + " — \""
+                    + (spoken == null ? line : spoken) + "\"");
+            // Shot/reverse-shot dialogue scene: two-shot of the player and the
+            // builder, then the reply, each spoken in its own profile.
             if (ctx.cinematic != null) {
                 Vector3f bp = builder.getPosition();
                 com.voxel.cinematic.CinematicScript lines =
@@ -1259,6 +1417,16 @@ public class BlockInteraction {
         // Sneaking bypasses all interactive-block "use" handlers below so the
         // click falls through to placement (vanilla sneak+use behavior).
         if (sneakPlace) return false;
+
+        // ── Doors open/close on use ──
+        // Swapping to the 90°-rotated half is the swing: the panel moves out of
+        // the wall exactly like a vanilla door, and both halves stay in sync.
+        if (com.voxel.world.DecorBlocks.isDoor(hitBlock)
+                && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive
+                && !ctx.furnaceCutsceneActive && !ctx.chestOpen) {
+            toggleDoor(hit[0], hit[1], hit[2], hitBlock);
+            return true;
+        }
 
         // Right-click on a command block opens the ancient-builder program editor.
         if (CommandBlockManager.isCommandBlock(hitBlock) && !ctx.inventoryOpen && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
@@ -1743,6 +1911,37 @@ public class BlockInteraction {
             }
             if (ctx.uiDirtyMarker != null) ctx.uiDirtyMarker.run();
             return;
+        }
+        // Doors: one item stamps both halves, oriented for the wall it sits in.
+        // Placing against a side face tells us the wall axis; placing on a floor
+        // falls back to the direction the player is looking.
+        if (com.voxel.world.DecorBlocks.isDoorLower(placeBlockId)) {
+            int wallDx = hit[0] - px, wallDz = hit[2] - pz;
+            boolean wallAlongZ;
+            if (wallDx != 0) wallAlongZ = true;
+            else if (wallDz != 0) wallAlongZ = false;
+            else {
+                Vector3f look = getLookDirection();
+                wallAlongZ = Math.abs(look.x) >= Math.abs(look.z);
+            }
+            placeBlockId = com.voxel.world.DecorBlocks.doorLowerForWall(placeBlockId, wallAlongZ);
+            if (!placeDoor(px, py, pz, placeBlockId)) return;
+        }
+        // Beds: the head goes one cell further along the way the player faces,
+        // so one item stamps both halves and the pair always belongs together.
+        if (com.voxel.world.DecorBlocks.isBed(placeBlockId)) {
+            Vector3f look = getLookDirection();
+            placeBlockId = com.voxel.world.DecorBlocks.bedFootForFacing(
+                    com.voxel.world.DecorBlocks.Facing.fromLook(look.x, look.z));
+            if (!placeBed(px, py, pz, placeBlockId)) return;
+        }
+        // Standing banners: a lower cell plus an upper cell on the same column;
+        // the look axis decides which cloth plane the banner presents.
+        if (com.voxel.world.DecorBlocks.isBanner(placeBlockId)) {
+            Vector3f look = getLookDirection();
+            placeBlockId = com.voxel.world.DecorBlocks.bannerLowerForFacing(
+                    com.voxel.world.DecorBlocks.Facing.fromLook(look.x, look.z));
+            if (!placeBanner(px, py, pz, placeBlockId)) return;
         }
         // Orientable logs: choose the axis variant from the clicked face normal
         if (isOrientableLog(placeBlockId)) {

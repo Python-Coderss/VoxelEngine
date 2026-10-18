@@ -11,7 +11,8 @@ import java.util.Random;
  *
  * <p>Lines are grouped by the moment that calls for them and picked with a
  * per-entity {@link Random}, so two builders never say the same thing at once.
- * There is no audio behind any of them — see {@link CaptionSpeech}.</p>
+ * They are spoken verbatim by the builder voice profile — see
+ * {@link CharacterVoice}.</p>
  */
 public final class AncientBuilderLines {
 

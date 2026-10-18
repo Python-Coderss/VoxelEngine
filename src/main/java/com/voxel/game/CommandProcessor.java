@@ -52,6 +52,7 @@ public class CommandProcessor {
                 ctx.setStatus("Screenshot saved to screenshots/");
                 break;
             case "tv": handleTv(parts); break;
+            case "music": handleMusic(parts); break;
             case "light": handleLight(parts); break;
             case "worldsize": handleWorldSize(parts); break;
             case "save": handleSave(); break;
@@ -352,11 +353,83 @@ public class CommandProcessor {
         sb.append("\n  /setuv <full|half|empty> <x> <y> [w] [h] - Adjust heart UVs");
         sb.append("\n  /camera <follow|orbit|fixed> - Set camera shot type");
         sb.append("\n  /locate <village|testing_facility> - Find a nearby structure");
-        sb.append("\n  /tv <channel> - Change TV channel (0=Static,1=Shopping,2=Weather,3=VNN)");
+        sb.append("\n  /tv <channel> - Change TV channel (see the Villager TV guide for the running order)");
+        sb.append("\n  /music [auto|off|on|next|list|<pool>] - Steering the soundtrack (pools: menu, calm, night, danger, combat, boss, cave, nether, end, aether, sift, tutorial, village, story)");
         sb.append("\n  /screenshot - Save a screenshot to screenshots/");
         sb.append("\n  /light <r> <g> <b> - Place a point light (RGB 0-255, radius 32) at your position (/light clear)");
         sb.append("\n  /worldsize <tiny|small|medium|large|huge> - Change world size (recreates dimension)");
         ctx.setStatus(sb.toString());
+    }
+
+    /**
+     * /music — reports and steers the classified soundtrack.
+     *
+     * <p>With no argument it names the pool and track that are playing. The
+     * named argument pins a pool (or returns control to the director with
+     * {@code auto}), skips to the next track, lists the populated pools, or
+     * mutes/unmutes without stopping the decoder.</p>
+     */
+    private void handleMusic(String[] parts) {
+        com.voxel.audio.MusicPlayer player = ctx.musicPlayer;
+        if (parts.length < 2) {
+            String pool = player == null ? "" : player.currentContext();
+            String track = player == null ? "" : player.currentTrackName();
+            int size = player == null ? 0 : player.trackCount();
+            ctx.setStatus("Music: " + com.voxel.audio.MusicDirector.displayName(pool)
+                    + (track.isEmpty() ? "" : " — " + track)
+                    + " (" + size + " tracks)"
+                    + (ctx.musicMuted ? " [muted]" : ""));
+            return;
+        }
+        String arg = parts[1].toLowerCase(Locale.ROOT);
+        switch (arg) {
+            case "off":
+                ctx.musicMuted = true;
+                if (player != null) player.setGain(0f);
+                ctx.setStatus("Music muted. /music on to bring it back.");
+                return;
+            case "on":
+                ctx.musicMuted = false;
+                if (player != null) player.setGain(0.55f);
+                ctx.setStatus("Music unmuted.");
+                return;
+            case "next":
+                if (player != null) player.nextTrack();
+                ctx.setStatus("Skipping to the next track.");
+                return;
+            case "auto":
+                ctx.musicOverride = null;
+                ctx.setStatus("Music: director is choosing the pool again.");
+                return;
+            case "list":
+                if (ctx.musicLibrary == null || ctx.musicLibrary.isEmpty()) {
+                    ctx.setStatus("No music library found. Add MP3/OGG files under src/main/resources/music.");
+                    return;
+                }
+                StringBuilder sb = new StringBuilder("Music pools (")
+                        .append(ctx.musicLibrary.size()).append(" tracks):");
+                for (String pool : com.voxel.audio.MusicDirector.ALL_CONTEXTS) {
+                    int n = ctx.musicLibrary.count(pool);
+                    if (n > 0) sb.append("\n  ").append(pool).append(" — ").append(n);
+                }
+                ctx.setStatus(sb.toString());
+                return;
+            default:
+                break;
+        }
+        for (String pool : com.voxel.audio.MusicDirector.ALL_CONTEXTS) {
+            if (pool.equals(arg)) {
+                ctx.musicOverride = pool;
+                ctx.musicMuted = false;
+                if (player != null) {
+                    player.setGain(0.55f);
+                    player.playContext(pool);
+                }
+                ctx.setStatus("Music pool: " + com.voxel.audio.MusicDirector.displayName(pool));
+                return;
+            }
+        }
+        ctx.setStatus("Unknown music pool: " + arg + ". Try /music list.");
     }
 
     private void handleCamera(String[] parts) {
@@ -481,24 +554,39 @@ public class CommandProcessor {
 
     private void handleTv(String[] parts) {
         if (parts.length < 2) {
-            ctx.setStatus("Usage: /tv <channel> - Change TV channel (0=Static, 1=Shopping, 2=Weather, 3=VNN News)");
+            ctx.setStatus("Usage: /tv <channel> - Change TV channel " + tvChannelRange());
             return;
         }
         try {
             int channel = Integer.parseInt(parts[1]);
-            if (channel < 0 || channel > 3) {
-                ctx.setStatus("Invalid channel. Use 0-3: 0=Static, 1=Shopping, 2=Weather, 3=VNN News");
+            int max = ctx.tvSystem != null ? ctx.tvSystem.channelCount() - 1 : 3;
+            if (channel < 0 || channel > max) {
+                ctx.setStatus("Invalid channel. Use " + tvChannelRange());
                 return;
             }
             if (ctx.tvSystem != null) {
                 // Find nearby TV and set its channel
                 ctx.tvSystem.setChannel(ctx.tvBlockX, ctx.tvBlockY, ctx.tvBlockZ, channel);
-                ctx.setStatus("TV channel set to: " + ctx.tvSystem.getChannelName(channel));
+                TvGuide.Channel tuned = ctx.tvSystem.getGuide().channel(channel);
+                ctx.setStatus("TV channel set to: " + ctx.tvSystem.getChannelName(channel)
+                        + (tuned == null || tuned.tagline.isEmpty() ? "" : " — " + tuned.tagline));
             } else {
                 ctx.setStatus("No TV system available");
             }
         } catch (NumberFormatException e) {
             ctx.setStatus("Invalid channel number");
         }
+    }
+
+    /** "0-7: 0=Off-Air, 1=VSN, 2=Weather, 3=VNN, ..." built from the live guide. */
+    private String tvChannelRange() {
+        if (ctx.tvSystem == null) return "(0=Off-Air, 1=VSN, 2=Weather, 3=VNN)";
+        int last = ctx.tvSystem.channelCount() - 1;
+        StringBuilder out = new StringBuilder("0-").append(last).append(": ");
+        for (int i = 0; i <= last; i++) {
+            if (i > 0) out.append(", ");
+            out.append(i).append('=').append(ctx.tvSystem.getChannelCallsign(i));
+        }
+        return out.toString();
     }
 }

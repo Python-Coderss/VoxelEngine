@@ -45,6 +45,8 @@ public class InteractionBillboardSystem {
     private String[][] actions = new String[MAX_MARKERS][];
     private boolean[] highlighted = new boolean[MAX_MARKERS];
     private int markerCount = 0;
+    /** Keyboard-selected marker (arrow-key navigation), or -1 when none. */
+    private int selectedMarker = -1;
 
     private static final int MAX_MARKERS = 16;
     private static final float REACH = 6.0f;          // max distance for a billboard
@@ -94,6 +96,42 @@ public class InteractionBillboardSystem {
     }
     public boolean hasHighlightedMarker() { return getHighlightedMarker() >= 0; }
 
+    /** Index of the keyboard-selected marker, or -1 when none is selected. */
+    public int getSelectedMarker() { return selectedMarker; }
+
+    /** Clears the keyboard selection so the cursor hover takes over again. */
+    public void clearSelection() { selectedMarker = -1; }
+
+    /**
+     * Steps the keyboard selection to the next ({@code dir > 0}) or previous
+     * ({@code dir < 0}) on-screen prompt, wrapping around. With nothing
+     * selected the first step lands on the first (or last) visible marker.
+     * Returns the selected index, or -1 when no marker is selectable.
+     */
+    public int selectNext(int dir) {
+        boolean[] visible = new boolean[markerCount];
+        for (int i = 0; i < markerCount; i++) visible[i] = markers[i * 4 + 2] > 0.01f;
+        int idx = nextSelectable(selectedMarker, dir, markerCount, visible);
+        selectedMarker = idx;
+        return idx;
+    }
+
+    /**
+     * Pure selection step: the next selectable index in {@code dir} from
+     * {@code current}, wrapping modulo {@code count} and skipping markers whose
+     * {@code visible} flag is false. Returns -1 when nothing is selectable.
+     */
+    static int nextSelectable(int current, int dir, int count, boolean[] visible) {
+        if (count <= 0) return -1;
+        if (dir == 0) dir = 1;
+        int start = current >= 0 ? current : (dir > 0 ? -1 : 0);
+        for (int step = 1; step <= count; step++) {
+            int idx = Math.floorMod(start + dir * step, count);
+            if (visible == null || idx >= visible.length || visible[idx]) return idx;
+        }
+        return -1;
+    }
+
     // Per-marker source: block cell for functional-block markers (the
     // interactable itself, not the floating anchor), or an entity id with
     // blockX < 0 for entity markers ("Talk").
@@ -121,6 +159,7 @@ public class InteractionBillboardSystem {
                 && (ctx.cinematic == null || !ctx.cinematic.cameraActive());
         if (!active) {
             if (markerCount != 0) markerCount = 0;
+            selectedMarker = -1;
             return;
         }
 
@@ -312,6 +351,7 @@ public class InteractionBillboardSystem {
 
     private void projectMarkers(double time) {
         if (markerCount == 0) return;
+        if (selectedMarker >= markerCount) selectedMarker = -1;
         // Same view/projection as the cursor ray in Main.updatePointAndClick.
         Vector3f camPos = main.cameraController.getActiveCameraPosition();
         Vector3f dir = main.getLookDirection();
@@ -356,9 +396,11 @@ public class InteractionBillboardSystem {
             a = Math.max(0f, Math.min(1f, a));
             markers[i * 4 + 2] = a;
 
-            // Highlight if the cursor ray passes close to this marker's anchor.
-            highlighted[i] = rayO != null && rayD != null
+            // A keyboard selection owns the highlight; with none, the cursor
+            // ray passing close to this marker's anchor drives it.
+            boolean hovered = rayO != null && rayD != null
                 && pointRayDistance(rayO, rayD, worldPos) < 0.6f;
+            highlighted[i] = selectedMarker >= 0 ? (i == selectedMarker) : hovered;
         }
     }
 

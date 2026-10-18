@@ -1802,11 +1802,22 @@ float poolVis(vec3 p, vec3 origin, vec3 right, vec3 up, vec3 dir, sampler2D tex,
     return (pDepth <= texture(tex, uvw).r + 0.004) ? 1.0 : 0.0;
 }
 
+// TEMP probe scratch (headless panorama diagnostics only).
+// gDbgSurf = (sky light, baked block light, dynamic point light) of the LAST
+// opaque hit, so the probe can name the term that is lifting a bright surface.
+vec3 gDbgPoint = vec3(0.0);
+vec3 gDbgShaft = vec3(0.0);
+vec3 gDbgSurf = vec3(0.0);
+// gDbgPos = the same hit's world position, normalized to the panorama region
+// (x/128, y/48, z/128), so the probe can say WHERE a bright pixel is.
+vec3 gDbgPos = vec3(0.0);
+
 // Volumetric god rays: march the primary ray, accumulating light scattered toward
 // the camera from the active sun pool (day) and moon pool (night). Only rays with a
 // positive dot against a lit source contribute (cheap early-out for the rest).
 vec3 marchLightShafts(vec3 ro, vec3 rd, float tMax, Atmosphere at) {
     vec3 acc = vec3(0.0);
+    gDbgShaft = vec3(0.0);
     float sunDot = dot(rd, at.sunDir);
     float moonDot = dot(rd, at.moonDir);
     float sunLit = (at.sunColor.x + at.sunColor.y + at.sunColor.z);
@@ -1874,12 +1885,14 @@ vec3 marchLightShafts(vec3 ro, vec3 rd, float tMax, Atmosphere at) {
         uvS += uvStepS; depthS += depthStepS;
         uvM += uvStepM; depthM += depthStepM;
     }
+    gDbgShaft = acc;
     return acc;
 }
 
 // Dynamic point lights (added via /light). Accumulates diffuse + soft shadow.
 vec3 pointLightContrib(vec3 p, vec3 n) {
     vec3 acc = vec3(0.0);
+    gDbgPoint = vec3(0.0);
     // Defense in depth: clamp the count so a corrupt/oversized header can never
     // drive this loop to billions of iterations (GPU hang / frozen screen).
     int npl = min(numPointLights, 16);
@@ -1903,6 +1916,7 @@ vec3 pointLightContrib(vec3 p, vec3 n) {
             acc += L.color * (L.intensity * smoothstep(0.15, 0.4, ndl) * smoothstep(0.0, 0.15, att));
         }
     }
+    gDbgPoint += acc;
     return acc;
 }
 
@@ -1940,6 +1954,12 @@ void main() {
             camClipped = (bitmasks[(es << 7u) | uint(ebi >> 5)] & (1u << (ebi & 31))) != 0u;
         }
     }
+    // Probe scratch is per-pixel: leaving a stale value would let a ray that
+    // escapes to the sky report the previous bounce's terms.
+    gDbgPoint = vec3(0.0);
+    gDbgShaft = vec3(0.0);
+    gDbgSurf = vec3(0.0);
+    gDbgPos = vec3(0.0);
     vec3 final = vec3(0.0), throu = vec3(1.0), ro = camPos; bool skip = false;
     vec3 godRd = rd; float godT = 96.0; // primary ray for god-ray marching
     // Fog/haze color is constant per pixel (rd and `at` never change across
@@ -2597,6 +2617,8 @@ void main() {
             // Cave/night floor: unlit rock stays barely-visible, never pure black.
             beam = mix(vec3(0.045), sceneCol, sceneN);
             beam += pointLightContrib(hp, n);
+            gDbgSurf = vec3(skyNorm, blockNorm, clamp(dot(gDbgPoint, vec3(0.333)), 0.0, 1.0));
+            gDbgPos = clamp(hp / vec3(128.0, 48.0, 128.0), 0.0, 1.0);
 
             // Emissive entity parts, such as Enderman eyes, retain a vivid purple
             // glow even in darkness instead of being reduced by world lighting.
@@ -2727,6 +2749,33 @@ void main() {
     // Variable exposure: adapt the scene (not the UI) to the frame's average
     // brightness — walking out of a cave lets highlights settle instead of
     // clipping, and torch-lit interiors gain a little lift.
+    // TEMP depth debug (headless probe only: VOXEL_PANORAMA_DEBUG=depth sends
+    // u_CraftingItemCount == -9911): encodes primary-hit distance so the ASCII
+    // dump shows the room's geometry instead of its shading.
+    if (u_CraftingItemCount == -9911) {
+        float dd = clamp(godT / 30.0, 0.0, 1.0);
+        imageStore(imgOutput, px, vec4(vec3(1.0 - dd), 1.0));
+        return;
+    }
+    // Hit position (probe): R = x/128, G = y/48, B = z/128.
+    if (u_CraftingItemCount == -9914) {
+        imageStore(imgOutput, px, vec4(gDbgPos, 1.0));
+        return;
+    }
+    // Surface-term split (probe): R = baked sky light, G = baked block light,
+    // B = dynamic point lights — all as the shader's normalized 0..1 levels.
+    if (u_CraftingItemCount == -9913) {
+        imageStore(imgOutput, px, vec4(linearToSrgb(gDbgSurf), 1.0));
+        return;
+    }
+    // Shading-term split: R = point lights, G = god rays, B = raw final.
+    if (u_CraftingItemCount == -9912) {
+        float pt = clamp(dot(gDbgPoint, vec3(0.333)) * 1.5, 0.0, 1.0);
+        float sh = clamp(dot(gDbgShaft, vec3(0.333)) * 8.0, 0.0, 1.0);
+        float tot = clamp(dot(final, vec3(0.333)) * 1.5, 0.0, 1.0);
+        imageStore(imgOutput, px, vec4(linearToSrgb(vec3(pt, sh, tot)), 1.0));
+        return;
+    }
     vec3 result = ACESFilm(final * u_Exposure);
     // Cartoon grade on the scene only (UI alpha-blended afterwards, fullscreen
     // UI early-outs before this): saturation boost + 12-level posterize.

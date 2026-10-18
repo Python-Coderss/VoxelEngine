@@ -103,6 +103,23 @@ public final class AncientCity {
                 }
             }
         }
+        // South gate: a proper entrance to the refuge — two jambs, a lit lintel
+        // and a double door — where before the curb had no way in at all.
+        int gz = cz + 6;
+        for (int y = 1; y <= 4; y++) {
+            s.set(cx - 2, base + y, gz, STONE_BRICK);
+            s.set(cx + 2, base + y, gz, STONE_BRICK);
+        }
+        for (int dx = -2; dx <= 2; dx++) s.set(cx + dx, base + 5, gz, STONE_BRICK);
+        s.set(cx - 2, base + 5, gz, SOUL_LAMP);
+        s.set(cx + 2, base + 5, gz, SOUL_LAMP);
+        s.set(cx, base + 6, gz, SOUL_LAMP);
+        // The doors take the two centre cells of the gateway (wall along X).
+        for (int dx = -1; dx <= 0; dx++) {
+            s.set(cx + dx, base, gz, DecorBlocks.DARK_OAK_DOOR_LOWER_EW);
+            s.set(cx + dx, base + 1, gz, DecorBlocks.DARK_OAK_DOOR_UPPER_EW);
+        }
+
         // Rift gate: plinth, posts, lintel. Interior left dormant (air).
         for (int dx = -2; dx <= 3; dx++) {
             for (int dz = -1; dz <= 1; dz++) {

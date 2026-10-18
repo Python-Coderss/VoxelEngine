@@ -17,17 +17,23 @@ import java.io.Writer;
 import java.util.zip.GZIPOutputStream;
 
 /**
- * One-time dev tool: builds the full handcrafted Tutorial World into a dense
- * in-memory array and exports it as a bundled template under
- * {@code src/main/resources/tutorial_world} (git-tracked). At runtime the game
- * copies this template into the save directory and streams the chunks in from
- * disk — no runtime procedural build, and no chunk-boundary truncation.
+ * Builds the full handcrafted Tutorial World into a dense in-memory array and
+ * exports it as a bundled template under {@code src/main/resources/tutorial_world}
+ * (git-tracked). At runtime the game copies this template into the save
+ * directory and streams the chunks in from disk.
  *
- * The chunk files use the same v2 format {@link WorldSaveManager#loadChunk}
- * reads (magic, cx, cz, count, then short idx / short type / byte extra).
+ * <p>{@link #exportTo(File)} is the single implementation: the dev-tool main
+ * writes the bundled template, and {@code Main} calls it as a fallback when the
+ * bundled template is missing (for example when the game is launched from an
+ * IDE whose working directory is not the repo root). That fallback is what
+ * keeps the tutorial playable instead of dropping the player onto the flat
+ * generator with no buildings.</p>
+ *
+ * <p>The chunk files use the same v2 format {@link WorldSaveManager#loadChunk}
+ * reads (magic, cx, cz, count, then short idx / short type / byte extra).</p>
  *
  * Run with:
- *   MAVEN_OPTS="-Xmx2g" ./mvnw compile exec:java -Dexec.mainClass=com.voxel.tools.TutorialWorldExporter
+ *   MAVEN_OPTS="-Xmx3g" ./mvnw compile exec:java@export-tutorial
  */
 public final class TutorialWorldExporter {
 
@@ -36,7 +42,15 @@ public final class TutorialWorldExporter {
     private static final int MIN = TutorialWorldAuthor.MIN;
     private static final int H = TutorialWorldAuthor.AREA_H; // 112
 
+    private TutorialWorldExporter() {
+    }
+
     public static void main(String[] args) throws Exception {
+        exportTo(new File(OUT_DIR));
+    }
+
+    /** Builds the world and writes chunks, chests and level.dat into {@code outDir}. */
+    public static void exportTo(File outDir) throws Exception {
         long start = System.nanoTime();
 
         // Dense voxel store: [y][x-min][z-min] packed as type | extra<<16.
@@ -57,13 +71,13 @@ public final class TutorialWorldExporter {
             }
         };
 
-        System.out.println("Building handcrafted world (" + W + "x" + W + "x" + H + ")...");
+        System.out.println("Building handcrafted tutorial world (" + W + "x" + W + "x" + H + ")...");
         ChestManager chests = new ChestManager();
         TutorialWorldAuthor.buildAll(sink, chests);
         System.out.println("Build complete. Writing chunk files...");
 
-        deleteRecursively(new File(OUT_DIR));
-        File dimDir = new File(OUT_DIR, DimensionType.OVERWORLD.name);
+        deleteRecursively(outDir);
+        File dimDir = new File(outDir, DimensionType.OVERWORLD.name);
         dimDir.mkdirs();
 
         int minC = MIN >> 4, maxC = TutorialWorldAuthor.MAX >> 4;
@@ -78,11 +92,11 @@ public final class TutorialWorldExporter {
         System.out.println("Wrote " + written + " chunk files.");
 
         chests.saveToFile(new File(dimDir, "chest.dat"));
-        writeLevelDat();
+        writeLevelDat(outDir);
         System.out.println("Wrote chest.dat + level.dat.");
 
         long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
-        System.out.println("DONE in " + elapsedMs + " ms -> " + new File(OUT_DIR).getAbsolutePath());
+        System.out.println("DONE in " + elapsedMs + " ms -> " + outDir.getAbsolutePath());
     }
 
     /** Writes one chunk column in the v2 format loadChunk() reads back. */
@@ -138,7 +152,7 @@ public final class TutorialWorldExporter {
     }
 
     /** Hand-writes the template level.dat (seed, mode, spawn, starter kit). */
-    private static void writeLevelDat() throws Exception {
+    private static void writeLevelDat(File outDir) throws Exception {
         JSONObject root = new JSONObject();
         root.put("saveName", "tutorial");
         root.put("seed", 1234567L);
@@ -155,22 +169,30 @@ public final class TutorialWorldExporter {
         player.put("yaw", -90.0);
         player.put("pitch", 0.0);
         player.put("health", 20.0);
+        player.put("hunger", 20.0);
+        player.put("saturation", 5.0);
         player.put("dimension", "overworld");
 
-        // Starter kit: the Create tools so the player can experiment right away.
+        // Starter kit: enough to survive the tour and try the Create machines.
+        // The six guided stations hand out the rest, so this is deliberately
+        // light — a stone tool set, light, food, and a sample of the mod blocks.
         String[] kit = {
-            "wrench", "goggles", "brass_ingot", "hand_crank", "windmill_bearing",
-            "windmill_sail", "shaft", "cogwheel", "large_cogwheel", "millstone",
-            "mechanical_press", "crushing_wheel", "mechanical_drill", "mechanical_saw",
-            "belt_conveyor", "item_vault", "brass_casing", "blaze_burner", "steam_engine",
-            "copper_tank"
+            "stone_pickaxe", "stone_axe", "stone_sword", "torch", "bread",
+            "oak_planks", "crafting_table", "hand_crank", "shaft", "cogwheel",
+            "windmill_bearing", "windmill_sail", "millstone", "mechanical_press",
+            "belt_conveyor", "item_vault", "blaze_burner", "steam_engine",
+            "copper_tank", "wrench", "goggles", "brass_ingot"
         };
         JSONArray inv = new JSONArray();
         for (int i = 0; i < kit.length; i++) {
             JSONObject s = new JSONObject();
             s.put("slot", i);
             s.put("item", kit[i]);
-            int count = (kit[i].equals("shaft") || kit[i].equals("cogwheel")) ? 4 : 1;
+            int count = 1;
+            if (kit[i].equals("torch")) count = 32;
+            else if (kit[i].equals("bread")) count = 16;
+            else if (kit[i].equals("oak_planks")) count = 32;
+            else if (kit[i].equals("shaft") || kit[i].equals("cogwheel")) count = 4;
             s.put("count", count);
             s.put("durability", 0);
             inv.put(s);
@@ -178,7 +200,7 @@ public final class TutorialWorldExporter {
         player.put("inventory", inv);
         root.put("player", player);
 
-        File file = new File(OUT_DIR, "level.dat");
+        File file = new File(outDir, "level.dat");
         file.getParentFile().mkdirs();
         try (Writer w = new OutputStreamWriter(new FileOutputStream(file), "UTF-8")) {
             w.write(root.toString(2));

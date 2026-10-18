@@ -16,10 +16,11 @@ import org.joml.Vector3i;
  *
  * <p>Builders are the civilization's living remnant: architects, scholars,
  * engineers, curators and sentries who still tend the sites they built. They
- * are <b>voiceless by design</b>: nothing they say reaches the audio stack.
- * Every line they speak is published caption-only through
- * {@link com.voxel.ai.speech.CaptionSpeech}, so the player reads them in the
- * live captions exactly like village speech.</p>
+ * speak with the scholarly builder voice profile through
+ * {@link com.voxel.ai.speech.CharacterVoice}, so their authored lines are
+ * audible and captioned word for word. When the machine has no local voice
+ * the bridge falls back to the recorded clip corpus, and finally to captions
+ * only — a builder is never silent on screen.</p>
  *
  * <p>Movement mirrors {@link VillagerEntity}'s private helpers so the same
  * terrain, gravity and collision rules apply; decisions come from
@@ -154,16 +155,29 @@ public class AncientBuilderEntity extends Entity {
     public boolean aiHasHomeSite() { return homeSite != null; }
 
     /**
-     * Speak a line. There is no audio behind this — the line is shown in the
-     * live captions only.
+     * Speak a line in the builder voice. The authored text is what the local
+     * voice says and what the caption shows; when no local voice exists the
+     * recorded-clip fallback may replace it with a real clip transcript.
+     *
+     * @return the text that was displayed, or null when rate-limited
      */
+    public String aiSpeakLine(String line) {
+        return com.voxel.ai.speech.CharacterVoice.speak(id, getDisplayName(), line,
+                villager.voice.VoiceProfile.ANCIENT_BUILDER);
+    }
+
+    /** Speak a line with an explicit caption reveal time. */
+    public String aiSpeakLine(String line, float durationSeconds) {
+        return com.voxel.ai.speech.CharacterVoice.speak(id, getDisplayName(), line,
+                villager.voice.VoiceProfile.ANCIENT_BUILDER, durationSeconds);
+    }
+
     public boolean aiSpeak(String line) {
-        return com.voxel.ai.speech.CaptionSpeech.say(id, getDisplayName(), line);
+        return aiSpeakLine(line) != null;
     }
 
     public boolean aiSpeak(String line, float durationSeconds) {
-        return com.voxel.ai.speech.CaptionSpeech.say(id, getDisplayName(), line,
-                durationSeconds);
+        return aiSpeakLine(line, durationSeconds) != null;
     }
 
     public boolean aiInWater() {

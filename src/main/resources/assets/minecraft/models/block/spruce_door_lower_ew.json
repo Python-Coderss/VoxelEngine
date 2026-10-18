@@ -1,0 +1,73 @@
+{
+    "ambientocclusion": false,
+    "textures": {
+        "particle": "#bottom",
+        "bottom": "blocks/door_spruce_lower",
+        "top": "blocks/door_spruce_upper"
+    },
+    "elements": [
+        {
+            "from": [
+                0,
+                0,
+                13
+            ],
+            "to": [
+                16,
+                16,
+                16
+            ],
+            "faces": {
+                "down": {
+                    "uv": [
+                        13,
+                        0,
+                        16,
+                        16
+                    ],
+                    "texture": "#bottom",
+                    "cullface": "down"
+                },
+                "west": {
+                    "uv": [
+                        3,
+                        0,
+                        0,
+                        16
+                    ],
+                    "texture": "#bottom",
+                    "cullface": "north"
+                },
+                "east": {
+                    "uv": [
+                        0,
+                        0,
+                        3,
+                        16
+                    ],
+                    "texture": "#bottom",
+                    "cullface": "south"
+                },
+                "south": {
+                    "uv": [
+                        0,
+                        0,
+                        16,
+                        16
+                    ],
+                    "texture": "#bottom",
+                    "cullface": "west"
+                },
+                "north": {
+                    "uv": [
+                        16,
+                        0,
+                        0,
+                        16
+                    ],
+                    "texture": "#bottom"
+                }
+            }
+        }
+    ]
+}

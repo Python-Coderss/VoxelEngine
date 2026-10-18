@@ -12,7 +12,7 @@ public class AtmosphereRenderer {
     private final int locSunDir, locSunColor, locMoonDir, locMoonColor;
     private final int locSkyZenith, locSkyHorizon, locAmbient;
     private final int locDimensionID;
-    private final float[] sdTmp = new float[3]; // reusable sun-dir scratch (no per-frame alloc)
+    private final float[] atmoScratch = new float[21]; // reusable Overworld atmosphere (no per-frame alloc)
     // Cached r+g+b sums of the last-uploaded sun/moon colors — the same
     // "lit" measure the raytracer's god-ray march gates on. Lets Main skip
     // regenerating light pools whose source is currently invisible (day =>
@@ -68,40 +68,66 @@ public class AtmosphereRenderer {
             glUniform3f(locAmbient, 0.3f, 0.35f, 0.4f);
         } else {
             // Overworld: day/night cycle
-            computeSunDir(activeDimension, worldTime, sdTmp);
-            glUniform3f(locSunDir, sdTmp[0], sdTmp[1], sdTmp[2]);
-            glUniform3f(locMoonDir, -sdTmp[0], -sdTmp[1], -sdTmp[2]);
+            overworld(worldTime, atmoScratch);
+            glUniform3f(locSunDir, atmoScratch[0], atmoScratch[1], atmoScratch[2]);
+            glUniform3f(locMoonDir, atmoScratch[3], atmoScratch[4], atmoScratch[5]);
+            glUniform3f(locSunColor, atmoScratch[6], atmoScratch[7], atmoScratch[8]);
+            glUniform3f(locMoonColor, atmoScratch[9], atmoScratch[10], atmoScratch[11]);
+            glUniform3f(locSkyZenith, atmoScratch[12], atmoScratch[13], atmoScratch[14]);
+            glUniform3f(locSkyHorizon, atmoScratch[15], atmoScratch[16], atmoScratch[17]);
+            glUniform3f(locAmbient, atmoScratch[18], atmoScratch[19], atmoScratch[20]);
 
-            float h = sdTmp[1];
-            float skyZenR = mix(0.01f, 0.1f, smoothstep(-0.15f, 0.15f, h));
-            float skyZenG = mix(0.02f, 0.35f, smoothstep(-0.15f, 0.15f, h));
-            float skyZenB = mix(0.05f, 0.75f, smoothstep(-0.15f, 0.15f, h));
-            glUniform3f(locSkyZenith, skyZenR, skyZenG, skyZenB);
-
-            float horR = mix(0.02f, mix(0.9f, 0.5f, smoothstep(0f, 0.3f, h)), smoothstep(-0.15f, 0.1f, h));
-            float horG = mix(0.03f, mix(0.4f, 0.7f, smoothstep(0f, 0.3f, h)), smoothstep(-0.15f, 0.1f, h));
-            float horB = mix(0.08f, mix(0.2f, 0.9f, smoothstep(0f, 0.3f, h)), smoothstep(-0.15f, 0.1f, h));
-            glUniform3f(locSkyHorizon, horR, horG, horB);
-
-            // Sun intensity scaled to 0.7× — the previous full-white noon sun
-            // (1.0, 0.98, 0.9) washed out open-air scenes like the tutorial world.
-            float scR = mix(0.7f, 0.7f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
-            float scG = mix(0.35f, 0.68f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
-            float scB = mix(0.14f, 0.63f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
-            sunLum = scR + scG + scB;
-            glUniform3f(locSunColor, scR, scG, scB);
-
-            float mcR = 0.2f * smoothstep(-0.1f, 0.1f, -h);
-            float mcG = 0.25f * smoothstep(-0.1f, 0.1f, -h);
-            float mcB = 0.4f * smoothstep(-0.1f, 0.1f, -h);
-            moonLum = mcR + mcG + mcB;
-            glUniform3f(locMoonColor, mcR, mcG, mcB);
-
-            float ambR = mix(0.02f, skyZenR * 0.4f, smoothstep(-0.2f, 0.2f, h));
-            float ambG = mix(0.03f, skyZenG * 0.4f, smoothstep(-0.2f, 0.2f, h));
-            float ambB = mix(0.07f, skyZenB * 0.4f, smoothstep(-0.2f, 0.2f, h));
-            glUniform3f(locAmbient, ambR, ambG, ambB);
+            sunLum = atmoScratch[6] + atmoScratch[7] + atmoScratch[8];
+            moonLum = atmoScratch[9] + atmoScratch[10] + atmoScratch[11];
         }
+    }
+
+    /**
+     * CPU-side Overworld atmosphere for a world time on the 1440-unit day
+     * (0 = midnight, 360 = sunrise, 720 = noon, 1080 = dusk).
+     *
+     * <p>{@link #upload} hands exactly these numbers to the shader as
+     * {@code u_SunDir / u_MoonDir / u_SunColor / u_MoonColor / u_SkyZenith /
+     * u_SkyHorizon / u_Ambient}, and the raytracer builds its {@code Atmosphere}
+     * struct straight from those uniforms ({@code at.sunDir = u_SunDir; ...}) — so
+     * this method is the entire CPU half of the world-lighting data path.
+     * Exposed so tests can assert what the renderer feeds the shader, including
+     * the pole that matters most here: {@code sunColor} is zeroed by its horizon
+     * fade ({@code smoothstep(-0.1, 0.1, h)}) whenever the sun is below the
+     * horizon, and terrain is shaded with {@code ambient + sunColor * celRamp}.</p>
+     *
+     * @param out receives 21 floats: sunDir(3), moonDir(3), sunColor(3),
+     *            moonColor(3), skyZenith(3), skyHorizon(3), ambient(3)
+     */
+    public static void overworld(float worldTime, float[] out) {
+        float[] sd = new float[3];
+        computeSunDir(DimensionType.OVERWORLD, worldTime, sd);
+        out[0] = sd[0]; out[1] = sd[1]; out[2] = sd[2];
+        out[3] = -sd[0]; out[4] = -sd[1]; out[5] = -sd[2];
+
+        float h = sd[1];
+        float skyZenR = mix(0.01f, 0.1f, smoothstep(-0.15f, 0.15f, h));
+        float skyZenG = mix(0.02f, 0.35f, smoothstep(-0.15f, 0.15f, h));
+        float skyZenB = mix(0.05f, 0.75f, smoothstep(-0.15f, 0.15f, h));
+        out[12] = skyZenR; out[13] = skyZenG; out[14] = skyZenB;
+
+        out[15] = mix(0.02f, mix(0.9f, 0.5f, smoothstep(0f, 0.3f, h)), smoothstep(-0.15f, 0.1f, h));
+        out[16] = mix(0.03f, mix(0.4f, 0.7f, smoothstep(0f, 0.3f, h)), smoothstep(-0.15f, 0.1f, h));
+        out[17] = mix(0.08f, mix(0.2f, 0.9f, smoothstep(0f, 0.3f, h)), smoothstep(-0.15f, 0.1f, h));
+
+        // Sun intensity scaled to 0.7× — the previous full-white noon sun
+        // (1.0, 0.98, 0.9) washed out open-air scenes like the tutorial world.
+        out[6] = mix(0.7f, 0.7f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
+        out[7] = mix(0.35f, 0.68f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
+        out[8] = mix(0.14f, 0.63f, smoothstep(0f, 0.4f, h)) * smoothstep(-0.1f, 0.1f, h);
+
+        out[9] = 0.2f * smoothstep(-0.1f, 0.1f, -h);
+        out[10] = 0.25f * smoothstep(-0.1f, 0.1f, -h);
+        out[11] = 0.4f * smoothstep(-0.1f, 0.1f, -h);
+
+        out[18] = mix(0.02f, skyZenR * 0.4f, smoothstep(-0.2f, 0.2f, h));
+        out[19] = mix(0.03f, skyZenG * 0.4f, smoothstep(-0.2f, 0.2f, h));
+        out[20] = mix(0.07f, skyZenB * 0.4f, smoothstep(-0.2f, 0.2f, h));
     }
 
     /**

@@ -158,6 +158,7 @@ public class Main {
     private int currentTutorialZone = -1; // last showcase zone the popup announced
     private boolean tutorialMinecartsSpawned = false; // rideable coaster carts spawned yet
     private boolean pointClickDemoSpawned = false; // demo-world villager spawned yet
+    private boolean showcaseDemoSpawned = false;   // showcase-world villagers spawned yet
     private final java.util.Set<Integer> tutorialMobZonesSpawned = new java.util.HashSet<>(); // zones whose mobs are placed
     private int nextTutorialMobId = 65000; // unique id counter for tutorial-zone mobs
     private int nextSpawnCommandId = 75000; // unique id counter for /spawn-created mobs
@@ -166,12 +167,73 @@ public class Main {
     private com.voxel.World panoramaWorld;
     private int panoramaNextSlot = 0;
     private float panoramaAngle = 0f;    // orbit angle (radians)
-    private float panoramaTime = 3600f;  // in-world time; drifts gently for sun motion
+    /**
+     * Panorama clock, on the same 1440-unit day as {@link AtmosphereRenderer}
+     * (0 = midnight, 360 = sunrise, 720 = noon). Starts at 08:00 and drifts
+     * between {@link #PANORAMA_START_TIME} and {@link #PANORAMA_END_TIME}: the
+     * shader shades blocks with {@code ambient + sunColor * celRamp(sunDot)}, and
+     * sunColor is zero whenever the sun is below the horizon, so any clock value
+     * past dusk renders the whole menu scene as near-black terrain.
+     */
+    private float panoramaTime = PANORAMA_START_TIME;
+    private float panoramaTimeDir = 1f;  // +1 drifting toward dusk, -1 back to morning
+    /** 11:00 — a high sun, so the showcase hall's skylight shaft lands on the floor. */
+    public static final float PANORAMA_START_TIME = 660f;
+    /** 14:00 — still hours before dusk (1080); the clock bounces back at this end. */
+    public static final float PANORAMA_END_TIME = 840f;
+    /** True to look at the showcase hall's interior; false for the outdoor orbit. */
+    private static final boolean PANORAMA_INTERIOR_VIEW = true;
+    /** Floor level of the showcase hall (the interior camera stands on it). */
+    private static final float PANORAMA_FLOOR_Y = 27f;
+    /** Showcase hall footprint in X/Z, centred on (PANORAMA_CX, PANORAMA_CZ). */
+    private static final int PANORAMA_HALL_MIN = 45, PANORAMA_HALL_MAX = 67;
     private static final float PANORAMA_CX = 56f, PANORAMA_CY = 26f, PANORAMA_CZ = 56f;
-    // Reusable zero point-light header (16 bytes) for the panorama pass — do NOT
-    // use persistentPlBuf here: renderMenuPanorama also runs from
-    // presentInitialLoadingFrame(), before persistentPlBuf is allocated.
-    private final IntBuffer panoramaPlHeader = IntBuffer.allocate(4);
+    /**
+     * Light-bake extents: the whole allocated panorama region (8×3×8 chunks =
+     * 128³ wide, 48 tall), including the +X/+Z air border whose sky light the
+     * outer cliff faces sample.
+     */
+    private static final int PANORAMA_LIGHT_XZ = 128, PANORAMA_LIGHT_Y = 48;
+    /**
+     * Horizontal spill passes — how far baked sky light bends around roofs and
+     * edges, ONE LIGHT LEVEL per block (the pool stores 0..15, not 0..255).
+     * Keep this small: the sun term scales with sky light, so each extra pass
+     * adds another ring of near-full daylight, and the 7×7 skylight acting like
+     * a 13×13 one is what washed the showcase hall out. A single pass keeps the
+     * eaves and the doorway readable and leaves the room dark.
+     */
+    private static final int PANORAMA_SKY_SPILL_PASSES = 1;
+    /** Dynamic showcase lights (the /light feature) drawn with the panorama. */
+    private static final int PANORAMA_SHOWCASE_LIGHTS = 6;
+    /**
+     * Exposure for the interior showcase view. The menu path never runs eye
+     * adaptation, so it renders at 1.0 — which, with ACES lifting midtones
+     * hard, turned the lamp-lit hall into a uniformly pale box (a white floor
+     * under a couple of lanterns already tone-maps to ~210/255). Exposing for
+     * the interior (like a photographer metering for a dark room) keeps the
+     * walls near-black and lets the lantern pools, coloured lights and the sun
+     * shaft through the skylight carry the frame.
+     */
+    private static final float PANORAMA_INTERIOR_EXPOSURE = 0.36f;
+    /** 6-neighbour offsets used by the panorama light bake. */
+    private static final int[] PANO_NX = {1, -1, 0, 0, 0, 0};
+    private static final int[] PANO_NY = {0, 0, 1, -1, 0, 0};
+    private static final int[] PANO_NZ = {0, 0, 0, 0, 1, -1};
+    // Panorama point-light payload. Its own buffer — do NOT use persistentPlBuf
+    // here: renderMenuPanorama also runs from presentInitialLoadingFrame(),
+    // before persistentPlBuf is allocated.
+    private final FloatBuffer panoramaPlBuf =
+            MemoryUtil.memAllocFloat(4 + PANORAMA_SHOWCASE_LIGHTS * 8);
+    /** Camera the panorama last rendered from (reported by the headless probe). */
+    private float panoramaCamX, panoramaCamY, panoramaCamZ;
+    /** Frame counter for the panorama's sun-pool regeneration cadence. */
+    private int panoramaPoolFrame = 0;
+    /** Sun-pool index the panorama's god-ray shafts are currently baked from. */
+    private int panoramaSunPool = -1;
+    /** True once the panorama has seeded the fixed sun/moon pool directions. */
+    private boolean panoramaPoolDirsReady = false;
+    /** Height of the panorama's mine-adit showcase light (set when the adit is built). */
+    private float panoramaAditLightY = 31.5f;
     private final float[] shadowCamPosPrev = new float[3];
     private int activeSunPool = 0, activeMoonPool = 8;
     private int prevActiveSunPool = -1, prevActiveMoonPool = -1;
@@ -429,10 +491,15 @@ public class Main {
         if (musicPlayer != null) {
             musicPlayer.close();
         }
+        com.voxel.ai.speech.CharacterVoice.unbind();
+        com.voxel.ai.speech.VillagerSpeech.unbind();
         if (villagerAudioManager != null) {
             villagerAudioManager.close();
         }
-        chunkManager.shutdown();
+        // Null in the headless panorama probe: the menu path never builds a
+        // ChunkManager, and a shutdown NPE there aborted the JVM with a non-zero
+        // exit even though the frame dump had already succeeded.
+        if (chunkManager != null) chunkManager.shutdown();
         RedstoneLogger.shutdown();
         WorldGenLogger.shutdown();
         GameLogger.shutdown();
@@ -467,7 +534,9 @@ public class Main {
 
         glfwMakeContextCurrent(window);
         glfwSwapInterval(0);
-        glfwShowWindow(window);
+        // The headless probe (VOXEL_PANORAMA_PROBE) renders off-screen: no window
+        // appears on the desktop while a panorama frame is measured.
+        if (!panoramaProbe) glfwShowWindow(window);
         GL.createCapabilities();
 
         // Build only the tiny fullscreen path needed for an immediate loading frame.
@@ -503,17 +572,28 @@ public class Main {
         // playlist from src/main/resources/music (see tools/convert_music.sh).
         musicPlayer = new com.voxel.audio.MusicPlayer();
         musicPlayer.initialize();
-        java.io.File musicDir = new java.io.File("src/main/resources/music");
-        if (musicDir.isDirectory()) {
+        // Every bundled music family feeds one classified library: the MCSM
+        // soundtrack albums (src/resources/music), the Aether soundtrack, and
+        // any minecraft/ or fanmade/ folders added under the music root.
+        java.util.List<java.io.File> musicRoots = new java.util.ArrayList<>();
+        String musicOverride = System.getProperty("voxel.music.root");
+        if (musicOverride != null && !musicOverride.isEmpty()) {
+            musicRoots.add(new java.io.File(musicOverride));
+        }
+        musicRoots.add(new java.io.File("src/main/resources/music"));
+        musicRoots.add(new java.io.File("src/resources/music"));
+        musicRoots.add(new java.io.File("src/main/resources/assets/aether/sounds/music"));
+        com.voxel.audio.MusicLibrary musicLibrary =
+                com.voxel.audio.MusicLibrary.scan(musicRoots);
+        musicPlayer.setLibrary(musicLibrary);
+        if (musicLibrary.isEmpty()) {
+            java.io.File musicDir = new java.io.File("src/main/resources/music");
             musicPlayer.setRoot(musicDir);
-            System.out.println("[audio] music root ready (" + musicPlayer.trackCount()
-                    + " tracks, " + musicPlayer.pendingCount() + " placeholders); contexts: "
-                    + com.voxel.audio.MusicDirector.CONTEXT_COMBAT + "/"
-                    + com.voxel.audio.MusicDirector.CONTEXT_DANGER + "/"
-                    + com.voxel.audio.MusicDirector.CONTEXT_NIGHT + "/"
-                    + com.voxel.audio.MusicDirector.CONTEXT_CALM);
+            System.out.println("[audio] no classified music found — folder fallback: "
+                    + musicDir.getPath());
         } else {
-            System.out.println("[audio] no music folder at " + musicDir.getPath() + " — silence");
+            System.out.println("[audio] music library: " + musicLibrary.size()
+                    + " tracks; pools " + musicLibrary.populatedContexts());
         }
         presentEarlyLoadingFrame(earlyLoadingTexture);
         bootMark.accept("OpenAL ready");
@@ -577,6 +657,8 @@ public class Main {
 
         // Create shared game context (world/chunkManager/dimensionManager filled below after init)
         ctx = new GameContext();
+        ctx.musicPlayer = musicPlayer;
+        ctx.musicLibrary = musicLibrary;
         cameraController = new CameraController(ctx, this);
         ctx.cinematic = new com.voxel.cinematic.CinematicSystem(ctx);
         ctx.activeDimension = activeDimension;
@@ -605,6 +687,9 @@ public class Main {
         ctx.uiDirtyMarker = () -> { hud.inventoryUiDirty = true; };
         ctx.villagerAudioManager = villagerAudioManager;
         com.voxel.ai.speech.VillagerSpeech.bind(villagerAudioManager);
+        // Builders, the player, the narrator and bosses speak authored lines
+        // through their character profiles (local OS voice, cached per line).
+        com.voxel.ai.speech.CharacterVoice.bind(villagerAudioManager);
 
         // Create extracted subsystems
         itemDefinitions = new ItemDefinitions();
@@ -642,9 +727,12 @@ public class Main {
         // Initialize villager TV and village systems
         ctx.tvSystem = new VillagerTVSystem();
         ctx.tvSystem.setChannelChangeListener(channel -> {
-            if (channel == VillagerTVSystem.CHANNEL_VNN && ctx.villagerAudioManager != null) {
-                ctx.villagerAudioManager.requestNewsIntro();
-            }
+            if (ctx.villagerAudioManager == null) return;
+            // Switching always sounds deliberate: a short station ident now, then
+            // whatever the tuned programme's own script opens with (the VNN theme,
+            // for instance, is the first line of VNN Nightly).
+            com.voxel.game.TvMusicCue ident = ctx.tvSystem.getGuide().cue("station_ident");
+            if (ident != null) ctx.villagerAudioManager.requestTvMusicCue(ident);
         });
         ctx.villageManager = new VillagerVillageManager();
         // Wire village manager into MapGenVillage (must happen after ctx.villageManager is set)
@@ -809,6 +897,8 @@ public class Main {
             int LOG   = blockRegistry.getId("oak_log");
             int LEAF  = blockRegistry.getId("oak_leaves");
             int COBBLE = blockRegistry.getId("cobblestone");
+            int GLOWSTONE = blockRegistry.getId("glowstone");
+            int WOOL = blockRegistry.getId("wool");
             if (GRASS <= 0) GRASS = 1;
             if (DIRT <= 0) DIRT = 13;
             if (STONE <= 0) STONE = 2;
@@ -817,6 +907,8 @@ public class Main {
             if (LOG <= 0) LOG = 5;
             if (LEAF <= 0) LEAF = 4;
             if (COBBLE <= 0) COBBLE = STONE;
+            if (GLOWSTONE <= 0) GLOWSTONE = 17;
+            if (WOOL <= 0) WOOL = 91;
 
             java.util.Random rnd = new java.util.Random(42);
 
@@ -915,6 +1007,88 @@ public class Main {
             // Floating islands — the classic panorama look.
             buildPanoramaIsland(28, 41, 30, 6, GRASS, DIRT, STONE);
             buildPanoramaIsland(86, 42, 78, 5, GRASS, DIRT, STONE);
+            // A third, treed island set lower and further out balances the frame.
+            buildPanoramaIsland(20, 35, 84, 5, GRASS, DIRT, STONE);
+            for (int dy = 1; dy <= 3; dy++) placePanoramaVoxel(20, 39 + dy, 84, LOG);
+            for (int dx = -2; dx <= 2; dx++) {
+                for (int dz = -2; dz <= 2; dz++) {
+                    if (dx * dx + dz * dz > 4) continue;
+                    placePanoramaVoxel(20 + dx, 42, 84 + dz, LEAF);
+                    if (dx * dx + dz * dz <= 2) placePanoramaVoxel(20 + dx, 43, 84 + dz, LEAF);
+                }
+            }
+
+            // ── Far mountain ridge, stream, bridge and windmill ──
+            // The ridge closes the horizon on the far side of the lake and gives
+            // the orbit a dramatic backdrop instead of an endless flat edge.
+            for (int x = 16; x <= 102; x++) {
+                float t = (x - 16) / 86f;
+                float peak = 33f + 8.5f * (float) Math.sin(t * Math.PI * 1.4f)
+                        + 2.6f * (float) Math.sin(x * 0.21f);
+                for (int z = 92; z <= 108; z++) {
+                    float fall = 1f - Math.abs(z - 100) / 9f;
+                    if (fall <= 0f) continue;
+                    int h = (int) (28 + (peak - 28) * fall);
+                    for (int y = 22; y <= h; y++) {
+                        int type;
+                        if (y == h) type = (h >= 39) ? COBBLE : GRASS;
+                        else if (y >= h - 3) type = DIRT;
+                        else type = STONE;
+                        placePanoramaVoxel(x, y, z, type);
+                    }
+                }
+            }
+            // Snow-free stone caps and a waterfall spilling into the lake.
+            for (int y = 26; y <= 36; y++) {
+                for (int z = 84; z <= 96; z++) {
+                    placePanoramaVoxel(56, y, z, WATER);
+                    placePanoramaVoxel(57, y, z, WATER);
+                }
+            }
+            for (int z = 74; z <= 96; z++) {
+                placePanoramaVoxel(55, 26, z, WATER);
+                placePanoramaVoxel(56, 26, z, WATER);
+                placePanoramaVoxel(57, 26, z, WATER);
+                for (int x = 54; x <= 58; x++) placePanoramaVoxel(x, 24, z, STONE);
+                for (int x = 54; x <= 58; x++) placePanoramaVoxel(x, 25, z, SAND);
+            }
+            // A plank footbridge over the stream.
+            for (int x = 51; x <= 61; x++) placePanoramaVoxel(x, 28, 80, COBBLE);
+            for (int x = 51; x <= 61; x++) placePanoramaVoxel(x, 29, 80, COBBLE);
+            for (int x = 52; x <= 60; x += 4) {
+                placePanoramaVoxel(x, 27, 80, LOG);
+                placePanoramaVoxel(x, 26, 80, LOG);
+            }
+            // A windmill on the eastern hill (silhouette against the ridge).
+            int wmx = 94, wmz = 22;
+            int wmh = (int) Math.floor(height[wmx][wmz]);
+            for (int y = wmh + 1; y <= wmh + 5; y++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        boolean rim = dx != 0 || dz != 0;
+                        if (rim) placePanoramaVoxel(wmx + dx, y, wmz + dz, COBBLE);
+                    }
+                }
+            }
+            placePanoramaVoxel(wmx, wmh + 6, wmz, LOG);
+            placePanoramaVoxel(wmx, wmh + 7, wmz, LOG);
+            for (int dx = -2; dx <= 2; dx++) {
+                for (int dz = -1; dz <= 1; dz += 2) {
+                    if (Math.abs(dx) == 2) continue;
+                    placePanoramaVoxel(wmx + dx, wmh + 7, wmz + dz, WOOL);
+                }
+            }
+
+            // Lanterns ringing the lake shore for a warm focal point.
+            for (int i = 0; i < 8; i++) {
+                double ang = Math.PI * 2.0 * i / 8.0;
+                int lx = 56 + (int) Math.round(Math.cos(ang) * 19);
+                int lz = 56 + (int) Math.round(Math.sin(ang) * 17);
+                int lh = (int) Math.floor(height[lx][lz]);
+                placePanoramaVoxel(lx, lh + 1, lz, COBBLE);
+                placePanoramaVoxel(lx, lh + 2, lz, COBBLE);
+                placePanoramaVoxel(lx, lh + 3, lz, GLOWSTONE);
+            }
 
             // ── Create machines showcase (all spinning where kinetic) ──
             // A leveled plaza holding a windmill, cogwheel power line, millstone,
@@ -976,19 +1150,42 @@ public class Main {
                 placePanoramaVoxel(mbx + 13, mby + h, mbz - 4, CASING, 0, 0);
             }
 
-            // Sky light: full brightness on every voxel. The shader samples the
-            // light map at the hit face's neighbor (air or water for every visible
-            // surface in this scene — no caves/overhangs), so surfaces are fully
-            // lit and depth comes from AO + the sun term. The air border chunks
-            // are already fully lit by this same loop.
-            int[] chunkPoolArr = panoramaWorld.getChunkPool();
-            int[] lightPoolArr = panoramaWorld.getLightPool();
-            for (int slot = 0; slot < panoramaNextSlot; slot++) {
-                int base = slot << 12;
-                for (int i = 0; i < 4096; i++) {
-                    lightPoolArr[base + i] = 0xFF;
+            // ── Lighting showcase: a lamp-lit hall and a mine adit ──
+            // Everything above is lit by the sun alone. These two structures are
+            // lit *only* by their own flames (a plank roof keeps the hall dark,
+            // the adit is buried in the ridge), so the menu shows what the light
+            // engine actually does: sky light falling away under a roof, warm
+            // tinted pools around the flames, soft falloff into the dark.
+            // The lighting-showcase hall itself: white walls, a skylight over a
+            // pool, a mirror wall and lanterns. The menu camera orbits inside it.
+            buildPanoramaShowcaseHall();
+
+            // Mine adit bored into the ridge: 3 wide, 2 high, 8 deep, timbered
+            // and lit by a single glowstone pocket at the far face.
+            final int mx = 30, mz = 94;
+            final int my = Math.max(26, panoramaTopY(mx, mz) - 2);
+            for (int x = mx - 1; x <= mx + 1; x++) {
+                for (int z = mz; z <= mz + 7; z++) {
+                    placePanoramaVoxel(x, my, z, 0);
+                    placePanoramaVoxel(x, my + 1, z, 0);
                 }
             }
+            for (int h = 0; h <= 2; h++) {
+                placePanoramaVoxel(mx - 1, my + h, mz + 3, LOG);
+                placePanoramaVoxel(mx + 1, my + h, mz + 3, LOG);
+                placePanoramaVoxel(mx - 1, my + h, mz + 6, LOG);
+                placePanoramaVoxel(mx + 1, my + h, mz + 6, LOG);
+            }
+            placePanoramaVoxel(mx, my + 2, mz + 3, LOG);
+            placePanoramaVoxel(mx, my + 2, mz + 6, LOG);
+            placePanoramaVoxel(mx, my + 1, mz + 7, GLOWSTONE);
+            placePanoramaVoxel(mx, my + 2, mz + 7, GLOWSTONE);
+            panoramaAditLightY = my + 1.5f;
+
+            // Sky + block light baked from the scene (replaces the flat 15-everywhere
+            // fill that lit every face equally and left the block channel empty).
+            buildPanoramaLight();
+            int[] lightPoolArr = panoramaWorld.getLightPool();
 
             // ── Upload the scene to the chunk SSBOs (same layout as uploadWorldToGpu) ──
             int poolSize = panoramaWorld.getPoolSizeForAlloc();
@@ -1001,7 +1198,7 @@ public class Main {
             chunkPoolSSBO = glCreateBuffers();
             glNamedBufferStorage(chunkPoolSSBO, (long) poolSize * 4096 * Integer.BYTES, GL_DYNAMIC_STORAGE_BIT);
             IntBuffer poolBuf = MemoryUtil.memAllocInt(poolSize * 4096);
-            poolBuf.put(chunkPoolArr).flip();
+            poolBuf.put(panoramaWorld.getChunkPool()).flip();
             glNamedBufferSubData(chunkPoolSSBO, 0, poolBuf);
             MemoryUtil.memFree(poolBuf);
 
@@ -1084,6 +1281,332 @@ public class Main {
         panoramaWorld.setVoxelInPool(slot, x & 15, y & 15, z & 15, type, extra, flags);
     }
 
+    /** Pool index of a panorama voxel, or -1 when its chunk is not allocated. */
+    private int panoramaPoolIndex(int x, int y, int z) {
+        if (x < 0 || y < 0 || z < 0
+                || x >= PANORAMA_LIGHT_XZ || y >= PANORAMA_LIGHT_Y || z >= PANORAMA_LIGHT_XZ) {
+            return -1;
+        }
+        int cx = x >> 4, cy = y >> 4, cz = z >> 4;
+        int slot = panoramaWorld.getIndirectionTable()[cx + cy * com.voxel.World.REGION_SIZE
+                + cz * com.voxel.World.REGION_SIZE * com.voxel.World.REGION_SIZE];
+        if (slot == com.voxel.World.EMPTY) return -1;
+        return (slot << 12) | ((x & 15) | ((y & 15) << 4) | ((z & 15) << 8));
+    }
+
+    /** Highest non-air y in a panorama column, or -1 when the column is all air. */
+    private int panoramaTopY(int x, int z) {
+        int[] chunkPool = panoramaWorld.getChunkPool();
+        for (int y = PANORAMA_LIGHT_Y - 1; y >= 0; y--) {
+            int i = panoramaPoolIndex(x, y, z);
+            if (i >= 0 && (chunkPool[i] & 0xFFFF) != 0) return y;
+        }
+        return -1;
+    }
+
+    /** Light opacity of a block id, read from BlockDataManager's flat table. */
+    private static int panoramaOpacity(int[] opacity, int id) {
+        return (id > 0 && id < opacity.length) ? opacity[id] : 0;
+    }
+
+    /** Flat light-bake index: x,z < 128 so each stride is a shift. */
+    private static int panoramaFlat(int x, int y, int z) {
+        return ((y << 7 | z) << 7) | x;
+    }
+
+    /**
+     * Builds the menu's lighting showcase: a white-walled hall with a skylight
+     * over a pool, a mirror wall, lantern boxes and room for the coloured point
+     * lights. White matte surfaces make every light source legible, and with
+     * {@link #PANORAMA_INTERIOR_VIEW} the orbit camera sits inside it, so the
+     * menu shows the sun's volumetric shaft through the opening, the warm pools
+     * baked from the lanterns, the tinted pools of the dynamic lights, and the
+     * mirror wall reflecting all of it — instead of an evenly sunlit diorama.
+     */
+    private void buildPanoramaShowcaseHall() {
+        int WHITE = blockRegistry.getId("wool");
+        if (WHITE <= 0) WHITE = 91;
+        int MIRROR = blockRegistry.getId("diamond_block");
+        if (MIRROR <= 0) MIRROR = 139;
+        int LAMP = blockRegistry.getId("sea_lantern");
+        if (LAMP <= 0) LAMP = 470;
+        int GLOW = blockRegistry.getId("glowstone");
+        if (GLOW <= 0) GLOW = 17;
+        int POOL = blockRegistry.getId("water");
+        if (POOL <= 0) POOL = 15;
+
+        final int lo = PANORAMA_HALL_MIN, hi = PANORAMA_HALL_MAX;
+        final int floor = (int) PANORAMA_FLOOR_Y;
+        final int wallTop = floor + 9;  // ceiling underside
+        final int roof = floor + 10;
+        final int cx = (int) PANORAMA_CX, cz = (int) PANORAMA_CZ;
+
+        // Clear the volume, then lay the floor slab over whatever it covers
+        // (the hall sits on the lake, so its floor is the waterline).
+        for (int x = lo; x <= hi; x++) {
+            for (int z = lo; z <= hi; z++) {
+                for (int y = floor; y <= roof; y++) placePanoramaVoxel(x, y, z, 0);
+                placePanoramaVoxel(x, floor, z, WHITE);
+            }
+        }
+        // Solid white walls.
+        for (int y = floor + 1; y <= wallTop; y++) {
+            for (int x = lo; x <= hi; x++) {
+                for (int z = lo; z <= hi; z++) {
+                    if (x != lo && x != hi && z != lo && z != hi) continue;
+                    placePanoramaVoxel(x, y, z, WHITE);
+                }
+            }
+        }
+        // Mirror wall on the north side (diamond_block: reflectivity 200, so the
+        // raytracer casts real reflection rays here and mirrors the lit room).
+        for (int y = floor + 2; y <= floor + 5; y++) {
+            for (int x = lo + 4; x <= hi - 4; x++) placePanoramaVoxel(x, y, lo, MIRROR);
+        }
+        // Doorway in the west wall: a slice of daylight and landscape spills in.
+        for (int y = floor + 1; y <= floor + 3; y++) {
+            for (int z = cz - 1; z <= cz + 1; z++) placePanoramaVoxel(lo, y, z, 0);
+        }
+        // Lantern boxes let into the two long walls at lighting height (block
+        // light). Only four of them: a lantern every six blocks on all four
+        // walls lit the whole hall to a flat mid-grey and left nothing for the
+        // coloured point lights or the sun shaft to stand out against.
+        int lampY = floor + 5;
+        for (int dx = -6; dx <= 6; dx += 12) {
+            placePanoramaVoxel(cx + dx, lampY, lo + 1, LAMP);
+            placePanoramaVoxel(cx + dx, lampY, hi - 1, LAMP);
+        }
+        // Roof with a skylight over the pool: the sun's shaft lands in the water.
+        for (int x = lo; x <= hi; x++) {
+            for (int z = lo; z <= hi; z++) {
+                boolean skylight = Math.abs(x - cx) <= 3 && Math.abs(z - cz) <= 3;
+                if (!skylight) placePanoramaVoxel(x, roof, z, WHITE);
+            }
+        }
+        // Hanging lanterns at the roof corners (a second block-light layer).
+        // Shallow pool under the skylight — water reflects and transmits.
+        for (int x = cx - 3; x <= cx + 3; x++) {
+            for (int z = cz - 3; z <= cz + 3; z++) placePanoramaVoxel(x, floor, z, POOL);
+        }
+    }
+
+    /**
+     * Bakes the panorama's light pool: a sky-light column sweep with a short
+     * horizontal spill, plus a block-light flood from every emissive voxel in the
+     * scene.
+     *
+     * <p>This reads the same opacity / seed-level / tint tables as the in-game
+     * {@link com.voxel.lighting.LightEngine}, so the menu shows what the world
+     * shows: sky light falling away under a roof, warm tinted pools around the
+     * flames, light bending around eaves. It replaces a flat "sky = 15 on every
+     * voxel" fill that lit every face equally and left the block-light channel
+     * permanently zero — which is why the lamp-lit hall and the mine adit had
+     * nothing to light them.</p>
+     */
+    private void buildPanoramaLight() {
+        final int XZ = PANORAMA_LIGHT_XZ, Y = PANORAMA_LIGHT_Y;
+        final int CELLS = Y * XZ * XZ;
+        int[] lightPool = panoramaWorld.getLightPool();
+        int[] chunkPool = panoramaWorld.getChunkPool();
+        int[] opacity = blockDataManager.getOpacityArray();
+        int[] emissive = blockDataManager.getEmissiveArray();
+        int[] tint = blockDataManager.getLightColorArray();
+        final int MAX = com.voxel.lighting.LightEngine.MAX_LIGHT;
+
+        byte[] sky = new byte[CELLS];
+        int[] blockRgb = new int[CELLS];
+
+        // Sky light: top-down at full strength, each voxel subtracting its own
+        // opacity from what continues down (air 0, water 3, leaves 1, full blocks
+        // 16). Each cell keeps the level that ARRIVED at it: opaque blocks hold
+        // light in Minecraft too, and the shader falls back to the block's own
+        // light where a face's neighbour lies outside the buffer (the region's
+        // outer edge), so storing it keeps the cliff faces lit.
+        for (int z = 0; z < XZ; z++) {
+            for (int x = 0; x < XZ; x++) {
+                int level = MAX;
+                for (int y = Y - 1; y >= 0; y--) {
+                    int i = panoramaPoolIndex(x, y, z);
+                    int id = i < 0 ? 0 : chunkPool[i] & 0xFFFF;
+                    sky[panoramaFlat(x, y, z)] = (byte) level;
+                    level = Math.max(0, level - panoramaOpacity(opacity, id));
+                }
+            }
+        }
+        // Horizontal spill: light only moves sideways ONE BLOCK PER PASS, so a
+        // roof keeps its interior shaded while doorways, windows and eaves stay
+        // bright — the gradient the flat fill could not express.
+        //
+        // Double-buffered on purpose. Relaxing in place lets the +X/+Y/+Z sweep
+        // order carry a single update along an unbounded run of cells (each one
+        // reading the value its predecessor wrote moments earlier), which floods
+        // every interior the bake exists to keep dark — the showcase hall came out
+        // as a uniformly white box because of exactly that.
+        byte[] skyNext = new byte[CELLS];
+        for (int pass = 0; pass < PANORAMA_SKY_SPILL_PASSES; pass++) {
+            System.arraycopy(sky, 0, skyNext, 0, CELLS);
+            for (int y = 0; y < Y; y++) {
+                for (int z = 0; z < XZ; z++) {
+                    for (int x = 0; x < XZ; x++) {
+                        int i = panoramaPoolIndex(x, y, z);
+                        int own = panoramaOpacity(opacity, i < 0 ? 0 : chunkPool[i] & 0xFFFF);
+                        if (own >= MAX) continue; // inside a solid block
+                        int flat = panoramaFlat(x, y, z);
+                        int best = sky[flat] & 0xFF;
+                        for (int d = 0; d < 6; d++) {
+                            int nx = x + PANO_NX[d], ny = y + PANO_NY[d], nz = z + PANO_NZ[d];
+                            if (nx < 0 || ny < 0 || nz < 0 || nx >= XZ || ny >= Y || nz >= XZ) continue;
+                            // Light does not come OUT of an opaque block, or the level a
+                            // roof stored as "light arriving at it" (15) would act as a
+                            // lamp in the room below.
+                            int ni = panoramaPoolIndex(nx, ny, nz);
+                            int nid = ni < 0 ? 0 : chunkPool[ni] & 0xFFFF;
+                            if (panoramaOpacity(opacity, nid) >= MAX) continue;
+                            int candidate = (sky[panoramaFlat(nx, ny, nz)] & 0xFF) - 1 - own;
+                            if (candidate > best) best = candidate;
+                        }
+                        skyNext[flat] = (byte) Math.max(0, Math.min(MAX, best));
+                    }
+                }
+            }
+            byte[] swap = sky;
+            sky = skyNext;
+            skyNext = swap;
+        }
+
+        // Block light: one flood per (emissive, tint) source type — LightEngine's
+        // own grouping — so overlapping flames add their tints rather than one
+        // silently replacing the other.
+        java.util.HashMap<Integer, java.util.ArrayDeque<Integer>> sources = new java.util.HashMap<>();
+        for (int y = 0; y < Y; y++) {
+            for (int z = 0; z < XZ; z++) {
+                for (int x = 0; x < XZ; x++) {
+                    int i = panoramaPoolIndex(x, y, z);
+                    if (i < 0) continue;
+                    int id = chunkPool[i] & 0xFFFF;
+                    if (id <= 0 || id >= emissive.length || emissive[id] <= 0) continue;
+                    int typeKey = (emissive[id] << 24) | (tint[id] & 0xFFFFFF);
+                    sources.computeIfAbsent(typeKey, k -> new java.util.ArrayDeque<>())
+                            .add(panoramaFlat(x, y, z));
+                }
+            }
+        }
+        byte[] level = new byte[CELLS];
+        for (java.util.Map.Entry<Integer, java.util.ArrayDeque<Integer>> entry : sources.entrySet()) {
+            int emissiveByte = (entry.getKey() >>> 24) & 0xFF;
+            int color = entry.getKey() & 0xFFFFFF;
+            java.util.Arrays.fill(level, (byte) 0);
+            java.util.ArrayDeque<Integer> queue = entry.getValue();
+            int seed = com.voxel.lighting.LightEngine.seedLevel(emissiveByte);
+            if (seed <= 0) continue;
+            for (int flat : queue) level[flat] = (byte) seed;
+            while (!queue.isEmpty()) {
+                int flat = queue.poll();
+                int cur = level[flat] & 0xFF;
+                if (cur <= 1) continue;
+                int x = flat & 127, z = (flat >> 7) & 127, y = flat >> 14;
+                for (int d = 0; d < 6; d++) {
+                    int nx = x + PANO_NX[d], ny = y + PANO_NY[d], nz = z + PANO_NZ[d];
+                    if (nx < 0 || ny < 0 || nz < 0 || nx >= XZ || ny >= Y || nz >= XZ) continue;
+                    int ni = panoramaPoolIndex(nx, ny, nz);
+                    int nid = ni < 0 ? 0 : chunkPool[ni] & 0xFFFF;
+                    int next = cur - 1 - panoramaOpacity(opacity, nid);
+                    int nflat = panoramaFlat(nx, ny, nz);
+                    if (next > (level[nflat] & 0xFF)) {
+                        level[nflat] = (byte) next;
+                        queue.add(nflat);
+                    }
+                }
+            }
+            // Accumulate this type's tinted channels exactly as the LightEngine
+            // does: channel = round(level × tint / (15 × tint headroom)).
+            int tr = (color >> 16) & 0xFF, tg = (color >> 8) & 0xFF, tb = color & 0xFF;
+            float divisor = (float) MAX * com.voxel.lighting.LightEngine.LIGHT_TINT_HEADROOM;
+            for (int flat = 0; flat < CELLS; flat++) {
+                int lv = level[flat] & 0xFF;
+                if (lv <= 0) continue;
+                int acc = blockRgb[flat];
+                int nr = Math.min(255, ((acc >> 16) & 0xFF) + Math.round(lv * tr / divisor));
+                int ng = Math.min(255, ((acc >> 8) & 0xFF) + Math.round(lv * tg / divisor));
+                int nb = Math.min(255, (acc & 0xFF) + Math.round(lv * tb / divisor));
+                blockRgb[flat] = (nr << 16) | (ng << 8) | nb;
+            }
+        }
+
+        // Write the pool: sky in bits 0-7 (level × 17, LightEngine's scale), the
+        // accumulated tint in bits 8-31.
+        for (int y = 0; y < Y; y++) {
+            for (int z = 0; z < XZ; z++) {
+                for (int x = 0; x < XZ; x++) {
+                    int i = panoramaPoolIndex(x, y, z);
+                    if (i < 0) continue;
+                    int flat = panoramaFlat(x, y, z);
+                    int rgb = blockRgb[flat];
+                    lightPool[i] = ((sky[flat] & 0xFF) * 17)
+                            | (((rgb >> 16) & 0xFF) << 8)
+                            | (((rgb >> 8) & 0xFF) << 16)
+                            | ((rgb & 0xFF) << 24);
+                }
+            }
+        }
+    }
+
+    /**
+     * Seeds the fixed sun/moon pool directions the menu's shafts are baked from.
+     * The gameplay pass derives the same 8 directions on its first world frame,
+     * which never runs while the menu is up, so the panorama seeds them itself.
+     */
+    private void ensurePanoramaPoolDirs() {
+        if (panoramaPoolDirsReady) return;
+        for (int i = 0; i < 8; i++) {
+            float sampleT = (i + 0.5f) / 8.0f * 1440.0f;
+            AtmosphereRenderer.computeSunDir(DimensionType.OVERWORLD, sampleT, poolDirs[i]);
+            poolDirs[8 + i][0] = -poolDirs[i][0];
+            poolDirs[8 + i][1] = -poolDirs[i][1];
+            poolDirs[8 + i][2] = -poolDirs[i][2];
+        }
+        panoramaPoolDirsReady = true;
+    }
+
+    /**
+     * Uploads the panorama's dynamic showcase lights — the {@code /light}
+     * feature: a cool lamp over the lake, a warm lamp over the Create machine
+     * plaza, and an amber lamp down the mine adit. Same 8-float record the world
+     * uses (position.xyz, radius, colour.rgb, intensity), buffer-relative.
+     */
+    private void uploadPanoramaPointLights() {
+        panoramaPlBuf.clear();
+        // The header count MUST be raw int bits: the shader reads it as an int.
+        panoramaPlBuf.put(Float.intBitsToFloat(PANORAMA_SHOWCASE_LIGHTS)).put(0).put(0).put(0);
+        // Inside the showcase hall: four saturated corners plus a warm lamp under
+        // the skylight, so the white walls read the colour of each source.
+        //
+        // Intensity/radius are deliberately small. The shader's point light is a
+        // flat 2-tone term with no inverse-square falloff (only "fades over the
+        // radius"), so in a 23-block hall five lights at radius 14 stacked every
+        // surface up to several units of white — the hall came out as a uniformly
+        // lit white box. Tight radii keep each source a legible pool on a dark
+        // wall, which is the whole point of a lighting showcase.
+        // Intensity is compared against the baked lantern level (a lantern face
+        // lands at ~0.21 in the shader's beam term), so the dynamic sources sit
+        // just above it: they tint the white walls without lifting the whole
+        // hall off black, which is what made the menu a pale grey box.
+        putPanoramaLight(48.5f, 31.0f, 48.5f, 8f, 1.0f, 0.25f, 0.20f, 0.16f);  // red
+        putPanoramaLight(63.5f, 31.0f, 48.5f, 8f, 0.30f, 1.0f, 0.40f, 0.16f);  // green
+        putPanoramaLight(48.5f, 31.0f, 63.5f, 8f, 0.30f, 0.45f, 1.0f, 0.16f);  // blue
+        putPanoramaLight(63.5f, 31.0f, 63.5f, 8f, 1.0f, 0.30f, 0.90f, 0.16f);  // magenta
+        putPanoramaLight(56.5f, 34.0f, 56.5f, 9f, 1.0f, 0.72f, 0.35f, 0.14f);  // under the skylight
+        putPanoramaLight(30.5f, panoramaAditLightY, 99.5f, 16f, 1.0f, 0.5f, 0.2f, 2.2f); // adit
+        panoramaPlBuf.flip();
+        glNamedBufferSubData(pointLightSSBO, 0, panoramaPlBuf);
+    }
+
+    private void putPanoramaLight(float x, float y, float z, float radius,
+                                  float r, float g, float b, float intensity) {
+        panoramaPlBuf.put(x).put(y).put(z).put(radius);
+        panoramaPlBuf.put(r).put(g).put(b).put(intensity);
+    }
+
     /** Builds a grass-topped floating mound (classic panorama floating island). */
     private void buildPanoramaIsland(int cx, int baseY, int cz, int radius, int grass, int dirt, int stone) {
         for (int dx = -radius; dx <= radius; dx++) {
@@ -1107,16 +1630,49 @@ public class Main {
      * gameplay state (entities, point lights, break overlay, light-pool regen).
      */
     private void renderMenuPanorama(float dt) {
-        // Slow orbit (~2.5 min/revolution) + gentle sun drift for a living sky.
-        panoramaAngle += dt * 0.042f;
-        panoramaTime += dt * 1.8f;
-        if (panoramaTime > 24000f) panoramaTime -= 24000f;
+        // Slow orbit (~2.5 min/revolution) with a breathing radius/height and a
+        // target that eases between the lake and the machine plaza, so the menu
+        // never reads as a flat turntable. Sun drift keeps the sky alive.
+        panoramaAngle += dt * 0.040f;
+        // Bounce the clock inside a daylight window rather than wrapping a whole
+        // day: drifting past dusk (or a start time at night) collapses the menu
+        // terrain to ambient-only lighting.
+        panoramaTime += dt * 1.4f * panoramaTimeDir;
+        if (panoramaTime >= PANORAMA_END_TIME) {
+            panoramaTime = PANORAMA_END_TIME;
+            panoramaTimeDir = -1f;
+        } else if (panoramaTime <= PANORAMA_START_TIME) {
+            panoramaTime = PANORAMA_START_TIME;
+            panoramaTimeDir = 1f;
+        }
 
         float a = panoramaAngle;
-        float camX = PANORAMA_CX + (float) Math.cos(a) * 46f;
-        float camZ = PANORAMA_CZ + (float) Math.sin(a) * 46f;
-        float camY = PANORAMA_CY + 18f + (float) Math.sin(a * 0.7f) * 3.0f;
-        float dx = PANORAMA_CX - camX, dy = PANORAMA_CY + 8f - camY, dz = PANORAMA_CZ - camZ;
+        float orbit, camX, camY, camZ, targetX, targetY, targetZ;
+        if (PANORAMA_INTERIOR_VIEW) {
+            // Inside the showcase hall: a slow walk around the central pool, so the
+            // white walls, the mirror wall, the lantern pools and the sun shaft
+            // through the skylight all pass through frame.
+            orbit = 9.2f + 0.9f * (float) Math.sin(a * 0.63f);
+            camX = PANORAMA_CX + (float) Math.cos(a) * orbit;
+            camZ = PANORAMA_CZ + (float) Math.sin(a) * orbit;
+            camY = PANORAMA_FLOOR_Y + 3.2f + (float) Math.sin(a * 0.81f + 1.1f) * 0.6f;
+            targetX = PANORAMA_CX + 2.6f * (float) Math.sin(a * 0.47f);
+            targetY = PANORAMA_FLOOR_Y + 2.1f + 0.9f * (float) Math.sin(a * 0.39f + 0.6f);
+            targetZ = PANORAMA_CZ - 2.6f * (float) Math.cos(a * 0.47f);
+        } else {
+            // Outdoor orbit: rolling hills, the lake, the machine plaza.
+            orbit = 40f + 3.2f * (float) Math.sin(a * 0.63f);
+            camX = PANORAMA_CX + (float) Math.cos(a) * orbit;
+            camZ = PANORAMA_CZ + (float) Math.sin(a) * orbit;
+            camY = PANORAMA_CY + 15.5f + (float) Math.sin(a * 0.81f + 1.1f) * 3.4f;
+            targetX = PANORAMA_CX + 2.4f * (float) Math.sin(a * 0.47f);
+            targetY = PANORAMA_CY + 2.6f + 1.4f * (float) Math.sin(a * 0.39f + 0.6f);
+            targetZ = PANORAMA_CZ - 2.4f * (float) Math.cos(a * 0.47f);
+        }
+        panoramaCamX = camX;
+        panoramaCamY = camY;
+        panoramaCamZ = camZ;
+        float dx = targetX - camX, dy = targetY - camY, dz = targetZ - camZ;
         double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
         double ry = Math.atan2(dz, dx);
         double rp = Math.asin(Math.max(-1.0, Math.min(1.0, dy / dist)));
@@ -1131,9 +1687,8 @@ public class Main {
 
         glUseProgram(computeProgram);
 
-        // No point lights (defensive re-zero of the count header every frame).
-        panoramaPlHeader.rewind();
-        glNamedBufferSubData(pointLightSSBO, 0, panoramaPlHeader);
+        // Dynamic showcase lights (the /light feature): see uploadPanoramaPointLights().
+        uploadPanoramaPointLights();
 
         // Camera + world uniforms (buffer-relative; the panorama world offset is 0).
         glProgramUniform3f(computeProgram, 0, cfx, cfy, cfz);
@@ -1169,7 +1724,9 @@ public class Main {
         glBindTexture(GL_TEXTURE_2D_ARRAY, textureManager.getDestroyStageArrayId());
         if (locDestroyStages >= 0) glUniform1i(locDestroyStages, 17);
         glActiveTexture(GL_TEXTURE15);
-        glBindTexture(GL_TEXTURE_2D, hud.uiTextureId);
+        // The headless probe judges the scene itself, so it samples an empty UI
+        // texture and the menu panel/text never cover the measured frame.
+        glBindTexture(GL_TEXTURE_2D, panoramaProbe ? 0 : hud.uiTextureId);
         glUniform1i(locUISource, 15);
 
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
@@ -1182,22 +1739,40 @@ public class Main {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, lightSSBO);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, sdfSSBO);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, columnTopSSBO);
-        glProgramUniform1i(computeProgram, locCraftingItemCount, 0);
+        String dbg = System.getenv("VOXEL_PANORAMA_DEBUG");
+        glProgramUniform1i(computeProgram, locCraftingItemCount,
+                "depth".equals(dbg) ? -9911
+                : "terms".equals(dbg) ? -9912
+                : "surf".equals(dbg) ? -9913
+                : "pos".equals(dbg) ? -9914 : 0);
 
-        // God-ray state: real uniforms, but the pools are zeroed so no shafts
-        // appear — avoids any stale/undefined pool-texture sampling.
-        glProgramUniform1i(computeProgram, LOC_SHADOW_PASS, 0);
+        // God rays: bake the sun pool the shaft march samples. Handing the shader
+        // zeroed pools reads as "occluded everywhere" (depth 0) and produced no
+        // shafts at all; regenerating the active pool shows real light shafts
+        // through the trees, under the bridge and past the floating islands.
         AtmosphereRenderer.computeSunDir(DimensionType.OVERWORLD, panoramaTime, activeSunDir);
         activeMoonDir[0] = -activeSunDir[0];
         activeMoonDir[1] = -activeSunDir[1];
         activeMoonDir[2] = -activeSunDir[2];
+        ensurePanoramaPoolDirs();
+        int sunPool = nearestPool(activeSunDir, 0);
+        if (sunPool != panoramaSunPool || panoramaPoolFrame % 8 == 0) {
+            panoramaSunPool = sunPool;
+            if (atmosphereRenderer.sunLuminance() > 0.01f) {
+                regenLightPool(sunPool, cbx, cby, cbz, org.lwjgl.opengl.GL30.GL_R32F);
+            }
+        }
+        panoramaPoolFrame++;
+        glProgramUniform1i(computeProgram, LOC_SHADOW_PASS, 0);
+        // Bind the ACTIVE pools + their ortho bases for the shaft march, exactly
+        // as the gameplay pass does after its own regeneration dispatches.
         uploadPoolBasis(LOC_SHADOW_ORIGIN, LOC_SHADOW_RIGHT, LOC_SHADOW_UP, LOC_SHADOW_SUN_DIR,
-                activeSunDir, cbx, cby, cbz);
+                poolDirs[sunPool], cbx, cby, cbz);
         uploadPoolBasis(LOC_MOON_POOL_ORIGIN, LOC_MOON_POOL_RIGHT, LOC_MOON_POOL_UP, LOC_MOON_POOL_DIR,
-                activeMoonDir, cbx, cby, cbz);
+                poolDirs[8], cbx, cby, cbz);
         glProgramUniform2f(computeProgram, LOC_SHADOW_EXTENT, shadowHalfExtent, shadowDepth);
         glActiveTexture(GL_TEXTURE18);
-        glBindTexture(GL_TEXTURE_2D, lightPoolTex[0]);
+        glBindTexture(GL_TEXTURE_2D, lightPoolTex[sunPool]);
         glActiveTexture(GL_TEXTURE19);
         glBindTexture(GL_TEXTURE_2D, lightPoolTex[8]);
         glProgramUniform1i(computeProgram, LOC_SUN_POOL, 18);
@@ -1205,7 +1780,15 @@ public class Main {
         glProgramUniform1f(computeProgram, LOC_SHADOW_MAP_SIZE, 1.0f / shadowMapRes);
 
         glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
-        glProgramUniform1f(computeProgram, LOC_EXPOSURE, currentExposure);
+        glProgramUniform1f(computeProgram, LOC_EXPOSURE,
+                PANORAMA_INTERIOR_VIEW ? PANORAMA_INTERIOR_EXPOSURE : currentExposure);
+        if (panoramaProbe) System.out.printf("[PANORAMA EXPOSURE] %.2f%n",
+                PANORAMA_INTERIOR_VIEW ? PANORAMA_INTERIOR_EXPOSURE : currentExposure);
+        // Probe diagnostic: paint the target magenta first, so a dump that comes
+        // back magenta proves the dispatch below never wrote the frame.
+        if (panoramaProbe) {
+            glClearTexImage(renderTexture, 0, GL_RGBA, GL_FLOAT, new float[]{1f, 0f, 1f, 1f});
+        }
         glDispatchCompute((renderW + 15) / 16, (renderH + 15) / 16, 1);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
@@ -1886,10 +2469,18 @@ public class Main {
      * resource creation stay in init() — they're not moved.
      */
     private void initializeWorldPhase() {
+        // Committing a world must start from a clean slate: the lazy-stamping
+        // registries and static spawn state are session-scoped and would
+        // otherwise leak in from a previously played world.
+        resetWorldStaticState();
         // A fresh world instance: reset the zone popup so a new or reloaded
         // tutorial world re-fires title cards.
         currentTutorialZone = -1;
         tutorialMinecartsSpawned = false;
+        tutorialMobZonesSpawned.clear();
+        if (ctx.tutorialProgress != null) ctx.tutorialProgress.reset();
+        pointClickDemoSpawned = false;
+        showcaseDemoSpawned = false;
         // Create only the saved dimension at startup; other dimensions lazy-load.
         // A save may have been last used outside the Overworld, and restoring its
         // coordinates into an Overworld manager makes the player appear stuck in
@@ -1900,6 +2491,7 @@ public class Main {
         dimensionManager.setWorldSeed(ctx.worldSeed);
         dimensionManager.setTutorialWorld(ctx.tutorialWorld);
         dimensionManager.setPointClickWorld(ctx.pointClickWorld);
+        dimensionManager.setShowcaseWorld(ctx.showcaseWorld);
         dimensionManager.createDimension(initialDimension, initialRenderDistance);
         // createDimension populates the dimension map but leaves the active
         // dimension pointer alone; make sure it targets the selected dimension
@@ -2068,6 +2660,36 @@ public class Main {
         setStatus("Welcome back to \"" + ctx.saveName + "\"!");
     }
 
+    /**
+     * Clears the session-scoped static state that lazy world content and the
+     * spawner systems fill while a world is being played. Without this, loading
+     * a world after playing another one left sites flagged "already built" (so
+     * their structures were never stamped and their builder population was
+     * never queued) and stale spawner/story flags carried over.
+     *
+     * <p>Called once per committed world from {@link #initializeWorldPhase()},
+     * before terrain or entities exist, so every site/story beat is fresh.</p>
+     */
+    private void resetWorldStaticState() {
+        com.voxel.world.AncientBuilderSites.resetForTest();
+        com.voxel.game.AncientBuilderPopulation.resetForTest();
+        com.voxel.world.AncientBuilderModern.resetForTest();
+        com.voxel.world.McsmStructures.resetForTest();
+        com.voxel.world.LegendsStructures.resetForTest();
+        com.voxel.world.DungeonsStructures.resetForTest();
+        com.voxel.world.AncientCity.resetForTest();
+        com.voxel.world.MobSpawnerLogic.resetForTests();
+        com.voxel.game.McsmStory.resetForTest();
+        com.voxel.game.CampaignStory.resetForTest();
+        com.voxel.game.MelodyPortal.reset();
+        com.voxel.world.BeaconLogic.resetForTests();
+        com.voxel.game.TntBlock.resetForTest();
+        com.voxel.game.FormidiBomb.resetForTest();
+        com.voxel.game.SiftSieve.resetForTest();
+        com.voxel.ai.speech.CaptionSpeech.resetForTest();
+        com.voxel.ai.brain.Chaos.reset();
+    }
+
     // ── Entity persistence restore ──
     private org.json.JSONArray pendingEntitySpawns = null;
     private DimensionType entityDimWatcher = null;
@@ -2082,11 +2704,26 @@ public class Main {
             java.util.List<com.voxel.entity.Entity> spawned = com.voxel.entity.EntityPersistence
                     .createForDimension(new org.json.JSONArray().put(o), dim, entityTmh());
             World dimWorld = dimensionManager.peekWorld(dim);
+            // The active dimension is always instantiated by the time restore
+            // runs; fall back to the live world rather than leaving entities
+            // unbound if the instance lookup ever misses.
+            if (dimWorld == null && dim == activeDimension) dimWorld = world;
             for (com.voxel.entity.Entity e : spawned) {
-                if (dimWorld != null && e instanceof com.voxel.entity.EnemyEntity) ((com.voxel.entity.EnemyEntity) e).setWorld(dimWorld);
-                else if (dimWorld != null && e instanceof com.voxel.entity.AetherPassiveEntity)
-                    ((com.voxel.entity.AetherPassiveEntity) e).setWorld(dimWorld);
+                // EVERY restored entity must be rebound to its dimension's
+                // world. Only enemies and Aether wildlife used to be: villagers,
+                // livestock and golems came back with world == null, so their
+                // brain tick (VillagerEntity guards on "brain != null &&
+                // world != null") and ground movement were skipped and they
+                // stood frozen after a save load.
+                if (dimWorld != null) e.setWorld(dimWorld);
                 entityManager.addEntity(e);
+                // Villages are not persisted: a restored villager must rejoin one
+                // so it resumes work and trading instead of idling outside any
+                // village with no job site.
+                if (e instanceof com.voxel.entity.VillagerEntity && ctx.villageManager != null) {
+                    ctx.villageManager.bindRestoredVillager(
+                            (com.voxel.entity.VillagerEntity) e, dimWorld);
+                }
             }
         }
         pendingEntitySpawns = remaining;
@@ -2356,7 +2993,7 @@ public class Main {
                 case LOAD_SAVE: ctx.menuScreen = GameContext.MenuScreen.MAIN; ctx.menuSelection = 0; break;
                 case NEW_WORLD_SIZE: ctx.menuScreen = GameContext.MenuScreen.NEW_WORLD_SEED; ctx.menuTextActive = true; break;
                 case NEW_WORLD_MODE: ctx.menuScreen = GameContext.MenuScreen.NEW_WORLD_SIZE; break;
-                case OPTIONS: ctx.menuScreen = GameContext.MenuScreen.MAIN; ctx.menuSelection = 3; break;
+                case OPTIONS: ctx.menuScreen = GameContext.MenuScreen.MAIN; ctx.menuSelection = 5; break;
                 default: break;
             }
             return;
@@ -2368,8 +3005,8 @@ public class Main {
 
         switch (screen) {
             case MAIN: {
-                // Title screen: world creation, tutorial, saves, and options.
-                int optionCount = 5;
+                // Title screen: world creation, showcase, tutorial, saves, options.
+                int optionCount = 6;
                 if (menuKeyPressed(GLFW_KEY_UP)) {
                     ctx.menuSelection--;
                     if (ctx.menuSelection < 0) ctx.menuSelection = optionCount - 1;
@@ -2382,14 +3019,32 @@ public class Main {
                     switch (ctx.menuSelection) {
                         case 0: // New World
                             ctx.pointClickWorld = false;
+                            ctx.tutorialWorld = false;
+                            ctx.showcaseWorld = false;
                             ctx.menuScreen = GameContext.MenuScreen.NEW_WORLD_NAME;
                             ctx.menuTextActive = true;
                             ctx.menuTextInput.setLength(0);
                             ctx.menuTextInput.append("New World");
                             break;
-                        case 1: // Tutorial World (load the bundled handcrafted world)
+                        case 1: // Showcase World — creative hub for every feature/dimension
+                            ctx.tutorialWorld = false;
+                            ctx.pointClickWorld = false;
+                            ctx.showcaseWorld = true;
+                            ctx.saveName = "showcase";
+                            copyShowcaseTemplate();
+                            loadSaveIntoContext("showcase");
+                            // loadLevelData() adopts level.dat's mode; the showcase
+                            // is always creative so it can be flown through freely.
+                            ctx.gameMode = GameContext.GameMode.CREATIVE;
+                            ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
+                            ctx.cursorRayOverride = null;
+                            updateCursorMode();
+                            setStatus("Showcase World loaded — every feature and dimension, in creative.");
+                            break;
+                        case 2: // Tutorial World (load the bundled handcrafted world)
                             ctx.tutorialWorld = true;
                             ctx.pointClickWorld = false;
+                            ctx.showcaseWorld = false;
                             ctx.saveName = "tutorial";
                             // The handcrafted world ships in git-tracked resources
                             // (not the git-ignored saves/ dir). Copy it into the
@@ -2399,9 +3054,10 @@ public class Main {
                             ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
                             setStatus("Entering Tutorial World — a hand-built Create showcase!");
                             break;
-                        case 2: // Point & Click Demo (separate small showcase world)
+                        case 3: // Point & Click Demo (separate small showcase world)
                             ctx.tutorialWorld = false;
                             ctx.pointClickWorld = true;
+                            ctx.showcaseWorld = false;
                             ctx.saveName = "pointclick";
                             copyPointClickTemplate();
                             loadSaveIntoContext("pointclick");
@@ -2410,12 +3066,12 @@ public class Main {
                             updateCursorMode();
                             setStatus("Point & Click Demo loaded.");
                             break;
-                        case 3: // Load Save
+                        case 4: // Load Save
                             ctx.saveList = com.voxel.world.WorldSaveManager.listSaves();
                             ctx.saveListSelection = 0;
                             ctx.menuScreen = GameContext.MenuScreen.LOAD_SAVE;
                             break;
-                        case 4: // Options
+                        case 5: // Options
                             ctx.menuScreen = GameContext.MenuScreen.OPTIONS;
                             ctx.menuSelection = 0;
                             break;
@@ -2541,6 +3197,10 @@ public class Main {
                 // ENTER or the mouse-clicked LOAD button both commit the selection.
                 if ((menuKeyPressed(GLFW_KEY_ENTER) || confirmRequested) && n > 0) {
                     String name = ctx.saveList.get(ctx.saveListSelection);
+                    // The showcase flag is not persisted in level.dat, so clear it
+                    // here; tutorialWorld is restored from level.dat by the loader.
+                    ctx.showcaseWorld = false;
+                    ctx.pointClickWorld = false;
                     loadSaveIntoContext(name);
                 }
                 if (menuKeyPressed(GLFW_KEY_ESCAPE)) {
@@ -2555,16 +3215,38 @@ public class Main {
         }
     }
 
-    /** Copies the bundled handcrafted Tutorial World template into the save dir. */
+    /**
+     * Materialises the handcrafted Tutorial World into the save dir.
+     *
+     * <p>Prefers the bundled template, then the Maven output copy, then a full
+     * runtime rebuild through {@link com.voxel.tools.TutorialWorldExporter}. The
+     * rebuild is what makes the tutorial safe to launch from an IDE or jar whose
+     * working directory is not the repo root — the old bare file-copy failed
+     * there and silently left the player on the flat fallback plain.</p>
+     */
     private void copyTutorialTemplate() {
-        java.io.File src = new java.io.File("src/main/resources/tutorial_world");
         java.io.File dst = new java.io.File(com.voxel.world.WorldSaveManager.SAVES_DIR, "tutorial");
         com.voxel.world.WorldSaveManager.deleteSave("tutorial");
-        if (!src.isDirectory()) {
-            System.err.println("Tutorial template missing: " + src.getAbsolutePath());
-            return;
+
+        String configured = System.getProperty("voxel.tutorial.template");
+        java.io.File[] candidates = {
+            configured == null ? null : new java.io.File(configured),
+            new java.io.File("src/main/resources/tutorial_world"),
+            new java.io.File("target/classes/tutorial_world")
+        };
+        for (java.io.File src : candidates) {
+            if (src != null && src.isDirectory()) {
+                copyDir(src, dst);
+                return;
+            }
         }
-        copyDir(src, dst);
+        System.out.println("Tutorial template not found on disk — rebuilding it now...");
+        try {
+            com.voxel.tools.TutorialWorldExporter.exportTo(dst);
+        } catch (Exception e) {
+            System.err.println("Failed to rebuild the Tutorial World: " + e);
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -2588,6 +3270,28 @@ public class Main {
             // Last-resort fallback: copy the bundled template if it is on disk.
             java.io.File src = new java.io.File("src/main/resources/pointclick_world");
             if (src.isDirectory()) copyDir(src, dst);
+        }
+    }
+
+    /**
+     * Creates the creative Showcase World save.
+     *
+     * The hub terrain is regenerated at runtime by
+     * {@link com.voxel.world.ShowcaseWorldGenerator} (from
+     * {@link com.voxel.world.ShowcaseWorldAuthor}) into every section, so —
+     * unlike the bundled Tutorial / Point &amp; Click maps — there are no chunk
+     * files to copy. Only level.dat is written: it records the creative game
+     * mode, the plaza spawn point and a starter kit, and it is what makes the
+     * world show up in the Load Save list.
+     */
+    private void copyShowcaseTemplate() {
+        java.io.File dst = new java.io.File(com.voxel.world.WorldSaveManager.SAVES_DIR,
+                com.voxel.tools.ShowcaseWorldExporter.SAVE_NAME);
+        com.voxel.world.WorldSaveManager.deleteSave(com.voxel.tools.ShowcaseWorldExporter.SAVE_NAME);
+        try {
+            com.voxel.tools.ShowcaseWorldExporter.exportTo(dst);
+        } catch (Exception e) {
+            System.err.println("Failed to write Showcase World level.dat: " + e);
         }
     }
 
@@ -2633,7 +3337,20 @@ public class Main {
         ctx.menuScreen = GameContext.MenuScreen.IN_GAME;
         ctx.menuTextActive = false;
         ctx.spawnLoadingMessage = "Loading world...";
-        if (ctx.cinematic != null) ctx.cinematic.playIntro();
+        if (ctx.cinematic != null) {
+            // Each world gets its own opening beat. Plain save loads simply fade
+            // in — replaying the "new world" intro on an established save was
+            // both wrong and a camera hijack every time the player resumed.
+            ctx.cinematic.resetFirstTimeFlags();
+            boolean tutorial = ctx.tutorialWorld || "tutorial".equals(name);
+            boolean showcase = ctx.showcaseWorld || com.voxel.tools.ShowcaseWorldExporter.SAVE_NAME.equals(name);
+            boolean pointClick = ctx.pointClickWorld || "pointclick".equals(name);
+            if (tutorial) ctx.cinematic.playTutorialIntro();
+            else if (showcase) ctx.cinematic.playShowcaseIntro();
+            else if (pointClick) ctx.cinematic.playPointClickIntro();
+            else if (!ctx.loadPending) ctx.cinematic.playIntro();
+            else ctx.cinematic.respawnFade();
+        }
         setStatus("Loading save \"" + name + "\"");
     }
 
@@ -2646,7 +3363,8 @@ public class Main {
         StringBuilder sb = new StringBuilder();
         if (screen == GameContext.MenuScreen.MAIN) {
             sb.append("VOXEL ENGINE\n\n");
-            String[] options = { "New World", "Tutorial World", "Point & Click Demo", "Load Save", "Theme: " +
+            String[] options = { "New World", "Showcase World", "Tutorial World",
+                "Point & Click Demo", "Load Save", "Theme: " +
                 (ctx.uiTheme == GameContext.UiTheme.DARK ? "Dark" : "Light") };
             for (int i = 0; i < options.length; i++) {
                 sb.append(ctx.menuSelection == i ? "> " : "  ").append(options[i]).append("\n");
@@ -2855,6 +3573,41 @@ public class Main {
                 // player enters them (the combat arena and quarry should not sit
                 // empty — they exist to be fought in).
                 spawnTutorialZoneMobs(currentTutorialZone);
+                tickTutorialProgress();
+            }
+
+            // Showcase World: announce each district as the player walks into
+            // it, and populate the plaza with a villager guide + ancient builder
+            // so the hub feels alive on entry.
+            if (ctx.showcaseWorld) {
+                int zoneIdx = com.voxel.world.ShowcaseWorldAuthor.zoneAt(
+                        player.getPosition().x, player.getPosition().z);
+                if (zoneIdx != currentTutorialZone) {
+                    currentTutorialZone = zoneIdx;
+                    if (zoneIdx >= 0) {
+                        com.voxel.world.ShowcaseWorldAuthor.Zone zone =
+                                com.voxel.world.ShowcaseWorldAuthor.zones()[zoneIdx];
+                        showTutorialPopup(zone.name, zone.subtitle);
+                    }
+                }
+                if (!showcaseDemoSpawned && !ctx.initializing
+                        && ctx.world != null && ctx.entityManager != null) {
+                    showcaseDemoSpawned = true;
+                    int g = com.voxel.world.ShowcaseWorldAuthor.G;
+                    com.voxel.entity.VillagerEntity guide = new com.voxel.entity.VillagerEntity(
+                            nextTutorialMobId++, new Vector3f(3.5f, g + 1, 8.5f), textureManager);
+                    guide.dimension = activeDimension;
+                    guide.setWorld(world);
+                    entityManager.addEntity(guide);
+                    com.voxel.entity.AncientBuilderEntity host =
+                            new com.voxel.entity.AncientBuilderEntity(
+                                    nextTutorialMobId++, new Vector3f(-3.5f, g + 1, 8.5f), textureManager);
+                    host.setRole(com.voxel.entity.AncientBuilderEntity.Role.ARCHITECT);
+                    host.setHomeSite(new org.joml.Vector3i(0, g + 1, 0), "Showcase Plaza");
+                    host.dimension = activeDimension;
+                    host.setWorld(world);
+                    entityManager.addEntity(host);
+                }
             }
 
             // Point & Click demo world: spawn the plaza villager once the
@@ -3649,9 +4402,24 @@ public class Main {
                     entityManager);
         }
 
-        // Tick villager TV system
+        // Tick villager TV system. The broadcast only speaks on the channel a
+        // viewer is actually watching, so a wall of screens left on the default
+        // channel does not narrate the whole village.
         if (ctx.tvSystem != null) {
+            ctx.tvSystem.setWatchedChannel(ctx.tvWatching ? ctx.tvChannel : -1);
             ctx.tvSystem.tick(dt);
+            java.util.List<VillagerTVSystem.TvEvent> tvEvents = ctx.tvSystem.drainEvents();
+            if (!tvEvents.isEmpty() && ctx.villagerAudioManager != null) {
+                String callsign = ctx.tvSystem.getChannelCallsign(ctx.tvChannel);
+                for (VillagerTVSystem.TvEvent event : tvEvents) {
+                    if (event.cue != null) {
+                        ctx.villagerAudioManager.requestTvMusicCue(event.cue);
+                    }
+                    if (event.line != null && event.line.isSpoken()) {
+                        ctx.villagerAudioManager.requestTvLine(event.line, callsign);
+                    }
+                }
+            }
         }
 
         // Fall from Aether: if player drops below y=0, fall back to Overworld
@@ -4244,6 +5012,7 @@ public class Main {
                 // scene with a slowly orbiting camera and composites the menu UI
                 // (u_UITexture) on top — the same path used in-world.
                 renderMenuPanorama(Math.min(dt, 0.1f));
+                maybeRunPanoramaProbe(); // TEMP measurement hook (VOXEL_PANORAMA_PROBE)
             } else if (!ctx.initializing) {
             // World buffer origin — used to make all shader positions buffer-relative
             int wox = world.getOffsetX(), woy = world.getOffsetY(), woz = world.getOffsetZ();
@@ -4604,7 +5373,11 @@ public class Main {
             glfwPollEvents();
             if (musicPlayer != null) {
                 musicPlayer.update();
-                if (desiredMusicContext != null) {
+                // The title screen gets its own pool; in-game the logic thread
+                // publishes the scene-appropriate context from world state.
+                if (ctx != null && ctx.menuScreen != GameContext.MenuScreen.IN_GAME) {
+                    musicPlayer.playContext(com.voxel.audio.MusicDirector.CONTEXT_MENU);
+                } else if (desiredMusicContext != null) {
                     musicPlayer.playContext(desiredMusicContext);
                 }
             }
@@ -4618,7 +5391,9 @@ public class Main {
 
     /**
      * Counts hostile mobs around the player and picks the music pool the
-     * render thread should switch to (combat > danger > night > calm).
+     * render thread should switch to. Priority lives in
+     * {@link com.voxel.audio.MusicDirector#contextForScene}: boss > combat >
+     * danger > dimension mood > cave > night > hub/village > calm.
      */
     private void updateMusicContext(com.voxel.Player player) {
         if (musicPlayer == null || entityManager == null || player == null) return;
@@ -4626,8 +5401,10 @@ public class Main {
         float py = com.voxel.utils.FixedPoint.toFloat(player.getFixedY());
         float pz = com.voxel.utils.FixedPoint.toFloat(player.getFixedZ());
         int close = 0, near = 0;
+        boolean boss = false;
         float combatSq = com.voxel.audio.MusicDirector.COMBAT_RANGE * com.voxel.audio.MusicDirector.COMBAT_RANGE;
         float dangerSq = com.voxel.audio.MusicDirector.DANGER_RANGE * com.voxel.audio.MusicDirector.DANGER_RANGE;
+        float bossSq = 42f * 42f;
         for (com.voxel.entity.Entity e : entityManager.getEntitiesSnapshot()) {
             if (!(e instanceof com.voxel.entity.EnemyEntity)) continue;
             com.voxel.entity.EnemyEntity mob = (com.voxel.entity.EnemyEntity) e;
@@ -4637,8 +5414,50 @@ public class Main {
             float d2 = dx * dx + dy * dy + dz * dz;
             if (d2 <= combatSq) close++;
             else if (d2 <= dangerSq) near++;
+            if (d2 <= bossSq && (mob instanceof com.voxel.entity.WitherStormEntity
+                    || mob instanceof com.voxel.entity.GreatHogEntity
+                    || mob instanceof com.voxel.entity.ArchIllagerEntity
+                    || mob instanceof com.voxel.entity.HeartOfEnderEntity)) {
+                boss = true;
+            }
         }
-        desiredMusicContext = com.voxel.audio.MusicDirector.contextFor(near + close, close, isNightTime());
+        boolean nearVillage = false;
+        if (ctx.villageManager != null) {
+            com.voxel.game.VillagerVillageManager.Village village =
+                    ctx.villageManager.findNearestVillage(px, pz);
+            if (village != null) {
+                float dx = village.center.x - px, dz = village.center.z - pz;
+                nearVillage = dx * dx + dz * dz <= 56f * 56f;
+            }
+        }
+        if (ctx.musicMuted) {
+            desiredMusicContext = null;
+            return;
+        }
+        if (ctx.musicOverride != null) {
+            desiredMusicContext = ctx.musicOverride;
+            return;
+        }
+        desiredMusicContext = com.voxel.audio.MusicDirector.contextForScene(
+                activeDimension.name, isUnderground(px, py, pz),
+                near + close, close, isNightTime(), boss,
+                ctx.tutorialWorld || ctx.showcaseWorld, nearVillage);
+    }
+
+    /** True when solid rock sits overhead — caves, mineshafts, tunnels. */
+    private boolean isUnderground(float px, float py, float pz) {
+        if (world == null) return false;
+        int x = (int) Math.floor(px);
+        int z = (int) Math.floor(pz);
+        int y0 = (int) Math.floor(py) + 3;
+        for (int y = y0; y <= y0 + 42; y++) {
+            int v = world.getVoxel(x, y, z);
+            if (v > 0 && (ctx.blockDataManager == null
+                    || ctx.blockDataManager.isFullBlock(v))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Night = the sun is below the horizon (Aether/Nether skies stay calm). */
@@ -4707,6 +5526,31 @@ public class Main {
             if (commandMode) {
                 handleCommandModeKey(key);
                 return;
+            }
+
+            // ── Point & click: arrow keys select a prompt, Enter uses it ──
+            // The on-screen billboards are the MCSM interaction entries. They
+            // used to be selectable only by hovering the virtual cursor exactly
+            // over a target, which is fiddly; the arrow keys now step through
+            // them (the mouse still highlights/activates too).
+            if (pointAndClickMode && hud != null && hud.billboards != null
+                    && !inventoryOpen && !ctx.mapOpen && !ctx.pauseMenuOpen
+                    && !ctx.tvWatching && !ctx.tradeOpen
+                    && ctx.activeUI == GameContext.ActiveUI.NONE
+                    && !ctx.craftingCutsceneActive && !ctx.furnaceCutsceneActive
+                    && !(ctx.cinematic != null && ctx.cinematic.cameraActive())) {
+                if (key == GLFW_KEY_UP || key == GLFW_KEY_LEFT) {
+                    selectBillboard(-1);
+                    return;
+                }
+                if (key == GLFW_KEY_DOWN || key == GLFW_KEY_RIGHT) {
+                    selectBillboard(1);
+                    return;
+                }
+                if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) {
+                    int sel = hud.billboards.getHighlightedMarker();
+                    if (sel >= 0 && performBillboardAction(sel)) return;
+                }
             }
 
             if (key == GLFW_KEY_R && player.isDead()) {
@@ -5287,6 +6131,23 @@ public class Main {
         }
     }
 
+    /**
+     * Moves the point-and-click selection by {@code dir} and echoes the
+     * highlighted prompt in the status line, so arrow-key navigation is
+     * discoverable. A mouse click or Enter then runs the action through
+     * {@link #performBillboardAction(int)}.
+     */
+    private void selectBillboard(int dir) {
+        if (hud == null || hud.billboards == null) return;
+        int idx = hud.billboards.selectNext(dir);
+        if (idx < 0) return;
+        String action = hud.billboards.getMarkerActionCount(idx) > 0
+                ? hud.billboards.getMarkerAction(idx, 0) : "";
+        setStatus(hud.billboards.getMarkerName(idx)
+                + (action.isEmpty() ? "" : " - " + action)
+                + "   [UP/DOWN or LEFT/RIGHT select, ENTER/click use]");
+    }
+
     public void openCommandMode() {        if (inventoryOpen) setInventoryOpen(false);
         hud.inventoryUiDirty = true;
         commandMode = true;
@@ -5632,6 +6493,25 @@ public class Main {
     }
 
     /** Shows the Tutorial World zone title-card popup for a few seconds. */
+    /**
+     * Celebrates a completed tutorial goal: a banner with the next objective,
+     * a short letterbox beat, and a status line. Runs on the logic thread and
+     * consumes exactly one completion per call, so no step is announced twice.
+     */
+    private void tickTutorialProgress() {
+        if (!ctx.tutorialWorld || ctx.tutorialProgress == null) return;
+        int step = ctx.tutorialProgress.consumeJustCompleted();
+        if (step < 0) return;
+        String next = ctx.tutorialProgress.isComplete()
+                ? "Explore freely — the whole world is a sandbox now."
+                : ctx.tutorialProgress.hintLine();
+        showTutorialPopup("STEP " + (step + 1) + " COMPLETE · "
+                + com.voxel.game.TutorialProgress.title(step), next);
+        if (ctx.cinematic != null) ctx.cinematic.barsMoment(1.4f);
+        setStatus("Tutorial progress " + ctx.tutorialProgress.completedCount()
+                + "/" + com.voxel.game.TutorialProgress.STEP_COUNT);
+    }
+
     public void showTutorialPopup(String title, String subtitle) {
         tutorialPopupTitle = title;
         tutorialPopupSubtitle = subtitle;
@@ -5831,6 +6711,42 @@ public class Main {
         // The map preview projects onto the ground plane at world sea level (63),
         // so off-center perspective rays sample the correct landing XZ.
         glUniform1f(locMapGroundY, 63f - mwoy);
+    }
+
+    /**
+     * Registers one book family: the flat model (crafting grid / held preview)
+     * and the upright drop model. Both are non-full AABB models, so they render
+     * as miniature books with a visible spine rather than as cubes.
+     */
+    /**
+     * Registers the decorative building blocks (doors, trapdoors, ladders,
+     * flower pots) whose models are emitted by tools/gen_door_models.py.
+     *
+     * The resource tree always shipped the door <em>textures</em> and the
+     * vanilla door geometry, but no door was ever registered as a block, so
+     * every authored building had bare holes for doorways. Ids and names come
+     * from {@link com.voxel.world.DecorBlocks} so the registration, the item
+     * definitions and the authored worlds cannot drift apart.
+     */
+    private void registerDecorativeBlocks() {
+        String models = "src/main/resources/assets/minecraft/models/block";
+        for (int i = 0; i < com.voxel.world.DecorBlocks.NAMES.length; i++) {
+            int id = com.voxel.world.DecorBlocks.FIRST_ID + i;
+            String name = com.voxel.world.DecorBlocks.NAMES[i];
+            blockRegistry.register(name, id);
+            shaderBlockRegistry.register(id, id);
+            blockDataManager.registerBlock(id, name, textureManager, models);
+        }
+    }
+
+    private void registerBookBlocks(int flatId, String name, int dropId, String dropName) {
+        String models = "src/main/resources/assets/minecraft/models/block";
+        blockRegistry.register("item_" + name, flatId);
+        shaderBlockRegistry.register(flatId, flatId);
+        blockDataManager.registerBlock(flatId, "item_" + name, textureManager, models);
+        blockRegistry.register(dropName, dropId);
+        shaderBlockRegistry.register(dropId, dropId);
+        blockDataManager.registerBlock(dropId, dropName, textureManager, models);
     }
 
     public void setupResources() {
@@ -6650,6 +7566,19 @@ public class Main {
         blockRegistry.register("item_drop_charcoal", 290);
         shaderBlockRegistry.register(290, 290);
         blockDataManager.registerBlock(290, "item_drop_charcoal", textureManager, mcModels);
+
+        // --- Books: a real 3D model with a spine (cover boards + page stack) ---
+        // Each book has a flat model (crafting grid / held preview) and an
+        // upright drop model (world drop). IDs 940-947 are beyond the Sift set
+        // (927-937), so they are free. Models are emitted by
+        // tools/gen_book_models.py; textures by tools/gen_book_textures.py.
+        registerBookBlocks(940, "book", 941, "item_drop_book");
+        registerBookBlocks(942, "writable_book", 943, "item_drop_writable_book");
+        registerBookBlocks(944, "written_book", 945, "item_drop_written_book");
+        registerBookBlocks(946, "enchanted_book", 947, "item_drop_enchanted_book");
+
+        // --- Decorative building blocks (doors, trapdoors, ladder, flower pot) ---
+        registerDecorativeBlocks();
 
         // --- Create-inspired kinetic blocks (shafts, cogs, water wheel) ---
         // Orientable shafts: 291 = vertical (Y), 292 = X axis, 293 = Z axis.
@@ -7542,6 +8471,271 @@ public class Main {
      * Reads the current compute shader output (renderTexture) back from the GPU
      * and saves it as a timestamped PNG in the screenshots/ folder.
      */
+    /**
+     * Headless panorama harness, enabled with {@code VOXEL_PANORAMA_PROBE=1}.
+     *
+     * <p>The window is never shown (see {@code init}) and the menu UI is left out
+     * of the compute pass, so the frames this prints are the raw raytraced scene.
+     * After {@code VOXEL_PANORAMA_FRAMES} frames it dumps the frame as ASCII art
+     * (luminance + hue), the bake's pool values at a few probe cells, and the
+     * luminance histogram, then closes. {@code VOXEL_PANORAMA_TIME} pins the
+     * panorama clock so two runs differ only by the thing under test.</p>
+     */
+    private final boolean panoramaProbe = System.getenv("VOXEL_PANORAMA_PROBE") != null;
+    /** Frames to render before dumping (the camera needs a few to settle). */
+    private final int panoramaProbeFramesTarget =
+            Integer.getInteger("voxel.panorama.frames", 45);
+    private int panoramaProbeFrames = 0;
+
+    private void maybeRunPanoramaProbe() {
+        if (!panoramaProbe) return;
+        String pinned = System.getenv("VOXEL_PANORAMA_TIME");
+        if (pinned != null) {
+            try {
+                panoramaTime = Float.parseFloat(pinned);
+            } catch (NumberFormatException ignored) {
+                // keep drifting
+            }
+        }
+        if (++panoramaProbeFrames < panoramaProbeFramesTarget) return;
+        dumpPanoramaFrame();
+        glfwSetWindowShouldClose(window, true);
+    }
+
+    /** Reads the rendered frame back and prints it as ASCII art plus statistics. */
+    private void dumpPanoramaFrame() {
+        int numPixels = renderW * renderH;
+        java.nio.ByteBuffer pixels = MemoryUtil.memAlloc(numPixels * 4);
+        try {
+            glGetTextureImage(renderTexture, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+            double sumR = 0, sumG = 0, sumB = 0;
+            long n = 0, dark = 0, mid = 0, bright = 0;
+            double maxLum = 0, maxR = 0, maxG = 0, maxB = 0;
+            for (int y = 0; y < renderH; y++) {
+                for (int x = 0; x < renderW; x++) {
+                    int i = (y * renderW + x) * 4;
+                    double r = pixels.get(i) & 0xFF;
+                    double g = pixels.get(i + 1) & 0xFF;
+                    double b = pixels.get(i + 2) & 0xFF;
+                    sumR += r; sumG += g; sumB += b; n++;
+                    double lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    if (lum < 25) dark++;
+                    else if (lum < 160) mid++;
+                    else bright++;
+                    if (lum > maxLum) { maxLum = lum; maxR = r; maxG = g; maxB = b; }
+                }
+            }
+            System.out.printf(
+                "[PANORAMA STATS] clock=%.1f camera=(%.1f,%.1f,%.1f) mean=(%.1f,%.1f,%.1f) "
+                + "dark=%.1f%% mid=%.1f%% bright=%.1f%% max=(%.0f,%.0f,%.0f) exposure=%.2f%n",
+                panoramaTime, panoramaCamX, panoramaCamY, panoramaCamZ,
+                sumR / n, sumG / n, sumB / n,
+                100.0 * dark / n, 100.0 * mid / n, 100.0 * bright / n, maxR, maxG, maxB,
+                currentExposure);
+            // Percentiles: a single mean hides "half the frame is clipped".
+            int[] lums = new int[numPixels];
+            for (int y = 0; y < renderH; y++) {
+                for (int x = 0; x < renderW; x++) {
+                    int i = (y * renderW + x) * 4;
+                    lums[y * renderW + x] = (int) (0.2126 * (pixels.get(i) & 0xFF)
+                            + 0.7152 * (pixels.get(i + 1) & 0xFF)
+                            + 0.0722 * (pixels.get(i + 2) & 0xFF));
+                }
+            }
+            java.util.Arrays.sort(lums);
+            int blown = 0;
+            for (int v : lums) if (v >= 250) blown++;
+            System.out.printf("[PANORAMA LUMA] p05=%d p25=%d p50=%d p75=%d p95=%d blown=%.1f%%%n",
+                    lums[(int) (numPixels * 0.05)], lums[(int) (numPixels * 0.25)],
+                    lums[numPixels / 2], lums[(int) (numPixels * 0.75)],
+                    lums[(int) (numPixels * 0.95)],
+                    100.0 * blown / numPixels);
+            int[] cpool = panoramaWorld.getChunkPool();
+            int[] lpool = panoramaWorld.getLightPool();
+            int[][] cells = {
+                {50, 30, 50},  // interior air, off the skylight
+                {50, 27, 50},  // floor, off the skylight
+                {50, 33, 50},  // interior air, above head height
+                {56, 36, 56},  // ceiling underside beside the skylight
+                {66, 30, 56},  // air against the east wall
+                {46, 32, 56},  // air in the doorway's spill
+                {56, 30, 56},  // under the skylight (should be lit)
+                {63, 28, 56},  // air just above the hall floor near the camera
+                {63, 27, 56},  // the hall floor block itself
+                {61, 28, 56},  // floor air, outside the skylight footprint
+                {61, 27, 56},  // floor block, outside the skylight footprint
+            };
+            for (int[] p : cells) {
+                int pi = panoramaPoolIndex(p[0], p[1], p[2]);
+                System.out.printf("[PANORAMA CELL] (%d,%d,%d) id=%d light=0x%08X%n",
+                        p[0], p[1], p[2], pi < 0 ? -1 : cpool[pi] & 0xFFFF,
+                        pi < 0 ? 0 : lpool[pi]);
+            }
+            // Slice through the room: sky level and block-light intensity per cell,
+            // so the bake's falloff is readable without a picture.
+            // What the GPU actually holds for the probe cells (the CPU pool can be
+            // correct while the upload or the binding is not).
+            java.nio.ByteBuffer gpuCell = MemoryUtil.memAlloc(4);
+            try {
+                for (int[] p : cells) {
+                    int pi = panoramaPoolIndex(p[0], p[1], p[2]);
+                    glGetNamedBufferSubData(lightSSBO, (long) pi * 4, gpuCell);
+                    System.out.printf("[PANORAMA GPU] (%d,%d,%d) light=0x%08X%n",
+                            p[0], p[1], p[2], gpuCell.getInt(0));
+                }
+            } finally {
+                MemoryUtil.memFree(gpuCell);
+            }
+
+            StringBuilder up = new StringBuilder();
+            StringBuilder side = new StringBuilder();
+            for (int y = 27; y <= 37; y++) {
+                int li = panoramaPoolIndex(50, y, 50);
+                int v = li < 0 ? 0 : lpool[li];
+                up.append(String.format("y=%d id=%d sky=%d blk=%d | ", y,
+                        li < 0 ? -1 : cpool[li] & 0xFFFF, v & 0xFF,
+                        Math.max((v >> 8) & 0xFF, Math.max((v >> 16) & 0xFF, (v >> 24) & 0xFF))));
+            }
+            for (int x = 45; x <= 67; x += 2) {
+                int li = panoramaPoolIndex(x, 30, 50);
+                int v = li < 0 ? 0 : lpool[li];
+                side.append(String.format("x=%d id=%d sky=%d blk=%d | ", x,
+                        li < 0 ? -1 : cpool[li] & 0xFFFF, v & 0xFF,
+                        Math.max((v >> 8) & 0xFF, Math.max((v >> 16) & 0xFF, (v >> 24) & 0xFF))));
+            }
+            System.out.println("[PANORAMA SLICE] column at x=50,z=50: " + up);
+            System.out.println("[PANORAMA SLICE] row at y=30,z=50: " + side);
+            for (int y : new int[] { 28, 31, 34 }) {
+                printPanoramaLightMap(y, cpool, lpool);
+            }
+            printPanoramaHexGrid(pixels, 12, 6);
+            printPanoramaAscii(pixels, 88, 40);
+        } finally {
+            MemoryUtil.memFree(pixels);
+        }
+    }
+
+    /**
+     * Prints the baked light levels of the hall footprint as two ASCII maps at
+     * one height: sky light, then block light (max channel). Each cell is the
+     * level in 0..15 units, so a room that the bake sealed off should read all
+     * zeros in the sky map.
+     */
+    private void printPanoramaLightMap(int y, int[] cpool, int[] lpool) {
+        String ramp = "0123456789ABCDEF";
+        System.out.println("[PANORAMA LIGHTMAP] y=" + y + " sky (x right, z down):");
+        for (int z = PANORAMA_HALL_MIN; z <= PANORAMA_HALL_MAX; z++) {
+            StringBuilder line = new StringBuilder();
+            for (int x = PANORAMA_HALL_MIN; x <= PANORAMA_HALL_MAX; x++) {
+                int i = panoramaPoolIndex(x, y, z);
+                if (i < 0) { line.append('?'); continue; }
+                int v = lpool[i];
+                line.append(cpool[i] == 0 ? ramp.charAt((v & 0xFF) / 17) : '#');
+            }
+            System.out.println(line);
+        }
+        System.out.println("[PANORAMA LIGHTMAP] y=" + y + " block (x right, z down):");
+        for (int z = PANORAMA_HALL_MIN; z <= PANORAMA_HALL_MAX; z++) {
+            StringBuilder line = new StringBuilder();
+            for (int x = PANORAMA_HALL_MIN; x <= PANORAMA_HALL_MAX; x++) {
+                int i = panoramaPoolIndex(x, y, z);
+                if (i < 0) { line.append('?'); continue; }
+                int v = lpool[i];
+                int blk = Math.max((v >> 8) & 0xFF, Math.max((v >> 16) & 0xFF, (v >> 24) & 0xFF));
+                line.append(cpool[i] == 0 ? ramp.charAt(Math.min(15, (blk * 15 + 127) / 255)) : '#');
+            }
+            System.out.println(line);
+        }
+    }
+
+    /** Prints the frame as a coarse grid of average RRGGBB values. */
+    private void printPanoramaHexGrid(java.nio.ByteBuffer pixels, int cols, int rows) {
+        System.out.println("[PANORAMA HEX] " + cols + "x" + rows + " average RGB per cell");
+        for (int ry = rows - 1; ry >= 0; ry--) {
+            StringBuilder line = new StringBuilder();
+            for (int cx = 0; cx < cols; cx++) {
+                int x0 = (int) ((long) cx * renderW / cols);
+                int x1 = Math.max(x0 + 1, (int) ((long) (cx + 1) * renderW / cols));
+                int y0 = (int) ((long) ry * renderH / rows);
+                int y1 = Math.max(y0 + 1, (int) ((long) (ry + 1) * renderH / rows));
+                long r = 0, g = 0, b = 0, n = 0;
+                for (int y = y0; y < y1; y += 2) {
+                    for (int x = x0; x < x1; x += 2) {
+                        int i = (y * renderW + x) * 4;
+                        r += pixels.get(i) & 0xFF;
+                        g += pixels.get(i + 1) & 0xFF;
+                        b += pixels.get(i + 2) & 0xFF;
+                        n++;
+                    }
+                }
+                line.append(String.format("%02X%02X%02X ", r / n, g / n, b / n));
+            }
+            System.out.println(line);
+        }
+    }
+
+    /**
+     * Prints the frame as two ASCII panels: a luminance ramp, and a hue map where
+     * a letter marks a saturated cell (R/Y/G/C/B/M) so tinted lights are visible
+     * in text. Cells are averaged over a small block so single bright pixels do
+     * not dominate.
+     */
+    private void printPanoramaAscii(java.nio.ByteBuffer pixels, int cols, int rows) {
+        final String ramp = " .:-=+*#%@";
+        StringBuilder lum = new StringBuilder();
+        StringBuilder hue = new StringBuilder();
+        for (int ry = rows - 1; ry >= 0; ry--) {
+            for (int cx = 0; cx < cols; cx++) {
+                int x0 = (int) ((long) cx * renderW / cols);
+                int x1 = Math.max(x0 + 1, (int) ((long) (cx + 1) * renderW / cols));
+                int y0 = (int) ((long) ry * renderH / rows);
+                int y1 = Math.max(y0 + 1, (int) ((long) (ry + 1) * renderH / rows));
+                double r = 0, g = 0, b = 0;
+                long n = 0;
+                for (int y = y0; y < y1; y += 2) {
+                    for (int x = x0; x < x1; x += 2) {
+                        int i = (y * renderW + x) * 4;
+                        r += pixels.get(i) & 0xFF;
+                        g += pixels.get(i + 1) & 0xFF;
+                        b += pixels.get(i + 2) & 0xFF;
+                        n++;
+                    }
+                }
+                r /= n; g /= n; b /= n;
+                double lumV = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                int idx = (int) Math.round(lumV / 255.0 * (ramp.length() - 1));
+                lum.append(ramp.charAt(Math.max(0, Math.min(ramp.length() - 1, idx))));
+                hue.append(hueLetter(r, g, b));
+            }
+            lum.append('\n');
+            hue.append('\n');
+        }
+        System.out.println("[PANORAMA ASCII] luminance ramp \"" + ramp
+                + "\" (' ' = black, '@' = white), top row = top of frame:");
+        System.out.print(lum);
+        System.out.println("[PANORAMA ASCII] hue map ('.' = desaturated; R/Y/G/C/B/M, lower case = dim):");
+        System.out.print(hue);
+    }
+
+    /** One character describing a cell's hue, or '.' when it is (near) grey. */
+    private static char hueLetter(double r, double g, double b) {
+        double mx = Math.max(r, Math.max(g, b));
+        double mn = Math.min(r, Math.min(g, b));
+        if (mx < 12.0) return '.';
+        if ((mx - mn) / mx < 0.15) return '.';
+        double hue;
+        if (mx == r) hue = 60.0 * (((g - b) / (mx - mn)) % 6.0);
+        else if (mx == g) hue = 60.0 * (((b - r) / (mx - mn)) + 2.0);
+        else hue = 60.0 * (((r - g) / (mx - mn)) + 4.0);
+        if (hue < 0) hue += 360.0;
+        char letter = hue < 30 || hue >= 330 ? 'R'
+                : hue < 90 ? 'Y'
+                : hue < 150 ? 'G'
+                : hue < 210 ? 'C'
+                : hue < 270 ? 'B' : 'M';
+        return mx < 110 ? Character.toLowerCase(letter) : letter;
+    }
+
     public void takeScreenshot() {
         // Captured at the internal render resolution (renderTexture's size).
         int numPixels = renderW * renderH;

@@ -1,0 +1,1532 @@
+{
+  "version": 1,
+  "_note": "Villager TV broadcast schedule. Edit this file to rewrite the channels, programmes and scripts; no Java changes needed. Each line carries its caption, the recorded voice it is spoken in (clip = an exact clips_index.json id from the Villager News 1.0 Add-On collection, topic = a ClipScript situation used as a fallback), and the music cue that starts with it. Every caption is a real take from that collection, pinned with tools/bind_tv_clips.py --check.",
+  "cues": [
+    {
+      "id": "station_ident",
+      "name": "Station Ident",
+      "kind": "IDENT",
+      "bpm": 120,
+      "gain": 0.8,
+      "notes": [
+        [
+          72,
+          0,
+          0.25
+        ],
+        [
+          76,
+          0.25,
+          0.25
+        ],
+        [
+          79,
+          0.5,
+          0.75
+        ]
+      ]
+    },
+    {
+      "id": "ident_sung",
+      "name": "Sung Ident",
+      "kind": "IDENT",
+      "bpm": 118,
+      "gain": 0.85,
+      "notes": [
+        [
+          67,
+          0,
+          0.5
+        ],
+        [
+          72,
+          0.5,
+          1.0
+        ],
+        [
+          74,
+          1.5,
+          1.0
+        ]
+      ]
+    },
+    {
+      "id": "static_hum",
+      "name": "Off-Air Hum",
+      "kind": "BED",
+      "bpm": 60,
+      "gain": 0.45,
+      "notes": [
+        [
+          36,
+          0,
+          2
+        ],
+        [
+          37,
+          2,
+          2
+        ],
+        [
+          36,
+          4,
+          4
+        ]
+      ]
+    },
+    {
+      "id": "vnn_theme",
+      "name": "VNN Nightly Theme",
+      "kind": "THEME",
+      "bpm": 132,
+      "gain": 0.9,
+      "notes": [
+        [
+          67,
+          0,
+          0.5
+        ],
+        [
+          69,
+          0.5,
+          0.5
+        ],
+        [
+          71,
+          1.0,
+          0.5
+        ],
+        [
+          72,
+          1.5,
+          1.0
+        ],
+        [
+          71,
+          2.5,
+          0.5
+        ],
+        [
+          67,
+          3.0,
+          2.0
+        ]
+      ]
+    },
+    {
+      "id": "headline_sting",
+      "name": "Headline Sting",
+      "kind": "STING",
+      "bpm": 140,
+      "gain": 0.85,
+      "notes": [
+        [
+          64,
+          0,
+          0.25
+        ],
+        [
+          67,
+          0.25,
+          0.25
+        ],
+        [
+          71,
+          0.5,
+          0.25
+        ],
+        [
+          76,
+          0.75,
+          0.75
+        ]
+      ]
+    },
+    {
+      "id": "vnn_signoff",
+      "name": "VNN Sign-Off",
+      "kind": "THEME",
+      "bpm": 108,
+      "gain": 0.8,
+      "notes": [
+        [
+          72,
+          0,
+          1.0
+        ],
+        [
+          69,
+          1.0,
+          1.0
+        ],
+        [
+          65,
+          2.0,
+          1.0
+        ],
+        [
+          60,
+          3.0,
+          2.0
+        ]
+      ]
+    },
+    {
+      "id": "vsn_jingle",
+      "name": "Shopping Jingle",
+      "kind": "JINGLE",
+      "bpm": 128,
+      "gain": 0.9,
+      "notes": [
+        [
+          72,
+          0,
+          0.25
+        ],
+        [
+          72,
+          0.25,
+          0.25
+        ],
+        [
+          76,
+          0.5,
+          0.5
+        ],
+        [
+          74,
+          1.0,
+          0.25
+        ],
+        [
+          72,
+          1.25,
+          0.5
+        ]
+      ]
+    },
+    {
+      "id": "price_sting",
+      "name": "Price Sting",
+      "kind": "STING",
+      "bpm": 150,
+      "gain": 0.9,
+      "notes": [
+        [
+          79,
+          0,
+          0.125
+        ],
+        [
+          83,
+          0.125,
+          0.125
+        ],
+        [
+          86,
+          0.25,
+          0.5
+        ]
+      ]
+    },
+    {
+      "id": "clearance_bed",
+      "name": "Clearance Bed",
+      "kind": "BED",
+      "bpm": 112,
+      "gain": 0.6,
+      "notes": [
+        [
+          60,
+          0,
+          1
+        ],
+        [
+          64,
+          1,
+          1
+        ],
+        [
+          67,
+          2,
+          1
+        ],
+        [
+          72,
+          3,
+          1
+        ],
+        [
+          67,
+          4,
+          1
+        ],
+        [
+          64,
+          5,
+          2
+        ]
+      ]
+    },
+    {
+      "id": "weather_jingle",
+      "name": "Weather Jingle",
+      "kind": "JINGLE",
+      "bpm": 116,
+      "gain": 0.85,
+      "notes": [
+        [
+          71,
+          0,
+          0.5
+        ],
+        [
+          74,
+          0.5,
+          0.5
+        ],
+        [
+          76,
+          1.0,
+          1.0
+        ],
+        [
+          74,
+          2.0,
+          0.5
+        ],
+        [
+          71,
+          2.5,
+          1.0
+        ]
+      ]
+    },
+    {
+      "id": "clock_chime",
+      "name": "Hour Chime",
+      "kind": "STING",
+      "bpm": 100,
+      "gain": 0.8,
+      "notes": [
+        [
+          77,
+          0,
+          0.5
+        ],
+        [
+          72,
+          0.5,
+          0.5
+        ],
+        [
+          67,
+          1.0,
+          1.0
+        ],
+        [
+          60,
+          2.0,
+          2.0
+        ]
+      ]
+    },
+    {
+      "id": "storm_warning",
+      "name": "Storm Warning",
+      "kind": "STING",
+      "bpm": 144,
+      "gain": 0.95,
+      "notes": [
+        [
+          48,
+          0,
+          0.5
+        ],
+        [
+          48,
+          0.5,
+          0.5
+        ],
+        [
+          55,
+          1.0,
+          1.5
+        ]
+      ]
+    },
+    {
+      "id": "vmc_theme",
+      "name": "Music Channel Theme",
+      "kind": "THEME",
+      "bpm": 140,
+      "gain": 0.9,
+      "notes": [
+        [
+          60,
+          0,
+          0.5
+        ],
+        [
+          64,
+          0.5,
+          0.5
+        ],
+        [
+          67,
+          1.0,
+          0.5
+        ],
+        [
+          72,
+          1.5,
+          1.5
+        ],
+        [
+          71,
+          3.0,
+          0.5
+        ],
+        [
+          67,
+          3.5,
+          1.5
+        ]
+      ]
+    },
+    {
+      "id": "vmc_track_one",
+      "name": "Hrmm (Extended Mix)",
+      "kind": "BED",
+      "bpm": 124,
+      "gain": 0.75,
+      "notes": [
+        [
+          64,
+          0,
+          1
+        ],
+        [
+          67,
+          1,
+          1
+        ],
+        [
+          69,
+          2,
+          1
+        ],
+        [
+          67,
+          3,
+          1
+        ],
+        [
+          64,
+          4,
+          2
+        ],
+        [
+          62,
+          6,
+          2
+        ]
+      ]
+    },
+    {
+      "id": "vmc_track_two",
+      "name": "Emerald Nights",
+      "kind": "BED",
+      "bpm": 96,
+      "gain": 0.7,
+      "notes": [
+        [
+          60,
+          0,
+          2
+        ],
+        [
+          63,
+          2,
+          2
+        ],
+        [
+          67,
+          4,
+          2
+        ],
+        [
+          70,
+          6,
+          4
+        ]
+      ]
+    },
+    {
+      "id": "nature_bed",
+      "name": "Wilderness Bed",
+      "kind": "BED",
+      "bpm": 92,
+      "gain": 0.6,
+      "notes": [
+        [
+          64,
+          0,
+          1.5
+        ],
+        [
+          67,
+          1.5,
+          1.5
+        ],
+        [
+          71,
+          3,
+          1.5
+        ],
+        [
+          67,
+          4.5,
+          3
+        ]
+      ]
+    },
+    {
+      "id": "nature_sting",
+      "name": "Discovery Sting",
+      "kind": "STING",
+      "bpm": 110,
+      "gain": 0.8,
+      "notes": [
+        [
+          65,
+          0,
+          0.5
+        ],
+        [
+          72,
+          0.5,
+          0.5
+        ],
+        [
+          77,
+          1.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "id": "kitchen_jingle",
+      "name": "Kitchen Jingle",
+      "kind": "JINGLE",
+      "bpm": 126,
+      "gain": 0.85,
+      "notes": [
+        [
+          72,
+          0,
+          0.25
+        ],
+        [
+          74,
+          0.25,
+          0.25
+        ],
+        [
+          76,
+          0.5,
+          0.25
+        ],
+        [
+          79,
+          0.75,
+          0.75
+        ]
+      ]
+    },
+    {
+      "id": "kitchen_bed",
+      "name": "Simmer Bed",
+      "kind": "BED",
+      "bpm": 104,
+      "gain": 0.55,
+      "notes": [
+        [
+          65,
+          0,
+          1
+        ],
+        [
+          69,
+          1,
+          1
+        ],
+        [
+          72,
+          2,
+          1
+        ],
+        [
+          69,
+          3,
+          1
+        ],
+        [
+          65,
+          4,
+          2
+        ]
+      ]
+    },
+    {
+      "id": "sports_anthem",
+      "name": "Match Day Anthem",
+      "kind": "THEME",
+      "bpm": 138,
+      "gain": 0.9,
+      "notes": [
+        [
+          60,
+          0,
+          0.5
+        ],
+        [
+          67,
+          0.5,
+          0.5
+        ],
+        [
+          72,
+          1,
+          1
+        ],
+        [
+          71,
+          2,
+          0.5
+        ],
+        [
+          67,
+          2.5,
+          0.5
+        ],
+        [
+          72,
+          3,
+          2
+        ]
+      ]
+    },
+    {
+      "id": "full_time",
+      "name": "Full Time Sting",
+      "kind": "STING",
+      "bpm": 120,
+      "gain": 0.9,
+      "notes": [
+        [
+          72,
+          0,
+          0.25
+        ],
+        [
+          72,
+          0.25,
+          0.25
+        ],
+        [
+          72,
+          0.5,
+          1.0
+        ],
+        [
+          76,
+          1.5,
+          1.5
+        ]
+      ]
+    },
+    {
+      "id": "crowd_roar",
+      "name": "Crowd Roar",
+      "kind": "STING",
+      "bpm": 132,
+      "gain": 0.9,
+      "notes": [
+        [
+          55,
+          0,
+          0.5
+        ],
+        [
+          60,
+          0.5,
+          0.5
+        ],
+        [
+          67,
+          1.0,
+          0.5
+        ],
+        [
+          72,
+          1.5,
+          1.5
+        ]
+      ]
+    }
+  ],
+  "channels": [
+    {
+      "id": 0,
+      "callsign": "OFF",
+      "name": "Static / Off-Air",
+      "tagline": "Please stand by",
+      "tint": "#8A8A8A",
+      "programmes": [
+        {
+          "name": "Test Card",
+          "duration": 30,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Hello? Is this thing on? Testing, testing... good, still working!",
+              "topic": "SMALLTALK",
+              "emotion": "neutral",
+              "cue": "static_hum",
+              "clip": "addon:oreville_vn:axwsxe"
+            },
+            {
+              "at": 11,
+              "text": "Hello? Can you hear my voice? I am the wind!",
+              "topic": "SMALLTALK",
+              "emotion": "neutral",
+              "clip": "addon:oreville_vn:cxcpvx"
+            },
+            {
+              "at": 20,
+              "text": "Thank you! I shall now report on important things!",
+              "topic": "GREETING",
+              "emotion": "neutral",
+              "cue": "clock_chime",
+              "clip": "addon:oreville_vn:jrxfpn"
+            }
+          ]
+        },
+        {
+          "name": "Colour Bars & Tone",
+          "duration": 24,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Oooh, I like this colour. I want to stand close to it! Surely nothing bad will happen if I do!",
+              "topic": "SHINY",
+              "emotion": "happy",
+              "cue": "ident_sung",
+              "clip": "addon:oreville_vn:inrjmx"
+            },
+            {
+              "at": 14,
+              "text": "Whoa, that's so sparkly. ...I've never seen something so magnificent!",
+              "topic": "ADMIRE",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:aaiobx"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "callsign": "VSN",
+      "name": "Villager Shopping Network",
+      "tagline": "Deals, hrmm, now",
+      "tint": "#E0B050",
+      "programmes": [
+        {
+          "name": "Emerald Hour",
+          "duration": 42,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Greetings, traveler! My Llamas and I bring wares from afar!",
+              "topic": "GREETING",
+              "emotion": "happy",
+              "cue": "vsn_jingle",
+              "clip": "addon:oreville_vn:nprhjx"
+            },
+            {
+              "at": 7,
+              "text": "Right here! Best trades in the village as far as you're aware.",
+              "topic": "ADMIRE",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:apgvnt"
+            },
+            {
+              "at": 14,
+              "text": "That's coming out of the village budget! My budget!",
+              "topic": "ARGUE",
+              "emotion": "angry",
+              "cue": "price_sting",
+              "clip": "addon:oreville_vn:acgecn"
+            },
+            {
+              "at": 22,
+              "text": "Juuust getting all my trades back! Get those Emeralds ready!",
+              "topic": "GOSSIP",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:amwyug"
+            },
+            {
+              "at": 30,
+              "text": "Satisfied with our transaction, I hope? Run along now!",
+              "topic": "GREETING",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:adpewo"
+            },
+            {
+              "at": 37,
+              "text": "Exotic goods! Questionable value! Limited time before I vanish mysteriously!",
+              "topic": "BLUFF",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:wxtbks"
+            }
+          ]
+        },
+        {
+          "name": "Clearance Barn",
+          "duration": 36,
+          "lines": [
+            {
+              "at": 0,
+              "text": "You came at the right time, odd citizen! Everything is on special discount today! It's not really.",
+              "topic": "ADMIRE",
+              "emotion": "happy",
+              "cue": "clearance_bed",
+              "clip": "addon:oreville_vn:qkuepa"
+            },
+            {
+              "at": 12,
+              "text": "Who needs a house when you could have Llamas?",
+              "topic": "BLUFF",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:agzmhi"
+            },
+            {
+              "at": 21,
+              "text": "I wouldn't trade with you for a million Emeralds! u.. uh.. ...unless?",
+              "topic": "ARGUE",
+              "emotion": "neutral",
+              "cue": "price_sting",
+              "clip": "addon:oreville_vn:avtgfw"
+            },
+            {
+              "at": 29,
+              "text": "This is exactly why I can't trust anyone in this village. Nobody appreciates quality merchandise.",
+              "topic": "GOSSIP",
+              "emotion": "neutral",
+              "clip": "addon:oreville_vn:ztvcpx"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "callsign": "WX",
+      "name": "Weather & Time",
+      "tagline": "Every hour on the hour",
+      "tint": "#60A0E0",
+      "programmes": [
+        {
+          "name": "Hourly Weather Watch",
+          "duration": 34,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Yep, that's the same sun as yesterday.",
+              "topic": "GREETING",
+              "emotion": "happy",
+              "cue": "weather_jingle",
+              "clip": "addon:oreville_vn:bcujjf"
+            },
+            {
+              "at": 7,
+              "text": "Hmmm, it's a bit chilly today!",
+              "topic": "SMALLTALK",
+              "emotion": "neutral",
+              "clip": "addon:oreville_vn:luocqa"
+            },
+            {
+              "at": 14,
+              "text": "Is that what the sky is made of? I always wondered what the sky was made of.",
+              "topic": "SMALLTALK",
+              "emotion": "neutral",
+              "clip": "addon:oreville_vn:ydcnpb"
+            },
+            {
+              "at": 24,
+              "text": "Oooh, a new hour has begun, fellow Villager! I felt it go 'bong' inside my head. I hope that is normal.",
+              "topic": "SHINY",
+              "emotion": "happy",
+              "cue": "clock_chime",
+              "clip": "addon:oreville_vn:atpocd"
+            },
+            {
+              "at": 30,
+              "text": "The Bell hasn't rung yet. That's good.",
+              "topic": "FORGET",
+              "emotion": "sad",
+              "clip": "addon:oreville_vn:flrjrd"
+            }
+          ]
+        },
+        {
+          "name": "Storm Warning Bulletin",
+          "duration": 30,
+          "lines": [
+            {
+              "at": 0,
+              "text": "The sky is leaking! THE SKY IS LEAKING!",
+              "topic": "PANIC",
+              "emotion": "scared",
+              "cue": "storm_warning",
+              "clip": "addon:oreville_vn:vhaqyz"
+            },
+            {
+              "at": 8,
+              "text": "Do not worry, the rain cannot reach me. I am walking very fast.",
+              "topic": "BLUFF",
+              "emotion": "neutral",
+              "clip": "addon:oreville_vn:arfgww"
+            },
+            {
+              "at": 17,
+              "text": "Aah, the rain. It hurts!",
+              "topic": "PANIC",
+              "emotion": "scared",
+              "clip": "addon:oreville_vn:aocpgw"
+            },
+            {
+              "at": 24,
+              "text": "Run, legs, run! The clouds are angry!",
+              "topic": "PANIC",
+              "emotion": "scared",
+              "clip": "addon:oreville_vn:ukodjr"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "callsign": "VNN",
+      "name": "VNN Villager News",
+      "tagline": "The testificate evening news",
+      "tint": "#C05050",
+      "programmes": [
+        {
+          "name": "VNN Nightly",
+          "duration": 48,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Da Da Da Daaa Daa Da Da Da Daaa Da Villager News!",
+              "topic": "GREETING",
+              "emotion": "happy",
+              "cue": "vnn_theme",
+              "clip": "addon:oreville_vn:dwigoh"
+            },
+            {
+              "at": 8,
+              "text": "Breaking News! A local citizen spots a celebrity around the village. Over to Villager #9.... ...Villager #9?",
+              "topic": "PANIC",
+              "emotion": "scared",
+              "cue": "headline_sting",
+              "clip": "addon:oreville_vn:iajdxy"
+            },
+            {
+              "at": 21,
+              "text": "A Creeper! My Emeralds! My Emeralds!",
+              "topic": "PANIC",
+              "emotion": "scared",
+              "clip": "addon:oreville_vn:azbrdi"
+            },
+            {
+              "at": 28,
+              "text": "Look at that, a citizen is doing journalism! Villager News is proud!",
+              "topic": "ADMIRE",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:jcsvai"
+            },
+            {
+              "at": 35,
+              "text": "Nobody likes you, Testificate Man!",
+              "topic": "ARGUE",
+              "emotion": "angry",
+              "clip": "addon:oreville_vn:bcfzqh"
+            },
+            {
+              "at": 41,
+              "text": "Well, that's the end of that. Better luck next world!",
+              "topic": "GREETING",
+              "emotion": "neutral",
+              "cue": "vnn_signoff",
+              "clip": "addon:oreville_vn:ygnazn"
+            }
+          ]
+        },
+        {
+          "name": "Field Report: The Nether",
+          "duration": 40,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Netherite? You went to the Nether? On purpose? With those legs?",
+              "topic": "BLUFF",
+              "emotion": "neutral",
+              "cue": "headline_sting",
+              "clip": "addon:oreville_vn:xnrkkj"
+            },
+            {
+              "at": 10,
+              "text": "It glows, but there's no fire... It's magic!",
+              "topic": "SHINY",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:bcexbf"
+            },
+            {
+              "at": 19,
+              "text": "A Ghast that is happy! This is much better than the other ones!",
+              "topic": "ADMIRE",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:pnjvoo"
+            },
+            {
+              "at": 27,
+              "text": "Don't panic, don't panic, don't panic. OH NO! I'm panicking!",
+              "topic": "PANIC",
+              "emotion": "scared",
+              "clip": "addon:oreville_vn:afwvki"
+            },
+            {
+              "at": 35,
+              "text": "Hmmm, safe travels.",
+              "topic": "GREETING",
+              "emotion": "neutral",
+              "cue": "vnn_signoff",
+              "clip": "addon:oreville_vn:avvtrs"
+            }
+          ]
+        },
+        {
+          "name": "Cultural Corner",
+          "duration": 32,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Excuse me, pardon me, Villager #9 coming through! Big story unfolding somewhere, probably!",
+              "topic": "GOSSIP",
+              "emotion": "neutral",
+              "cue": "station_ident",
+              "clip": "addon:oreville_vn:odqfly"
+            },
+            {
+              "at": 10,
+              "text": "Jobs are just a social construct, who needs one... Oh, I'm so poor.",
+              "topic": "GOSSIP",
+              "emotion": "sad",
+              "clip": "addon:oreville_vn:aqebkc"
+            },
+            {
+              "at": 19,
+              "text": "You look how Monday feels, strange Villager. That is a compliment. I think.",
+              "topic": "SMALLTALK",
+              "emotion": "neutral",
+              "clip": "addon:oreville_vn:azhjor"
+            },
+            {
+              "at": 28,
+              "text": "If anyone sees a story, please flag down your local Villager #9! That's me!",
+              "topic": "BLUFF",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:yybsnf"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "callsign": "VMC",
+      "name": "Villager Music Channel",
+      "tagline": "All hrmm, all day",
+      "tint": "#B070D0",
+      "programmes": [
+        {
+          "name": "Hrmm (Extended Mix)",
+          "duration": 30,
+          "lines": [
+            {
+              "at": 0,
+              "text": "We don't need these Juke-in-the-boxes! We make our own music, ACAPELLA!",
+              "topic": "GREETING",
+              "emotion": "happy",
+              "cue": "vmc_theme",
+              "clip": "addon:oreville_vn:cknfpi"
+            },
+            {
+              "at": 10,
+              "text": "*Singing* ooo standing in my house until the morning coz I don't have a Bed... ...I am very sleepy...",
+              "topic": "SHINY",
+              "emotion": "happy",
+              "cue": "vmc_track_one",
+              "clip": "addon:oreville_vn:qidzvc"
+            },
+            {
+              "at": 22,
+              "text": "And I would walk a few blocks here then will walk a few blocks more DA DA DA!",
+              "topic": "SMALLTALK",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:dkotzz"
+            }
+          ]
+        },
+        {
+          "name": "Emerald Nights",
+          "duration": 34,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Ooh, I love that song! It's the one that goes... mm... mmm-mm... yes, that one exactly.",
+              "topic": "SHINY",
+              "emotion": "happy",
+              "cue": "vmc_track_two",
+              "clip": "addon:oreville_vn:qseswq"
+            },
+            {
+              "at": 13,
+              "text": "MUSIC! Everyone, the box is singing again! Form a circle and wobble respectfully!",
+              "topic": "ADMIRE",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:bphivd"
+            },
+            {
+              "at": 25,
+              "text": "Yay! Fireworks!",
+              "topic": "SHINY",
+              "emotion": "happy",
+              "cue": "price_sting",
+              "clip": "addon:oreville_vn:ayfugo"
+            }
+          ]
+        },
+        {
+          "name": "The Late Set",
+          "duration": 28,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Do do do dooo do do do dooooo",
+              "topic": "GOSSIP",
+              "emotion": "neutral",
+              "cue": "ident_sung",
+              "clip": "addon:oreville_vn:lnecvu"
+            },
+            {
+              "at": 12,
+              "text": "I feel like I haven't slept at all.",
+              "topic": "FORGET",
+              "emotion": "sad",
+              "cue": "vmc_track_one",
+              "clip": "addon:oreville_vn:bcyujo"
+            },
+            {
+              "at": 22,
+              "text": "Na na na na na na na Testificate Man! *singing*",
+              "topic": "SMALLTALK",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:fdjjlo"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "callsign": "NAT",
+      "name": "Villager Geographic",
+      "tagline": "The wild, explained slowly",
+      "tint": "#5FA060",
+      "programmes": [
+        {
+          "name": "Big Sniffing Creature",
+          "duration": 40,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Oh, a Sniffer! It's sniffing about for seeds, I bet.",
+              "topic": "BLUFF",
+              "emotion": "neutral",
+              "cue": "nature_bed",
+              "clip": "addon:oreville_vn:boeylz"
+            },
+            {
+              "at": 9,
+              "text": "Look! It is the big sniffing creature with no eyes!",
+              "topic": "SHINY",
+              "emotion": "happy",
+              "cue": "nature_sting",
+              "clip": "addon:oreville_vn:aohwmn"
+            },
+            {
+              "at": 18,
+              "text": "It sniffs the ground. Perhaps it has lost something?",
+              "topic": "FORGET",
+              "emotion": "sad",
+              "clip": "addon:oreville_vn:dravzc"
+            },
+            {
+              "at": 26,
+              "text": "Since when do trees have eyes?",
+              "topic": "FORGET",
+              "emotion": "neutral",
+              "clip": "addon:oreville_vn:afoqfa"
+            },
+            {
+              "at": 34,
+              "text": "It hops, it eats blocks, and it reeks. A most fascinating creature!",
+              "topic": "BLUFF",
+              "emotion": "neutral",
+              "clip": "addon:oreville_vn:glvrkw"
+            }
+          ]
+        },
+        {
+          "name": "Domesticated Canine",
+          "duration": 34,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Is that a big dog or a small Horse?",
+              "topic": "ADMIRE",
+              "emotion": "happy",
+              "cue": "nature_sting",
+              "clip": "addon:oreville_vn:yxniit"
+            },
+            {
+              "at": 9,
+              "text": "Hey, a Wolf! I will pet it from very far away.",
+              "topic": "MOB_COWARD",
+              "emotion": "scared",
+              "clip": "addon:oreville_vn:aubgib"
+            },
+            {
+              "at": 19,
+              "text": "Ooh! A tamed Wolf! With a collar and everything!",
+              "topic": "SHINY",
+              "emotion": "happy",
+              "cue": "nature_bed",
+              "clip": "addon:oreville_vn:nikuxf"
+            },
+            {
+              "at": 28,
+              "text": "A Sheep! Are you the one from my dreams?",
+              "topic": "SHINY",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:afidfx"
+            }
+          ]
+        },
+        {
+          "name": "The Deep Places",
+          "duration": 36,
+          "lines": [
+            {
+              "at": 0,
+              "text": "A Bat! Are you lost from the cave, friend?",
+              "topic": "BLUFF",
+              "emotion": "neutral",
+              "cue": "nature_bed",
+              "clip": "addon:oreville_vn:ylunud"
+            },
+            {
+              "at": 10,
+              "text": "Ow my head, it hurts now!",
+              "topic": "TRIP",
+              "emotion": "sad",
+              "cue": "headline_sting",
+              "clip": "addon:oreville_vn:apljsf"
+            },
+            {
+              "at": 20,
+              "text": "There! An Enderman! Do not, I repeat, do not make eye contact!",
+              "topic": "HUNT_CONFUSED",
+              "emotion": "scared",
+              "clip": "addon:oreville_vn:cvwmkr"
+            },
+            {
+              "at": 30,
+              "text": "I'm saved!",
+              "topic": "CHICKEN_OUT",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:baclmq"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "callsign": "KITCH",
+      "name": "Hrmm Kitchen",
+      "tagline": "Cook it, then talk about it",
+      "tint": "#E08A40",
+      "programmes": [
+        {
+          "name": "Bread, Again",
+          "duration": 34,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Bread! My favourite shape of food!",
+              "topic": "GREETING",
+              "emotion": "happy",
+              "cue": "kitchen_jingle",
+              "clip": "addon:oreville_vn:owkayv"
+            },
+            {
+              "at": 8,
+              "text": "Bread is the best food ever!",
+              "topic": "ADMIRE",
+              "emotion": "happy",
+              "cue": "kitchen_bed",
+              "clip": "addon:oreville_vn:riycqg"
+            },
+            {
+              "at": 16,
+              "text": "Place a Potato inside, and it screams until it's delicious.",
+              "topic": "BUILD_OOPS",
+              "emotion": "neutral",
+              "clip": "addon:oreville_vn:nvgtxi"
+            },
+            {
+              "at": 24,
+              "text": "Mmm, Potatoes!",
+              "topic": "ADMIRE",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:aweyjy"
+            },
+            {
+              "at": 30,
+              "text": "Ooh, you're really hungry. You should eat something.",
+              "topic": "GREETING",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:cyhrkn"
+            }
+          ]
+        },
+        {
+          "name": "Cooking with Lava",
+          "duration": 36,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Cooking, are we? You know food goes in raw and comes out cooked? I figured that out myself.",
+              "topic": "BLUFF",
+              "emotion": "neutral",
+              "cue": "kitchen_jingle",
+              "clip": "addon:oreville_vn:ofvivl"
+            },
+            {
+              "at": 11,
+              "text": "Don't touch it!",
+              "topic": "PANIC",
+              "emotion": "scared",
+              "clip": "addon:oreville_vn:ajuuwr"
+            },
+            {
+              "at": 19,
+              "text": "You killed the fire! It was so young! It had so many things left to burn!",
+              "topic": "ARGUE",
+              "emotion": "angry",
+              "cue": "price_sting",
+              "clip": "addon:oreville_vn:nuowcu"
+            },
+            {
+              "at": 28,
+              "text": "Mmm, pork.",
+              "topic": "ADMIRE",
+              "emotion": "happy",
+              "cue": "kitchen_bed",
+              "clip": "addon:oreville_vn:abxgfo"
+            }
+          ]
+        },
+        {
+          "name": "Two Emerald Suppers",
+          "duration": 32,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Mmm, do I smell cooking? Put me on it! I mean food! Put food on it!",
+              "topic": "GOSSIP",
+              "emotion": "neutral",
+              "cue": "kitchen_jingle",
+              "clip": "addon:oreville_vn:nvkyms"
+            },
+            {
+              "at": 10,
+              "text": "Well, I guess I'm homeless now.",
+              "topic": "CHICKEN_OUT",
+              "emotion": "sad",
+              "clip": "addon:oreville_vn:baervo"
+            },
+            {
+              "at": 19,
+              "text": "Be gentle, odd-looking villager! Books do not enjoy being thrown about!",
+              "topic": "ARGUE",
+              "emotion": "angry",
+              "cue": "kitchen_bed",
+              "clip": "addon:oreville_vn:abrdcu"
+            },
+            {
+              "at": 27,
+              "text": "Ooh! Is it soup time? Please say it's soup time!",
+              "topic": "GREETING",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:mvhmvc"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "callsign": "SPORT",
+      "name": "Villager Sports Network",
+      "tagline": "Three blocks in forty-five seconds",
+      "tint": "#50A080",
+      "programmes": [
+        {
+          "name": "Match Day Live",
+          "duration": 40,
+          "lines": [
+            {
+              "at": 0,
+              "text": "Citizen! Purchase my helmet and join the ranks of the heroes!",
+              "topic": "GREETING",
+              "emotion": "happy",
+              "cue": "sports_anthem",
+              "clip": "addon:oreville_vn:jhdmxl"
+            },
+            {
+              "at": 9,
+              "text": "Whoa, you're so strong!",
+              "topic": "ADMIRE",
+              "emotion": "happy",
+              "cue": "crowd_roar",
+              "clip": "addon:oreville_vn:atyphj"
+            },
+            {
+              "at": 18,
+              "text": "Running! My favourite!",
+              "topic": "FOLLOW",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:jnthdq"
+            },
+            {
+              "at": 25,
+              "text": "You are being very rude to gravity right now!",
+              "topic": "SHINY",
+              "emotion": "happy",
+              "clip": "addon:oreville_vn:azeghk"
+            },
+            {
+              "at": 33,
+              "text": "Wow, so fast!",
+              "topic": "ADMIRE",
+              "emotion": "happy",
+              "cue": "full_time",
+              "clip": "addon:oreville_vn:kjcyzj"
+            }
+          ]
+        },
+        {
+          "name": "Post-Match Analysis",
+          "duration": 34,
+          "lines": [
+            {
+              "at": 0,
+              "text": "I have no strong feelings about this.",
+              "topic": "SMALLTALK",
+              "emotion": "neutral",
+              "cue": "ident_sung",
+              "clip": "addon:oreville_vn:kywczv"
+            },
+            {
+              "at": 9,
+              "text": "I think there's more pressing matters at hand!",
+              "topic": "ARGUE",
+              "emotion": "angry",
+              "clip": "addon:oreville_vn:awuxgp"
+            },
+            {
+              "at": 19,
+              "text": "Whoa! You're so big and strong... and made out of Iron!",
+              "topic": "BLUFF",
+              "emotion": "happy",
+              "cue": "full_time",
+              "clip": "addon:oreville_vn:yimrjk"
+            },
+            {
+              "at": 28,
+              "text": "Safe travels! May your pockets jingle and your Llamas behave!",
+              "topic": "GREETING",
+              "emotion": "neutral",
+              "clip": "addon:oreville_vn:vydhky"
+            }
+          ]
+        },
+        {
+          "name": "The Sprint Final",
+          "duration": 36,
+          "lines": [
+            {
+              "at": 0,
+              "text": "I. Am. Speed!",
+              "topic": "BLUFF",
+              "emotion": "neutral",
+              "cue": "sports_anthem",
+              "clip": "addon:oreville_vn:gjubtm"
+            },
+            {
+              "at": 9,
+              "text": "Scream if you want to go faster!",
+              "topic": "FOLLOW",
+              "emotion": "happy",
+              "cue": "crowd_roar",
+              "clip": "addon:oreville_vn:tlmubr"
+            },
+            {
+              "at": 18,
+              "text": "Oh no! Now I need to get a job!",
+              "topic": "PANIC",
+              "emotion": "scared",
+              "clip": "addon:oreville_vn:avyabc"
+            },
+            {
+              "at": 27,
+              "text": "I can walk faster than that.",
+              "topic": "ADMIRE",
+              "emotion": "happy",
+              "cue": "full_time",
+              "clip": "addon:oreville_vn:brokfs"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "_clips": "Every line's \"clip\" is an id from voice/clips_index.json with kind=\"addon\" (Villager News 1.0 Add-On) whose transcript is the line's caption. Re-pin with tools/bind_tv_clips.py."
+}

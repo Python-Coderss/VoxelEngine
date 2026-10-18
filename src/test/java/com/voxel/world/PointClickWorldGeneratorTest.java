@@ -70,10 +70,33 @@ public class PointClickWorldGeneratorTest {
         int g = PointClickWorldAuthor.G;
         // Stone-brick plaza floor overrides the grass within +-10 of origin.
         assertEquals("plaza floor", 131, gen.getBlockType(3, g, 3, g));
-        assertEquals("plaza border wall", 131, gen.getBlockType(10, g + 1, 0, g));
+        assertEquals("plaza border wall", 131, gen.getBlockType(10, g + 1, 4, g));
+        // The four cardinal gateways are open so the district paths connect.
+        assertEquals("plaza east gate", 0, gen.getBlockType(10, g + 1, 0, g));
         // Lamp post glowstone heads at the four corners.
         assertEquals("lamp glowstone", 17, gen.getBlockType(-8, g + 3, -8, g));
         assertEquals("lamp glowstone", 17, gen.getBlockType(8, g + 3, 8, g));
+    }
+
+    @Test
+    public void fourDistrictsExistAlongTheCardinalPaths() {
+        int g = PointClickWorldAuthor.G;
+        // West: the builder's yard has a real oak door in its east wall.
+        assertEquals("yard door lower", DecorBlocks.OAK_DOOR_LOWER,
+                gen.getBlockType(-26, g + 1, 0, g));
+        assertEquals("yard door upper", DecorBlocks.OAK_DOOR_UPPER,
+                gen.getBlockType(-26, g + 2, 0, g));
+        assertEquals("yard workbench", 115, gen.getBlockType(-34, g + 1, -2, g));
+        // North: the market canopy is wool over log posts.
+        assertEquals("market canopy", 91, gen.getBlockType(0, g + 4, -32, g));
+        assertEquals("market chest", 118, gen.getBlockType(0, g + 1, -28, g));
+        // South: the farm's irrigation channel is water, with a scarecrow.
+        assertEquals("farm channel", 15, gen.getBlockType(0, g, 30, g));
+        assertEquals("scarecrow head", 42, gen.getBlockType(7, g + 3, 27, g));
+        // East: the quarry face exposes ore beside a walk-in tunnel.
+        assertEquals("quarry ore face", 61, gen.getBlockType(26, g + 1, -3, g));
+        assertEquals("quarry tunnel mouth", 0, gen.getBlockType(26, g + 1, 0, g));
+        assertEquals("quarry rail", 391, gen.getBlockType(32, g + 1, 0, g));
     }
 
     @Test

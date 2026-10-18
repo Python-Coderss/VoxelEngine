@@ -51,6 +51,16 @@ public class Entity {
     public float getPickWidth() { return pickWidth; }
     public float getPickHeight() { return pickHeight; }
 
+    /**
+     * Binds this entity to the world it lives in. Subclasses that own a
+     * {@code world} field override this; the base default is a no-op so that
+     * generic callers (save restore, dimension switches) can rebind ANY entity
+     * without knowing its concrete type. An entity left with a null world has
+     * its brain and ground movement skipped, which is exactly why villagers and
+     * livestock used to come back from a save frozen in place.
+     */
+    public void setWorld(com.voxel.World world) { }
+
     // ── Animation system ──
     private Animation currentAnimation = null;
     private String currentAnimName = null;

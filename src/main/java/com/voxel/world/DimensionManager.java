@@ -23,6 +23,8 @@ public class DimensionManager {
     private boolean tutorialWorld = false;
     /** When true, the Overworld is built as the flat Point & Click demo world. */
     private boolean pointClickWorld = false;
+    /** When true, the Overworld is built as the creative Showcase World hub. */
+    private boolean showcaseWorld = false;
 
     public DimensionManager(BlockDataManager blockDataManager, WorldSaveManager saveManager, BiomeManager biomeManager) {
         this.blockDataManager = blockDataManager;
@@ -46,6 +48,11 @@ public class DimensionManager {
     /** Selects the flat Point & Click demo generator for the Overworld. */
     public void setPointClickWorld(boolean pointClickWorld) {
         this.pointClickWorld = pointClickWorld;
+    }
+
+    /** Selects the flat Showcase World generator for the Overworld. */
+    public void setShowcaseWorld(boolean showcaseWorld) {
+        this.showcaseWorld = showcaseWorld;
     }
 
     /** Mixes the world seed into a per-dimension noise seed, keeping 0 → classic. */
@@ -90,6 +97,10 @@ public class DimensionManager {
                 // flat generator matches its base terrain so there's no Beta
                 // terrain bleeding in at the edges.
                 generator = new PointClickWorldGenerator(typeSeed, blockDataManager);
+            } else if (showcaseWorld) {
+                // The Showcase World hub is regenerated at runtime from the
+                // author into every section, so it needs no bundled template.
+                generator = new ShowcaseWorldGenerator(typeSeed, blockDataManager);
             } else {
             // The normal Overworld uses the faithful Beta 1.8.1 continental
             // generator (Adventure Update terrain) with vanilla precision.

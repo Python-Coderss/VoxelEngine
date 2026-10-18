@@ -1,6 +1,7 @@
 package com.voxel.world.structure;
 
 import com.voxel.World;
+import com.voxel.world.DecorBlocks;
 import com.voxel.world.StrongholdLocator;
 import com.voxel.utils.BlockDataManager;
 
@@ -29,6 +30,23 @@ public class MapGenStronghold {
 
     private static final int CHUNK_W = 16;
     private static final int VALID_WIDTH = 32;
+    /** Real doors for the stronghold rooms (Main.registerDecorativeBlocks). */
+    private static final int DOOR_LOWER_EW = DecorBlocks.OAK_DOOR_LOWER_EW;
+    private static final int DOOR_UPPER_EW = DecorBlocks.OAK_DOOR_UPPER_EW;
+    private static final int LADDER = DecorBlocks.LADDER;
+
+    /**
+     * First block id registered under any of {@code names}, or 0 when none is.
+     * Never unboxes a null — {@link BlockDataManager#findBlockId} returns one
+     * for any name the registry does not know.
+     */
+    private static int id(BlockDataManager bdm, String... names) {
+        for (String n : names) {
+            Integer v = bdm.findBlockId(n);
+            if (v != null && v > 0) return v;
+        }
+        return 0;
+    }
 
     /** True when this chunk column is at least partially inside the stronghold bounding box. */
     public static boolean isStrongholdChunk(int cx, int cz, int strongholdCX, int strongholdCZ) {
@@ -54,12 +72,15 @@ public class MapGenStronghold {
     public static void generate(World world, int slot, int cx, int cz, int cy,
                                  int strongholdCX, int strongholdCZ, int baseY,
                                  BlockDataManager blockDataManager) {
-        int stoneBricksId = blockDataManager.findBlockId("stone_bricks");
-        int mossyId       = stoneBricksId; // Fall back to plain stonebricks if mossy missing.
-        int bookshelfId   = blockDataManager.findBlockId("bookshelf");
-        int torchId       = blockDataManager.findBlockId("torch");
-        int frameId       = blockDataManager.findBlockId("end_portal_frame");
-        int portalId      = blockDataManager.findBlockId("end_portal");
+        // findBlockId() returns null for an unknown name, so every lookup goes
+        // through the null-safe helper and tries the names this engine actually
+        // registers ("stonebrick"/"stonebrick_normal", not "stone_bricks").
+        int stoneBricksId = id(blockDataManager, "stone_bricks", "stonebrick", "stonebrick_normal");
+        int mossyId       = id(blockDataManager, "mossy_stonebrick", "mossy_stone_bricks", "mossy_cobblestone");
+        int bookshelfId   = id(blockDataManager, "bookshelf");
+        int torchId       = id(blockDataManager, "torch", "normal_torch");
+        int frameId       = id(blockDataManager, "end_portal_frame");
+        int portalId      = id(blockDataManager, "end_portal");
         if (mossyId == 0)  mossyId = stoneBricksId;
 
         if (stoneBricksId == 0 || frameId == 0 || portalId == 0) {
@@ -89,19 +110,32 @@ public class MapGenStronghold {
                     stoneBricksId, frameId, portalId);
         }
 
-        // ── Library: a 14×9×15 bookshelves-and-aisle volume just south of the portal room.
+        // ── Library: a 14×9×9 bookshelves-and-aisle room just south of the portal room.
+        // The old depth of 15 ran past the decorated chunk and the whole room
+        // was therefore skipped by fitsChunk (dead code). 9 keeps it inside the
+        // chunk that is actually decorated, and it now sits on the same floor
+        // level as the portal room.
         // We say "south" = +Z for friendly coordinates.
         int libMinX = originX + 1;
         int libMinZ = originZ + 6;
-        int libW = 14, libH = 9, libD = 15;
-        if (fitsChunk(libMinX, baseY - 1, libMinZ, libW, libH, libD, slotMinX, slotMaxX, slotMinZ, slotMaxZ)) {
-            buildLibrary(world, slot, cx, cz, libMinX, baseY - 1, libMinZ,
+        int libW = 14, libH = 9, libD = 9;
+        if (fitsChunk(libMinX, baseY, libMinZ, libW, libH, libD, slotMinX, slotMaxX, slotMinZ, slotMaxZ)) {
+            buildLibrary(world, slot, cx, cz, libMinX, baseY, libMinZ,
                     libW, libH, libD, stoneBricksId, bookshelfId, torchId);
+            // A level walk from the portal-room mouth into the library's north
+            // door, so stepping out of the room is not a fall.
+            for (int dx = 1; dx <= 2; dx++)
+                for (int dz = 4; dz <= 5; dz++)
+                    putBlock(world, slot, cx, cz, originX + dx, baseY, originZ + dz,
+                            stoneBricksId);
         }
 
-        // ── Stairwell: 4×15×4 stairwell down 15 levels from the library south end.
-        int stairMinX = originX + 5;
-        int stairMinZ = originZ + 22;
+        // ── Descent shaft: a hollow stone-brick shaft west of the library with
+        // a ladder to the bottom, a mossy rim and a real door at the top. It is
+        // placed inside the decorated chunks (the old +22 Z offset fell outside
+        // them and never generated at all).
+        int stairMinX = originX - 8;
+        int stairMinZ = originZ + 6;
         if (fitsChunk(stairMinX, baseY - 14, stairMinZ, 4, 15, 4,
                 slotMinX, slotMaxX, slotMinZ, slotMaxZ)) {
             buildStairwell(world, slot, cx, cz,
@@ -198,47 +232,97 @@ public class MapGenStronghold {
                                        int cx, int cz,
                                        int x, int y, int z, int w, int h, int d,
                                        int stoneId, int bookshelfId, int torchId) {
-        // Floor and ceiling
+        // Two-wide doorway columns, shared by both end walls.
+        int doorA = x + w / 2;
+        int doorB = doorA + 1;
+        // Floor and ceiling (solid, so nothing hangs over the aisle).
         for (int dx = 0; dx < w; dx++)
             for (int dz = 0; dz < d; dz++) {
                 putBlock(world, slot, cx, cz, x + dx, y, z + dz, stoneId);
                 putBlock(world, slot, cx, cz, x + dx, y + h - 1, z + dz, stoneId);
             }
-        // Side walls
+        // Side walls along the long (X) walls.
         for (int dy = 1; dy < h - 1; dy++)
             for (int dz = 0; dz < d; dz++) {
                 putBlock(world, slot, cx, cz, x, y + dy, z + dz, stoneId);
                 putBlock(world, slot, cx, cz, x + w - 1, y + dy, z + dz, stoneId);
             }
-        // Bookshelf rows: place 2-block-tall bookshelves along both inner walls
+        // End walls (Z) — the old build left both ends wide open to the sky.
+        // A two-wide, two-tall doorway is left clear for the doors below.
+        for (int dy = 1; dy < h - 1; dy++) {
+            for (int dx = 0; dx < w; dx++) {
+                boolean doorway = dy <= 2 && (x + dx == doorA || x + dx == doorB);
+                if (doorway) continue;
+                putBlock(world, slot, cx, cz, x + dx, y + dy, z, stoneId);
+                putBlock(world, slot, cx, cz, x + dx, y + dy, z + d - 1, stoneId);
+            }
+        }
+        // Bookshelf rows along the two long walls, with a gap at each doorway
+        // so the shelving does not block the doors.
         for (int dx = 1; dx < w - 1; dx++) {
+            if (x + dx == doorA || x + dx == doorB) continue;
             for (int dy = 1; dy < h - 2; dy++) {
                 putBlock(world, slot, cx, cz, x + dx, y + dy, z + 1, bookshelfId);
                 putBlock(world, slot, cx, cz, x + dx, y + dy, z + d - 2, bookshelfId);
             }
         }
-        // Aisle torches every 4 blocks along the middle
+        // Aisle torches every 4 blocks along the middle.
         for (int dz = 4; dz < d - 2; dz += 4) {
             putBlock(world, slot, cx, cz, x + w / 2, y + 1, z + dz, torchId);
         }
+        // Real two-block doors in both end walls. The walls run along X, so
+        // they take the east-west panels: the north door faces the portal room,
+        // the south door faces the descent shaft.
+        for (int dx = doorA; dx <= doorB; dx++) {
+            putBlock(world, slot, cx, cz, dx, y + 1, z, DOOR_LOWER_EW);
+            putBlock(world, slot, cx, cz, dx, y + 2, z, DOOR_UPPER_EW);
+            putBlock(world, slot, cx, cz, dx, y + 1, z + d - 1, DOOR_LOWER_EW);
+            putBlock(world, slot, cx, cz, dx, y + 2, z + d - 1, DOOR_UPPER_EW);
+        }
     }
 
+    /**
+     * A vertical descent shaft: a stone-brick shell with a drained interior, a
+     * ladder down one side, a walled lava pool on the bottom landing, a mossy
+     * rim at the surface and a real two-block door in the south wall. The old
+     * version laid a solid 4×15×4 cube of stone and called it a stairwell, with
+     * no way in and no way down.
+     */
     private static void buildStairwell(World world, int slot,
                                         int cx, int cz,
                                         int x, int y, int z,
                                         int stoneId, int mossyId, int surfaceY) {
-        for (int dy = 0; dy < 15; dy++) {
-            for (int dx = 0; dx < 4; dx++)
-                for (int dz = 0; dz < 4; dz++)
-                    putBlock(world, slot, cx, cz, x + dx, y + dy, z + dz, stoneId);
+        // Shell: four walls, hollow inside, from the bottom landing to the rim.
+        for (int ly = y; ly <= surfaceY + 1; ly++) {
+            for (int dx = 0; dx < 4; dx++) {
+                putBlock(world, slot, cx, cz, x + dx, ly, z, stoneId);
+                putBlock(world, slot, cx, cz, x + dx, ly, z + 3, stoneId);
+            }
+            for (int dz = 0; dz < 4; dz++) {
+                putBlock(world, slot, cx, cz, x, ly, z + dz, stoneId);
+                putBlock(world, slot, cx, cz, x + 3, ly, z + dz, stoneId);
+                putBlock(world, slot, cx, cz, x + 1, ly, z + dz, 0);
+                putBlock(world, slot, cx, cz, x + 2, ly, z + dz, 0);
+            }
         }
-        // Surface lava pool at the bottom for the dramatic effect
-        for (int dx = 1; dx < 3; dx++)
-            for (int dz = 1; dz < 3; dz++)
-                putBlock(world, slot, cx, cz, x + dx, y, z + dz, 26 /* lava */);
-        // Stronghold mossy entrance at the top
+        // Sealed floor under the shaft so the interior never hangs over a void.
         for (int dx = 0; dx < 4; dx++)
             for (int dz = 0; dz < 4; dz++)
-                putBlock(world, slot, cx, cz, x + dx, surfaceY, z + dz, mossyId);
+                putBlock(world, slot, cx, cz, x + dx, y - 1, z + dz, stoneId);
+        // A ladder down the west interior wall.
+        for (int ly = y; ly <= surfaceY; ly++)
+            putBlock(world, slot, cx, cz, x + 1, ly, z + 1, LADDER);
+        // Walled lava pool on the bottom landing, on the far side from the ladder.
+        putBlock(world, slot, cx, cz, x + 2, y, z + 2, 26 /* lava */);
+        // Mossy rim along the north and south walls only where no door is.
+        for (int dx = 0; dx < 4; dx++)
+            putBlock(world, slot, cx, cz, x + dx, surfaceY + 1, z, mossyId);
+        putBlock(world, slot, cx, cz, x, surfaceY + 1, z + 3, mossyId);
+        putBlock(world, slot, cx, cz, x + 3, surfaceY + 1, z + 3, mossyId);
+        // Two-wide door in the south wall (a wall running along X).
+        putBlock(world, slot, cx, cz, x + 1, surfaceY + 1, z + 3, DOOR_LOWER_EW);
+        putBlock(world, slot, cx, cz, x + 1, surfaceY + 2, z + 3, DOOR_UPPER_EW);
+        putBlock(world, slot, cx, cz, x + 2, surfaceY + 1, z + 3, DOOR_LOWER_EW);
+        putBlock(world, slot, cx, cz, x + 2, surfaceY + 2, z + 3, DOOR_UPPER_EW);
     }
 }

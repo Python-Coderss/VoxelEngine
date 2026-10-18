@@ -306,6 +306,12 @@ public class PlayerInventory {
         ctx.craftingManager.consumeItems(craftingGrid);
         saveSurfaceCraftingGrid();
         ctx.setStatus("Crafted " + match.resultItemId.replace('_', ' '));
+        if (ctx.tutorialWorld && ctx.tutorialProgress != null) {
+            ctx.tutorialProgress.complete(com.voxel.game.TutorialProgress.CRAFT);
+            if (match.resultItemId != null && match.resultItemId.startsWith("iron_")) {
+                ctx.tutorialProgress.complete(com.voxel.game.TutorialProgress.IRON);
+            }
+        }
         if (ctx.cinematic != null) {
             boolean first = ctx.cinematic.firstTime("craft:" + match.resultItemId);
             ctx.cinematic.playActionBeat(com.voxel.cinematic.CinematicSystem.Beat.CRAFT,
@@ -427,6 +433,12 @@ public class PlayerInventory {
         crafting3x3ResultItemId = null;
         crafting3x3ResultCount = 0;
         ctx.setStatus("Crafted " + match.resultItemId.replace('_', ' '));
+        if (ctx.tutorialWorld && ctx.tutorialProgress != null) {
+            ctx.tutorialProgress.complete(com.voxel.game.TutorialProgress.CRAFT);
+            if (match.resultItemId != null && match.resultItemId.startsWith("iron_")) {
+                ctx.tutorialProgress.complete(com.voxel.game.TutorialProgress.IRON);
+            }
+        }
         if (ctx.cinematic != null) {
             boolean first = ctx.cinematic.firstTime("craft:" + match.resultItemId);
             ctx.cinematic.playActionBeat(com.voxel.cinematic.CinematicSystem.Beat.CRAFT,

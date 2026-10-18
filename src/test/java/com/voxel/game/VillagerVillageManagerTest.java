@@ -1,11 +1,14 @@
 package com.voxel.game;
 
 import com.voxel.World;
+import com.voxel.entity.VillagerEntity;
+import org.joml.Vector3f;
 import org.joml.Vector3i;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -63,5 +66,44 @@ public class VillagerVillageManagerTest {
         manager.tick(new PlateWorld(64), 120f, 120f, null, null);
         assertEquals(2, manager.getPendingVillageCount());
         assertTrue(manager.getAllVillages().isEmpty());
+    }
+
+    @Test
+    public void restoredVillagersRejoinAVillageAndResumeMembership() {
+        VillagerVillageManager manager = new VillagerVillageManager();
+        World world = new PlateWorld(64);
+        VillagerEntity first =
+                new VillagerEntity(80001, new Vector3f(0f, 64f, 0f), null);
+        VillagerEntity second =
+                new VillagerEntity(80002, new Vector3f(4f, 64f, 4f), null);
+        assertFalse("a restored villager starts outside any village",
+                first.isInVillage());
+
+        manager.bindRestoredVillager(first, world);
+        manager.bindRestoredVillager(second, world);
+
+        assertTrue(first.isInVillage());
+        assertTrue(second.isInVillage());
+        assertEquals("restored villagers share one village record",
+                first.getVillageCenter(), second.getVillageCenter());
+        assertEquals("the shared village cell holds both villagers",
+                2, manager.getAllVillages().iterator().next().villagers.size());
+    }
+
+    @Test
+    public void reRegisteringAVillageCellKeepsItsVillagers() {
+        VillagerVillageManager manager = new VillagerVillageManager();
+        VillagerEntity villager =
+                new VillagerEntity(80003, new Vector3f(1f, 64f, 1f), null);
+        manager.bindRestoredVillager(villager, new PlateWorld(64));
+        VillagerVillageManager.Village before =
+                manager.getAllVillages().iterator().next();
+
+        // The generator re-registers the same cell as its chunks re-generate.
+        VillagerVillageManager.Village again =
+                manager.registerVillage(new Vector3i(0, 64, 0), 48);
+
+        assertSame("re-registration must merge, not replace", before, again);
+        assertEquals(1, again.villagers.size());
     }
 }

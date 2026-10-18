@@ -51,6 +51,18 @@ public final class AncientBuilderSites {
     /** Void steel: the builders' own alloy, used for monuments and machines. */
     private static final int VOID_STEEL = 905;
 
+    // ── Doors (ids registered by Main.registerDecorativeBlocks) ──
+    // Each kit is {lower Z-wall, upper Z-wall, lower X-wall, upper X-wall}.
+    private static final int[] OAK_DOOR = {DecorBlocks.OAK_DOOR_LOWER,
+            DecorBlocks.OAK_DOOR_UPPER, DecorBlocks.OAK_DOOR_LOWER_EW,
+            DecorBlocks.OAK_DOOR_UPPER_EW};
+    private static final int[] SPRUCE_DOOR = {DecorBlocks.SPRUCE_DOOR_LOWER,
+            DecorBlocks.SPRUCE_DOOR_UPPER, DecorBlocks.SPRUCE_DOOR_LOWER_EW,
+            DecorBlocks.SPRUCE_DOOR_UPPER_EW};
+    private static final int[] DARK_OAK_DOOR = {DecorBlocks.DARK_OAK_DOOR_LOWER,
+            DecorBlocks.DARK_OAK_DOOR_UPPER, DecorBlocks.DARK_OAK_DOOR_LOWER_EW,
+            DecorBlocks.DARK_OAK_DOOR_UPPER_EW};
+
     /** One fixed site with its family of layout variants. */
     public static final class Site {
         public final String name;
@@ -210,21 +222,34 @@ public final class AncientBuilderSites {
                 s.set(cx + dx, base + 8, cz + dz, STONE_BRICK_SLAB);
             }
         }
-        // Entrances on all four faces.
+        // Entrances on all four faces: a two-tall central door flanked by glass
+        // sidelights and capped by a stone-brick lintel.
         for (int d = -1; d <= 1; d++) {
-            for (int y = 1; y <= 3; y++) {
-                s.set(cx + d, base + y, cz - r, 0);
-                s.set(cx + d, base + y, cz + r, 0);
-                s.set(cx - r, base + y, cz + d, 0);
-                s.set(cx + r, base + y, cz + d, 0);
+            for (int y = 1; y <= 2; y++) {
+                int side = d == 0 ? 0 : GLASS;
+                s.set(cx + d, base + y, cz - r, side);
+                s.set(cx + d, base + y, cz + r, side);
+                s.set(cx - r, base + y, cz + d, side);
+                s.set(cx + r, base + y, cz + d, side);
             }
+            s.set(cx + d, base + 3, cz - r, STONE_BRICK);
+            s.set(cx + d, base + 3, cz + r, STONE_BRICK);
+            s.set(cx - r, base + 3, cz + d, STONE_BRICK);
+            s.set(cx + r, base + 3, cz + d, STONE_BRICK);
         }
+        // The doors: north/south faces are walls along X, east/west along Z.
+        doorInXWall(s, cx, cz - r, base + 1, OAK_DOOR);
+        doorInXWall(s, cx, cz + r, base + 1, OAK_DOOR);
+        doorInZWall(s, cx - r, cz, base + 1, OAK_DOOR);
+        doorInZWall(s, cx + r, cz, base + 1, OAK_DOOR);
 
         // Colonnade: pillars at each fourth cell, slab capitals, torch sconces.
         for (int dx = -r + 3; dx <= r - 3; dx += 4) {
             for (int dz = -r + 3; dz <= r - 3; dz += 4) {
                 pillar(s, cx + dx, cz + dz, base + 1, 6, VOID_STEEL, STEEL_BEAM);
-                s.set(cx + dx + 1, base + 5, cz + dz, TORCH);
+                // Sconce standing on the floor beside the pillar (the old one
+                // floated at mid-height with nothing beneath it).
+                s.set(cx + dx + 1, base + 1, cz + dz, TORCH);
             }
         }
 
@@ -244,11 +269,16 @@ public final class AncientBuilderSites {
             }
         }
         s.set(cx, base + 3, cz, ENCHANTING_TABLE);
-        s.set(cx - 2, base + 3, cz, CHEST);
-        s.set(cx + 2, base + 3, cz, CHEST);
-        for (int dx = -4; dx <= 4; dx += 2) {
-            for (int dz = -4; dz <= 4; dz += 2) {
-                s.set(cx + dx, base + 9, cz + dz, CEILING_LIGHT);
+        // Chests sit on the outer dais course (they used to hover a block above it).
+        s.set(cx - 2, base + 2, cz, CHEST);
+        s.set(cx + 2, base + 2, cz, CHEST);
+        // Roof deck laid on the wall ring and the colonnade, with recessed light
+        // panels standing in for the oculus (the old lights floated over an open
+        // hall with no ceiling at all).
+        for (int dx = -r + 1; dx <= r - 1; dx++) {
+            for (int dz = -r + 1; dz <= r - 1; dz++) {
+                boolean panel = Math.floorMod(dx, 4) == 0 && Math.floorMod(dz, 4) == 0;
+                s.set(cx + dx, base + 8, cz + dz, panel ? CEILING_LIGHT : STONE_BRICK);
             }
         }
 
@@ -264,9 +294,15 @@ public final class AncientBuilderSites {
                     s.set(cx + dx, base + 5, cz + dz, STONE_BRICK_SLAB);
                 }
             }
+            // A single doorway from the hall into the wing, with a door and glass
+            // sidelights (three bare holes before).
+            for (int dz = -1; dz <= 1; dz++) {
+                int side = dz == 0 ? 0 : GLASS;
+                for (int y = 1; y <= 2; y++) s.set(cx - r, base + y, cz + dz, side);
+            }
+            s.set(cx - r, base + 3, cz, STONE_BRICK);
+            doorInZWall(s, cx - r, cz, base + 1, OAK_DOOR);
             for (int dz = -3; dz <= 3; dz += 3) {
-                s.set(cx - r, base + 1, cz + dz, 0);
-                s.set(cx - r, base + 2, cz + dz, 0);
                 s.set(cx - r - 4, base + 1, cz + dz, CHEST);
                 s.set(cx - r - 6, base + 1, cz + dz, CHEST);
             }
@@ -328,10 +364,11 @@ public final class AncientBuilderSites {
         s.set(cx, base + 1, cz - 5, CAULDRON);
         s.set(cx, base + 1, cz + 5, BREWING_STAND);
 
-        // Entrance on the south face.
-        for (int d = -1; d <= 1; d++) {
-            for (int y = 1; y <= 3; y++) s.set(cx + d, base + y, cz + r, 0);
-        }
+        // Entrance on the south face: a two-tall doorway with a real door and a
+        // stone-brick lintel over it.
+        for (int y = 1; y <= 2; y++) s.set(cx, base + y, cz + r, 0);
+        s.set(cx, base + 3, cz + r, STONE_BRICK);
+        doorInXWall(s, cx, cz + r, base + 1, SPRUCE_DOOR);
 
         // Variant 1: eastern instrument annex with an enchantment bench.
         if (variant == 1) {
@@ -348,6 +385,7 @@ public final class AncientBuilderSites {
             }
             s.set(cx + r, base + 1, cz, 0);
             s.set(cx + r, base + 2, cz, 0);
+            doorInZWall(s, cx + r, cz, base + 1, SPRUCE_DOOR);
             s.set(cx + r + 4, base + 1, cz, ENCHANTING_TABLE);
             s.set(cx + r + 7, base + 1, cz - 2, CHEST);
             s.set(cx + r + 7, base + 1, cz + 2, ANVIL);
@@ -381,23 +419,32 @@ public final class AncientBuilderSites {
                     }
                 }
             }
-            // Rail spur down the middle of the terrace.
+            // Rail spur down the middle of the terrace, running east-west.
             for (int dx = -r + 1; dx <= r - 1; dx++) {
-                s.set(cx + dx, y, cz, Math.abs(dx) % 2 == 0 ? RAIL_EW : RAIL_EW);
+                s.set(cx + dx, y, cz, RAIL_EW);
             }
         }
 
-        // Stone store on the rim: chests, anvils, a crafting bench.
+        // Stone store on the rim: chests, anvils, a crafting bench. The old
+        // design was sealed shut — no entrance and an open roof.
         floor(s, cx + 20, cz + 6, cx + 26, cz + 12, base, MOSSY_COBBLE);
         for (int dx = 20; dx <= 26; dx++) {
             for (int dz = 6; dz <= 12; dz++) {
                 boolean edge = dx == 20 || dx == 26 || dz == 6 || dz == 12;
-                if (!edge) continue;
-                for (int y = 1; y <= 3; y++) {
-                    s.set(cx + dx, base + y, cz + dz, STONE_BRICK);
+                if (edge) {
+                    for (int y = 1; y <= 3; y++) {
+                        s.set(cx + dx, base + y, cz + dz, STONE_BRICK);
+                    }
                 }
                 s.set(cx + dx, base + 4, cz + dz, STONE_BRICK_SLAB);
             }
+        }
+        s.set(cx + 23, base + 4, cz + 9, GLOWSTONE);
+        // Double door on the pit-facing (west) wall, with a threshold step.
+        for (int dz = 8; dz <= 9; dz++) {
+            for (int y = 1; y <= 2; y++) s.set(cx + 20, base + y, cz + dz, 0);
+            s.set(cx + 19, base, cz + dz, MOSSY_COBBLE);
+            doorInZWall(s, cx + 20, cz + dz, base + 1, SPRUCE_DOOR);
         }
         s.set(cx + 21, base + 1, cz + 7, CHEST);
         s.set(cx + 25, base + 1, cz + 7, CHEST);
@@ -405,20 +452,23 @@ public final class AncientBuilderSites {
         s.set(cx + 21, base + 1, cz + 11, ANVIL);
 
         // Crane: void-steel mast and boom over the pit, with a hopper bucket.
-        pillar(s, cx - 16, cz - 16, base + 1, 8, VOID_STEEL, STEEL_BEAM);
+        // The mast stands on the dug terrace floor instead of hovering above it.
+        pillar(s, cx - 16, cz - 16, base, 8, VOID_STEEL, STEEL_BEAM);
         for (int i = 1; i <= 8; i++) {
             s.set(cx - 16 + i, base + 8, cz - 16, STEEL_BEAM);
         }
         s.set(cx - 8, base + 7, cz - 16, HOPPER);
         if (variant == 1) {
-            pillar(s, cx + 16, cz - 16, base + 1, 8, VOID_STEEL, STEEL_BEAM);
+            pillar(s, cx + 16, cz - 16, base, 8, VOID_STEEL, STEEL_BEAM);
             for (int i = 1; i <= 8; i++) {
                 s.set(cx + 16 - i, base + 8, cz - 16, STEEL_BEAM);
             }
             s.set(cx + 8, base + 7, cz - 16, HOPPER);
         }
-        s.set(cx - 20, base + 1, cz + 2, TORCH);
-        s.set(cx + 20, base + 1, cz - 2, TORCH);
+        // Rim markers stand on the natural ground surface rather than hovering
+        // one course above it.
+        s.set(cx - 20, base, cz + 2, TORCH);
+        s.set(cx + 20, base, cz - 2, TORCH);
     }
 
     private static int oreFor(int hash) {
@@ -462,10 +512,14 @@ public final class AncientBuilderSites {
                         Math.floorMod(dx + dz, 4) == 0 ? CEILING_LIGHT : CONCRETE);
             }
         }
-        // Door on the south wall.
-        for (int d = -2; d <= 2; d++) {
-            for (int y = 1; y <= 3; y++) s.set(cx + d, base + y, cz - rz, 0);
+        // Entrance on the south wall: a two-tall doorway with a central door and
+        // glass sidelights, instead of a five-wide hole punched through the wall.
+        for (int y = 1; y <= 2; y++) {
+            s.set(cx - 1, base + y, cz - rz, GLASS);
+            s.set(cx + 1, base + y, cz - rz, GLASS);
+            s.set(cx, base + y, cz - rz, 0);
         }
+        doorInXWall(s, cx, cz - rz, base + 1, DARK_OAK_DOOR);
 
         // Machine line: casings, shafts, cogwheels, a press and a belt run.
         for (int dx = -6; dx <= 6; dx++) {
@@ -509,51 +563,77 @@ public final class AncientBuilderSites {
     private static void buildWatchSpire(VoxelSink s, int cx, int cz, int base, int variant) {
         int half = 4;
         int height = variant == 1 ? 24 : 18;
+        // Ring of interior cells the spiral stair climbs, one course of rise per
+        // cell, so the stair is one continuous climb rather than a scatter of
+        // disconnected steps down the diagonal.
+        final int[][] SPIRAL = {
+                {-2, -2}, {-1, -2}, {0, -2}, {1, -2}, {2, -2},
+                {2, -1}, {2, 0}, {2, 1}, {2, 2},
+                {1, 2}, {0, 2}, {-1, 2}, {-2, 2},
+                {-2, 1}, {-2, 0}, {-2, -1}};
         for (int y = 1; y <= height; y++) {
-            int h = y >= height - 4 ? half - 1 : half;
+            boolean crown = y > height - 4;
+            int h = crown ? half - 1 : half;
             for (int dx = -h; dx <= h; dx++) {
                 for (int dz = -h; dz <= h; dz++) {
                     boolean edge = Math.abs(dx) == h || Math.abs(dz) == h;
                     if (!edge) continue;
                     boolean slit = y % 4 == 2 && (Math.abs(dx) == h ^ Math.abs(dz) == h);
                     s.set(cx + dx, base + y, cz + dz,
-                            slit ? GLASS : (y > height - 4 ? MARBLE : STONE_BRICK));
+                            slit ? GLASS : (crown ? MARBLE : STONE_BRICK));
                 }
             }
-            // Spiral stair inside the shell.
-            int sx = ((y / 2) % 3) - 1;
-            int sz = ((y / 2) % 3) - 1;
-            s.set(cx + sx, base + y, cz + sz, STONE_BRICK_STAIRS);
+            // Ledge bridging the step-in, so the stepped crown rests on masonry.
+            if (y == height - 3) {
+                for (int dx = -half; dx <= half; dx++) {
+                    for (int dz = -half; dz <= half; dz++) {
+                        if (Math.abs(dx) == half || Math.abs(dz) == half) {
+                            s.set(cx + dx, base + y, cz + dz, STONE_BRICK);
+                        }
+                    }
+                }
+            }
+            if (y < height) {
+                int[] step = SPIRAL[(y - 1) % SPIRAL.length];
+                s.set(cx + step[0], base + y, cz + step[1], STONE_BRICK_STAIRS);
+            }
         }
-        // Base plinth and door.
+        // Base plinth.
         for (int dx = -half - 2; dx <= half + 2; dx++) {
             for (int dz = -half - 2; dz <= half + 2; dz++) {
                 s.set(cx + dx, base - 1, cz + dz, STONE_BRICK);
                 s.set(cx + dx, base, cz + dz, MOSSY_COBBLE);
             }
         }
-        for (int d = -1; d <= 1; d++) {
-            for (int y = 1; y <= 3; y++) s.set(cx + d, base + y, cz - half - 1, 0);
-        }
-        // Battlement + crown.
+        // Entrance in the actual shell wall (the old carve sat a block outside it,
+        // leaving the tower completely sealed) with a real door.
+        for (int y = 1; y <= 2; y++) s.set(cx, base + y, cz - half, 0);
+        s.set(cx, base + 3, cz - half, STONE_BRICK);
+        doorInXWall(s, cx, cz - half, base + 1, DARK_OAK_DOOR);
+
+        // Battlement over the crown floor, left open where the stair tops out so
+        // the tower can actually be climbed.
         int top = base + height;
-        for (int dx = -half; dx <= half; dx++) {
-            s.set(cx + dx, top + 1, cz - half, IRON_BARS);
-            s.set(cx + dx, top + 1, cz + half, IRON_BARS);
-            s.set(cx - half, top + 1, cz + dx, IRON_BARS);
-            s.set(cx + half, top + 1, cz + dx, IRON_BARS);
+        int bh = half - 1;
+        int[] lastStep = SPIRAL[(height - 2) % SPIRAL.length];
+        for (int dx = -bh; dx <= bh; dx++) {
+            s.set(cx + dx, top + 1, cz - bh, IRON_BARS);
+            s.set(cx + dx, top + 1, cz + bh, IRON_BARS);
+            s.set(cx - bh, top + 1, cz + dx, IRON_BARS);
+            s.set(cx + bh, top + 1, cz + dx, IRON_BARS);
         }
-        for (int dx = -half + 1; dx <= half - 1; dx++) {
-            for (int dz = -half + 1; dz <= half - 1; dz++) {
-                s.set(cx + dx, top, cz + dz, MARBLE);
+        for (int dx = -bh; dx <= bh; dx++) {
+            for (int dz = -bh; dz <= bh; dz++) {
+                boolean hatch = dx == lastStep[0] && dz == lastStep[1];
+                s.set(cx + dx, top, cz + dz, hatch ? 0 : MARBLE);
             }
         }
         s.set(cx, top + 1, cz, BEACON);
-        s.set(cx - 2, top + 1, cz, CHEST);
-        s.set(cx - 2, top + 2, cz, TORCH);
-        s.set(cx + 2, top + 1, cz, CEILING_LIGHT);
+        s.set(cx - 1, top + 1, cz, CHEST);
+        s.set(cx - 1, top + 2, cz, TORCH);
+        s.set(cx + 1, top + 1, cz, CEILING_LIGHT);
         if (variant == 1) {
-            s.set(cx + 2, top + 3, cz, BEACON);
+            s.set(cx + 1, top + 2, cz, BEACON);
             s.set(cx, top + 2, cz, CEILING_LIGHT);
         }
     }
@@ -601,9 +681,10 @@ public final class AncientBuilderSites {
             s.set(cx + p[0], base + 4, cz + p[1], GLOWSTONE);
         }
 
-        // Variant 1: a commemorative arch over the north walk.
+        // Variant 1: a commemorative arch over the north walk, clear of the
+        // mirrored basin, with a lit keystone in the lintel.
         if (variant == 1) {
-            int az = cz - 12;
+            int az = cz - 16;
             for (int y = 1; y <= 6; y++) {
                 s.set(cx - 4, base + y, az, MARBLE);
                 s.set(cx + 4, base + y, az, MARBLE);
@@ -612,8 +693,8 @@ public final class AncientBuilderSites {
                 s.set(cx + dx, base + 7, az, MARBLE);
                 s.set(cx + dx, base + 8, az, STEEL_BEAM);
             }
+            s.set(cx, base + 7, az, SEA_LANTERN);
             s.set(cx, base + 9, az, CEILING_LIGHT);
-            s.set(cx, base + 6, az, SEA_LANTERN);
         }
     }
 
@@ -624,20 +705,30 @@ public final class AncientBuilderSites {
     }
 
     private static void basin(VoxelSink s, int cx, int cz, int base) {
+        // A sunken pool: the rim is two courses deep so the water cannot escape
+        // sideways, and the water sits one level below the surrounding walk.
         for (int dx = -4; dx <= 4; dx++) {
             for (int dz = -4; dz <= 4; dz++) {
                 int d = Math.max(Math.abs(dx), Math.abs(dz));
-                if (d == 4) s.set(cx + dx, base, cz + dz, MARBLE);
-                else s.set(cx + dx, base, cz + dz, WATER);
+                if (d == 4) {
+                    s.set(cx + dx, base, cz + dz, MARBLE);
+                    s.set(cx + dx, base - 1, cz + dz, MARBLE);
+                } else {
+                    s.set(cx + dx, base, cz + dz, 0);
+                    s.set(cx + dx, base - 1, cz + dz, WATER);
+                    s.set(cx + dx, base - 2, cz + dz, MARBLE);
+                }
             }
         }
+        // Centre pedestal rising out of the water to a lit finial.
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
-                s.set(cx + dx, base + 1, cz + dz, MARBLE);
+                s.set(cx + dx, base - 1, cz + dz, MARBLE);
             }
         }
+        s.set(cx, base, cz, MARBLE);
+        s.set(cx, base + 1, cz, MARBLE);
         s.set(cx, base + 2, cz, SEA_LANTERN);
-        s.set(cx, base + 3, cz, WATER);
     }
 
     // ── shared helpers ────────────────────────────────────────────────────
@@ -652,6 +743,18 @@ public final class AncientBuilderSites {
                                int shaft, int cap) {
         for (int y = y0; y < y0 + height; y++) s.set(x, y, z, shaft);
         s.set(x, y0 + height, z, cap);
+    }
+
+    /** Hangs a two-tall door in a wall that runs along Z (the wall plane is YZ). */
+    private static void doorInZWall(VoxelSink s, int x, int z, int floorY, int[] kit) {
+        s.set(x, floorY, z, kit[0]);
+        s.set(x, floorY + 1, z, kit[1]);
+    }
+
+    /** Hangs a two-tall door in a wall that runs along X (the wall plane is XZ). */
+    private static void doorInXWall(VoxelSink s, int x, int z, int floorY, int[] kit) {
+        s.set(x, floorY, z, kit[2]);
+        s.set(x, floorY + 1, z, kit[3]);
     }
 
     /** In-memory sink for tests and tools. */

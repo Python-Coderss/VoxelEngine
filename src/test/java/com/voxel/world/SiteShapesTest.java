@@ -9,9 +9,13 @@ import static org.junit.Assert.assertTrue;
 /**
  * The shape library is the skeleton under every MCSM/Legends/Dungeons site.
  * Each shape must stamp a non-empty, deterministic, idempotent footprint that
- * reads as the place it stands for.
+ * reads as the place it stands for — and every enclosed building it draws must
+ * carry a real, walkable door.
  */
 public class SiteShapesTest {
+
+    /** Number of shapes exercised by {@link SiteShapesTest#stamp}. */
+    private static final int SHAPE_COUNT = 14;
 
     @Test
     public void plazaIsPavedAndIdempotent() {
@@ -45,8 +49,36 @@ public class SiteShapesTest {
     }
 
     @Test
+    public void everyBuildingShapeHasAWorkingDoor() {
+        for (int which : new int[] {1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13}) {
+            SiteShapes.RecordingSink s = new SiteShapes.RecordingSink();
+            stamp(which, s);
+            assertTrue("shape " + which + " places a real door", doorCount(s) > 0);
+        }
+    }
+
+    @Test
+    public void everyDoorSitsOnSomethingSolid() {
+        // A door leaf must not float: the cell underneath it has to be filled.
+        for (int which : new int[] {1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13}) {
+            SiteShapes.RecordingSink s = new SiteShapes.RecordingSink();
+            stamp(which, s);
+            for (java.util.Map.Entry<String, Integer> e : s.voxels.entrySet()) {
+                if (!isDoor(e.getValue())) continue;
+                String[] parts = e.getKey().split(",");
+                int x = Integer.parseInt(parts[0]);
+                int y = Integer.parseInt(parts[1]);
+                int z = Integer.parseInt(parts[2]);
+                Integer below = s.voxels.get(x + "," + (y - 1) + "," + z);
+                assertTrue("shape " + which + ": door leaf at " + e.getKey() + " floats",
+                        below != null && below != 0);
+            }
+        }
+    }
+
+    @Test
     public void everyShapeStampsSomethingAndIsIdempotent() {
-        for (int which = 0; which < 12; which++) {
+        for (int which = 0; which < SHAPE_COUNT; which++) {
             SiteShapes.RecordingSink a = new SiteShapes.RecordingSink();
             SiteShapes.RecordingSink b = new SiteShapes.RecordingSink();
             stamp(which, a);
@@ -54,6 +86,19 @@ public class SiteShapesTest {
             assertFalse("shape " + which + " writes voxels", a.voxels.isEmpty());
             assertEquals("shape " + which + " is idempotent", a.voxels, b.voxels);
         }
+    }
+
+    private static boolean isDoor(int id) {
+        if (id < DecorBlocks.FIRST_ID
+                || id >= DecorBlocks.FIRST_ID + DecorBlocks.NAMES.length) return false;
+        return DecorBlocks.NAMES[id - DecorBlocks.FIRST_ID].contains("door");
+    }
+
+    /** Counts door voxels from the shared decor table. */
+    private static int doorCount(SiteShapes.RecordingSink s) {
+        int n = 0;
+        for (int id : s.voxels.values()) if (isDoor(id)) n++;
+        return n;
     }
 
     private static void stamp(int which, SiteShapes.Sink s) {
@@ -69,6 +114,8 @@ public class SiteShapesTest {
             case 8: SiteShapes.forge(s, 0, 0, 68, 8, 905, 21, 137, 17); break;
             case 9: SiteShapes.outpost(s, 0, 0, 68, 9, 1, 5, 138, 457); break;
             case 10: SiteShapes.riftHall(s, 0, 0, 68, 9, 900, 933, 934, 17); break;
+            case 11: SiteShapes.pumpkinField(s, 0, 0, 68, 13, 1, 13, 42, 131); break;
+            case 12: SiteShapes.forestCamp(s, 0, 0, 68, 14, 1, 5, 4, 17); break;
             default: SiteShapes.skyIsland(s, 0, 0, 68, 10, 1, 13, 18, 17); break;
         }
     }

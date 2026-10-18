@@ -4,9 +4,10 @@
   "saveName": "tutorial",
   "tutorial": true,
   "gameMode": "SURVIVAL",
-  "lastPlayed": 1790724504588,
+  "lastPlayed": 1792285887280,
   "worldSize": "MEDIUM",
   "player": {
+    "saturation": 5,
     "x": 0.5,
     "y": 69,
     "health": 20,
@@ -14,85 +15,85 @@
     "pitch": 0,
     "inventory": [
       {
-        "item": "wrench",
+        "item": "stone_pickaxe",
         "durability": 0,
         "count": 1,
         "slot": 0
       },
       {
-        "item": "goggles",
+        "item": "stone_axe",
         "durability": 0,
         "count": 1,
         "slot": 1
       },
       {
-        "item": "brass_ingot",
+        "item": "stone_sword",
         "durability": 0,
         "count": 1,
         "slot": 2
       },
       {
-        "item": "hand_crank",
+        "item": "torch",
         "durability": 0,
-        "count": 1,
+        "count": 32,
         "slot": 3
       },
       {
-        "item": "windmill_bearing",
+        "item": "bread",
         "durability": 0,
-        "count": 1,
+        "count": 16,
         "slot": 4
       },
       {
-        "item": "windmill_sail",
+        "item": "oak_planks",
+        "durability": 0,
+        "count": 32,
+        "slot": 5
+      },
+      {
+        "item": "crafting_table",
         "durability": 0,
         "count": 1,
-        "slot": 5
+        "slot": 6
+      },
+      {
+        "item": "hand_crank",
+        "durability": 0,
+        "count": 1,
+        "slot": 7
       },
       {
         "item": "shaft",
         "durability": 0,
         "count": 4,
-        "slot": 6
+        "slot": 8
       },
       {
         "item": "cogwheel",
         "durability": 0,
         "count": 4,
-        "slot": 7
-      },
-      {
-        "item": "large_cogwheel",
-        "durability": 0,
-        "count": 1,
-        "slot": 8
-      },
-      {
-        "item": "millstone",
-        "durability": 0,
-        "count": 1,
         "slot": 9
       },
       {
-        "item": "mechanical_press",
+        "item": "windmill_bearing",
         "durability": 0,
         "count": 1,
         "slot": 10
       },
       {
-        "item": "crushing_wheel",
+        "item": "windmill_sail",
         "durability": 0,
         "count": 1,
         "slot": 11
       },
       {
-        "item": "mechanical_drill",
+        "item": "millstone",
         "durability": 0,
         "count": 1,
         "slot": 12
       },
       {
-        "item": "mechanical_saw",
+        "item": "mechanical_press",
         "durability": 0,
         "count": 1,
         "slot": 13
@@ -110,31 +111,44 @@
         "slot": 15
       },
       {
-        "item": "brass_casing",
+        "item": "blaze_burner",
         "durability": 0,
         "count": 1,
         "slot": 16
       },
       {
-        "item": "blaze_burner",
+        "item": "steam_engine",
         "durability": 0,
         "count": 1,
         "slot": 17
       },
       {
-        "item": "steam_engine",
+        "item": "copper_tank",
         "durability": 0,
         "count": 1,
         "slot": 18
       },
       {
-        "item": "copper_tank",
+        "item": "wrench",
         "durability": 0,
         "count": 1,
         "slot": 19
+      },
+      {
+        "item": "goggles",
+        "durability": 0,
+        "count": 1,
+        "slot": 20
+      },
+      {
+        "item": "brass_ingot",
+        "durability": 0,
+        "count": 1,
+        "slot": 21
       }
     ],
     "dimension": "overworld",
-    "yaw": -90
+    "yaw": -90,
+    "hunger": 20
   }
 }

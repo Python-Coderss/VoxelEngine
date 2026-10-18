@@ -315,6 +315,7 @@ public class BlockDataManager {
         // Set isFullBlock based on block type
         if (name.startsWith("item_") || name.contains("slab") || name.contains("stairs") || name.contains("fence") ||
                 name.contains("wall") || name.contains("door") || name.contains("trapdoor") ||
+                name.contains("ladder") ||
                 name.contains("pane") || name.contains("carpet") || name.contains("dust") || name.contains("pressure_plate") ||
                 name.contains("button") || name.contains("lever") || name.contains("torch") ||
                 name.contains("rail") || name.contains("sign") || name.contains("banner") ||
