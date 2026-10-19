@@ -1,0 +1,19 @@
+source=TEAVSRP2.zip
+mode=non-neural acoustic reference analysis
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/death.ogg duration=1.9273 rate=22050 peak=0.32782 rms=0.04913 f0_est=179.3Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/haggle1.ogg duration=2.5774 rate=22050 peak=0.08234 rms=0.01239 f0_est=162.1Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/haggle2.ogg duration=1.7067 rate=22050 peak=0.10339 rms=0.01587 f0_est=132.0Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/haggle3.ogg duration=2.9257 rate=22050 peak=0.16330 rms=0.02880 f0_est=193.4Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/hit1.ogg duration=0.5921 rate=22050 peak=0.49579 rms=0.10187 f0_est=282.7Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/hit2.ogg duration=0.9520 rate=22050 peak=0.80902 rms=0.12500 f0_est=294.0Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/hit3.ogg duration=1.2074 rate=22050 peak=0.40277 rms=0.07502 f0_est=247.8Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/hit4.ogg duration=1.3235 rate=22050 peak=0.78220 rms=0.07944 f0_est=237.1Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/idle1.ogg duration=0.9288 rate=22050 peak=0.10159 rms=0.01848 f0_est=168.3Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/idle2.ogg duration=1.9621 rate=22050 peak=0.09720 rms=0.01646 f0_est=227.3Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/idle3.ogg duration=0.6037 rate=22050 peak=0.11441 rms=0.03115 f0_est=180.7Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/no1.ogg duration=1.8344 rate=22050 peak=0.22964 rms=0.03269 f0_est=193.4Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/no2.ogg duration=1.7879 rate=22050 peak=0.04218 rms=0.01141 f0_est=137.8Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/no3.ogg duration=1.0333 rate=22050 peak=0.30438 rms=0.04801 f0_est=172.3Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/yes1.ogg duration=1.1146 rate=22050 peak=0.17163 rms=0.02533 f0_est=302.1Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/yes2.ogg duration=3.6223 rate=22050 peak=0.17059 rms=0.02184 f0_est=169.6Hz
+dev/teavrsp-reference/assets/minecraft/sounds/mob/villager/yes3.ogg duration=0.4412 rate=22050 peak=0.17752 rms=0.04227 f0_est=168.3Hz

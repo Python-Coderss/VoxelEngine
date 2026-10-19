@@ -147,6 +147,42 @@
 
     <build>
         <plugins>
+            <!--
+              Assets are huge (112 MB / ~12k files: the tutorial world alone is
+              66 MB) but the code is small (300 files). By default the
+              resources plugin re-copies every asset on EVERY compile and test,
+              which dominated the build: a no-op `mvn compile` took 19 s.
+
+              The game reads its assets from src/main/resources at runtime (a
+              plain File-based loader, not a classpath one), so compile and test
+              do not need target/classes populated with them at all. Only
+              packaging a jar needs them bundled, so resource processing is
+              bound to the `prepare-package` phase, which runs before
+              maven-jar/shade but never during compile or surefire.
+
+              Run `mvn package` (or `mvn -Prelease package`) to build a jar;
+              for day-to-day work just run `mvn compile` / `mvn test`, which now
+              only compile Java.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <!-- Disable the lifecycle's default process-resources copy. -->
+                    <execution>
+                        <id>default-resources</id>
+                        <phase>none</phase>
+                    </execution>
+                    <execution>
+                        <id>copy-assets-for-jar</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>resources</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
@@ -165,7 +201,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.8.1</version>
+                <version>3.11.0</version>
                 <configuration>
                     <!--
                       Use <release>, not <source>/<target>. source/target only set the
@@ -180,6 +216,15 @@
                     <release>8</release>
                     <source>1.8</source>
                     <target>1.8</target>
+                    <!--
+                      Maven 3.9 still reports "Changes detected - recompiling the
+                      module! :source" and runs javac over all 300 files even when
+                      the tree is untouched, so these settings do not fully take
+                      effect. Kept because they help where they do apply; for a
+                      genuinely fast edit loop use build-fast.bat, which compiles
+                      only the changed sources with plain javac.
+                    -->
+                    <useIncrementalCompilation>true</useIncrementalCompilation>
                 </configuration>
             </plugin>
             <plugin>

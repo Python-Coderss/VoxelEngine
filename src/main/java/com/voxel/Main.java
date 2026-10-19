@@ -320,19 +320,10 @@ public class Main {
     public int width = 1280, height = 720;
     public final int CHUNK_SIZE = 16, REGION_SIZE = 128;
 
-    // ── Internal render scale ──
-    // AUTO DYNAMIC RESOLUTION IS THE DEFAULT: the internal scale continuously
-    // adapts so sky views hold ≥60 FPS and open ground views push toward 120
-    // FPS (the EMA target is 1000/120 ms). F7 cycles: Auto → 100% → 85% → 70%
-    // → 60% → 50% → back to Auto. Fixed modes never downscale.
-    private static final String[] SCALE_MODE_NAMES = {"Auto", "100%", "85%", "70%", "60%", "50%"};
-    private static final float[] SCALE_MODE_VALUES = {-1f, 1.0f, 0.85f, 0.70f, 0.60f, 0.50f};
-    private static final float[] DRS_SCALE_STEPS = {0.50f, 0.60f, 0.70f, 0.85f, 1.0f};
-    private static final float DRS_TARGET_MS = 1000.0f / 120.0f; // auto mode targets ~120 FPS
-    private int renderScaleMode = 0;          // index into SCALE_MODE_* tables (default: Auto)
-    private int drsStep = DRS_SCALE_STEPS.length - 1; // auto mode's current step (starts native)
-    private float emaFrameMs = DRS_TARGET_MS; // exponential moving average of frame cost
-    private int drsCooldown = 30;             // frames between auto scale changes
+    // The raytracer always renders at the window's native resolution. The former
+    // dynamic-resolution scaler (auto EMA + a 50–100% ladder, F7 to cycle) is
+    // gone: it traded visible sharpness for frame rate. renderW/renderH now track
+    // the window 1:1 and only change on a real window resize.
     public int renderW = width, renderH = height;
 
     public float lastMouseX = width / 2f, lastMouseY = height / 2f;
@@ -4870,9 +4861,6 @@ public class Main {
                 if (perfQueries != null) perfLogAndReset();
             }
 
-            // Dynamic resolution: feed this frame's cost to the auto scaler.
-            updateRenderScale(Math.min(dt, 0.1f) * 1000.0f);
-
             if (player.isDead()) {
                 statusMessage = "YOU DIED! Press R to respawn.";
                 statusUntil = glfwGetTime() + 1.0;
@@ -5577,11 +5565,6 @@ public class Main {
 
             if (key == GLFW_KEY_F5) {
                 toggleCameraMode();
-                return;
-            }
-
-            if (key == GLFW_KEY_F7) {
-                cycleRenderScale();
                 return;
             }
 
@@ -8223,95 +8206,6 @@ public class Main {
      * bypass this. The EMA warms up fast after boot/teleports so the scale
      * settles within ~a second instead of crawling down over several seconds.
      */
-    private void updateRenderScale(float rawDtMs) {
-        emaFrameMs = emaFrameMs * 0.9f + rawDtMs * 0.1f;
-        if (SCALE_MODE_VALUES[renderScaleMode] >= 0f) {
-            setRenderScale(SCALE_MODE_VALUES[renderScaleMode]);
-            return;
-        }
-        if (--drsCooldown > 0) return;
-        // Fullscreen UI (inventory/commands/TV) makes most pixels early-out, so
-        // frame cost drops artificially — don't "recover" resolution mid-menu
-        // only to drop again after closing (visible resolution pumping).
-        boolean uiCoveredNow = ctx != null && (inventoryOpen || commandMode || ctx.tvWatching);
-        if (uiCoveredNow) {
-            drsCooldown = 20;
-            return;
-        }
-        if (emaFrameMs > DRS_TARGET_MS * 1.2f && drsStep > 0) {
-            drsStep--;
-            drsUpStreak = 0;
-            setRenderScale(DRS_SCALE_STEPS[drsStep]);
-            logDrs(rawDtMs, "down");
-            // Re-measure quickly: a wrong guess should correct in ~0.25s,
-            // not hang around for a full second at a bad scale.
-            drsCooldown = emaFrameMs > DRS_TARGET_MS * 2f ? 8 : 15;
-        } else if (emaFrameMs < DRS_TARGET_MS * 0.8f && drsStep < DRS_SCALE_STEPS.length - 1) {
-            // Upgrades demand TWO consecutive cheap windows: a single quiet gap
-            // between world-streaming hitches would otherwise raise the scale
-            // just to drop it again at the next hitch (resolution pumping).
-            if (++drsUpStreak < 2) {
-                drsCooldown = 15;
-                return;
-            }
-            drsUpStreak = 0;
-            drsStep++;
-            setRenderScale(DRS_SCALE_STEPS[drsStep]);
-            logDrs(rawDtMs, "up");
-            // And once raised, commit for ~0.75s before re-evaluating.
-            drsCooldown = 90;
-        } else {
-            // Settled inside the target band — keep a heartbeat line but slow
-            // it right down (~every 4 s at 120 fps) so game.log stays readable.
-            drsUpStreak = 0;
-            if (++drsHoldLogCounter >= 480) {
-                drsHoldLogCounter = 0;
-                logDrs(rawDtMs, "hold");
-            }
-            drsCooldown = 30;
-        }
-    }
-
-    private int drsHoldLogCounter;
-
-    /** Consecutive cheap-frame windows seen while a scale upgrade is pending. */
-    private int drsUpStreak;
-
-    /**
-     * One status line per adaptation decision, so runs are diagnosable from
-     * game.log: "[DRS] scale=70% (900x506) ema=9.4ms fps=111 (down)".
-     */
-    private void logDrs(float dtMs, String dir) {
-        System.out.println(String.format(
-            "[DRS] scale=%.0f%% (%dx%d) ema=%.1fms fps=%d %s",
-            DRS_SCALE_STEPS[drsStep] * 100f, renderW, renderH, emaFrameMs,
-            lastMeasuredFps, dir));
-    }
-
-    /** Applies a scale fraction to the window size (16px floor per axis). */
-    private void setRenderScale(float scale) {
-        int w = Math.max(16, (int) (width * scale));
-        int h = Math.max(16, (int) (height * scale));
-        if (w == renderW && h == renderH) return;
-        // Must run on the GL thread — called from loop() and key handler paths only.
-        resizeRenderTexture(w, h);
-    }
-
-    /** F7: cycle Auto → 100% → 85% → 70% → 60% → 50% → Auto. */
-    private void cycleRenderScale() {
-        renderScaleMode = (renderScaleMode + 1) % SCALE_MODE_NAMES.length;
-        float v = SCALE_MODE_VALUES[renderScaleMode];
-        if (v >= 0f) {
-            setRenderScale(v);
-        } else {
-            drsCooldown = 45; // give the EMA time to settle before re-stepping
-            setRenderScale(DRS_SCALE_STEPS[drsStep]);
-        }
-        String label = SCALE_MODE_NAMES[renderScaleMode];
-        if (v < 0f) label += String.format(" (%.0f%%)", DRS_SCALE_STEPS[drsStep] * 100);
-        setStatus("Render Scale: " + label);
-    }
-
     // ── GPU timing (GL_TIME_ELAPSED ring; results harvested 32 frames late so
     //    reads never stall the pipeline). Sections: 0=light-pool gen, 1=raytrace
     //    dispatch, 2=present blit. Averages print once per second next to FPS. ──

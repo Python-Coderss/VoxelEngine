@@ -2,7 +2,7 @@
 nul
 claude-fable-5.md
 dev/
-voice/corpus/
+
 target/
 *.log
 __pycache__/
