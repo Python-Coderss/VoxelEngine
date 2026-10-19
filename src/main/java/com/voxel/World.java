@@ -49,7 +49,6 @@ public class World {
 
     // The occlusion pool stores a 14-bit mask for directional sky visibility
     // 1 short per voxel = 4096 shorts per chunk.
-    private final short[] occlusionPool;
 
     // Directional SDF pool: 8 bytes per chunk section, ONLY used for chunks
     // with zero solid voxels ("empty-loaded" chunks). Each byte encodes the
@@ -94,7 +93,6 @@ public class World {
         lightPool = new int[poolSize * voxelsPerChunk];
         tempLightPool = new byte[poolSize * voxelsPerChunk];
         bitmaskPool = new int[poolSize * (voxelsPerChunk / 32)];
-        occlusionPool = new short[poolSize * voxelsPerChunk];
         dirSdfPool = new byte[poolSize * 8];
     }
 
@@ -246,7 +244,6 @@ public class World {
     public int[] getChunkPool() { return chunkPool; }
     public int[] getBitmaskPool() { return bitmaskPool; }
     public int[] getLightPool() { return lightPool; }
-    public short[] getOcclusionPool() { return occlusionPool; }
     public byte[] getTempLightPool() { return tempLightPool; }
     public byte[] getDirSdfPool() { return dirSdfPool; }
     public int getPoolSizeForAlloc() { return poolSize; }
@@ -413,7 +410,6 @@ public void clearChunkPoolSlot(int slot) {
     for (int i = 0; i < voxelsPerChunk; i++) {
         chunkPool[startIdx + i] = 0;
         lightPool[startIdx + i] = 0;
-        occlusionPool[startIdx + i] = (short)0x3FFF; // sky-visible default, not pitch-black
     }
 
     int startBitWord = slot << 7;

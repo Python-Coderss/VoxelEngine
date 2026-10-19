@@ -1245,64 +1245,6 @@ public class LightEngine {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  OCCLUSION BAKER
-    // ══════════════════════════════════════════════════════════════════
-
-    /** 14-directional occlusion sample vectors (matches LightPropagationEngine). */
-    public static final float[][] OCC_DIRS = {
-        {0.0f, 1.0f, 0.0f},
-        {0.707f, 0.707f, 0.0f}, {-0.707f, 0.707f, 0.0f}, {0.0f, 0.707f, 0.707f}, {0.0f, 0.707f, -0.707f},
-        {0.5f, 0.707f, 0.5f}, {-0.5f, 0.707f, 0.5f}, {0.5f, 0.707f, -0.5f}, {-0.5f, 0.707f, -0.5f},
-        {0.866f, 0.5f, 0.0f}, {-0.866f, 0.5f, 0.0f}, {0.0f, 0.5f, 0.866f}, {0.0f, 0.5f, -0.866f},
-        {0.0f, 0.3f, 0.0f}
-    };
-
-    /**
-     * Bakes 14-directional sky occlusion for every voxel in a chunk section.
-     * Stores results in the World's occlusionPool as bitmask shorts.
-     */
-    public void bakeChunkOcclusion(int slot, int cx, int cy, int cz) {
-        short[] occPool = world.getOcclusionPool();
-        int baseIdx = slot << 12;
-        for (int ly = 15; ly >= 0; ly--) {
-            for (int lz = 0; lz < 16; lz++) {
-                for (int lx = 0; lx < 16; lx++) {
-                    int wx = (cx << 4) + lx, wy = (cy << 4) + ly, wz = (cz << 4) + lz;
-                    int idx = baseIdx | (lx | (ly << 4) | (lz << 8));
-                    if (isFullBlock(wx, wy, wz)) { occPool[idx] = 0; continue; }
-                    int m = 0;
-                    for (int d = 0; d < 14; d++) {
-                        if (checkSkyVisibility(wx, wy, wz, d)) m |= (1 << d);
-                    }
-                    occPool[idx] = (short) m;
-                }
-            }
-        }
-    }
-
-    private boolean checkSkyVisibility(int x, int y, int z, int dirIdx) {
-        float[] d = OCC_DIRS[dirIdx];
-        float cx = x + 0.5f, cy = y + 0.5f, cz = z + 0.5f;
-        for (int i = 1; i < 32; i++) {
-            int nx = (int)(cx + d[0] * i), ny = (int)(cy + d[1] * i), nz = (int)(cz + d[2] * i);
-            if (ny >= bufSize) return true;
-            if (isFullBlock(nx, ny, nz)) return false;
-        }
-        return true;
-    }
-
-    /** Returns true if the voxel at (x,y,z) is a full solid block (opaque, no transparency). */
-    private boolean isFullBlock(int x, int y, int z) {
-        int ox = world.getOffsetX(), oy = world.getOffsetY(), oz = world.getOffsetZ();
-        int rx = x - ox, ry = y - oy, rz = z - oz;
-        if (rx < 0 || ry < 0 || rz < 0 || rx >= bufSize || ry >= bufSize || rz >= bufSize) return false;
-        int slot = world.getIndirectionTable()[(rx >> 4) + (ry >> 4) * World.REGION_SIZE + (rz >> 4) * World.REGION_SIZE * World.REGION_SIZE];
-        if (slot == World.EMPTY) return false;
-        int id = world.getChunkPool()[(slot << 12) | ((rx & 15) | ((ry & 15) << 4) | ((rz & 15) << 8))] & 0xFFFF;
-        return id > 0 && blockDataManager.isFullBlockFast(id);
-    }
-
-    // ══════════════════════════════════════════════════════════════════
     //  HELPERS
     // ══════════════════════════════════════════════════════════════════
 

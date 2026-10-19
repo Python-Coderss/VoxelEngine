@@ -107,7 +107,7 @@ public class Main {
     public long window;
     public int quadProgram, computeProgram;
     public int quadVAO, quadVBO, renderTexture;
-    public int indirectionSSBO, chunkPoolSSBO, bitmaskSSBO, occlusionSSBO, pointLightSSBO, lightSSBO;
+    public int indirectionSSBO, chunkPoolSSBO, bitmaskSSBO, pointLightSSBO, lightSSBO;
     public int sdfSSBO;  // chunk-level SDF for sphere-trace acceleration (binding=10)
     public int columnTopSSBO; // per-column highest loaded section (binding=11)
 
@@ -480,7 +480,6 @@ public class Main {
         glDeleteBuffers(indirectionSSBO);
         glDeleteBuffers(chunkPoolSSBO);
         glDeleteBuffers(bitmaskSSBO);
-        glDeleteBuffers(occlusionSSBO);
         glDeleteBuffers(pointLightSSBO);
         glDeleteBuffers(lightSSBO);
         glDeleteBuffers(craftingItemSSBO);
@@ -1209,13 +1208,6 @@ public class Main {
             glNamedBufferSubData(bitmaskSSBO, 0, maskBuf);
             MemoryUtil.memFree(maskBuf);
 
-            occlusionSSBO = glCreateBuffers();
-            glNamedBufferStorage(occlusionSSBO, (long) poolSize * 4096 * Short.BYTES, GL_DYNAMIC_STORAGE_BIT);
-            // Zero it (the shader's getVoxelOcclusion is currently uncalled, but
-            // undefined storage is a foot-gun if it ever becomes live).
-            java.nio.ByteBuffer zeroOcc = java.nio.ByteBuffer.allocate(poolSize * 4096 * 2);
-            glNamedBufferSubData(occlusionSSBO, 0, zeroOcc);
-
             lightSSBO = glCreateBuffers();
             glNamedBufferStorage(lightSSBO, (long) poolSize * 4096 * Integer.BYTES, GL_DYNAMIC_STORAGE_BIT);
             IntBuffer lightBuf = MemoryUtil.memAllocInt(poolSize * 4096);
@@ -1732,7 +1724,6 @@ public class Main {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, bitmaskSSBO);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, occlusionSSBO);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, pointLightSSBO);
         entityManager.bind(6, 7);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, craftingItemSSBO);
@@ -5221,8 +5212,7 @@ public class Main {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, indirectionSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, chunkPoolSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, bitmaskSSBO);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, occlusionSSBO);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, pointLightSSBO);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, pointLightSSBO);
             entityManager.bind(6, 7);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, craftingItemSSBO);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, lightSSBO);
@@ -8778,7 +8768,6 @@ public class Main {
         if (indirectionSSBO != 0) glDeleteBuffers(indirectionSSBO);
         if (chunkPoolSSBO != 0) glDeleteBuffers(chunkPoolSSBO);
         if (bitmaskSSBO != 0) glDeleteBuffers(bitmaskSSBO);
-        if (occlusionSSBO != 0) glDeleteBuffers(occlusionSSBO);
         if (pointLightSSBO != 0) glDeleteBuffers(pointLightSSBO);
         if (lightSSBO != 0) glDeleteBuffers(lightSSBO);
 
@@ -8795,13 +8784,6 @@ public class Main {
         bitmaskSSBO = glCreateBuffers();
         glNamedBufferStorage(bitmaskSSBO, bbuf, GL_DYNAMIC_STORAGE_BIT);
         MemoryUtil.memFree(bbuf);
-
-        short[] occlusionPool = world.getOcclusionPool();
-        java.nio.ShortBuffer obuf = MemoryUtil.memAllocShort(occlusionPool.length);
-        obuf.put(occlusionPool).flip();
-        occlusionSSBO = glCreateBuffers();
-        glNamedBufferStorage(occlusionSSBO, obuf, GL_DYNAMIC_STORAGE_BIT);
-        MemoryUtil.memFree(obuf);
 
         pointLightSSBO = glCreateBuffers();
         glNamedBufferStorage(pointLightSSBO, 4096, GL_DYNAMIC_STORAGE_BIT);
@@ -8826,7 +8808,6 @@ public class Main {
     // Reusable direct buffers for uploadDirtyChunks (allocated once, reused per frame)
     public java.nio.IntBuffer reusableVoxelBuf;
     public java.nio.IntBuffer reusableMaskBuf;
-    public java.nio.ShortBuffer reusableOccBuf;
     public java.nio.IntBuffer reusableTableBuf;
     public java.nio.IntBuffer reusableLightBuf;
 
@@ -8863,14 +8844,12 @@ public class Main {
         if (reusableVoxelBuf == null || reusableVoxelBuf.capacity() < vpc) {
             if (reusableVoxelBuf != null) MemoryUtil.memFree(reusableVoxelBuf);
             if (reusableMaskBuf != null) MemoryUtil.memFree(reusableMaskBuf);
-            if (reusableOccBuf != null) MemoryUtil.memFree(reusableOccBuf);
-            if (reusableTableBuf != null) MemoryUtil.memFree(reusableTableBuf);
+                if (reusableTableBuf != null) MemoryUtil.memFree(reusableTableBuf);
             if (reusableLightBuf != null) MemoryUtil.memFree(reusableLightBuf);
             if (reusableSdfBuf != null) MemoryUtil.memFree(reusableSdfBuf);
             reusableVoxelBuf = MemoryUtil.memAllocInt(vpc);
             reusableMaskBuf = MemoryUtil.memAllocInt(128);
-            reusableOccBuf = MemoryUtil.memAllocShort(vpc);
-            reusableTableBuf = MemoryUtil.memAllocInt(REGION_SIZE * REGION_SIZE * REGION_SIZE);
+                reusableTableBuf = MemoryUtil.memAllocInt(REGION_SIZE * REGION_SIZE * REGION_SIZE);
             reusableLightBuf = MemoryUtil.memAllocInt(vpc);
             reusableSdfBuf = MemoryUtil.memAlloc(sdfBytesPerChunk);
         }
@@ -8885,7 +8864,6 @@ public class Main {
 
         int[] pool = world.getChunkPool();
         int[] masks = world.getBitmaskPool();
-        short[] occs = world.getOcclusionPool();
         // Light pool slice per slot — uploaded with each dirty slot below (replaces the
         // old one-shot full-pool upload, which copied+uploaded the ENTIRE pool — at
         // poolSize>=2048 that is >=32MB, and with the default render distance it is
@@ -8911,10 +8889,6 @@ public class Main {
             reusableMaskBuf.clear();
             reusableMaskBuf.put(masks, s * 128, 128).flip();
             glNamedBufferSubData(bitmaskSSBO, (long) s * 128 * Integer.BYTES, reusableMaskBuf);
-
-            reusableOccBuf.clear();
-            reusableOccBuf.put(occs, s * vpc, vpc).flip();
-            glNamedBufferSubData(occlusionSSBO, (long) s * vpc * Short.BYTES, reusableOccBuf);
 
             // Per-slot light pool slice (16KB each). The old code uploaded the ENTIRE
             // pool in one frame on every lighting pass (a 140-300MB copy + upload with
