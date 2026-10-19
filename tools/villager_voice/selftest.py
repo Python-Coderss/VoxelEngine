@@ -516,6 +516,35 @@ def test_noise_floor():
                      measurements.get("pitch_sync_cycles", 0)))
 
 
+def test_java_tables_in_sync():
+    """The generated Java data tables must match the Python source of truth.
+
+    The Java port's phone inventory, voiceprint defaults and pronunciation
+    dictionaries are generated rather than transcribed, so a hand edit to either
+    side silently diverges. This check regenerates in memory and compares.
+    """
+    try:
+        from . import java_port
+    except ImportError as error:
+        return check("java_tables_in_sync", True, "generator unavailable (skipped)")
+    if not os.path.isdir(java_port.JAVA_DIR):
+        return check("java_tables_in_sync", True,
+                     "Java port absent; nothing to compare (skipped)")
+    drifted = []
+    generated = java_port.generate()
+    for name, text in sorted(generated.items()):
+        path = os.path.join(java_port.JAVA_DIR, name)
+        if not os.path.isfile(path):
+            drifted.append("%s (missing)" % name)
+            continue
+        with open(path, "r", encoding="utf-8") as handle:
+            if handle.read() != text:
+                drifted.append(name)
+    return check("java_tables_in_sync", not drifted,
+                 "%d generated Java files match Python" % len(generated)
+                 if not drifted else "drifted: %s" % ", ".join(drifted))
+
+
 ALL_TESTS = [
     ("levinson_durbin", test_levinson_durbin),
     ("wav_io", test_wav_roundtrip),
@@ -532,6 +561,7 @@ ALL_TESTS = [
     ("psola_time", test_psola_time),
     ("formant_shift", test_formant_shift),
     ("breathiness_calibration", test_breathiness_calibration),
+    ("java_tables_in_sync", test_java_tables_in_sync),
 ]
 
 

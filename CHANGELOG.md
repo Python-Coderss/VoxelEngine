@@ -86,6 +86,40 @@ trip — corrected in `wavio.write_wav`, and noted for the Java side.
 `tools/villager_voice/README.md` documents the architecture and `SCHEMA.md`
 documents all three JSON formats, generated from the code so it cannot drift.
 
+### The same engine in Java, plugged into the existing voice package
+`src/main/java/villager/voice/synth/` ports it to Java 8 with no new dependency
+(the pom already declares `org.json`). It extends the package rather than
+replacing it: `VillagerSynthVoice` implements `TextToSpeech`, so it can be handed
+to any caller that already works with the SAPI voice, and also exposes
+`render(String, SpeechOptions)` matching `ReferenceCorpusVoice` so the two are
+interchangeable at the call site. Where SAPI borrows a voice installed on the
+player's machine and reference mode replays recorded clips, this one *builds* the
+voice, so `isAvailable()` is unconditionally true — the property the OS-voice
+path cannot offer. `VoicePrint.effective()` mirrors `SpeechOptions.getEffective*`,
+and the output stage reuses `AudioDsp.peak/normalizePeak/fadeEdges`.
+
+Its data tables are **generated from the verified Python tables** rather than
+transcribed (`python3 -m villager_voice.java_port`), because a hand-copied table
+of 377 pronunciations is exactly the kind of thing that drifts silently and then
+makes the Java voice disagree with the Python one it is supposed to match;
+`selftest` now fails if the committed Java no longer matches what the generator
+produces. That also gave a better answer than porting the grapheme-to-phoneme
+rules: instead of transliterating several hundred lines of order-dependent,
+position-sensitive rules, the generator pre-computes their *output* over the
+corpus vocabulary, so all 2,455 distinct words the corpus uses carry their
+Python-computed pronunciation. Java therefore agrees with Python exactly on
+every word the corpus contains, and only reaches its own simplified rules for
+words the corpus never used — a simplification documented in `VillagerLexicon`'s
+Javadoc rather than hidden.
+
+Stated plainly: the Java port is **syntax-validated but not compiled**. No JDK is
+obtainable in this sandbox — there is no `javac` or `mvn`, the `jdk4py` wheels
+ship a JRE with `jdk.compiler` stripped out, and the Adoptium hosts are not
+reachable. All 12 files were parsed with `javalang`, which also parses the 23
+pre-existing files in the package cleanly, so the grammar is right and nothing
+existing was broken; type errors would not be caught. Run `mvn -q compile` before
+trusting it. The Python implementation remains the verified reference.
+
 ## Every Character Speaks, and Beds & Banners Are Real Multiblocks (Oct 17, 2026)
 
 ### The previously silent cast is voiced

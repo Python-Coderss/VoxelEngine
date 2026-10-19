@@ -358,13 +358,60 @@ alternative glottal models, a hand-written score, and four PSOLA re-voicings.
 
 ## Java port
 
-The Java voice package at `src/main/java/villager/voice/` (23 files, 4,217 lines)
-already defines the contract this engine mirrors: `VoiceMode {CLIP, REFERENCE}`,
-`VillagerVoiceRenderer.render(String, SpeechOptions) → WavAudio`,
-`SpeechOptions(speed, pitchSemitones, volume, tone, emotion, sarcasm, question)`
-with its `getEffective*` accessors, 24 kHz mono 16-bit output. `VoicePrint.effective()`
-deliberately mirrors `SpeechOptions.getEffective*`, and `wavio.fade_edges` mirrors
-`AudioDsp.fadeEdges`.
+`src/main/java/villager/voice/synth/` — 12 files, 9,320 lines, Java 8, no new
+dependencies (uses the `org.json` the pom already declares). It plugs into the
+existing package rather than replacing it: `VillagerSynthVoice` implements
+`TextToSpeech`, so it can be handed to any caller that already works with the
+SAPI voice, and also exposes `render(String, SpeechOptions)` matching
+`ReferenceCorpusVoice` so the two are interchangeable at the call site.
+
+| Class | Lines | Mirrors |
+|---|---|---|
+| `VoicePrint` | 700 | `voiceprint.py` — dotted access, validation, `explicitPaths()`, `effective()` macro resolution, JSON I/O |
+| `VoicePrintTables` | 289 | generated: 102 defaults, 87 ranges, 4 enums |
+| `VillagerPhones` | 1,451 | generated: the 48-phone inventory |
+| `VillagerDictionary` | 437 | generated: 377 curated pronunciations |
+| `VillagerCorpusLexicon` | 2,515 | generated: pronunciations for all 2,455 distinct corpus words |
+| `VillagerLexicon` | 558 | `lexicon.py` — tokenising, normalising, contractions, suffix machinery |
+| `ProsodyScore` | 653 | `prosody.py` — text → timed score, all four passes |
+| `FormantSynthesizer` | 1,198 | `synth.py` — source, cascade tract, nasal coupling, radiation, output stage, events |
+| `PsolaVoiceTransform` | 767 | `transform.py` — pitch marks, PSOLA, formant shift, envelope, aspiration |
+| `SpeechAnalysis` | 265 | `analyze.estimate_f0` — autocorrelation F0 with octave protection |
+| `VillagerSynthVoice` | 190 | the bridge into the existing voice package |
+| `SynthCli` | 297 | `render`, `convert`, `schema`, `phones`, `pronounce`, `stats` |
+
+### Generated data, not transcribed data
+
+The phone inventory, voiceprint tables and pronunciation dictionaries are
+**emitted from the verified Python tables** by
+`python3 -m villager_voice.java_port`. A hand-copied table of 377 pronunciations
+is exactly the kind of thing that drifts silently and then makes the Java voice
+disagree with the Python one it is supposed to match, so `selftest` fails if the
+committed Java no longer matches what the generator produces
+(`java_tables_in_sync`).
+
+This also drove a better answer than porting the G2P rules. Rather than
+transliterate several hundred lines of order-dependent, position-sensitive rules
+that cannot be compile-checked here, the generator pre-computes their *output*
+over the corpus vocabulary: all 2,455 distinct words the corpus uses carry their
+Python-computed pronunciation. The Java engine therefore agrees with Python
+exactly on every word the corpus contains, and only reaches its own simplified
+rules for words the corpus never used. That simplification is documented in
+`VillagerLexicon`'s Javadoc rather than hidden.
+
+### Verification status, stated plainly
+
+The Java port is **syntax-validated but not compiled**. No JDK is obtainable in
+this sandbox: there is no `javac`/`mvn` on the machine, the `jdk4py` PyPI wheels
+ship a JRE with `jdk.compiler` stripped out (so `java -m jdk.compiler/...` fails
+with "Module jdk.compiler not found"), and the Adoptium download hosts are not
+reachable. Every file was parsed with `javalang`, which also parses all 23
+pre-existing files in the package cleanly — so the grammar is right and no
+existing file was broken, but **type errors would not be caught**. Run
+`mvn -q compile` before trusting it.
+
+The Python implementation is the verified reference: 18/18 self-tests, and its
+round trip recovers F0 to 1.0% and F2/F3 to 2.6%/0.6%.
 
 One correction to carry across: `WavAudio.java` reads 16-bit PCM with ÷32768
 (line 44) but writes with ×32767 (line 64). That asymmetry injects a systematic
