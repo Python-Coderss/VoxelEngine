@@ -663,8 +663,7 @@ public class ChunkManager {
         int cz = z >> 4;
 
         // Always mark slot dirty synchronously so GPU sees voxel data change immediately.
-        // Lighting BFS is deferred to light thread (async), but occlusion is baked sync.
-        mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
+        // Lighting BFS is deferred to light thread (async).
         dirtySlots.add(slot);
 
         // SDF air-certificate maintenance: if this edit left the section with
@@ -1664,7 +1663,6 @@ public class ChunkManager {
                         }
                         applyDeferredVoxelWrites(cx, cy, cz);
                         unmarkGenerating(colKey, cy);
-                        mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
                         dirtySlots.add(slot);
                         sectionsLoaded++;
                     }
@@ -1718,7 +1716,6 @@ public class ChunkManager {
                         if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
                         applyDeferredVoxelWrites(cx, cy, cz);
                         unmarkGenerating(colKey, cy);
-                        mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
                         dirtySlots.add(slot);
                         tableDirty.set(true);
                         sectionsLoaded++;
@@ -1859,7 +1856,6 @@ public class ChunkManager {
             }
             applyDeferredVoxelWrites(cx, cy, cz);
             unmarkGenerating(colKey, cy);
-            mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
             dirtySlots.add(slot);
         }
 
@@ -1955,7 +1951,6 @@ public class ChunkManager {
                     if (slot == null) continue;
                     applyDeferredVoxelWrites(cx, scy, cz);
                     unmarkGenerating(colKey, scy);
-                    mcLightEngine.bakeChunkOcclusion(slot, cx, scy, cz);
                     dirtySlots.add(slot);
                 }
             } else {
@@ -1975,7 +1970,6 @@ public class ChunkManager {
                     if (!anySolid) { computeChunkDirSDF(slot, cx, scy, cz); dirtySlots.add(slot); }
                     applyDeferredVoxelWrites(cx, scy, cz);
                     unmarkGenerating(colKey, scy);
-                    mcLightEngine.bakeChunkOcclusion(slot, cx, scy, cz);
                     dirtySlots.add(slot);
                 }
             }
@@ -2026,7 +2020,6 @@ public class ChunkManager {
         if (!anySolid) { computeChunkDirSDF(slot, cx, cy, cz); dirtySlots.add(slot); }
 
         // Bake occlusion and mark dirty
-        mcLightEngine.bakeChunkOcclusion(slot, cx, cy, cz);
         dirtySlots.add(slot);
         tableDirty.set(true);
 

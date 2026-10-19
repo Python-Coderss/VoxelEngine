@@ -203,7 +203,7 @@ float decodeBlockLight(float encodedChannel) {
     return pow(clamp(encodedChannel / 255.0, 0.0, 1.0), 2.2) * 255.0;
 }
 
-// ── Cartoon-style helpers ──
+// ── Shading helpers ──
 // Deterministic screen-space hash (dither + volumetric shaft detail).
 float hash12(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -211,15 +211,12 @@ float hash12(vec2 p) {
     return fract((p3.x + p3.y) * p3.z);
 }
 
-// 3-tone cel ramp for directional light: shadow / mid / lit bands with soft
-// transitions (smoothstep instead of hard steps — keeps the toon look without
-// harsh "deep-fried" band edges). Light INTENSITY only — albedo, transparency
-// and reflection factors are untouched, so glass/water/reflections keep their
-// current look.
-float celRamp(float x) {
-    float s = smoothstep(0.05, 0.18, x);
-    float m = smoothstep(0.35, 0.55, x);
-    return mix(mix(0.24, 0.66, s), 1.0, m);
+// Lambert diffuse term for a directional light. This replaced a 3-tone cel ramp
+// that compressed N·L into shadow/mid/lit bands; real Lambert falls off
+// smoothly with the cosine of the angle, so terminators and curved surfaces
+// gradate instead of stepping.
+float lambertDiffuse(float x) {
+    return clamp(x, 0.0, 1.0);
 }
 
 // Animated caustic pattern (wave interference) — Minecraft-shader style light
@@ -234,13 +231,11 @@ float causticAt(vec3 p) {
 
 vec3 GetSky(vec3 rd, Atmosphere at) {
     float d = max(0.0, rd.y);
-    // Cartoon sky: 5 horizontal color bands with soft edges (keeps the horizon
-    // warm/cool split, but flat and posterized instead of a smooth gradient).
-    float h = pow(d, 0.7) * 5.0;
-    float bandF = fract(h);
-    float blend = clamp((floor(h) + smoothstep(0.0, 0.14, bandF)) / 5.0, 0.0, 1.0);
-    vec3 sky = mix(at.skyHorizon, at.skyZenith, blend);
-    // Crisp cartoon sun disc + gentle warm halo (kept from blowing out)
+    // Smooth horizon->zenith gradient. This replaces a 5-band posterized ramp
+    // (floor(h) + smoothstep on fract(h)) that stepped the sky into flat strips;
+    // a continuous blend is both more natural and cheaper.
+    vec3 sky = mix(at.skyHorizon, at.skyZenith, pow(d, 0.7));
+    // Crisp sun disc + gentle warm halo (kept from blowing out)
     float sd = dot(rd, at.sunDir);
     sky += at.sunColor * (smoothstep(0.9993, 0.9997, sd) * 3.5 + pow(max(sd, 0.0), 10.0) * 0.22);
     // Moon disc
@@ -249,8 +244,8 @@ vec3 GetSky(vec3 rd, Atmosphere at) {
     return sky;
 }
 
-// Volumetric haze: banded sky color with a sun-facing scattering boost so
-// light beams read as glowing air (cartoon volumetric atmosphere). Takes the
+// Volumetric haze: sky color with a sun-facing scattering boost so
+// light beams read as glowing air. Takes the
 // already-evaluated sky so GetSky() runs once per pixel — the miss path reuses
 // the same sky instead of re-running the banding math.
 vec3 hazeFromSky(vec3 sky, vec3 rd, Atmosphere at) {
@@ -483,12 +478,12 @@ bool isWaterVoxel(vec3 p) {
 }
 
 // ── Ambient Occlusion ──
-// Vertex-based ambient occlusion (cartoon).
+// Vertex-based ambient occlusion.
 // The classic 12-sample vertex pattern shares side/corner blocks between the 4
 // vertices, so the UNIQUE set is 8 blocks (4 side + 4 corner) — sampling those
 // directly removes 4 redundant SSBO indirections per AO. Vertex values stay
-// identical to the classic formula, then the result is quantized to 3 cel tones
-// for the flat, chunky toon shadow look.
+// identical to the classic formula, then interpolate continuously across the
+// face (this used to quantize them to 3 cel tones).
 // Cached solidity probe for AO neighborhoods. Semantics are IDENTICAL to the
 // old per-probe path (voxelPool bit 31); the memoized chunk-slot lookup saves
 // up to 7 redundant chunkSlots SSBO loads out of 8 probes.
@@ -565,12 +560,14 @@ float computeAmbientOcclusion(vec3 hp, vec3 n) {
     float ao01 = 1.0 - (s1f + s4f + c3f) / 3.0;
     float ao11 = 1.0 - (s2f + s4f + c4f) / 3.0;
 
-    // Bilinear interpolation across the face, then quantize to 3 cel tones
-    // (soft transitions — hard steps read as "deep-fried" bands on slopes)
+    // Bilinear interpolation across the face. This used to quantize the result
+    // into 3 cel tones (two smoothsteps remapped 0..1 onto 0.35/0.66/1.0),
+    // which banded every contact shadow. A continuous occlusion term grades
+    // smoothly and costs less. The 0.35 floor is kept so a fully enclosed
+    // corner is dark but never crushes to pure black, matching the darkest
+    // value the old ramp could produce.
     float ao = mix(mix(ao00, ao10, u), mix(ao01, ao11, u), v);
-    ao = clamp(ao, 0.2, 1.0);
-    float aoBand = mix(0.35, 0.66, smoothstep(0.5, 0.62, ao));
-    return mix(aoBand, 1.0, smoothstep(0.8, 0.9, ao));
+    return mix(0.35, 1.0, clamp(ao, 0.0, 1.0));
 }
 
 // Sample RGB lightmap at world position.
@@ -1794,7 +1791,7 @@ vec3 marchLightShafts(vec3 ro, vec3 rd, float tMax, Atmosphere at) {
                 sunOob = true;
             } else if (depthS <= texture(u_SunPoolTex, uvS).r + 0.004) {
                 // Deterministic world-space density: shafts read as soft glowing
-                // air instead of uniform slices (cartoon volumetric).
+                // air instead of uniform slices.
                 float density = 0.6 + 0.4 * hash12((ro + rd * t).xz * 0.25);
                 acc += at.sunColor * (sunDot * step * 0.010 * density * decay);
             }
@@ -1840,12 +1837,14 @@ vec3 pointLightContrib(vec3 p, vec3 n) {
         // The gate is the SHADING ramp itself, not ndl>0: smoothstep(0.15,0.4,ndl)
         // is exactly 0 below ndl==0.15, so a grazing light adds nothing to `acc`
         // whether or not it is shadowed — tracing it was pure cost.
-        if (ndl <= 0.15 || att <= 0.0 || L.intensity <= 0.0) continue;
+        if (ndl <= 0.0 || att <= 0.0 || L.intensity <= 0.0) continue;
         if (fastShadow(shadowOrigin, ldir, d) > 0.5) {
-            // Cartoon 2-tone point light: lit face = full color, grazing/shadowed
-            // faces = nothing (soft shadows from fastShadow are preserved; both
-            // transitions are smooth so the light never "pops" or fries).
-            acc += L.color * (L.intensity * smoothstep(0.15, 0.4, ndl) * smoothstep(0.0, 0.15, att));
+            // Physically-shaped falloff: N·L Lambert for the diffuse angle and
+            // the smooth inverse-square-ish attenuation already computed above.
+            // This replaces the "cartoon 2-tone" ramp (smoothstep(0.15,0.4) on
+            // N·L, smoothstep(0,0.15) on attenuation) that snapped lit faces to
+            // full brightness and dropped grazing ones to nothing.
+            acc += L.color * (L.intensity * ndl * att);
         }
     }
     gDbgPoint += acc;
@@ -1930,7 +1929,7 @@ void main() {
             if (gtexel.a > 0.05) {
                 const float GA = 0.45; // ghost opacity
                 float gsun = max(0.0, dot(gn, at.sunDir));
-                vec3 gbeam = at.ambient * 0.7 + at.sunColor * celRamp(gsun) * 0.8;
+                vec3 gbeam = at.ambient * 0.7 + at.sunColor * lambertDiffuse(gsun) * 0.8;
                 final += gtexel.rgb * gbeam * GA;
                 throu *= (1.0 - GA);
             }
@@ -2034,7 +2033,7 @@ void main() {
                 // Sun diffuse (no shadow ray — light pools only feed god rays)
                 float sunVisC = max(0.0, dot(n, at.sunDir));
                 beam = at.ambient * 1.0;
-                if (sunVisC > 0.0) beam += at.sunColor * celRamp(sunVisC);
+                if (sunVisC > 0.0) beam += at.sunColor * lambertDiffuse(sunVisC);
                 beam += pointLightContrib(hp, n);
                 vec3 bc = alb * beam * (1.0 - trans);
                 float fog = 1.0 - exp(-t * 0.003); bc = mix(bc, haze, fog);
@@ -2067,8 +2066,8 @@ void main() {
                 refl = 0.0;
                 float sunVisH = max(0.0, dot(n, at.sunDir));
                 beam = at.ambient;
-                if (sunVisH > 0.0) beam += at.sunColor * celRamp(sunVisH);
-                beam += at.moonColor * celRamp(max(0.0, dot(n, at.moonDir))) * 0.5;
+                if (sunVisH > 0.0) beam += at.sunColor * lambertDiffuse(sunVisH);
+                beam += at.moonColor * lambertDiffuse(max(0.0, dot(n, at.moonDir))) * 0.5;
                 beam += pointLightContrib(hp, n);
             } else {
                 uint entityLayer = eTex & 0x7FFFFFFFu;
@@ -2102,8 +2101,8 @@ void main() {
                 // No sun shadow ray — light pools only feed god rays.
                 float sunVisE = max(0.0, dot(n, at.sunDir));
                 beam = at.ambient;
-                if (sunVisE > 0.0) beam += at.sunColor * celRamp(sunVisE);
-                beam += at.moonColor * celRamp(max(0.0, dot(n, at.moonDir))) * 0.5;
+                if (sunVisE > 0.0) beam += at.sunColor * lambertDiffuse(sunVisE);
+                beam += at.moonColor * lambertDiffuse(max(0.0, dot(n, at.moonDir))) * 0.5;
                 beam += pointLightContrib(hp, n);
             }
         } else {
@@ -2528,10 +2527,7 @@ void main() {
             // Lamp rebalance: a full-strength lamp is 0.25 suns — clearly
             // dimmer than daylight outdoors (you can tell a lit patch apart),
             // while still reading plainly against the near-black cave floor.
-            // sceneN picks whichever source dominates; the lamp branch paints
-            // its own warm colour instead of multiplying the sun term.
             float blockNorm = clamp(linearBlockLevel / 255.0, 0.0, 1.0);
-            float sceneN = max(skyNorm, blockNorm);
 
             // Apply block light tint: color the beam with the RGB light source color
             vec3 blockTint = vec3(1.0);
@@ -2542,14 +2538,24 @@ void main() {
             // Direct+ambient lighting for the block (no sun shadow ray — pools only
             // feed god rays; baked sky light already darkens caves/overhangs).
             float sunVis = max(0.0, dot(n, at.sunDir));
-            vec3 sunLit = at.ambient + at.sunColor * celRamp(sunVis) * skyNorm;
+            // Sun term scales with how much sky this voxel actually sees.
+            vec3 sunLit = (at.ambient + at.sunColor * lambertDiffuse(sunVis)) * skyNorm;
             float sunLum = max(dot(at.sunColor, vec3(0.333)) + dot(at.ambient, vec3(0.333)), 0.05);
-            // 0.25-sun lamp colour with a visibility floor so lamps read even
-            // in pitch-dark caves; tinted by the source hue.
+            // Lamp term is tinted by the source hue and scaled by its own level.
             vec3 lampCol = blockTint * clamp(sunLum * 0.25, 0.20, 0.95);
-            vec3 sceneCol = (blockNorm > skyNorm) ? lampCol : sunLit;
+            // Sun and lamp ADD. The old model picked a single winner
+            // (sceneCol = blockNorm > skyNorm ? lampCol : sunLit) and crossfaded
+            // between two unrelated colours, so a torch-lit wall sat perfectly flat
+            // until skyNorm crossed blockNorm and then jumped ~2x in one step —
+            // a visible seam, and a dead sun term everywhere below the crossover.
+            // Summing keeps both contributions continuous and monotonic in each
+            // source, and costs one extra multiply-add.
+            vec3 lit = sunLit + lampCol * blockNorm;
             // Cave/night floor: unlit rock stays barely-visible, never pure black.
-            beam = mix(vec3(0.045), sceneCol, sceneN);
+            // AO is applied to the lit term only, so the floor survives in
+            // shadowed corners instead of crushing cave walls to black.
+            float ao = computeAmbientOcclusion(hp, n);
+            beam = vec3(0.045) + lit * ao;
             beam += pointLightContrib(hp, n);
             gDbgSurf = vec3(skyNorm, blockNorm, clamp(dot(gDbgPoint, vec3(0.333)), 0.0, 1.0));
             gDbgPos = clamp(hp / vec3(128.0, 48.0, 128.0), 0.0, 1.0);
@@ -2559,10 +2565,6 @@ void main() {
             if (isEnt && entEmissive > 0.5) {
                 beam += vec3(0.82, 0.08, 1.0) * 3.5;
             }
-
-            // Ambient occlusion: darken face edges/corners based on neighboring blocks
-            float ao = computeAmbientOcclusion(hp, n);
-            beam *= ao;
 
             // Water caustics: sunlit upward faces with water directly above get
             // animated light patterns (seafloor and underwater terrain shimmer).
@@ -2610,13 +2612,15 @@ void main() {
             }
         }
 
-        // ── Toon rim light ──
-        // Grazing-angle edge highlight (classic cel-shading accent) tinted by the
-        // ambient+sun mix, so silhouette edges pop against the banded sky. Opaque
-        // surfaces only — water/glass reflections and translucency are untouched.
+        // ── Grazing-angle sheen ──
+        // A subtle view-dependent lift at silhouette edges, standing in for the
+        // grazing-angle sheen a matte surface shows under real illumination.
+        // This replaces the old "toon rim light", which added a hard cubic edge
+        // highlight to make silhouettes pop against the banded sky — a cel-shading
+        // accent with no physical counterpart once the banding is gone.
         if (trans < 0.01) {
             float rv = 1.0 - max(0.0, dot(n, -rd));
-            beam += mix(at.ambient, at.sunColor, 0.5) * (rv * rv * rv) * 0.35;
+            beam += mix(at.ambient, at.sunColor, 0.5) * pow(rv, 5.0) * 0.06;
         }
 
         // Camera clipped inside water: the primary hit is the water voxel we're
@@ -2711,20 +2715,11 @@ void main() {
         return;
     }
     vec3 result = ACESFilm(final * u_Exposure);
-    // Cartoon grade on the scene only (UI alpha-blended afterwards, fullscreen
-    // UI early-outs before this): saturation boost + 12-level posterize.
-    // Band edges use a narrow smoothstep blend instead of a hash dither — the
-    // old dither showed up as grain on dark surfaces, this stays clean.
-    float lum = dot(result, vec3(0.299, 0.587, 0.114));
-    result = mix(vec3(lum), result, 1.06); // subtle pop; 1.18 oversaturated ("deep-fried")
-    if (uiCol.a < 0.5) {
-        // 12-level posterize with a wider soft blend at the band edges
-        vec3 scaled = clamp(result * 12.0, 0.0, 11.0);
-        vec3 lo = floor(scaled);
-        vec3 frac = scaled - lo;
-        vec3 hi = min(lo + 1.0, 11.0);
-        result = mix(lo, hi, smoothstep(0.38, 0.62, frac)) / 12.0;
-    }
+    // No posterize and no saturation boost: the old grade quantised the scene to
+    // 12 levels and pushed saturation 1.06x to give colours a "pop". Both are
+    // toon tells and neither has a physical counterpart — smooth tone-mapped
+    // output is both more realistic and cheaper. ACES + the sRGB encode below
+    // are the whole transfer now.
     // NOTE: partial-alpha UI blending moved to the quad blit (quad.frag), which
     // composites the HUD at full window resolution — this keeps text sharp when
     // the raytracer runs at a reduced render scale. Fully-opaque UI pixels still
