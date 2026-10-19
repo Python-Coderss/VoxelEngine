@@ -1,0 +1,24 @@
+{
+  "pitch": {
+    "semitones": -2.0,
+    "contour": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        2.0,
+        -3.0
+      ]
+    ]
+  },
+  "time": {
+    "scale": 0.72
+  },
+  "source": {
+    "creak": 0.5,
+    "tilt_db_per_octave": -3.0
+  },
+  "format": "villager_voice.transform",
+  "version": 1
+}

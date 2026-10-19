@@ -1,5 +1,91 @@
 # CHANGELOG
 
+## A Villager Voice You Can Rebuild From JSON (Oct 18, 2026)
+
+### Analysis–synthesis voice engine, no model and no network
+`tools/villager_voice/` is a new stdlib-only Python package (6.8k lines, no
+numpy/scipy/ffmpeg) that recreates the villager voice from a source-filter model
+rather than a pretrained cloning network. It measures a voice, resynthesises it,
+and re-voices existing recordings — all three driven by JSON. Consistent with the
+engine's standing position, it ships no neural model and calls no network
+service.
+
+- **Voiceprint** (`src/main/resources/voice/voiceprint_villager_news.json`) is
+  the control surface: 102 knobs over `source`, `tract`, `articulation`,
+  `prosody`, `character`, `output` and `phone_overrides`, every scalar one
+  bounded by a declared range or enum. Glottal model, open quotient, five
+  formants with bandwidths, spectral tilt, aspiration, breathiness, jitter,
+  shimmer, creak, vibrato, nasality with its pole and zero, coarticulation,
+  declination and three pause lengths are all individually addressable.
+- `character` is a *macro* layer that resolves into the low-level sections, but
+  an explicitly set low-level value always wins: `gender=female` with
+  `source.f0_mean_hz=196` gives 196 Hz, not the 274 Hz the multiplier used to
+  produce. `VoicePrint.explicit_paths()` distinguishes the two cases.
+- **Score** is the performance contract — timed phones with per-phone formants,
+  plus `f0`/`amp`/`formant_scale`/`breathiness` contours and non-speech `events`.
+  `synth.render_score` consumes a hand-written score exactly as it consumes one
+  generated from text, so the same file format drives both speech synthesis and
+  the voice changer.
+- **Transform spec** re-voices an existing WAV. Pitch, duration and timbre are
+  separate axes: PSOLA re-spaces the overlap-add marks so pitch moves without
+  touching the vocal-tract envelope, and formants shift by resample-then-restore
+  so timbre moves without the pitch following.
+- Output is now normalised two-sided to `output.peak_ceiling`, matching
+  `AudioDsp`/`ClipVoice`. Previously only limiting applied, so a line whose
+  loudest moment was a vowel rather than a stop burst rendered ~22 dB quieter
+  than a full sentence (`"Hrmm."` measured peak 0.047 / −44.7 dB, now
+  0.950 / −18.7 dB).
+
+### Verified against signals of known ground truth
+`python3 -m villager_voice selftest` runs 17 checks, all passing. A synthesiser
+and an analyser can agree with each other while both are wrong, so the tests use
+signals whose truth is known by construction:
+
+- PSOLA pitch shift +7 st on a 115.4 Hz vowel measured 172.8 Hz against a target
+  of 172.8 Hz — **0.0 % error** — with F2/F3 drift under 2 % and duration
+  unchanged. ×1.5 time scaling gave a duration error of 0.01 %.
+- Levinson–Durbin agrees with a direct Gaussian solve of the same Yule–Walker
+  system to 8.6e-14. An impulse train through resonators at 500/1500/2500 Hz
+  comes back as 517/1505/2494 Hz.
+- Generated timing is 3.04 syllables/s against **3.31 measured from the 2,252
+  committed clips** (1.75 h). `selftest` also pins the hard-coded corpus
+  fallbacks to a fresh measurement of `clips_index.json`; that check caught the
+  fallback claiming 3.62 syllables/s where the index measures 3.312, which would
+  have made speech ~9 % too fast whenever the index is absent.
+- Round trip of a full sentence: F0 1.0 % error, F2 2.6 %, F3 0.6 %.
+
+Bugs found and fixed by that round trip, since each one was invisible in
+isolation: Levinson–Durbin was aliasing in place; the LPC order was fixed at 16
+(resolving only ~1.4 kHz at 24 kHz); the spectrum evaluator used the opposite
+sign convention to the solver, inverting the response; the radiation stage was a
+mathematical no-op at its default; jitter was a compounding random walk;
+`period_f0` was reset every 32-sample block against a ~207-sample period, making
+jitter and shimmer near no-ops; breathiness was applied twice; per-frame inverse
+filtering manufactured 9.1 % jitter on a perfectly periodic signal (now one
+filter per voiced run, floor 0.71 %); and `WavAudio`'s 16-bit asymmetry (÷32768
+on read, ×32767 on write) injected a systematic `v/32768` error into every round
+trip — corrected in `wavio.write_wav`, and noted for the Java side.
+
+### Known limits, stated rather than hidden
+- The corpus **audio is not in this repository** (verified four ways: 0 wav, 146
+  ogg all Aether, 463 mp3 all music, nothing in git history, no addon zip). So
+  timing and vocabulary are measured from `clips_index.json` while the acoustic
+  fields are RP male reference values; the voiceprint records which is which in
+  `provenance.measured_fields` / `assumed_fields`.
+  `python3 -m villager_voice init --from-audio DIR` re-fits them once the clips
+  are available.
+- LPC reads F1 about 9–19 % low when the fundamental sits close to it (Praat
+  shows the same bias); F2/F3 hold to 0.6–2.6 %.
+- HNR has a ~19 dB measurement floor, so `breathiness` is verifiable over 0…0.6
+  only. `analyze.CALIBRATION` stores the measured table and
+  `calibrate_breathiness()` regenerates it rather than trusting a textbook rule.
+- The G2P rule path is approximate on the long tail, because English tense/lax
+  is lexical; correctness on frequent words is bought by curating 377 dictionary
+  entries (the 72 most frequent words cover half the corpus's 16,146 tokens).
+
+`tools/villager_voice/README.md` documents the architecture and `SCHEMA.md`
+documents all three JSON formats, generated from the code so it cannot drift.
+
 ## Every Character Speaks, and Beds & Banners Are Real Multiblocks (Oct 17, 2026)
 
 ### The previously silent cast is voiced

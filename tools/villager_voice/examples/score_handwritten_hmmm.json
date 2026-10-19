@@ -1,0 +1,52 @@
+{
+  "text": "Hrmm.",
+  "sample_rate": 24000,
+  "duration": 1.05,
+  "phones": [
+    {
+      "sym": "HH", "start": 0.00, "dur": 0.09, "stress": 0, "amp": 0.7,
+      "voiced": false, "f": [520, 1450, 2480, 3400, 4300],
+      "bw": [200, 260, 320, 380, 440], "manner": "glide", "word": 0, "syll": 0
+    },
+    {
+      "sym": "M", "start": 0.09, "dur": 0.14, "stress": 0, "amp": 0.9,
+      "voiced": true, "f": [285, 1100, 2200, 3400, 4300],
+      "bw": [95, 140, 220, 300, 380], "manner": "nasal", "word": 0, "syll": 0
+    },
+    {
+      "sym": "AX", "start": 0.23, "dur": 0.62, "stress": 1, "amp": 1.0,
+      "voiced": true, "f": [520, 1450, 2480, 3400, 4300],
+      "bw": [70, 100, 160, 210, 270], "manner": "vowel", "word": 0, "syll": 0
+    },
+    {
+      "sym": "M", "start": 0.85, "dur": 0.16, "stress": 0, "amp": 0.8,
+      "voiced": true, "f": [285, 1100, 2200, 3400, 4300],
+      "bw": [95, 140, 220, 300, 380], "manner": "nasal", "word": 0, "syll": 1
+    }
+  ],
+  "pauses": [],
+  "words": [{"text": "Hrmm", "start": 0.0, "end": 1.01}],
+  "phrases": [{"index": 0, "end": 1.01, "punctuation": ".", "kind": "statement"}],
+  "contours": {
+    "f0": [[0.00, 1.5], [0.30, 0.0], [0.70, -1.2], [1.01, -3.4]],
+    "amp": [[0.00, -6.0], [0.25, 0.0], [0.80, -1.5], [1.01, -9.0]],
+    "formant_scale": [[0.0, 1.0], [1.01, 1.0]],
+    "breathiness": [[0.0, 0.2], [1.01, 0.3]]
+  },
+  "events": [],
+  "random_seed": 20261004,
+  "_comment": [
+    "A hand-written score. synth.render_score consumes this exactly as it",
+    "consumes a score generated from text -- the synthesiser cannot tell the",
+    "difference. Times are seconds from the start of the line; contour lists",
+    "are linearly interpolated between breakpoints and must be sorted by time.",
+    "",
+    "f0 is semitones relative to source.f0_mean_hz, amp is dB relative to the",
+    "voiceprint's nominal level, formant_scale is a linear multiplier, and",
+    "breathiness is 0..1 (it overrides source.breathiness for those blocks).",
+    "",
+    "Render it:",
+    "  python3 -m villager_voice render --score examples/score_handwritten_hmmm.json \\",
+    "      --out out.wav"
+  ]
+}

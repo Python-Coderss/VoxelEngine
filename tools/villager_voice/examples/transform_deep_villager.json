@@ -1,0 +1,51 @@
+{
+  "format": "villager_voice.transform",
+  "version": 1,
+  "pitch": {
+    "semitones": -5.0,
+    "range_compress": 0.85,
+    "contour": [],
+    "follow_input": true
+  },
+  "time": {
+    "scale": 0.93,
+    "keep_pitch": true
+  },
+  "timbre": {
+    "vocal_tract_scale": 1.14,
+    "bandwidth_scale": 1.06,
+    "envelope_mix": 0.0
+  },
+  "source": {
+    "tilt_db_per_octave": -2.5,
+    "aspiration_db_delta": 0.0
+  },
+  "output": {
+    "sample_rate": 24000,
+    "gain_db": 1.0,
+    "peak_ceiling": 0.95,
+    "fade_ms": 12.0
+  },
+  "_comment": [
+    "Re-voices an existing WAV into a deeper, slower, darker speaker.",
+    "",
+    "pitch.semitones -5.0 lowers F0 by a perfect fourth. Because PSOLA re-spaces",
+    "the overlap-add marks instead of resampling the grains, the vocal-tract",
+    "envelope is untouched by this -- verified at 0.0% F0 error with F2/F3",
+    "drift under 2%.",
+    "",
+    "timbre.vocal_tract_scale 1.14 lengthens the tract 14%, which sets",
+    "formant_scale to 1/1.14 = 0.877 and moves the formants down independently",
+    "of pitch. That combination (pitch down AND formants down) is what reads as",
+    "'bigger person' rather than 'same person speaking lower'.",
+    "",
+    "time.scale 0.93 slows the delivery 7% without changing pitch.",
+    "",
+    "source.tilt_db_per_octave -2.5 adds spectral tilt on top of whatever the",
+    "input already had.",
+    "",
+    "Apply it:",
+    "  python3 -m villager_voice convert --in take.wav \\",
+    "      --spec examples/transform_deep_villager.json --out out.wav --report report.json"
+  ]
+}

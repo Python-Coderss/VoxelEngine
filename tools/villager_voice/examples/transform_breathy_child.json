@@ -1,0 +1,42 @@
+{
+  "format": "villager_voice.transform",
+  "version": 1,
+  "pitch": {
+    "semitones": 8.0,
+    "range_compress": 1.15
+  },
+  "time": {
+    "scale": 1.06,
+    "keep_pitch": true
+  },
+  "timbre": {
+    "vocal_tract_scale": 0.86,
+    "bandwidth_scale": 1.0
+  },
+  "source": {
+    "aspiration_db_delta": -16.0,
+    "tilt_db_per_octave": 1.5
+  },
+  "output": {
+    "sample_rate": 24000,
+    "peak_ceiling": 0.95
+  },
+  "_comment": [
+    "Re-voices an existing WAV into a smaller, higher, breathier speaker.",
+    "",
+    "The three moves that read as 'child' act on different axes, which is the",
+    "point of keeping them separate:",
+    "  pitch.semitones +8.0        raises F0 (shorter vocal folds)",
+    "  timbre.vocal_tract_scale    0.86 shortens the tract 14%, pushing all",
+    "                              formants up by 1/0.86 = 1.16x",
+    "  source.aspiration_db_delta  -16.0 adds breath noise 16 dB below the",
+    "                              signal peak, so the voice sounds less",
+    "                              fully-phonated",
+    "",
+    "Raising pitch alone sounds like a pitch-shifted adult; raising pitch AND",
+    "formants together is what changes the apparent size of the speaker.",
+    "",
+    "pitch.range_compress 1.15 widens the speaker's own F0 range 15%, which",
+    "adds to the youthful, less monotone impression."
+  ]
+}
