@@ -29,7 +29,7 @@ import java.util.Set;
  * dimension or mood pool falls back to the story/calm pool, and finally to the
  * whole library, so a sparse install still plays something.</p>
  */
-public final class MusicLibrary {
+public class MusicLibrary {
 
     /** One playable track. */
     public static final class Track {
@@ -55,10 +55,10 @@ public final class MusicLibrary {
     /** Tracks shorter than this are stings/risers, not background music. */
     static final long MIN_TRACK_BYTES = 700_000L;
 
-    private final List<Track> tracks;
-    private final Map<String, List<Track>> pools;
+    protected final List<Track> tracks;
+    protected final Map<String, List<Track>> pools;
 
-    private MusicLibrary(List<Track> tracks) {
+    protected MusicLibrary(List<Track> tracks) {
         this.tracks = Collections.unmodifiableList(tracks);
         Map<String, List<Track>> byContext = new HashMap<>();
         for (Track t : tracks) {

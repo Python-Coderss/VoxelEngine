@@ -72,7 +72,10 @@ if ($stale.Count -eq 0) {
 }
 
 Write-Host "[fast] Compiling $($stale.Count) changed source file(s)..."
-& $Javac -nowarn -encoding UTF-8 --release 8 -cp $cp -d $outRoot @stale
+# -source/-target (not --release): JDK 8's javac rejects --release outright,
+# and the game targets a Java 8 runtime. When built ON JDK 8 there is no
+# newer java.base to accidentally link against, so source/target is safe here.
+& $Javac -nowarn -encoding UTF-8 -source 8 -target 8 -cp $cp -d $outRoot @stale
 if ($LASTEXITCODE -ne 0) {
     Write-Host '[fast] FAILED.'
     exit 1

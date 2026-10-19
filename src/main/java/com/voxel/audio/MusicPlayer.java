@@ -174,6 +174,9 @@ public final class MusicPlayer implements AutoCloseable {
      */
     public void playContext(String context) {
         String want = context == null ? "" : context;
+        // Retry even when the context is unchanged if nothing is playing: the
+        // library can be empty for the first few frames while its background
+        // scan runs, and the early-out would otherwise never re-trigger.
         if (want.equals(currentContext) && (trackQueued || decoding || swapAudio != null)) return;
         currentContext = want;
         if (library != null) {

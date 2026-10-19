@@ -573,18 +573,19 @@ public class Main {
         musicRoots.add(new java.io.File("src/main/resources/music"));
         musicRoots.add(new java.io.File("src/resources/music"));
         musicRoots.add(new java.io.File("src/main/resources/assets/aether/sounds/music"));
-        com.voxel.audio.MusicLibrary musicLibrary =
-                com.voxel.audio.MusicLibrary.scan(musicRoots);
+        // Scan the catalogue on a background thread. The soundtrack is several
+        // hundred tracks / a few hundred MB, and the walk (length() + canonical
+        // path + classify per file) was adding a stall to boot for a catalogue
+        // nothing reads until music is requested. LazyMusicLibrary reports empty
+        // until the scan lands; MusicPlayer simply retries next frame.
+        com.voxel.audio.LazyMusicLibrary musicLibrary =
+                new com.voxel.audio.LazyMusicLibrary(musicRoots);
+        musicLibrary.start();
         musicPlayer.setLibrary(musicLibrary);
-        if (musicLibrary.isEmpty()) {
-            java.io.File musicDir = new java.io.File("src/main/resources/music");
-            musicPlayer.setRoot(musicDir);
-            System.out.println("[audio] no classified music found — folder fallback: "
-                    + musicDir.getPath());
-        } else {
-            System.out.println("[audio] music library: " + musicLibrary.size()
-                    + " tracks; pools " + musicLibrary.populatedContexts());
-        }
+        // NOTE: no setRoot() fallback here. setRoot() clears the library (folder
+        // mode), which would discard the catalogue the moment the scan landed.
+        // An empty scan simply means no music plays, which is the correct
+        // behaviour for a machine with no soundtrack files.
         presentEarlyLoadingFrame(earlyLoadingTexture);
         bootMark.accept("OpenAL ready");
 

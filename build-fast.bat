@@ -16,7 +16,9 @@ REM ---------------------------------------------------------------------------
 setlocal
 cd /d "%~dp0"
 
-set "JAVAC=C:\Program Files\Java\jdk-21\bin\javac.exe"
+REM Match the game's runtime: build on JDK 8 so the bytecode is produced by the
+REM same javac that will run it (and source/target 1.8 is then authoritative).
+set "JAVAC=C:\Program Files\Eclipse Adoptium\jdk-8.0.482.8-hotspot\bin\javac.exe"
 if not exist "%JAVAC%" set "JAVAC=javac"
 
 REM Locate a working maven (one-off classpath dump, and for tests).

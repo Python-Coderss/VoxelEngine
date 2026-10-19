@@ -24,3 +24,6 @@ Create/
 
 # Generated visual-harness artifacts (inspect locally, do not commit)
 screenshots/chest_harness/
+
+# maven-shade-plugin byproduct (regenerated on every package)
+dependency-reduced-pom.xml
