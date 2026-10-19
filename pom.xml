@@ -167,6 +167,17 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.8.1</version>
                 <configuration>
+                    <!--
+                      Use <release>, not <source>/<target>. source/target only set the
+                      bytecode version; javac still linked against the BUILD JDK's
+                      java.base. Building on JDK 9+ therefore emitted covariant
+                      NIO overrides that do not exist on Java 8, e.g.
+                      invokevirtual FloatBuffer.flip:()Ljava/nio/FloatBuffer;
+                      which fails at startup on a Java 8 runtime with
+                      NoSuchMethodError: java.nio.FloatBuffer.flip()Ljava/nio/FloatBuffer;
+                      <release> pins the API to 8 too, so those calls cannot be emitted.
+                    -->
+                    <release>8</release>
                     <source>1.8</source>
                     <target>1.8</target>
                 </configuration>
