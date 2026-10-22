@@ -2386,27 +2386,31 @@ void main() {
                         region = vec4(0.0, 0.0, 6.0, 5.0);
                         chestLatchSample = true;
                     } else if (chestElement == 1) {
-                        // chestNormal.y was negated by the model Y/Z flip above, so
-                        // chestFace 0 is the WORLD +Y (top) face and face 1 is the
-                        // underside. The atlas paints the lid's top planks at
-                        // (14,0)-(28,14) and its dark underside at (28,0)-(42,14);
-                        // feeding these the other way round put the dark crop on
-                        // the visible lid (the swapped +Y/-Y faces).
+                        // The model Y/Z flip above negates EVERY component of the
+                        // normal, so the chestFace index is mirrored on all three
+                        // axes: face 0 is world +Y, face 1 is world -Y, and each
+                        // axis pair (2,3) and (4,5) is swapped the same way. The
+                        // atlas keeps the vanilla ModelChest layout, where the lid's
+                        // lit top planks are (14,0)-(28,14) and its dark underside
+                        // (28,0)-(42,14), so each mirrored index has to read the
+                        // other face's crop or the dark/hidden art lands on the
+                        // visible side.
                         if (chestFace == 0)      region = vec4(14.0, 0.0, 28.0, 14.0);
                         else if (chestFace == 1) region = vec4(28.0, 0.0, 42.0, 14.0);
-                        else if (chestFace == 2) region = vec4(28.0, 14.0, 42.0, 19.0);
-                        else if (chestFace == 3) region = vec4(14.0, 14.0, 28.0, 19.0);
-                        else if (chestFace == 4) region = vec4(42.0, 14.0, 56.0, 19.0);
-                        else                      region = vec4(0.0, 14.0, 14.0, 19.0);
+                        else if (chestFace == 2) region = vec4(14.0, 14.0, 28.0, 19.0);
+                        else if (chestFace == 3) region = vec4(28.0, 14.0, 42.0, 19.0);
+                        else if (chestFace == 4) region = vec4(0.0, 14.0, 14.0, 19.0);
+                        else                      region = vec4(42.0, 14.0, 56.0, 19.0);
                     } else {
-                        // Same swap for the body: its opening (black in the atlas at
-                        // 14,19) is the top face, which the lid covers when shut.
+                        // Same mirroring for the body: its opening (black in the
+                        // atlas at 14,19) is the top face, which the lid covers
+                        // when shut.
                         if (chestFace == 0)      region = vec4(14.0, 19.0, 28.0, 33.0);
                         else if (chestFace == 1) region = vec4(28.0, 19.0, 42.0, 33.0);
-                        else if (chestFace == 2) region = vec4(28.0, 33.0, 42.0, 43.0);
-                        else if (chestFace == 3) region = vec4(14.0, 33.0, 28.0, 43.0);
-                        else if (chestFace == 4) region = vec4(42.0, 33.0, 56.0, 43.0);
-                        else                      region = vec4(0.0, 33.0, 14.0, 43.0);
+                        else if (chestFace == 2) region = vec4(14.0, 33.0, 28.0, 43.0);
+                        else if (chestFace == 3) region = vec4(28.0, 33.0, 42.0, 43.0);
+                        else if (chestFace == 4) region = vec4(0.0, 33.0, 14.0, 43.0);
+                        else                      region = vec4(42.0, 33.0, 56.0, 43.0);
                     }
                     // The latch crop is only 6x5 pixels at the atlas edge. Sampling
                     // the entity array with mipmaps blends it with transparent atlas
@@ -2578,7 +2582,11 @@ void main() {
             // AO is applied to the lit term only, so the floor survives in
             // shadowed corners instead of crushing cave walls to black.
             float ao = computeAmbientOcclusion(hp, n);
-            beam = vec3(0.045) + lit * ao;
+            // Unlit floor. 0.045 (about 0.23 after the sRGB encode) was bright
+            // enough to paint a cave as a flat grey room and to rob every lamp
+            // pool of its shape; 0.012 keeps rock readable in the dark while
+            // letting the light do the modelling.
+            beam = vec3(0.012) + lit * ao;
             beam += pointLightContrib(hp, n);
             gDbgSurf = vec3(skyNorm, blockNorm, clamp(dot(gDbgPoint, vec3(0.333)), 0.0, 1.0));
             gDbgPos = clamp(hp / vec3(128.0, 48.0, 128.0), 0.0, 1.0);
