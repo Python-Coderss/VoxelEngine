@@ -92,13 +92,14 @@ public final class MCGui {
     public static final Rect HEART_FULL = new Rect(34, 0, 9, 9);
     // Hunger shanks live on the second icon row (y=27), NOT on the heart row:
     // sampling y=0 here returned the empty/half/full HEART sprites, which is
-    // why the food bar looked like bones. Verified against the shipped atlas.
-    // Vanilla order on the food row: 52 = full meat shank, 61 = half shank,
-    // 70 = empty (desaturated) shank. The fill sprites are not simply the
-    // empty one at +9px.
+    // why the food bar looked like bones. Verified against the shipped atlas
+    // (pixel dump): 52 = filled meat shank, 61 = the same shank cut in half,
+    // 16 = the empty (black silhouette) container. 70/79 are the pale
+    // hunger-effect variants, not the empty state — using 70 as "empty" made an
+    // empty bar look full.
     public static final Rect FOOD_FULL = new Rect(52, 27, 9, 9);
     public static final Rect FOOD_HALF = new Rect(61, 27, 9, 9);
-    public static final Rect FOOD_EMPTY = new Rect(70, 27, 9, 9);
+    public static final Rect FOOD_EMPTY = new Rect(16, 27, 9, 9);
 
     // ── icons.png XP-style bar (used for loading progress) ──
     /** 182x5 empty trough. */

@@ -48,8 +48,17 @@ public class CommandProcessor {
             case "camera": handleCamera(parts); break;
             case "locate": handleLocate(parts); break;
             case "screenshot":
+                // "/screenshot clean" (aliases: noui, scene, no-ui) drops the HUD
+                // for one frame, so the capture is the raytraced scene alone.
+                ctx.screenshotWithoutUi = parts.length >= 2
+                        && ("clean".equalsIgnoreCase(parts[1])
+                            || "noui".equalsIgnoreCase(parts[1])
+                            || "no-ui".equalsIgnoreCase(parts[1])
+                            || "scene".equalsIgnoreCase(parts[1]));
                 ctx.screenshotRequested = true;
-                ctx.setStatus("Screenshot saved to screenshots/");
+                ctx.setStatus(ctx.screenshotWithoutUi
+                        ? "Screenshot without UI saved to screenshots/"
+                        : "Screenshot saved to screenshots/");
                 break;
             case "tv": handleTv(parts); break;
             case "music": handleMusic(parts); break;
@@ -375,7 +384,7 @@ public class CommandProcessor {
         sb.append("\n  /locate <village|testing_facility> - Find a nearby structure");
         sb.append("\n  /tv <channel> - Change TV channel (see the Villager TV guide for the running order)");
         sb.append("\n  /music [auto|off|on|next|list|<pool>] - Steering the soundtrack (pools: menu, calm, night, danger, combat, boss, cave, nether, end, aether, sift, tutorial, village, story)");
-        sb.append("\n  /screenshot - Save a screenshot to screenshots/");
+        sb.append("\n  /screenshot [clean] - Save a screenshot to screenshots/ (clean = no HUD)");
         sb.append("\n  /light <r> <g> <b> - Place a point light (RGB 0-255, radius 32) at your position (/light clear)");
         sb.append("\n  /worldsize <tiny|small|medium|large|huge> - Change world size (recreates dimension)");
         ctx.setStatus(sb.toString());

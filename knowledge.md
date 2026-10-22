@@ -521,3 +521,11 @@ drop their base log item.
   Dungeons journeys. Every site is lazy, deterministic and idempotent, stamped from `Main`'s
   Overworld logic tick.
 - **Note:** the new story sites have structures only — their mobs and story beats are still TODO.
+- **Hunger bar art lives in icons.png, not ui.png (2026-10-21):** an ASCII/colour dump of
+  `src/main/resources/ui/ui.png` (the only ui atlas; rows 0-101 carry content) shows exactly two 9x9
+  drumsticks, at (170,28) (brown outline) and (179,28) (green outline) — both *empty* silhouettes with
+  a #282828 body, no filled meat and no half state. The old `UIConstants.HUNGER_*` rects at (0,104)
+  therefore sampled transparent pixels and the HUD food bar drew nothing. The filled shanks are on the
+  food row of `gui/icons.png`: 52,27 = filled, 61,27 = half, 16,27 = empty container (70/79 are the pale
+  hunger-effect variants — using 70 as "empty" made an empty bar read as full). `HudUI` now samples
+  `MCGui.FOOD_*` from `MCGui.ICONS` with full 9x9 sprites (no half-pixel inset: it clips the bone).

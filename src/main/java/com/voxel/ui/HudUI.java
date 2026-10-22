@@ -242,8 +242,13 @@ public class HudUI {
     public UILayer.UITextElement menuHint;
 
     // ── Minecraft-style title screen chrome ──
-    /** Tiled dirt backdrop used by every menu screen except the title. */
-    public UILayer.UIElement menuDirtBackground;
+    /**
+     * Full-screen backdrop capture used by every menu screen except the title.
+     * A flat render of the world, not a tiled block texture: the pixel font has
+     * to stay legible over it, so the only thing behind text is the artwork and
+     * the rows' own plates.
+     */
+    public UILayer.UIElement menuBackdrop;
     /** Story Mode wordmark art shown on the title screen (null texture falls back to text). */
     public UILayer.UIElement menuLogo;
     /** "SEASON THREE" line under the wordmark. */
@@ -948,9 +953,9 @@ public class HudUI {
         }
 
         // Hunger bar icons: sit on the same row as the hearts, immediately to
-        // their right (vanilla layout). Sampled from the ui.png atlas at
-        // refresh time — UIConstants.HUNGER_EMPTY/HALF/FULL — instead of
-        // borrowing the cooked_chicken item icon from the item atlas.
+        // their right (vanilla layout). Sampled from gui/icons.png at refresh
+        // time — MCGui.FOOD_EMPTY/HALF/FULL — instead of borrowing the
+        // cooked_chicken item icon from the item atlas.
         for (int i = 0; i < 10; i++) {
             foodIcons[i] = new UILayer.UIElement(
                 new Vector2f(Main.HOTBAR_X + 10 * 30 + 10 + i * 30, Main.HOTBAR_Y - 30),
@@ -1402,21 +1407,23 @@ public class HudUI {
         menuBackground.visible = false;
         menuLayer.addElement(menuBackground);
 
-        // Vanilla dirt backdrop for every menu screen after the title. Kept
-        // above menuBackground so the options/world screens get the tiled
-        // 16x16 dirt wall instead of the panorama.
-        menuDirtBackground = new UILayer.UIElement(
+        // Backdrop capture for every menu screen after the title. Kept above
+        // menuBackground so the options/world screens get the rendered scene
+        // instead of a tiled 16x16 dirt wall; a flat plate stands in when the
+        // capture is missing from a trimmed resource pack.
+        menuBackdrop = new UILayer.UIElement(
             new Vector2f(0, 0),
             new Vector2f(main.width, main.height),
-            new Vector4f(0.42f, 0.42f, 0.42f, 1f)
+            new Vector4f(1f, 1f, 1f, 1f)
         );
-        // Menus stay live: the 3D panorama keeps rendering behind the rows, so
-        // the non-title screens get their legibility from a scrim rather than a
-        // prebuilt backdrop image.
-        MCGui.panel(menuDirtBackground);
-        menuDirtBackground.onClick = () -> { };
-        menuDirtBackground.visible = false;
-        menuLayer.addElement(menuDirtBackground);
+        if (MCGui.MCSM_MENU_BG != 0) {
+            MCGui.full(menuBackdrop, MCGui.MCSM_MENU_BG);
+        } else {
+            menuBackdrop.color.set(UiPalette.panelDeep(1f));
+        }
+        menuBackdrop.onClick = () -> { };
+        menuBackdrop.visible = false;
+        menuLayer.addElement(menuBackdrop);
 
         // ── Top-right loading popup ──
         // A compact toast panel shown while spawn chunks generate (world boot /
@@ -2361,26 +2368,36 @@ public class HudUI {
         float foodBar = main.player.getHunger();
         int armorBar = main.player.getArmorPoints();
 
-        // Hunger bar (10 drumstick icons, 2 food points each, drawn from the
-        // ui.png atlas). Always visible so the empty drumsticks frame the bar
-        // exactly like vanilla; the row sits beside the hearts.
+        // Hunger bar (10 drumstick icons, 2 food points each). The art lives on
+        // the food row of gui/icons.png: ui.png only carries the two *empty*
+        // outline shanks at (170,28)/(179,28), with no filled meat, so a ui.png
+        // food bar could never show a half or full state.
         for (int i = 0; i < 10; i++) {
             float foodValue = foodBar - (i * 2);
             UILayer.UIElement food = foodIcons[i];
             food.visible = !main.commandMode;
             if (!food.visible) continue;
-            food.textureId = uiTextureId;
             food.color.set(1, 1, 1, 1);
             // Top-left HUD: hunger sits on the same row as the hearts, to their
             // right, exactly where the icons were built.
             food.pos.set(Main.HOTBAR_X + 10 * 30 + 10 + i * 30, Main.HOTBAR_Y - 30);
-            Vector4f uv = foodValue >= 2.0f ? UIConstants.HUNGER_FULL
-                    : (foodValue >= 1.0f ? UIConstants.HUNGER_HALF : UIConstants.HUNGER_EMPTY);
-            float fw = uiTextureSize.x;
-            float fh = uiTextureSize.y;
-            // Inset the UV by half a pixel to avoid atlas bleeding (as hearts do).
-            food.uvOffset.set((uv.x + 0.5f) / fw, (uv.y + 0.5f) / fh);
-            food.uvScale.set((uv.z - 1.0f) / fw, (uv.w - 1.0f) / fh);
+            if (MCGui.ICONS != 0) {
+                MCGui.Rect shank = foodValue >= 2.0f ? MCGui.FOOD_FULL
+                        : (foodValue >= 1.0f ? MCGui.FOOD_HALF : MCGui.FOOD_EMPTY);
+                food.textureId = MCGui.ICONS;
+                // Whole 9x9 sprite, no pixel inset: the shank art fills its cell
+                // edge to edge and an inset clips the bone.
+                Vector4f uv = MCGui.spriteUV(MCGui.ICONS, shank);
+                food.uvOffset.set(uv.x, uv.y);
+                food.uvScale.set(uv.z, uv.w);
+            } else {
+                // Trimmed pack fallback: the brown-outline shank from ui.png.
+                food.textureId = uiTextureId;
+                float fw = uiTextureSize.x;
+                float fh = uiTextureSize.y;
+                food.uvOffset.set(170.0f / fw, 28.0f / fh);
+                food.uvScale.set(9.0f / fw, 9.0f / fh);
+            }
         }
 
         // Armor bar (10 chestplate icons, 2 armor points each; hidden when bare)
@@ -2757,13 +2774,28 @@ public class HudUI {
         staticLayer.setVisible(!menuActive);
         // Title screen: the panorama (live 3D panorama when the game has one,
         // otherwise the shipped panorama_0.png). Every other menu screen uses
-        // vanilla's tiled dirt wall. Both are always visible so they consume
+        // the rendered backdrop capture. Both are always visible so they consume
         // clicks and hidden inventory controls can't be hit.
         boolean titleScreen = ctx.menuScreen == GameContext.MenuScreen.MAIN;
+        boolean backdropArt = !titleScreen && MCGui.MCSM_MENU_BG != 0;
         menuBackground.visible = menuActive;
-        menuDirtBackground.visible = menuActive && !titleScreen;
-        if (!titleScreen) {
-            // Dirt layer draws itself; the panorama quad underneath is irrelevant.
+        menuBackdrop.visible = menuActive && backdropArt;
+        if (backdropArt) {
+            // Cover-crop the capture to the window: cropping the overhanging axis
+            // keeps the scene in proportion instead of stretching it, and no
+            // block texture ever repeats under the text.
+            int bgTexW = UIManager.getTextureSize(MCGui.MCSM_MENU_BG).x;
+            int bgTexH = UIManager.getTextureSize(MCGui.MCSM_MENU_BG).y;
+            float texAspect = bgTexW / (float) bgTexH;
+            float winAspect = main.width / (float) main.height;
+            float uFrac = 1f, vFrac = 1f;
+            if (winAspect < texAspect) uFrac = winAspect / texAspect;
+            else vFrac = texAspect / winAspect;
+            menuBackdrop.pos.set(0f, 0f);
+            menuBackdrop.size.set(main.width, main.height);
+            menuBackdrop.uvOffset.set((1f - uFrac) * 0.5f, (1f - vFrac) * 0.5f);
+            menuBackdrop.uvScale.set(uFrac, vFrac);
+            // The capture covers the panorama quad underneath.
             menuBackground.color.w = 0f;
         } else if (main.panoramaActive) {
             menuBackground.color.w = 0f;
@@ -2819,7 +2851,7 @@ public class HudUI {
         // Translucent text backdrop (menu only): dark pane in dark mode, pale
         // pane in light mode so the theme's text color stays readable over the
         // 3D panorama behind it.
-        menuTextPanel.visible = false; // replaced by the dirt / panorama chrome
+        menuTextPanel.visible = false; // replaced by the backdrop capture / panorama
         if (dark) {
             menuTextPanel.color.set(UiPalette.panelDeep(0.55f));
         } else {

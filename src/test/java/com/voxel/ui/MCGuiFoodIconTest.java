@@ -36,7 +36,9 @@ public class MCGuiFoodIconTest {
         }
         assertEquals(52, MCGui.FOOD_FULL.x);
         assertEquals(61, MCGui.FOOD_HALF.x);
-        assertEquals(70, MCGui.FOOD_EMPTY.x);
+        // 16 is the empty container silhouette. 70/79 are the *pale* filled
+        // shanks; sampling 70 as "empty" made an empty bar read as full.
+        assertEquals(16, MCGui.FOOD_EMPTY.x);
     }
 
     @Test
@@ -53,10 +55,11 @@ public class MCGuiFoodIconTest {
     public void foodSpritesShowMeatTintOnlyWhenFilled() throws Exception {
         BufferedImage img = loadAtlas();
         int full = maxMeatSaturation(img, MCGui.FOOD_FULL);
+        int half = maxMeatSaturation(img, MCGui.FOOD_HALF);
         int empty = maxMeatSaturation(img, MCGui.FOOD_EMPTY);
         assertTrue("full shank carries a roast highlight, red-green=" + full, full > 70);
-        assertTrue("empty shank is paler than the full one (" + empty + " vs " + full + ")",
-                empty < full - 20);
+        assertTrue("half shank carries a roast highlight, red-green=" + half, half > 70);
+        assertTrue("empty container has no meat tint (" + empty + ")", empty < 20);
     }
 
     @Test

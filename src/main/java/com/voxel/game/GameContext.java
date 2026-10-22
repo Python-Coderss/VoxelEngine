@@ -244,6 +244,12 @@ public class GameContext {
     public double statusUntil = 0.0;
     public int lastMeasuredFps = 0;
     public boolean screenshotRequested = false;
+    /**
+     * When set with {@link #screenshotRequested}, the capture frame is rendered
+     * without the HUD/menu composite ({@code /screenshot clean}), so the image is
+     * the raytraced scene alone. Cleared once the shot is taken.
+     */
+    public boolean screenshotWithoutUi = false;
 
     // --- Render ---
     public int width = 1280, height = 720;

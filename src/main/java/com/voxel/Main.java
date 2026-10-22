@@ -107,6 +107,8 @@ public class Main {
     public long window;
     public int quadProgram, computeProgram;
     public int quadVAO, quadVBO, renderTexture;
+    /** 1x1 transparent texture bound in place of the UI canvas for clean shots. */
+    public int blankUiTexture;
     public int indirectionSSBO, chunkPoolSSBO, bitmaskSSBO, pointLightSSBO, lightSSBO;
     public int sdfSSBO;  // chunk-level SDF for sphere-trace acceleration (binding=10)
     public int columnTopSSBO; // per-column highest loaded section (binding=11)
@@ -549,6 +551,18 @@ public class Main {
         locQuadUITex = glGetUniformLocation(quadProgram, "uiTexture");
         locQuadCompositeUI = glGetUniformLocation(quadProgram, "u_CompositeUI");
         setupQuad();
+        // Transparent 1x1 stand-in for the UI sampler. A clean screenshot binds
+        // it in place of the HUD canvas, so the raytracer's UI pass draws nothing.
+        blankUiTexture = glGenTextures();
+        glBindTexture(GL_TEXTURE_2D, blankUiTexture);
+        {
+            java.nio.ByteBuffer blank = MemoryUtil.memAlloc(4);
+            blank.put((byte) 0).put((byte) 0).put((byte) 0).put((byte) 0).flip();
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, blank);
+            MemoryUtil.memFree(blank);
+        }
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         bootMark.accept("quad ready");
         // Title screen first: the MC GUI kit + vanilla font + one UI shader are
         // all this needs, so the window is never a black rectangle while the
@@ -5542,10 +5556,23 @@ public class Main {
 
             glBindImageTexture(0, renderTexture, 0, false, 0, GL_WRITE_ONLY, GL_RGBA8);
             glProgramUniform1f(computeProgram, LOC_EXPOSURE, currentExposure);
+            // A clean screenshot also has to skip the raytracer's own UI pass:
+            // the shader reads u_UITexture (unit 10) and writes opaque UI pixels
+            // straight into the scene image, so compositing alone is not enough.
+            // Point that sampler at a transparent 1x1 texture for this dispatch.
+            boolean shotWithoutUi = ctx.screenshotRequested && ctx.screenshotWithoutUi;
+            if (shotWithoutUi) {
+                glActiveTexture(org.lwjgl.opengl.GL13.GL_TEXTURE10);
+                glBindTexture(GL_TEXTURE_2D, blankUiTexture);
+            }
             perfBegin(1);
             glDispatchCompute((renderW + 15) / 16, (renderH + 15) / 16, 1);
             glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
             perfEnd(1);
+            if (shotWithoutUi) {
+                glActiveTexture(org.lwjgl.opengl.GL13.GL_TEXTURE10);
+                glBindTexture(GL_TEXTURE_2D, hud.uiManager.getUITexture());
+            }
 
             updateVariableExposure();
 
@@ -5563,15 +5590,18 @@ public class Main {
                 glBindTexture(GL_TEXTURE_2D, hud.uiManager.getUITexture());
                 glUniform1i(locQuadUITex, 1);
             }
-            if (locQuadCompositeUI >= 0) glUniform1i(locQuadCompositeUI, 1);
+            // A clean screenshot composites the scene alone: skip the UI layer
+            // for this single frame, so the capture holds no HUD or prompts.
+            if (locQuadCompositeUI >= 0) glUniform1i(locQuadCompositeUI, shotWithoutUi ? 0 : 1);
             glUniform1i(locQuadPass, 0);
             if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 0);
             glBindVertexArray(quadVAO);
             glDrawArrays(GL_TRIANGLES, 0, 6);
             perfEnd(2);
             if (ctx.screenshotRequested) {
-                takeScreenshot();
+                takeScreenshot(!shotWithoutUi);
                 ctx.screenshotRequested = false;
+                ctx.screenshotWithoutUi = false;
             }
             perfSlot = (perfSlot + 1) % PERF_RING;
             } else {
@@ -5593,8 +5623,11 @@ public class Main {
                 glBindVertexArray(quadVAO);
                 glDrawArrays(GL_TRIANGLES, 0, 6);
                 if (ctx.screenshotRequested) {
+                    // Loading/menu frames ARE the UI texture; there is no scene
+                    // pass to capture without it.
                     takeScreenshot();
                     ctx.screenshotRequested = false;
+                    ctx.screenshotWithoutUi = false;
                 }
             }
 
@@ -8764,6 +8797,8 @@ public class Main {
         }
         if (++uiProbeFrames < uiProbeFramesTarget) return;
         uiProbeShot = true;
+        // VOXEL_SCREENSHOT_NO_UI captures the scene without the HUD in probe runs.
+        ctx.screenshotWithoutUi = System.getenv("VOXEL_SCREENSHOT_NO_UI") != null;
         ctx.screenshotRequested = true;
     }
 
@@ -9105,6 +9140,16 @@ public class Main {
     }
 
     public void takeScreenshot() {
+        takeScreenshot(true);
+    }
+
+    /**
+     * Captures the presented window. {@code withUi} is descriptive only — the
+     * framebuffer is read as it stands, so a scene-only capture must come from a
+     * frame whose UI composite was skipped (see the world render path's
+     * {@code shotWithoutUi}).
+     */
+    public void takeScreenshot(boolean withUi) {
         // Capture the WINDOW, after the UI composite, so the HUD, prompts and
         // captions are in the image. Reading renderTexture here (the old path)
         // only ever captured the raytraced scene.
@@ -9132,7 +9177,8 @@ public class Main {
             if (!dir.exists()) dir.mkdirs();
             File out = new File(dir, "screenshot_" + System.currentTimeMillis() + ".png");
             ImageIO.write(image, "PNG", out);
-            System.out.println("Screenshot saved: " + out.getPath() + " (scene + HUD)");
+            System.out.println("Screenshot saved: " + out.getPath()
+                    + (withUi ? " (scene + HUD)" : " (scene only)"));
 
             if (System.getenv("VOXEL_UI_PROBE") != null) {
                 System.out.println("[UI PROBE] frame " + w + "x" + h
