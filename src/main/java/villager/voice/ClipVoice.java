@@ -73,11 +73,7 @@ public final class ClipVoice implements AutoCloseable {
         WavAudio source = library.load(clip).resampled(DEFAULT_SAMPLE_RATE);
         float[] samples = source.samples.clone();
 
-        // Playback shaping: effective speed plus a clamped pitch tilt. The
-        // recorded voice is already the villager, so the old +8-semitone
-        // register lift does not apply — pitch just flavors the delivery.
-        double pitch = clamp(options.getPitchSemitones() + emotionPitch(options), -6.0, 6.0);
-        double factor = options.getEffectiveSpeed() * Math.pow(2.0, -pitch / 12.0);
+        double factor = playbackFactor(options);
         if (Math.abs(factor - 1.0) > 1e-3) {
             int length = Math.max(1, (int) Math.round(samples.length / factor));
             samples = AudioDsp.resample(samples, length);
@@ -93,6 +89,18 @@ public final class ClipVoice implements AutoCloseable {
         AudioDsp.normalizePeak(samples, PEAK_CEILING);
         AudioDsp.fadeEdges(samples, Math.min(DEFAULT_SAMPLE_RATE / 80, samples.length / 5));
         return new WavAudio(DEFAULT_SAMPLE_RATE, samples);
+    }
+
+    /**
+     * How much faster than the source recording this delivery plays. Speed and
+     * the emotion/pitch tilt both resample the clip, so caption cue times must
+     * be divided by this factor — dividing by speed alone drifts whenever the
+     * line is pitched up or down.
+     */
+    public static double playbackFactor(SpeechOptions options) {
+        if (options == null) return 1.0;
+        double pitch = clamp(options.getPitchSemitones() + emotionPitch(options), -6.0, 6.0);
+        return options.getEffectiveSpeed() * Math.pow(2.0, -pitch / 12.0);
     }
 
     private static double emotionPitch(SpeechOptions options) {

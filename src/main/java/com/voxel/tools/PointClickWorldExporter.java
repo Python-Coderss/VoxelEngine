@@ -145,7 +145,7 @@ public final class PointClickWorldExporter {
     private static void writeLevelDat(File outDir) throws Exception {
         JSONObject root = new JSONObject();
         root.put("saveName", "pointclick");
-        root.put("seed", 42L);
+        root.put("seed", com.voxel.world.PackPng.SEED);
         root.put("worldSize", "SMALL");
         root.put("gameMode", "SURVIVAL");
         root.put("worldTime", 720.0);

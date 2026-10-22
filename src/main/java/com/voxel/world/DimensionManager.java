@@ -25,6 +25,8 @@ public class DimensionManager {
     private boolean pointClickWorld = false;
     /** When true, the Overworld is built as the creative Showcase World hub. */
     private boolean showcaseWorld = false;
+    /** When true, the Overworld is built as the dark/light Lighting Demo. */
+    private boolean lightingDemoWorld = false;
 
     public DimensionManager(BlockDataManager blockDataManager, WorldSaveManager saveManager, BiomeManager biomeManager) {
         this.blockDataManager = blockDataManager;
@@ -53,6 +55,11 @@ public class DimensionManager {
     /** Selects the flat Showcase World generator for the Overworld. */
     public void setShowcaseWorld(boolean showcaseWorld) {
         this.showcaseWorld = showcaseWorld;
+    }
+
+    /** Selects the Lighting Demo generator for the Overworld. */
+    public void setLightingDemoWorld(boolean lightingDemoWorld) {
+        this.lightingDemoWorld = lightingDemoWorld;
     }
 
     /** Mixes the world seed into a per-dimension noise seed, keeping 0 → classic. */
@@ -101,6 +108,10 @@ public class DimensionManager {
                 // The Showcase World hub is regenerated at runtime from the
                 // author into every section, so it needs no bundled template.
                 generator = new ShowcaseWorldGenerator(typeSeed, blockDataManager);
+            } else if (lightingDemoWorld) {
+                // Dark hall + light hall, both authored and regenerated at
+                // runtime: a test bench for the renderer's lighting.
+                generator = new LightingDemoWorldGenerator(typeSeed, blockDataManager);
             } else {
             // The normal Overworld uses the faithful Beta 1.8.1 continental
             // generator (Adventure Update terrain) with vanilla precision.

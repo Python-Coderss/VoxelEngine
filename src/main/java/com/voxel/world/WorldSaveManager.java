@@ -484,6 +484,20 @@ public class WorldSaveManager {
             root.put("tutorial", ctx.tutorialWorld);
             root.put("lastPlayed", System.currentTimeMillis());
 
+            // MCSM decision memory: named flags plus the short recap shown by
+            // /story. Kept alongside the player state so a save resumes the
+            // same branch the player chose.
+            JSONObject storyJson = new JSONObject();
+            JSONObject flagJson = new JSONObject();
+            for (Map.Entry<String, String> flag : ctx.story.flags().entrySet()) {
+                flagJson.put(flag.getKey(), flag.getValue());
+            }
+            storyJson.put("flags", flagJson);
+            JSONArray storyChoices = new JSONArray();
+            for (String line : ctx.story.choices()) storyChoices.put(line);
+            storyJson.put("choices", storyChoices);
+            root.put("story", storyJson);
+
             JSONObject playerJson = new JSONObject();
             if (player != null) {
                 playerJson.put("x", player.getPosition().x);
@@ -506,6 +520,10 @@ public class WorldSaveManager {
                     s.put("item", stack.itemId);
                     s.put("count", stack.count);
                     s.put("durability", stack.durability);
+                    if (stack.enchantment != null) {
+                        s.put("enchant", stack.enchantment);
+                        s.put("enchantLevel", stack.enchantLevel);
+                    }
                     invJson.put(s);
                 }
             }
@@ -521,6 +539,10 @@ public class WorldSaveManager {
                     s.put("slot", i);
                     s.put("item", stack.itemId);
                     s.put("count", stack.count);
+                    if (stack.enchantment != null) {
+                        s.put("enchant", stack.enchantment);
+                        s.put("enchantLevel", stack.enchantLevel);
+                    }
                     armorJson.put(s);
                 }
             }
@@ -552,6 +574,29 @@ public class WorldSaveManager {
             ctx.worldTime = (float) root.optDouble("worldTime", 720.0);
             ctx.tutorialWorld = root.optBoolean("tutorial", false);
 
+            JSONObject storyJson = root.optJSONObject("story");
+            if (storyJson != null) {
+                Map<String, String> flags = new HashMap<String, String>();
+                JSONObject flagJson = storyJson.optJSONObject("flags");
+                if (flagJson != null) {
+                    java.util.Iterator<String> keys = flagJson.keys();
+                    while (keys.hasNext()) {
+                        String key = keys.next();
+                        flags.put(key, flagJson.optString(key, ""));
+                    }
+                }
+                List<String> choices = new ArrayList<String>();
+                JSONArray choiceJson = storyJson.optJSONArray("choices");
+                if (choiceJson != null) {
+                    for (int i = 0; i < choiceJson.length(); i++) {
+                        choices.add(choiceJson.optString(i, ""));
+                    }
+                }
+                ctx.story.restore(flags, choices);
+            } else {
+                ctx.story.clear();
+            }
+
             JSONObject playerJson = root.optJSONObject("player");
             if (playerJson == null) return null;
             PlayerState ps = new PlayerState();
@@ -579,6 +624,11 @@ public class WorldSaveManager {
                     ItemDefinitions.ItemStack stack = new ItemDefinitions.ItemStack(
                         s.optString("item", ""), s.optInt("count", 1));
                     stack.durability = s.optInt("durability", 0);
+                    stack.enchantment = com.voxel.game.Enchantments.normalize(
+                            s.optString("enchant", ""));
+                    stack.enchantLevel = Math.max(0, Math.min(3,
+                            s.optInt("enchantLevel", 0)));
+                    if (stack.enchantment == null) stack.enchantLevel = 0;
                     ps.inventory[slot] = stack;
                 }
             }

@@ -97,6 +97,24 @@ public class ShowcaseWorldGeneratorTest {
     }
 
     @Test
+    public void districtLandmarksExist() {
+        int g = ShowcaseWorldAuthor.G;
+        // Gallery colonnade: gold capitals over stone-brick columns.
+        assertEquals("colonnade column", 131, gen.getBlockType(9, g + 1, -47, g));
+        assertEquals("colonnade capital", 138, gen.getBlockType(9, g + 4, -47, g));
+        // Gateway: twin arch lintels with glowstone lamps.
+        assertEquals("arch lintel", 131, gen.getBlockType(11, g + 5, -21, g));
+        assertEquals("arch lamp", 17, gen.getBlockType(11, g + 6, -21, g));
+        // Redstone works: clock tower capped with a lamp.
+        assertEquals("clock tower cap", 17, gen.getBlockType(-36, g + 12, -16, g));
+        // Farm: windmill sail over the tower.
+        assertEquals("windmill sail", 72, gen.getBlockType(-14, g + 8, 22, g));
+        // Plaza: four obelisks with glowstone tips.
+        assertEquals("obelisk tip", 17, gen.getBlockType(14, g + 7, 14, g));
+        assertEquals("obelisk tip", 17, gen.getBlockType(-14, g + 7, -14, g));
+    }
+
+    @Test
     public void flatPlainProfileOutsideDistricts() {
         int g = ShowcaseWorldAuthor.G;
         assertEquals("grass surface", 1, gen.getBlockType(-40, g, 55, g));

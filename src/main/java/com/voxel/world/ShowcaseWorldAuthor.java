@@ -111,6 +111,14 @@ public final class ShowcaseWorldAuthor {
             NOTE_BLOCK = 937, ITEM_BOOK = 940, ITEM_WRITABLE_BOOK = 942,
             ITEM_WRITTEN_BOOK = 944, ITEM_ENCHANTED_BOOK = 946;
 
+    // ── Detail-pass additions ──────────────────────────────────────────────
+    private static final int SPRUCE_LEAVES = 48, JUNGLE_LEAVES = 50, DARK_OAK_LEAVES = 53;
+    private static final int SHAFT = 291, SHAFT_X = 292;
+    private static final int BANNER_NS = DecorBlocks.BANNER_LOWER_NS,
+            BANNER_NS_TOP = DecorBlocks.BANNER_UPPER_NS,
+            BANNER_EW = DecorBlocks.BANNER_LOWER_EW,
+            BANNER_EW_TOP = DecorBlocks.BANNER_UPPER_EW;
+
     // ── Door kits: {lower Z-wall, upper Z-wall, lower X-wall, upper X-wall} ─
     private static final int[] OAK_DOOR = {DecorBlocks.OAK_DOOR_LOWER,
             DecorBlocks.OAK_DOOR_UPPER, DecorBlocks.OAK_DOOR_LOWER_EW,
@@ -322,6 +330,52 @@ public final class ShowcaseWorldAuthor {
             set(x, y + 1, z, display);
         }
 
+        /** Oak-slab seat laid along X ({@code alongX}) or along Z. */
+        private void bench(int x, int z, boolean alongX, int length) {
+            for (int i = 0; i < length; i++) {
+                set(alongX ? x + i : x, G + 1, alongX ? z : z + i, SLAB_OAK);
+            }
+        }
+
+        /** Square marble planter with a dirt bed and one bloom. */
+        private void planter(int cx, int cz, int flower) {
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    set(cx + dx, G + 1, cz + dz,
+                            (dx == 0 && dz == 0) ? DIRT : MARBLE);
+                }
+            }
+            set(cx, G + 2, cz, flower);
+        }
+
+        /** Log standard with a two-cell standing banner hung on its upper half. */
+        private void bannerPost(int x, int z, boolean clothAlongX) {
+            set(x, G + 1, z, OAK_LOG);
+            set(x, G + 2, z, OAK_LOG);
+            set(x, G + 3, z, clothAlongX ? BANNER_NS : BANNER_EW);
+            set(x, G + 4, z, clothAlongX ? BANNER_NS_TOP : BANNER_EW_TOP);
+        }
+
+        /** Three-tall post with a plank arm and a torch, for district entrances. */
+        private void signpost(int x, int z) {
+            set(x, G + 1, z, OAK_LOG);
+            set(x, G + 2, z, OAK_LOG);
+            set(x, G + 3, z, OAK_LOG);
+            set(x - 1, G + 3, z, OAK_PLANKS);
+            set(x + 1, G + 3, z, OAK_PLANKS);
+            set(x, G + 4, z, TORCH);
+        }
+
+        /** Stone-brick water trough; the rim contains the water on all sides. */
+        private void trough(int x0, int z0, int x1, int z1) {
+            for (int x = x0; x <= x1; x++) {
+                for (int z = z0; z <= z1; z++) {
+                    boolean rim = x == x0 || x == x1 || z == z0 || z == z1;
+                    set(x, G + 1, z, rim ? STONEBRICK : WATER);
+                }
+            }
+        }
+
         private void tree(int x, int z, int log, int leaves) {
             int h = 5;
             for (int y = G + 1; y <= G + h; y++) set(x, y, z, log);
@@ -360,6 +414,8 @@ public final class ShowcaseWorldAuthor {
             buildRedstoneWorks();
             buildFarm();
             buildGardenDetails();
+            buildLandmarks();
+            buildDetailPass();
         }
 
         // ── Plaza ──────────────────────────────────────────────────────────
@@ -851,6 +907,631 @@ public final class ShowcaseWorldAuthor {
             set(bx0 + 8, G + 2, bz1 - 3, TRAPDOOR);
             set(bx0 + 4, G + 1, bz0 + 6, FLOWER_POT);
             set(bx0 + 4, G + 2, bz0 + 6, DANDELION);
+        }
+
+        // ── Landmarks ──────────────────────────────────────────────────────
+        /**
+         * One signature set-piece per district, kept clear of the authored
+         * buildings so every district reads as a place rather than a room.
+         */
+        private void buildLandmarks() {
+            galleryColonnade();
+            gatewayArches();
+            redstoneClockTower();
+            workshopWaterMill();
+            farmWindmill();
+            plazaObelisks();
+        }
+
+        /** Item gallery: gold-capped colonnade framing the corridor approach. */
+        private void galleryColonnade() {
+            int[] columns = {-13, -9, -5, 5, 9, 13};
+            for (int z = -47; z <= -46; z++) {
+                for (int x : columns) {
+                    for (int y = G + 1; y <= G + 3; y++) set(x, y, z, STONEBRICK);
+                    set(x, G + 4, z, GOLD_BLOCK);
+                }
+            }
+            // Twin trophy plinths at the entrance axis.
+            for (int x : new int[] {-4, 4}) {
+                set(x, G + 1, -47, MARBLE);
+                set(x, G + 2, -47, GOLD_BLOCK);
+                set(x, G + 3, -47, GLOWSTONE);
+            }
+        }
+
+        /** Gateway: twin stone arches facing the plaza, lamps on the lintels. */
+        private void gatewayArches() {
+            for (int cx : new int[] {-11, 11}) {
+                for (int y = G + 1; y <= G + 4; y++) {
+                    set(cx - 2, y, -21, STONEBRICK);
+                    set(cx + 2, y, -21, STONEBRICK);
+                }
+                for (int x = cx - 2; x <= cx + 2; x++) set(x, G + 5, -21, STONEBRICK);
+                set(cx, G + 6, -21, GLOWSTONE);
+                set(cx - 2, G + 5, -21, GLOWSTONE);
+                set(cx + 2, G + 5, -21, GLOWSTONE);
+            }
+        }
+
+        /** Redstone works: a clock tower on the lawn north of the machine hall. */
+        private void redstoneClockTower() {
+            int cx = -36, cz = -16;
+            pad(cx - 2, cz - 2, cx + 2, cz + 2, G, STONEBRICK);
+            fill(cx - 2, G + 1, cz - 2, cx + 2, G + 3, cz + 2, STONEBRICK);
+            fill(cx - 1, G + 4, cz - 1, cx + 1, G + 9, cz + 1, STONEBRICK);
+            fill(cx, G + 10, cz, cx, G + 11, cz, STONEBRICK);
+            set(cx, G + 12, cz, GLOWSTONE);
+            // Clock face on the south side of the shaft.
+            set(cx, G + 6, cz + 1, REDSTONE_LAMP);
+            set(cx, G + 7, cz + 1, REDSTONE_LAMP);
+            set(cx, G + 8, cz + 1, REDSTONE_LAMP);
+            set(cx - 1, G + 7, cz + 1, REDSTONE_LAMP);
+            set(cx + 1, G + 7, cz + 1, REDSTONE_LAMP);
+        }
+
+        /** Workshop: a plank water wheel set into a stone wall over a basin. */
+        private void workshopWaterMill() {
+            int wx0 = 32, wx1 = 40, wallZ = -11;
+            for (int x = wx0; x <= wx1; x++)
+                for (int y = G + 1; y <= G + 9; y++) set(x, y, wallZ, STONEBRICK);
+            // Wheel ring (radius 3) embedded in the panel so it stays grounded.
+            int[][] ring = {{-3, 0}, {3, 0}, {0, -3}, {0, 3},
+                    {-2, -2}, {2, -2}, {-2, 2}, {2, 2}};
+            int hx = 36, hy = G + 5;
+            for (int[] p : ring) set(hx + p[0], hy + p[1], wallZ, OAK_PLANKS);
+            set(hx, hy, wallZ, OAK_LOG);
+            // Contained water basin in front of the wheel.
+            pad(wx0, -12, wx1, -12, G, STONEBRICK);
+            for (int x = wx0 + 1; x <= wx1 - 1; x++) set(x, G + 1, -12, WATER);
+            for (int x = 31; x <= 41; x++) set(x, G + 1, -13, STONEBRICK);
+            set(wx0, G + 1, -12, STONEBRICK);
+            set(wx1, G + 1, -12, STONEBRICK);
+        }
+
+        /** Farm: a windmill on the west strip and a small fenced orchard. */
+        private void farmWindmill() {
+            int cx = -16, cz = 22;
+            fill(cx - 1, G + 1, cz - 1, cx + 1, G + 3, cz + 1, STONEBRICK);
+            fill(cx, G + 4, cz, cx, G + 7, cz, STONEBRICK);
+            set(cx, G + 8, cz, OAK_LOG);
+            for (int d = -2; d <= 2; d++) {
+                if (d == 0) continue;
+                set(cx + d, G + 8, cz, OAK_PLANKS);
+                set(cx, G + 8, cz + d, OAK_PLANKS);
+                set(cx + d, G + 7, cz, OAK_PLANKS);
+                set(cx, G + 7, cz + d, OAK_PLANKS);
+            }
+            // Fenced orchard strip west of the fields (x -17..-15, z 25..40).
+            for (int z = 25; z <= 40; z += 2) {
+                set(-17, G + 1, z, STONEBRICK);
+                set(-15, G + 1, z, STONEBRICK);
+            }
+            for (int z = 27; z <= 39; z += 4) {
+                for (int y = G + 1; y <= G + 3; y++) set(-16, y, z, OAK_LOG);
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        set(-16 + dx, G + 4, z + dz, OAK_LEAVES);
+                        set(-16 + dx, G + 5, z + dz, OAK_LEAVES);
+                    }
+                }
+                set(-16, G + 6, z, OAK_LEAVES);
+            }
+        }
+
+        /** Plaza: four marble obelisks marking the corners of the paving. */
+        private void plazaObelisks() {
+            for (int x : new int[] {-14, 14}) {
+                for (int z : new int[] {-14, 14}) {
+                    pad(x - 1, z - 1, x + 1, z + 1, G + 1, MARBLE);
+                    for (int y = G + 2; y <= G + 5; y++) set(x, y, z, STONEBRICK);
+                    set(x, G + 6, z, MARBLE);
+                    set(x, G + 7, z, GLOWSTONE);
+                }
+            }
+        }
+
+        // ── Detail pass: dressing every district so it reads as a place ────
+
+        /**
+         * Second pass over the whole hub: furniture, banners, stock, garden
+         * dressing and the outdoor scenery between the districts. Every new
+         * block is placed on the ground or on an existing authored surface —
+         * the geometry of the original hub is never moved.
+         */
+        private void buildDetailPass() {
+            buildPlazaDetail();
+            buildGatewayDetail();
+            buildGalleryDetail();
+            buildWorkshopDetail();
+            buildRedstoneDetail();
+            buildFarmDetail();
+            buildOutdoorDetail();
+            scatterDetails();
+        }
+
+        // ── Plaza dressing ─────────────────────────────────────────────────
+
+        /**
+         * Benches, planters, banners, hedges and a statue around the fountain.
+         * The walkway mouths and the spawn pocket are deliberately left open.
+         */
+        private void buildPlazaDetail() {
+            bench(-7, -5, true, 3);
+            bench(5, -5, true, 3);
+            bench(-7, 5, true, 3);
+            bench(5, 5, true, 3);
+
+            planter(-7, -11, POPPY);
+            planter(7, -11, TULIP);
+            planter(-7, 11, AZURE_BLUET);
+            planter(7, 11, ROSE);
+
+            bannerPost(-4, -11, true);
+            bannerPost(4, -11, true);
+            bannerPost(-4, 11, true);
+            bannerPost(4, 11, true);
+
+            // Low hedges along the paving edge, open at every walkway.
+            for (int a = 9; a <= 12; a++) {
+                set(a, G + 1, -13, OAK_LEAVES);
+                set(a, G + 1, 13, OAK_LEAVES);
+                set(-a, G + 1, -13, OAK_LEAVES);
+                set(-a, G + 1, 13, OAK_LEAVES);
+                set(-13, G + 1, a, OAK_LEAVES);
+                set(-13, G + 1, -a, OAK_LEAVES);
+                set(13, G + 1, a, OAK_LEAVES);
+                set(13, G + 1, -a, OAK_LEAVES);
+            }
+
+            // Statue of the first builder: marble plinth, gold figure.
+            pad(9, -7, 11, -5, G + 1, MARBLE);
+            set(10, G + 2, -6, GOLD_BLOCK);
+            set(10, G + 3, -6, MARBLE);
+
+            // Notice board beside the fountain's west side.
+            set(-9, G + 1, -4, OAK_LOG);
+            set(-6, G + 1, -4, OAK_LOG);
+            pad(-9, -4, -6, -4, G + 2, OAK_PLANKS);
+            pad(-9, -4, -6, -4, G + 3, OAK_PLANKS);
+
+            // Goods crates waiting to be sorted.
+            set(-11, G + 1, 10, OAK_PLANKS);
+            set(-11, G + 2, 10, WOOL);
+            set(-10, G + 1, 10, OAK_PLANKS);
+            set(-10, G + 1, 11, OAK_PLANKS);
+            set(-10, G + 2, 11, WOOL);
+            set(10, G + 1, -10, OAK_PLANKS);
+            set(10, G + 2, -10, WOOL);
+            set(11, G + 1, -10, OAK_PLANKS);
+
+            // Lanterns frame the welcome arch.
+            lampPost(-7, 13);
+            lampPost(7, 13);
+        }
+
+        // ── Gateway dressing ───────────────────────────────────────────────
+
+        /** Twin carpet runners, wall banners, benches, exhibits and a map table. */
+        private void buildGatewayDetail() {
+            for (int z = -36; z <= -24; z++) {
+                set(-2, G, z, WOOL);
+                set(-1, G, z, WOOL);
+                set(1, G, z, WOOL);
+                set(2, G, z, WOOL);
+                set(-3, G, z, MARBLE);
+                set(3, G, z, MARBLE);
+            }
+
+            // Cloth between the pillars on both long walls.
+            for (int z : new int[] {-38, -34, -30, -26}) {
+                set(-20, G + 2, z, BANNER_EW);
+                set(-20, G + 3, z, BANNER_EW_TOP);
+                set(20, G + 2, z, BANNER_EW);
+                set(20, G + 3, z, BANNER_EW_TOP);
+            }
+            // Banners flanking the south doors.
+            for (int x : new int[] {-4, 4}) {
+                set(x, G + 2, -22, BANNER_NS);
+                set(x, G + 3, -22, BANNER_NS_TOP);
+            }
+
+            bench(-18, -32, false, 3);
+            bench(18, -32, false, 3);
+
+            // A plinth and a themed relic in front of each portal bay.
+            int[] bays = {-15, -5, 5, 15};
+            int[] relics = {OBSIDIAN, GLOWSTONE, RIFT_FRAME, PURPUR_BLOCK};
+            for (int i = 0; i < bays.length; i++) {
+                set(bays[i], G + 1, -38, MARBLE);
+                set(bays[i], G + 2, -38, relics[i]);
+            }
+
+            // Map table between the doors and the bays.
+            for (int x = -1; x <= 1; x++) {
+                for (int z = -29; z <= -27; z++) {
+                    if ((x == -1 || x == 1) && (z == -29 || z == -27)) {
+                        set(x, G + 1, z, OAK_LOG);
+                    }
+                }
+            }
+            pad(-1, -29, 1, -27, G + 2, OAK_PLANKS);
+            set(-1, G + 3, -28, MARBLE);
+            set(0, G + 3, -28, ITEM_DROP_QUARTZ);
+            set(1, G + 3, -28, ITEM_DROP_STICK);
+
+            // Hanging lanterns under the roof deck.
+            for (int x : new int[] {-12, -6, 6, 12}) {
+                set(x, G + 5, -32, GLOWSTONE);
+                set(x, G + 5, -26, GLOWSTONE);
+            }
+
+            // Supply crates in the corners.
+            set(18, G + 1, -23, OAK_PLANKS);
+            set(18, G + 2, -23, WOOL);
+            set(-18, G + 1, -23, OAK_PLANKS);
+            set(-17, G + 1, -23, OAK_PLANKS);
+            set(-17, G + 2, -23, WOOL);
+        }
+
+        // ── Gallery dressing ───────────────────────────────────────────────
+
+        /** Mosaic, aisle posts, exhibit placards, benches and entrance pots. */
+        private void buildGalleryDetail() {
+            int[] mosaic = {MARBLE, GOLD_BLOCK, PURPUR_BLOCK, GOLD_BLOCK, MARBLE};
+            for (int i = 0; i < mosaic.length; i++) {
+                set(-2 + i, G, -55, mosaic[i]);
+                set(-2 + i, G, -54, mosaic[mosaic.length - 1 - i]);
+            }
+
+            for (int z = -62; z <= -50; z += 4) {
+                set(-3, G + 1, z, IRON_BARS);
+                set(3, G + 1, z, IRON_BARS);
+            }
+
+            // A marble placard with a gold cap at each display row's end.
+            for (int z : new int[] {-60, -56, -52, -50}) {
+                set(-17, G + 1, z, MARBLE);
+                set(-17, G + 2, z, GOLD_BLOCK);
+                set(17, G + 1, z, MARBLE);
+                set(17, G + 2, z, GOLD_BLOCK);
+            }
+
+            bench(-16, -49, true, 3);
+            bench(14, -49, true, 3);
+
+            for (int x : new int[] {-8, 8}) {
+                set(x, G + 2, -48, BANNER_NS);
+                set(x, G + 3, -48, BANNER_NS_TOP);
+            }
+
+            set(-3, G + 1, -49, FLOWER_POT);
+            set(-3, G + 2, -49, POPPY);
+            set(3, G + 1, -49, FLOWER_POT);
+            set(3, G + 2, -49, TULIP);
+        }
+
+        // ── Workshop dressing ──────────────────────────────────────────────
+
+        /** Workbench, pegboard, stock crates, sawdust, porch awning and a cart. */
+        private void buildWorkshopDetail() {
+            for (int x = 27; x <= 31; x += 2) set(x, G + 1, 2, OAK_LOG);
+            pad(27, 2, 31, 2, G + 2, OAK_PLANKS);
+            set(27, G + 3, 2, ITEM_DROP_WRENCH);
+            set(29, G + 3, 2, ITEM_DROP_GOGGLES);
+            set(31, G + 3, 2, ITEM_DROP_BRASS_INGOT);
+
+            pad(40, -9, 44, -9, G + 3, OAK_PLANKS);
+            set(40, G + 4, -9, ITEM_DROP_WRENCH);
+            set(41, G + 4, -9, ITEM_DROP_GOGGLES);
+            set(42, G + 4, -9, ITEM_DROP_STICK);
+            set(43, G + 4, -9, ITEM_DROP_IRON_INGOT);
+            set(44, G + 4, -9, ITEM_DROP_BRASS_INGOT);
+
+            // Stock by the back door, and sawdust by the bench.
+            set(44, G + 1, -8, OAK_PLANKS);
+            set(44, G + 2, -8, WOOL);
+            set(45, G + 1, -8, OAK_LOG);
+            set(43, G + 1, -8, OAK_PLANKS);
+            set(37, G, -8, SAND);
+            set(38, G, -8, SAND);
+
+            // Awning over the plaza entrance, on two log posts.
+            for (int y = G + 1; y <= G + 3; y++) {
+                set(24, y, -3, OAK_LOG);
+                set(24, y, 2, OAK_LOG);
+            }
+            pad(23, -3, 25, 2, G + 4, OAK_PLANKS);
+            set(23, G + 4, -3, SLAB_OAK);
+            set(25, G + 4, 2, SLAB_OAK);
+
+            // Hand cart waiting outside.
+            set(21, G + 1, 5, OAK_PLANKS);
+            set(20, G + 1, 5, OAK_PLANKS);
+            set(21, G + 2, 5, CHEST);
+            set(20, G + 1, 4, OAK_LOG);
+            set(20, G + 1, 6, OAK_LOG);
+        }
+
+        // ── Redstone works dressing ────────────────────────────────────────
+
+        /** Drive-shaft run, control desk, crates, gear sculpture and signpost. */
+        private void buildRedstoneDetail() {
+            for (int x = -45; x <= -27; x++) set(x, G + 4, -10, SHAFT_X);
+            for (int y = G + 1; y <= G + 4; y++) {
+                set(-45, y, -10, SHAFT);
+                set(-27, y, -10, SHAFT);
+            }
+            set(-45, G + 4, -10, LARGE_COGWHEEL);
+            set(-27, G + 4, -10, COGWHEEL);
+
+            pad(-40, 3, -37, 3, G + 1, OAK_PLANKS);
+            set(-40, G + 2, 3, NOTE_BLOCK);
+            set(-39, G + 2, 3, REDSTONE_LAMP);
+            set(-38, G + 2, 3, ITEM_DROP_WRENCH);
+            set(-37, G + 2, 3, HOPPER);
+
+            set(-28, G + 1, 2, OAK_PLANKS);
+            set(-28, G + 2, 2, WOOL);
+            set(-27, G + 1, 2, OAK_LOG);
+
+            // Gear sculpture on the lawn beside the beacon.
+            set(-55, G + 1, -4, STONEBRICK);
+            set(-55, G + 2, -4, SHAFT);
+            set(-55, G + 3, -4, LARGE_COGWHEEL);
+            set(-54, G + 1, -4, STONEBRICK);
+            set(-54, G + 2, -4, SHAFT);
+            set(-54, G + 3, -4, COGWHEEL);
+            set(-55, G + 4, -4, GLOWSTONE);
+
+            signpost(-24, 3);
+        }
+
+        // ── Farm dressing ──────────────────────────────────────────────────
+
+        /** Lanes, a paddock, bales, scarecrow, compost, troughs, shed and dock. */
+        private void buildFarmDetail() {
+            // Stone lanes keep the fields walkable.
+            pad(-14, 23, 14, 23, G, STONEBRICK);
+            pad(-14, 36, 14, 36, G, STONEBRICK);
+
+            // Split-rail paddock on the west lawn.
+            int px0 = -22, px1 = -15, pz0 = 43, pz1 = 49;
+            for (int x = px0; x <= px1; x += 2) {
+                for (int y = G + 1; y <= G + 2; y++) {
+                    set(x, y, pz0, OAK_LOG);
+                    set(x, y, pz1, OAK_LOG);
+                }
+            }
+            for (int z = pz0; z <= pz1; z += 2) {
+                for (int y = G + 1; y <= G + 2; y++) {
+                    set(px0, y, z, OAK_LOG);
+                    set(px1, y, z, OAK_LOG);
+                }
+            }
+            for (int x = px0; x <= px1; x++) {
+                for (int z = pz0; z <= pz1; z++) {
+                    boolean edge = x == px0 || x == px1 || z == pz0 || z == pz1;
+                    if (!edge) continue;
+                    if (x % 2 == 0 && z % 2 == 0) continue; // that cell is a post
+                    set(x, G + 2, z, SLAB_STONE_BRICK);
+                }
+            }
+            trough(-20, 45, -18, 47);
+            set(-17, G + 1, 48, WOOL);
+            set(-16, G + 1, 48, WOOL);
+            set(-17, G + 2, 48, WOOL);
+            set(-16, G + 2, 48, SLAB_OAK);
+
+            // Bales on a pallet by the barn lane.
+            set(-13, G + 1, 37, WOOL);
+            set(-12, G + 1, 37, WOOL);
+            set(-13, G + 2, 37, SLAB_OAK);
+
+            // Scarecrow in the south field.
+            for (int y = G + 1; y <= G + 2; y++) set(6, y, 46, OAK_LOG);
+            set(5, G + 2, 46, OAK_LOG);
+            set(7, G + 2, 46, OAK_LOG);
+            set(6, G + 3, 46, PUMPKIN);
+            set(6, G + 2, 45, WOOL);
+
+            // Compost bin at the farm's south-west corner.
+            for (int x = -14; x <= -12; x++) {
+                for (int z = 47; z <= 49; z++) {
+                    if (x == -14 || x == -12 || z == 47 || z == 49) set(x, G + 1, z, OAK_PLANKS);
+                }
+            }
+            set(-13, G + 1, 48, DIRT);
+            set(-13, G + 2, 48, REEDS);
+
+            // Trough among the south fields, clear of the barn doors.
+            trough(2, 30, 4, 32);
+
+            // Toolshed east of the fields.
+            int sx0 = 19, sx1 = 25, sz0 = 24, sz1 = 30, wallTop = G + 3;
+            pad(sx0, sz0, sx1, sz1, G, STONEBRICK);
+            walls(sx0, sz0, sx1, sz1, G + 1, wallTop, SPRUCE_PLANKS);
+            for (int y = G + 1; y <= wallTop; y++) {
+                set(sx0, y, sz0, OAK_LOG);
+                set(sx1, y, sz0, OAK_LOG);
+                set(sx0, y, sz1, OAK_LOG);
+                set(sx1, y, sz1, OAK_LOG);
+            }
+            windowBand(sx0, sz0, sx1, sz1, G + 2, 2);
+            doorwayAlongZ(sx0, 27, 2, G + 1);
+            doorZ(sx0, G + 1, 27, SPRUCE_DOOR);
+            doorZ(sx0, G + 1, 28, SPRUCE_DOOR);
+            pitchedRoof(sx0, sz0, sx1, sz1, wallTop, SLAB_OAK, OAK_PLANKS);
+            set(sx0 + 1, G + 1, sz0 + 1, CHEST);
+            chestAt(sx0 + 1, G + 1, sz0 + 1,
+                    new String[] {"wheat_seeds", "wheat", "pumpkin", "melon", "bread", "water_bucket"},
+                    new int[] {16, 16, 8, 8, 8, 1});
+            set(sx1 - 2, G + 1, sz0 + 1, CRAFT_TABLE);
+            set(sx1 - 2, G + 2, sz0 + 1, TRAPDOOR);
+            for (int y = G + 1; y <= G + 2; y++) set(sx1 - 1, y, sz1 - 1, LADDER);
+            set(sx0 + 1, G + 1, sz1 - 1, BOOKSHELF);
+            set(sx0 + 1, G + 2, sz1 - 1, BOOKSHELF);
+            lampPost(sx1 + 1, sz0);
+
+            // Jetty on the pond's east shore.
+            for (int x = -8; x <= -3; x++) set(x, G + 1, 43, OAK_PLANKS);
+            for (int x = -8; x <= -3; x += 2) set(x, G, 43, OAK_LOG);
+            set(-8, G + 2, 43, TRAPDOOR);
+            set(-3, G + 1, 42, CHEST);
+            chestAt(-3, G + 1, 42,
+                    new String[] {"water_bucket", "bread", "stick", "reeds"},
+                    new int[] {1, 8, 16, 16});
+            bench(-2, 44, false, 2);
+
+            // Orchard outliers west of the fields (beyond the district).
+            tree(-24, 18, BIRCH_LOG, OAK_LEAVES);
+            tree(-25, 26, SPRUCE_LOG, SPRUCE_LEAVES);
+            tree(-24, 34, JUNGLE_LOG, JUNGLE_LEAVES);
+            tree(-25, 44, DARK_OAK_LOG, DARK_OAK_LEAVES);
+
+            // Further meadow rows south of the fields.
+            for (int x = -14; x <= 14; x += 2) {
+                set(x, G + 1, 59, (x % 4 == 0) ? TULIP : DANDELION);
+                set(x, G + 1, 61, (x % 6 == 0) ? AZURE_BLUET : TALLGRASS);
+            }
+        }
+
+        // ── Outdoor dressing ───────────────────────────────────────────────
+
+        /** Benches, signposts and flower beds along the connecting walkways. */
+        private void buildOutdoorDetail() {
+            bench(-5, -18, true, 2);
+            bench(4, -18, true, 2);
+            bench(-5, 17, true, 2);
+            bench(4, 17, true, 2);
+            bench(18, -5, false, 2);
+            bench(22, -5, false, 2);
+            bench(-22, 4, false, 2);
+            bench(-18, 4, false, 2);
+
+            signpost(4, -19);
+            signpost(-4, 19);
+            signpost(23, 2);
+            signpost(-23, 2);
+
+            for (int z = -17; z <= -15; z++) {
+                set(-4, G + 1, z, FLOWER_POT);
+                set(-4, G + 2, z, POPPY);
+                set(4, G + 1, z, FLOWER_POT);
+                set(4, G + 2, z, TULIP);
+            }
+            for (int x = 18; x <= 22; x += 2) {
+                set(x, G + 1, -3, FLOWER_POT);
+                set(x, G + 2, -3, DANDELION);
+                set(-x, G + 1, 3, FLOWER_POT);
+                set(-x, G + 2, 3, AZURE_BLUET);
+            }
+        }
+
+        // ── Nature scatter ─────────────────────────────────────────────────
+
+        /**
+         * Deterministic copses, boulder clusters and flower patches on the
+         * ground between districts. Districts, the outlying landmarks and the
+         * central approaches are excluded, so nothing grows through a build.
+         */
+        private void scatterDetails() {
+            java.util.Random rnd = new java.util.Random(20261021L);
+            java.util.Set<Long> used = new java.util.HashSet<>();
+            for (int i = 0; i < 420; i++) {
+                int x = rnd.nextInt(113) - 56;
+                int z = rnd.nextInt(113) - 56;
+                if (!scatterAllowed(x, z)) continue;
+                boolean free = true;
+                for (int dx = -2; dx <= 2 && free; dx++) {
+                    for (int dz = -2; dz <= 2 && free; dz++) {
+                        if (used.contains(key(x + dx, z + dz))) free = false;
+                    }
+                }
+                if (!free) continue;
+                int roll = i % 9;
+                if (roll <= 2) {
+                    int[] logs = {OAK_LOG, BIRCH_LOG, SPRUCE_LOG, DARK_OAK_LOG};
+                    int[] leaves = {OAK_LEAVES, OAK_LEAVES, SPRUCE_LEAVES, DARK_OAK_LEAVES};
+                    int k = Math.floorMod(x * 7 + z * 3, logs.length);
+                    tree(x, z, logs[k], leaves[k]);
+                    markUsed(used, x, z, 3);
+                } else if (roll == 3) {
+                    boulder(x, z, Math.floorMod(x + z, 3));
+                    markUsed(used, x, z, 2);
+                } else if (roll == 4) {
+                    bush(x, z);
+                    markUsed(used, x, z, 1);
+                } else {
+                    flowerPatch(x, z, rnd);
+                    markUsed(used, x, z, 1);
+                }
+            }
+        }
+
+        /** True when nothing authored (or reserved) is near this column. */
+        private boolean scatterAllowed(int x, int z) {
+            if (Math.abs(x) > 56 || Math.abs(z) > 56) return false;
+            for (Zone zone : ZONES) {
+                if (x >= zone.minX - 3 && x <= zone.maxX + 3
+                        && z >= zone.minZ - 3 && z <= zone.maxZ + 3) return false;
+            }
+            // Central plaza and walkway approaches.
+            if (x >= -27 && x <= 27 && z >= -22 && z <= 20) return false;
+            // Outlying landmarks outside every district rectangle.
+            if (x >= -58 && x <= -46 && z >= -8 && z <= 13) return false;  // beacon, lava, chest
+            if (x >= -58 && x <= -52 && z >= -8 && z <= -1) return false;  // gear sculpture
+            if (x >= 27 && x <= 43 && z >= -17 && z <= -10) return false;   // water-mill basin
+            if (x >= -28 && x <= -21 && z >= 15 && z <= 46) return false;   // orchard outliers
+            if (x >= -27 && x <= -13 && z >= 41 && z <= 50) return false;   // paddock
+            if (x >= 17 && x <= 27 && z >= 22 && z <= 32) return false;     // toolshed
+            if (x >= -16 && x <= 16 && z >= 52 && z <= 62) return false;    // meadow rows
+            if (x >= -40 && x <= -32 && z >= -20 && z <= -12) return false; // clock tower
+            return true;
+        }
+
+        private long key(int x, int z) {
+            return ((long) x << 32) ^ (z & 0xFFFFFFFFL);
+        }
+
+        private void markUsed(java.util.Set<Long> used, int x, int z, int radius) {
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) used.add(key(x + dx, z + dz));
+            }
+        }
+
+        /** A low pile of mixed stone that sits on the grass. */
+        private void boulder(int x, int z, int variant) {
+            int main = variant == 0 ? COBBLESTONE : (variant == 1 ? ANDESITE : GRANITE);
+            int accent = variant == 0 ? MOSSY_COBBLESTONE : COBBLESTONE;
+            set(x, G + 1, z, main);
+            set(x + 1, G + 1, z, accent);
+            set(x, G + 1, z + 1, main);
+            set(x + 1, G + 1, z + 1, accent);
+            set(x, G + 2, z, main);
+            set(x + 1, G + 2, z + 1, accent);
+        }
+
+        /** Leafy shrub, the only kind of "small tree" the block set has. */
+        private void bush(int x, int z) {
+            set(x, G + 1, z, OAK_LEAVES);
+            set(x + 1, G + 1, z, OAK_LEAVES);
+            set(x, G + 1, z + 1, OAK_LEAVES);
+            set(x + 1, G + 1, z + 1, OAK_LEAVES);
+            set(x, G + 2, z, OAK_LEAVES);
+        }
+
+        /** A small mixed-flower patch on the grass. */
+        private void flowerPatch(int x, int z, java.util.Random rnd) {
+            int[] blooms = {POPPY, DANDELION, TULIP, AZURE_BLUET, ROSE, FERN, TALLGRASS};
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    boolean centre = dx == 0 && dz == 0;
+                    if (centre || rnd.nextBoolean()) {
+                        set(x + dx, G + 1, z + dz, blooms[rnd.nextInt(blooms.length)]);
+                    }
+                }
+            }
         }
 
         // ── Garden details (plaza edge) ────────────────────────────────────

@@ -2386,15 +2386,23 @@ void main() {
                         region = vec4(0.0, 0.0, 6.0, 5.0);
                         chestLatchSample = true;
                     } else if (chestElement == 1) {
-                        if (chestFace == 0)      region = vec4(28.0, 0.0, 42.0, 14.0);
-                        else if (chestFace == 1) region = vec4(14.0, 0.0, 28.0, 14.0);
+                        // chestNormal.y was negated by the model Y/Z flip above, so
+                        // chestFace 0 is the WORLD +Y (top) face and face 1 is the
+                        // underside. The atlas paints the lid's top planks at
+                        // (14,0)-(28,14) and its dark underside at (28,0)-(42,14);
+                        // feeding these the other way round put the dark crop on
+                        // the visible lid (the swapped +Y/-Y faces).
+                        if (chestFace == 0)      region = vec4(14.0, 0.0, 28.0, 14.0);
+                        else if (chestFace == 1) region = vec4(28.0, 0.0, 42.0, 14.0);
                         else if (chestFace == 2) region = vec4(28.0, 14.0, 42.0, 19.0);
                         else if (chestFace == 3) region = vec4(14.0, 14.0, 28.0, 19.0);
                         else if (chestFace == 4) region = vec4(42.0, 14.0, 56.0, 19.0);
                         else                      region = vec4(0.0, 14.0, 14.0, 19.0);
                     } else {
-                        if (chestFace == 0)      region = vec4(28.0, 19.0, 42.0, 33.0);
-                        else if (chestFace == 1) region = vec4(14.0, 19.0, 28.0, 33.0);
+                        // Same swap for the body: its opening (black in the atlas at
+                        // 14,19) is the top face, which the lid covers when shut.
+                        if (chestFace == 0)      region = vec4(14.0, 19.0, 28.0, 33.0);
+                        else if (chestFace == 1) region = vec4(28.0, 19.0, 42.0, 33.0);
                         else if (chestFace == 2) region = vec4(28.0, 33.0, 42.0, 43.0);
                         else if (chestFace == 3) region = vec4(14.0, 33.0, 28.0, 43.0);
                         else if (chestFace == 4) region = vec4(42.0, 33.0, 56.0, 43.0);
@@ -2551,6 +2559,21 @@ void main() {
             // Summing keeps both contributions continuous and monotonic in each
             // source, and costs one extra multiply-add.
             vec3 lit = sunLit + lampCol * blockNorm;
+            // Story Mode cel ramp: Telltale's lighting reads as a few flat bands
+            // rather than a smooth falloff. Quantise the accumulated irradiance
+            // into four terraces, keeping the hue by scaling the colour, and
+            // blend most (not all) of the way so the steps stay crisp without
+            // aliasing on distant faces.
+            //
+            // The bands are spaced in gamma space, not linear: linear terraces
+            // snap anything dim (a lamp-lit interior wall, a shaded face at
+            // night) down to the 0 band and crush it to black. In sqrt space the
+            // lowest terrace is still ~60% of the input, so dark surfaces keep
+            // a readable gradient while lit faces still step.
+            float litLum = dot(lit, vec3(0.333));
+            float litBand = pow(floor(sqrt(max(litLum, 0.0)) * 4.0 + 0.5) / 4.0, 2.0);
+            float bandFactor = litBand / max(litLum, 1e-3);
+            lit = mix(lit, lit * bandFactor, 0.62);
             // Cave/night floor: unlit rock stays barely-visible, never pure black.
             // AO is applied to the lit term only, so the floor survives in
             // shadowed corners instead of crushing cave walls to black.
@@ -2668,7 +2691,7 @@ void main() {
     
     // God rays: volumetric shafts from the ACTIVE sun/moon light pools. March the
     // primary ray up to its first hit; shafts only accumulate in air gaps.
-    if (godT > 0.5) final += marchLightShafts(camPos, godRd, min(godT, 96.0), at);
+    if (godT > 0.5 && u_CraftingItemCount != -9915) final += marchLightShafts(camPos, godRd, min(godT, 96.0), at);
 
     // Underwater: distance fog into deep blue — a shader-style post-pass that
     // makes the view readable when the camera is clipped inside water.
@@ -2715,11 +2738,35 @@ void main() {
         return;
     }
     vec3 result = ACESFilm(final * u_Exposure);
-    // No posterize and no saturation boost: the old grade quantised the scene to
-    // 12 levels and pushed saturation 1.06x to give colours a "pop". Both are
-    // toon tells and neither has a physical counterpart — smooth tone-mapped
-    // output is both more realistic and cheaper. ACES + the sRGB encode below
-    // are the whole transfer now.
+    // Story Mode grade. Telltale's frames are warm, saturated and noticeably
+    // contrastier than a neutral film curve; ACES on its own leaves the scene
+    // chalky and cool. Chroma comes up first, then a warm white point, a soft
+    // contrast S-curve and a light cel banding so lit faces read as flat poster
+    // colour instead of smooth gradients. The banding is blended, not applied
+    // flat, so skylight gradients and water stay smooth while block faces step.
+    // Chroma first: Telltale's palette is poster-bright, so pull the colours
+    // apart around their own luminance instead of just multiplying the frame.
+    float gradeLum = dot(result, vec3(0.2126, 0.7152, 0.0722));
+    result = clamp(mix(vec3(gradeLum), result, 1.26), 0.0, 1.0);
+    // Split-tone, not a flat warm filter: shadows drift teal-blue (the story
+    // mode night/indoor palette) while highlights go gold, which is what makes
+    // the frames read as Telltale rather than "sepia overlay". The two tints
+    // meet in the midtones so nothing jumps across the crossover.
+    vec3 shadowTint = vec3(0.90, 0.97, 1.09);
+    vec3 highTint = vec3(1.07, 1.00, 0.90);
+    result = clamp(result * mix(shadowTint, highTint, smoothstep(0.12, 0.82, gradeLum)),
+            0.0, 1.0);
+    // Gentle S-curve: more separation between lit and shaded faces without
+    // clipping the top of the skylight.
+    result = mix(result, result * result * (3.0 - 2.0 * result), 0.36);
+    // Poster banding, kept light: enough to flatten a lit wall into a few
+    // terraces, not so much that the sky gradient or water stripes.
+    result = mix(result, floor(result * 12.0 + 0.5) / 12.0, 0.26);
+    // Cinematic vignette, applied to the scene only (the HUD is composited by
+    // quad.frag afterwards, so text and prompts keep full brightness).
+    vec2 vigUv = (vec2(px) + 0.5) / vec2(imageSize(imgOutput));
+    float vig = smoothstep(1.05, 0.30, length((vigUv - 0.5) * vec2(1.0, 1.18)) * 1.30);
+    result *= mix(0.90, 1.0, vig);
     // NOTE: partial-alpha UI blending moved to the quad blit (quad.frag), which
     // composites the HUD at full window resolution — this keeps text sharp when
     // the raytracer runs at a reduced render scale. Fully-opaque UI pixels still

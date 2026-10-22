@@ -40,6 +40,15 @@ public class Player {
     private float moveVertical = 0.0f;
     private boolean jumpRequested = false;
 
+    // Jump feel: coyote time + input buffering. Both windows are short enough
+    // that they only forgive near-miss timing, not deliberate inputs.
+    private static final float COYOTE_TIME_SECONDS = 0.10f;
+    private static final float JUMP_BUFFER_SECONDS = 0.12f;
+    private float coyoteTimer = 0f;
+    private float jumpBufferTimer = 0f;
+    /** Downward speed of the last landing (blocks/tick), consumed once by Main. */
+    private float landingImpact = 0f;
+
     // Beacon-driven buffs. Set by BeaconLogic.scan() each tick; cleared
     // when the player leaves the beacon's radius. Buffs multiply the
     // effective JUMP_VELOCITY and horizontal speed (so 0 = no buff, 1 =
@@ -131,6 +140,19 @@ public class Player {
             experienceLevel++;
             if (levelUpListener != null) levelUpListener.onLevelUp(experienceLevel);
         }
+    }
+
+    /**
+     * Spend whole experience levels (enchanting). Returns false when the
+     * player cannot afford it; the current level's progress is consumed first,
+     * mirroring the way a table takes the levels it is offered.
+     */
+    public boolean spendLevels(int levels) {
+        if (levels <= 0) return true;
+        if (experienceLevel < levels) return false;
+        experienceLevel -= levels;
+        experiencePoints = 0;
+        return true;
     }
 
     /** Listener hook so the engine can fire "Level up!" UI when the
@@ -247,12 +269,15 @@ public class Player {
             fallDistance = 0;
         }
 
-        // Jump
-        if (jumpRequested) {
+        // Jump — coyote time lets a press land just after walking off an edge,
+        // and the input buffer lets a press land just before touching down.
+        if (jumpRequested || jumpBufferTimer > 0f) {
             jumpRequested = false;
-            if (onGround) {
+            if (onGround || coyoteTimer > 0f) {
                 velocity.y = JUMP_VELOCITY * (1.0f + beaconJumpBuff);
                 onGround = false;
+                coyoteTimer = 0f;
+                jumpBufferTimer = 0f;
                 if (isSprinting) {
                     float yawRad = (float) Math.toRadians(yaw);
                     velocity.x += Math.cos(yawRad) * SPRINT_JUMP_IMPULSE;
@@ -265,8 +290,15 @@ public class Player {
                     velocity.y += 0.025F;
                     if (velocity.y > 0.20F) velocity.y = 0.20F;
                 }
+                jumpBufferTimer = 0f;
             }
         }
+        // Expire the buffered press after its window (a held key re-arms it
+        // every frame through jump(), so vanilla auto-bounce is preserved).
+        if (jumpBufferTimer > 0f) jumpBufferTimer = Math.max(0f, jumpBufferTimer - tickDt);
+        // Coyote window counts down only while airborne, so a jump request
+        // arriving one or two ticks after stepping off a ledge still fires.
+        if (!onGround && coyoteTimer > 0f) coyoteTimer = Math.max(0f, coyoteTimer - tickDt);
 
         // Friction and acceleration
         float friction;
@@ -456,6 +488,9 @@ public class Player {
         } else if (checkCollision(world, blockDataManager)) {
             if (prevYVel < 0) {
                 onGround = true;
+                // Report the impact so the camera can dip and shake by fall height.
+                float impact = (float) -prevYVel;
+                if (impact > landingImpact) landingImpact = impact;
                 if (!parachuteDeployed) {
                     handleFallDamage();
                 } else {
@@ -465,6 +500,11 @@ public class Player {
             posY -= stepVelY;
             velocity.y = 0;
         }
+
+        // Grounded bookkeeping for coyote time. Runs after the vertical resolve
+        // so a landing this tick refreshes the window immediately; the timer
+        // itself is drained in tick() while airborne.
+        if (onGround) coyoteTimer = COYOTE_TIME_SECONDS;
     }
 
     /**
@@ -520,6 +560,7 @@ public class Player {
 
     public void jump(World world, BlockDataManager blockDataManager) {
         jumpRequested = true;
+        jumpBufferTimer = JUMP_BUFFER_SECONDS;
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -848,6 +889,24 @@ public class Player {
     public boolean isFlying() { return flying; }
     public void setFlying(boolean flying) { this.flying = flying; }
     public boolean isOnGround() { return onGround; }
+
+    /**
+     * Downward speed of the most recent landing in blocks/tick, and zero when
+     * there was none. Main consumes this once per logic tick to scale the
+     * landing camera kick; the value is cleared by the read so a single landing
+     * only ever produces one impulse.
+     */
+    public float consumeLandingImpact() {
+        float impact = landingImpact;
+        landingImpact = 0f;
+        return impact;
+    }
+
+    /** Remaining coyote-time window in seconds (0 = no grace jump available). */
+    public float getCoyoteTimer() { return coyoteTimer; }
+
+    /** Remaining jump-input buffer window in seconds (0 = no buffered press). */
+    public float getJumpBufferTimer() { return jumpBufferTimer; }
     public float getHealth() { return health; }
     public float getMaxHealth() { return maxHealth; }
 

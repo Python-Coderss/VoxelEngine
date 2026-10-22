@@ -3,6 +3,7 @@ package com.voxel.ai.brain;
 import com.voxel.ai.MobBrain;
 import com.voxel.ai.PathFinder;
 import com.voxel.ai.Senses;
+import com.voxel.ai.SpatialMind;
 import com.voxel.ai.Stimulus;
 import com.voxel.ai.StimulusBus;
 import com.voxel.ai.VoxelView;
@@ -68,6 +69,8 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
     private static final float JOB_SCAN_INTERVAL = 5f;
     private static final float THREAT_SIGHT_RANGE = 16f;
     private static final float EARSHOT_RANGE = 22f;
+    /** Radius searched for a safe, open, non-dead-end escape cell. */
+    private static final int PANIC_SCAN_RADIUS = 9;
     private static final long SCREAM_COOLDOWN_MILLIS = 9000L;
 
     private final VillagerEntity owner;
@@ -255,12 +258,19 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
         decisionAccum += dt;
         if (decisionAccum >= DECISION_INTERVAL) {
             decisionAccum = 0f;
-            Action next = chooseAction(
+            Action next = decide(
                     threatVisible && nearestThreatDist <= THREAT_SIGHT_RANGE,
                     panicRemaining, alertRemaining,
                     nightTime, inWater,
                     owner.aiHasBuildWork(),
-                    hasFriend && nearestFriendDist < 6f && socialCooldown <= 0f);
+                    hasFriend && nearestFriendDist < 6f && socialCooldown <= 0f,
+                    owner.aiHasJobSite(),
+                    Chaos.level(),
+                    hasFriend && nearestFriendDist < 7f,
+                    hasPlayer,
+                    nearestThreatDist);
+            // The network scores the planning beat; it cannot invent a job.
+            if (next == Action.WORK && !owner.aiHasJobSite()) next = Action.WANDER;
             // Utility order: panic > shelter > build > work > social > wander.
             // Work only redirects the low-priority plans, so a villager never
             // abandons a panic or a queued build to go stand at a job site.
@@ -392,6 +402,51 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
             default:
                 return planned;
         }
+    }
+
+    /**
+     * The runtime decision: hard safety rules first (non-neural), then the
+     * trained {@link VillagerPolicy} for ordinary daytime planning. Falls back
+     * to the utility ordering when the policy resource is missing.
+     */
+    static Action decide(boolean threatNearAndVisible, float panicSeconds,
+                         float alertSeconds, boolean night, boolean swimming,
+                         boolean buildWorkPending, boolean socialOpportunity,
+                         boolean hasJobSite, float chaos, boolean friendNear,
+                         boolean playerNear, float threatDistance) {
+        if (swimming) return Action.PANIC_FLEE;
+        if (threatNearAndVisible || panicSeconds > 0f) return Action.PANIC_FLEE;
+        if (alertSeconds > 0f) return Action.ALERT_LOOK;
+        if (night) return Action.GO_INDOORS;
+        VillagerPolicy policy = VillagerPolicy.get();
+        if (policy == null) {
+            return chooseAction(false, 0f, 0f, false, false,
+                    buildWorkPending, socialOpportunity);
+        }
+        float threatFar = 1f - Math.min(1f, Math.max(0f,
+                threatDistance / THREAT_SIGHT_RANGE));
+        return policy.choose(policyFeatures(buildWorkPending, socialOpportunity,
+                hasJobSite, chaos, friendNear, playerNear, threatFar));
+    }
+
+    /** Feature vector in {@link VillagerPolicy#FEATURES} order. */
+    static float[] policyFeatures(boolean buildWorkPending, boolean socialOpportunity,
+                                  boolean hasJobSite, float chaos, boolean friendNear,
+                                  boolean playerNear, float threatFar) {
+        return new float[]{
+                buildWorkPending ? 1f : 0f,
+                socialOpportunity ? 1f : 0f,
+                hasJobSite ? 1f : 0f,
+                clamp01(chaos),
+                friendNear ? 1f : 0f,
+                playerNear ? 1f : 0f,
+                clamp01(threatFar),
+                1f // daytime: night is handled by the non-neural rule above
+        };
+    }
+
+    private static float clamp01(float value) {
+        return Math.max(0f, Math.min(1f, value));
     }
 
     /** Utility ordering. Package-private and side-effect-free for unit tests. */
@@ -920,6 +975,15 @@ public final class VillagerBrain implements MobBrain, StimulusBus.Listener {
         fleePathAttempts++;
         usePath = false;
         Vector3f point = pickFleePoint(owner.getPosition(), threatPos, rng);
+        // Flee like someone who can see the ground: the spatial search refuses
+        // cliffs and dead-end corridors, which the pure-geometry sprint point
+        // happily ran into. Only when no safe cell is nearby does the old
+        // zigzag sprint fallback below stay in charge.
+        Vector3i escape = SpatialMind.escapeTarget(voxels, owner.getPosition(),
+                new Vector3f(threatPos), PANIC_SCAN_RADIUS);
+        if (escape != null) {
+            point = new Vector3f(escape.x + 0.5f, escape.y, escape.z + 0.5f);
+        }
         path.clear();
         pathIndex = 0;
         path.addAll(PathFinder.findPath(voxels,

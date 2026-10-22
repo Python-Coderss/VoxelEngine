@@ -443,6 +443,14 @@ public class BlockInteraction {
             }
         }
 
+        // Efficiency multiplies the tool's own speed, so it scales with tier
+        // instead of flattening it.
+        ItemDefinitions.ItemStack heldStack = ctx.playerInventory.getSelected();
+        if (heldStack != null) {
+            digSpeed *= Enchantments.miningMultiplier(
+                    heldStack.enchantment, heldStack.enchantLevel);
+        }
+
         if (!ctx.player.isOnGround()) digSpeed /= 5.0f;
         if (headSubmergedInWater()) digSpeed /= 5.0f;
 
@@ -456,6 +464,28 @@ public class BlockInteraction {
         int bz = (int) Math.floor(eye.z);
         int v = ctx.world.getVoxel(bx, by, bz);
         return isWaterBlock(v);
+    }
+
+    /**
+     * Bed use: sleep through the night and set the respawn point.
+     *
+     * <p>Vanilla rules: beds only work at night, and the engine's 1440-unit day
+     * counts dusk at 1080 through dawn at 240. Sleeping jumps the clock to dawn
+     * (240) so the nightfall director does not immediately re-trigger.</p>
+     */
+    private boolean trySleep(int x, int y, int z) {
+        if (!BedSleep.isNight(ctx.worldTime)) {
+            ctx.setStatus("You can only sleep at night");
+            return true;
+        }
+        ctx.player.setSpawnPoint(new org.joml.Vector3f(x + 0.5f, y + 1.0f, z + 0.5f));
+        ctx.worldTime = BedSleep.wakeTime(); // dawn
+        if (ctx.cinematic != null) {
+            ctx.cinematic.teleportFlash();
+            ctx.cinematic.barsMoment(1.1f);
+        }
+        ctx.setStatus("You sleep until dawn. Respawn point set.");
+        return true;
     }
 
     public void breakBlock(int x, int y, int z, int blockId, boolean collectDrop) {
@@ -489,6 +519,11 @@ public class BlockInteraction {
         // Piston base: derive facing direction from directional block ID before clearing
         int pistonDir = getPistonDirection(blockId);
         if (!ctx.chunkManager.setVoxel(x, y, z, 0)) return;
+        com.voxel.modloader.EventBus.fireBlockBreak(new com.voxel.api.events.BlockEvent(
+                com.voxel.api.events.BlockEvent.Action.BREAK, ctx, ctx.world, x, y, z, blockId));
+        // Subtle impact on the break itself (the mining loop already has its
+        // own progress overlay, so this is deliberately small).
+        ctx.cameraShake = Math.max(ctx.cameraShake, 0.20f);
         if (ctx.tutorialWorld && ctx.tutorialProgress != null) {
             ctx.tutorialProgress.complete(com.voxel.game.TutorialProgress.MINE);
         }
@@ -1418,6 +1453,19 @@ public class BlockInteraction {
         // click falls through to placement (vanilla sneak+use behavior).
         if (sneakPlace) return false;
 
+        // ── Beds: sleep through the night and set the respawn point ──
+        if (com.voxel.world.DecorBlocks.isBed(hitBlock) && !ctx.inventoryOpen
+                && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
+            return trySleep(hit[0], hit[1], hit[2]);
+        }
+
+        // ── Enchanting table: offers for the held tool, paid in XP levels ──
+        if (EnchantingTable.isTable(hitBlock) && !ctx.inventoryOpen
+                && !ctx.craftingCutsceneActive && !ctx.tvCutsceneActive) {
+            EnchantingTable.open(ctx, hit[0], hit[1], hit[2]);
+            return true;
+        }
+
         // ── Doors open/close on use ──
         // Swapping to the 90°-rotated half is the swing: the panel moves out of
         // the wall exactly like a vanilla door, and both halves stay in sync.
@@ -2006,6 +2054,13 @@ public class BlockInteraction {
             if (!ctx.chunkManager.setVoxel(px, py, pz, placeBlockId)) return;
         }
 
+        // Mods observe the placement after the world already holds the block.
+        com.voxel.modloader.EventBus.fireBlockPlace(new com.voxel.api.events.BlockEvent(
+                com.voxel.api.events.BlockEvent.Action.PLACE, ctx, ctx.world, px, py, pz, placeBlockId));
+        // A featherweight camera tick confirms the block actually landed.
+        // Kept below conscious-threshold so rapid building does not wobble the view.
+        ctx.cameraShake = Math.max(ctx.cameraShake, 0.12f);
+
         // Rail corners: recompute the surrounding rails' shapes (straight <-> curve)
         // so a newly placed corner converts its neighbours into curves and vice
         // versa (Beta RailLogic behaviour).
@@ -2087,7 +2142,9 @@ public class BlockInteraction {
         int[] ent = raycastEntity(3.0f);
         if (ent != null && ctx.entityManager != null) {
             com.voxel.entity.Entity e = ctx.entityManager.getEntity(ent[0]);
-            if (e instanceof com.voxel.entity.VillagerEntity || e instanceof com.voxel.entity.MinecartEntity) {
+            if (e instanceof com.voxel.entity.VillagerEntity
+                    || e instanceof com.voxel.entity.MinecartEntity
+                    || e instanceof com.voxel.entity.AncientBuilderEntity) {
                 float entDist = Float.intBitsToFloat(ent[1]);
                 int[] hit = raycastBlock(blockReachDistance());
                 float blockDist = hit != null ? getActiveCameraPosition().distance(

@@ -50,7 +50,9 @@ public final class VillagerSpeech {
                               SpeechOptions options) {
         if (audio == null || line == null || line.trim().isEmpty()) return false;
         if (!allow(villagerId)) return false;
-        return audio.requestSpeech(line.trim(), options, speaker) != null;
+        // The villager id seeds the fixed neural voice, so dynamic lines
+        // always speak in this villager's own voice.
+        return audio.requestSpeech(line.trim(), options, speaker, villagerId) != null;
     }
 
     /**

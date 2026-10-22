@@ -45,6 +45,9 @@ public class InteractionBillboardSystem {
     private String[][] actions = new String[MAX_MARKERS][];
     private boolean[] highlighted = new boolean[MAX_MARKERS];
     private int markerCount = 0;
+    /** Markers hidden by last projection: behind geometry / outside the view. */
+    private int culledOccluded = 0;
+    private int culledOffscreen = 0;
     /** Keyboard-selected marker (arrow-key navigation), or -1 when none. */
     private int selectedMarker = -1;
 
@@ -52,6 +55,22 @@ public class InteractionBillboardSystem {
     private static final float REACH = 6.0f;          // max distance for a billboard
     private static final double SCAN_INTERVAL = 0.12; // throttle (seconds)
     private double lastScanTime = -1.0;
+
+    /**
+     * Unattended HUD capture: {@code VOXEL_PAC_PROBE} publishes a fixed prompt
+     * layout at known screen positions instead of scanning the world, so a
+     * screenshot always contains a target under the cursor, a multi-action
+     * prompt and idle prompts. Inert otherwise.
+     */
+    private static final boolean PROBE_LAYOUT =
+            System.getenv("VOXEL_PAC_PROBE") != null;
+    /**
+     * A/B switch for the occlusion test ({@code VOXEL_PAC_NO_CULL}): a capture
+     * with and without culling from the same camera proves which prompts a
+     * wall was hiding. Inert otherwise.
+     */
+    private static final boolean PROBE_NO_CULL =
+            System.getenv("VOXEL_PAC_NO_CULL") != null;
 
     // Interactable block IDs (see BlockInteraction / PortalSystem).
     private static final int B_CRAFTING_TABLE = 115;
@@ -88,6 +107,11 @@ public class InteractionBillboardSystem {
     public int getMarkerActionCount(int i) { return actions[i] == null ? 0 : actions[i].length; }
     public String getMarkerAction(int i, int j) { return actions[i][j]; }
     public boolean isMarkerHighlighted(int i) { return highlighted[i]; }
+
+    /** Markers hidden by the last projection pass because a wall intervened. */
+    public int getCulledOccludedCount() { return culledOccluded; }
+    /** Markers hidden by the last projection pass because they were off-screen. */
+    public int getCulledOffscreenCount() { return culledOffscreen; }
 
     /** Index of the marker currently under the centre cursor, or -1. */
     public int getHighlightedMarker() {
@@ -151,6 +175,10 @@ public class InteractionBillboardSystem {
      * camera motion smoothly between scans.
      */
     public void update(double time) {
+        if (PROBE_LAYOUT) {
+            publishProbeLayout(main.width, main.height);
+            return;
+        }
         boolean active = main.pointAndClickMode
                 && ctx != null && ctx.player != null && !ctx.player.isDead()
                 && ctx.menuScreen == GameContext.MenuScreen.IN_GAME
@@ -172,6 +200,43 @@ public class InteractionBillboardSystem {
     }
 
     // ── Detection ────────────────────────────────────────────────────────────
+
+    /**
+     * Fixed screen-space prompt set for {@code VOXEL_PAC_PROBE}: one hovered
+     * multi-action target at the reticle, plus idle prompts around it. Screen
+     * coordinates are already final, so the normal projection pass is skipped.
+     */
+    private void publishProbeLayout(int w, int h) {
+        markerCount = 0;
+        selectedMarker = -1;
+        culledOccluded = 0;
+        culledOffscreen = 0;
+        addProbeMarker(0.50f, 0.46f, "Mason the Villager",
+                new String[]{"Talk", "Trade"}, true, w, h);
+        addProbeMarker(0.28f, 0.34f, "Crafting Table", new String[]{"Craft"}, false, w, h);
+        addProbeMarker(0.74f, 0.33f, "Chest", new String[]{"Open"}, false, w, h);
+        addProbeMarker(0.68f, 0.68f, "Nether Portal", new String[]{"Enter"}, false, w, h);
+        addProbeMarker(0.24f, 0.70f, "Furnace", new String[]{"Smelt"}, false, w, h);
+    }
+
+    private void addProbeMarker(float fx, float fy, String name, String[] actionList,
+                                boolean highlightedMarker, int w, int h) {
+        int i = markerCount;
+        if (i >= MAX_MARKERS) return;
+        markers[i * 4] = fx * w;
+        markers[i * 4 + 1] = fy * h;
+        markers[i * 4 + 2] = 1f;
+        markers[i * 4 + 3] = 0f;
+        names[i] = name;
+        actions[i] = actionList.clone();
+        labels[i] = actions[i][0];
+        highlighted[i] = highlightedMarker;
+        markerBlockX[i] = -1;
+        markerBlockY[i] = -1;
+        markerBlockZ[i] = -1;
+        markerEntityId[i] = -1;
+        markerCount++;
+    }
 
     /** Blocks already claimed by a merged structure during the current scan. */
     private final java.util.HashSet<Long> claimedBlocks = new java.util.HashSet<>();
@@ -246,7 +311,10 @@ public class InteractionBillboardSystem {
                 // HUD lists both under the name (MCSM multi-choice prompt).
                 String[] acts = com.voxel.game.VillagerTrades.trades(v.getProfession())
                         ? new String[]{"Talk", "Trade"} : new String[]{"Talk"};
-                addMarker(ep.x, ep.y + 2.0f, ep.z, "Villager", acts, -1, -1, -1, e.id);
+                String display = v.aiDisplayName();
+                addMarker(ep.x, ep.y + 2.0f, ep.z,
+                        display == null || display.trim().isEmpty() ? "Villager" : display,
+                        acts, -1, -1, -1, e.id);
             } else if (e instanceof com.voxel.entity.AncientBuilderEntity) {
                 com.voxel.entity.AncientBuilderEntity builder =
                         (com.voxel.entity.AncientBuilderEntity) e;
@@ -283,7 +351,7 @@ public class InteractionBillboardSystem {
         markerCount++;
     }
 
-    static boolean isInteractableBlock(int id) {
+    public static boolean isInteractableBlock(int id) {
         return id == B_CRAFTING_TABLE || id == B_FURNACE || id == B_FURNACE_ON
             || id == B_CHEST || id == B_VILLAGER_TV
             || id == B_HAND_CRANK || id == B_WINDMILL_BEARING || id == B_ITEM_VAULT
@@ -295,6 +363,30 @@ public class InteractionBillboardSystem {
             // false, which keeps tests and early startup safe.
             || com.voxel.game.RedstoneSwitches.isLever(id)
             || com.voxel.game.RedstoneSwitches.isButton(id);
+    }
+
+    /**
+     * The one-line reticle prompt for a target: {@code CLICK   Craft   ·   
+     * Crafting Table} for a single action, or the key-hinted list {@code
+     * Villager    [1] Talk    [2] Trade} when there is a choice. Pure, so the
+     * wording is unit-tested without a GL context.
+     */
+    public static String promptLine(String name, String[] actions) {
+        String target = name == null ? "" : name;
+        int n = actions == null ? 0 : actions.length;
+        if (n <= 1) {
+            String verb = n == 0 || actions[0] == null ? "" : actions[0].trim();
+            if (verb.isEmpty()) return target;
+            return target.isEmpty() ? "CLICK   " + verb
+                    : "CLICK   " + verb + "   \u00b7   " + target;
+        }
+        StringBuilder line = new StringBuilder(target);
+        for (int j = 0; j < n; j++) {
+            line.append(line.length() == 0 ? "" : "    ")
+                .append('[').append(j + 1).append("] ")
+                .append(actions[j] == null ? "" : actions[j]);
+        }
+        return line.toString();
     }
 
     /** Display name of an interactable block (shown in the MCSM prompt). */
@@ -347,6 +439,90 @@ public class InteractionBillboardSystem {
         }
     }
 
+    // ── Line of sight (raycast culling) ───────────────────────────────────────
+
+    /** Minimal voxel access for the occlusion walk, so it is testable. */
+    public interface BlockOccluder {
+        /** Block id at a cell, or 0 when the cell is outside the loaded world. */
+        int voxelAt(int x, int y, int z);
+
+        /** True when the id blocks sight completely (a full opaque block). */
+        boolean isOpaque(int blockId);
+    }
+
+    private final BlockOccluder worldOccluder = new BlockOccluder() {
+        @Override
+        public int voxelAt(int x, int y, int z) {
+            return ctx == null || ctx.world == null ? 0 : ctx.world.getVoxel(x, y, z);
+        }
+
+        @Override
+        public boolean isOpaque(int blockId) {
+            if (blockId == 0) return false;
+            // Full blocks only: glass, leaves, grass, torches and fluids must
+            // not hide a prompt, because the player can still click through
+            // them. isFullBlockFast is the same flag the mesher treats as solid.
+            return ctx != null && ctx.blockDataManager != null
+                    && ctx.blockDataManager.isFullBlockFast(blockId);
+        }
+    };
+
+    /**
+     * Amanatides &amp; Woo walk from a camera to a prompt anchor, stopping at the
+     * first opaque cell: {@code true} when the target is behind a wall. The
+     * prompt must then be hidden — a floating "click here" card glowing through
+     * bedrock tells the player there is something to click when there is not.
+     *
+     * <p>Pure and allocation-free so the culling is unit-tested with a synthetic
+     * world. The anchor's own cell is never tested (the walk stops just short of
+     * it), so a marker anchored on a block face is not occluded by its block.</p>
+     */
+    public static boolean segmentOccluded(float ax, float ay, float az,
+                                          float bx, float by, float bz,
+                                          BlockOccluder world) {
+        if (world == null) return false;
+        float dx = bx - ax, dy = by - ay, dz = bz - az;
+        double length = Math.sqrt((double) dx * dx + (double) dy * dy + (double) dz * dz);
+        if (length < 1e-4) return false;
+        float nx = (float) (dx / length);
+        float ny = (float) (dy / length);
+        float nz = (float) (dz / length);
+        float reach = (float) length - 0.05f; // stay out of the anchor's cell
+
+        int x = (int) Math.floor(ax), y = (int) Math.floor(ay), z = (int) Math.floor(az);
+        int stepX = nx > 0f ? 1 : -1;
+        int stepY = ny > 0f ? 1 : -1;
+        int stepZ = nz > 0f ? 1 : -1;
+        float tDeltaX = nx == 0f ? Float.MAX_VALUE : Math.abs(1f / nx);
+        float tDeltaY = ny == 0f ? Float.MAX_VALUE : Math.abs(1f / ny);
+        float tDeltaZ = nz == 0f ? Float.MAX_VALUE : Math.abs(1f / nz);
+        float tMaxX = nx == 0f ? Float.MAX_VALUE
+                : ((nx > 0f ? (x + 1 - ax) : (ax - x)) / Math.abs(nx));
+        float tMaxY = ny == 0f ? Float.MAX_VALUE
+                : ((ny > 0f ? (y + 1 - ay) : (ay - y)) / Math.abs(ny));
+        float tMaxZ = nz == 0f ? Float.MAX_VALUE
+                : ((nz > 0f ? (z + 1 - az) : (az - z)) / Math.abs(nz));
+
+        // Bounded walk: each step crosses exactly one cell boundary, and a
+        // diagonal ray can cross up to three cells per unit of length, so the
+        // guard scales with that worst case (it exists only to rule out an
+        // infinite loop, not to limit the search).
+        int guard = (int) (length * 3f) + 4;
+        for (int step = 0; step < guard; step++) {
+            float t;
+            if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
+                t = tMaxX; x += stepX; tMaxX += tDeltaX;
+            } else if (tMaxY <= tMaxZ) {
+                t = tMaxY; y += stepY; tMaxY += tDeltaY;
+            } else {
+                t = tMaxZ; z += stepZ; tMaxZ += tDeltaZ;
+            }
+            if (t > reach) return false;
+            if (world.isOpaque(world.voxelAt(x, y, z))) return true;
+        }
+        return false;
+    }
+
     // ── Projection (world → screen) ───────────────────────────────────────────
 
     private void projectMarkers(double time) {
@@ -371,6 +547,13 @@ public class InteractionBillboardSystem {
 
         Vector4f clip = new Vector4f();
         Vector3f worldPos = new Vector3f();
+        // Only the nearest marker under the cursor is highlighted; without
+        // this, overlapping prompts all lit up and the HUD could not say which
+        // one a click would use.
+        int bestHover = -1;
+        float bestHoverDistance = Float.MAX_VALUE;
+        culledOccluded = 0;
+        culledOffscreen = 0;
         for (int i = 0; i < markerCount; i++) {
             float wx = markerWorld[i * 3], wy = markerWorld[i * 3 + 1], wz = markerWorld[i * 3 + 2];
             worldPos.set(wx, wy, wz);
@@ -384,11 +567,30 @@ public class InteractionBillboardSystem {
             }
             float ndcX = clip.x / clip.w;
             float ndcY = clip.y / clip.w;
+            // Off-screen: hide instead of letting the HUD clamp the card onto
+            // the nearest screen edge, where it would point at nothing.
+            if (ndcX < -1f || ndcX > 1f || ndcY < -1f || ndcY > 1f) {
+                markers[i * 4 + 2] = 0f;
+                highlighted[i] = false;
+                culledOffscreen++;
+                continue;
+            }
             float screenX = (ndcX * 0.5f + 0.5f) * main.width;
             float screenY = (1.0f - (ndcY * 0.5f + 0.5f)) * main.height;
             markers[i * 4] = screenX;
             markers[i * 4 + 1] = screenY;
             markers[i * 4 + 3] = 0f;
+
+            // Raycast culling: a prompt behind a wall is a lie. Walk the voxels
+            // between the camera and the anchor and drop the marker when a full
+            // block intervenes (glass and leaves stay transparent).
+            if (!PROBE_NO_CULL
+                    && segmentOccluded(camPos.x, camPos.y, camPos.z, wx, wy, wz, worldOccluder)) {
+                markers[i * 4 + 2] = 0f;
+                highlighted[i] = false;
+                culledOccluded++;
+                continue;
+            }
 
             // Distance-based alpha: fade out near the reach edge.
             float distToCam = (float) Math.sqrt(distanceSquared(camPos.x, camPos.y, camPos.z, wx, wy, wz));
@@ -398,9 +600,17 @@ public class InteractionBillboardSystem {
 
             // A keyboard selection owns the highlight; with none, the cursor
             // ray passing close to this marker's anchor drives it.
-            boolean hovered = rayO != null && rayD != null
-                && pointRayDistance(rayO, rayD, worldPos) < 0.6f;
-            highlighted[i] = selectedMarker >= 0 ? (i == selectedMarker) : hovered;
+            if (selectedMarker < 0 && rayO != null && rayD != null) {
+                float distance = pointRayDistance(rayO, rayD, worldPos);
+                if (distance < 0.6f && distance < bestHoverDistance) {
+                    bestHoverDistance = distance;
+                    bestHover = i;
+                }
+            }
+            highlighted[i] = selectedMarker >= 0 && i == selectedMarker;
+        }
+        if (selectedMarker < 0 && bestHover >= 0) {
+            highlighted[bestHover] = true;
         }
     }
 

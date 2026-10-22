@@ -22,6 +22,9 @@ Create/
 # Shared agent workspace (per-session coordination, not project history)
 .agents/
 
+# Extracted mod jars (recreated on every launch from mods/*.jar)
+mods/.cache/
+
 # Generated visual-harness artifacts (inspect locally, do not commit)
 screenshots/chest_harness/
 

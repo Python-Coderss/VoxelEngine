@@ -95,7 +95,7 @@ public class MusicLibraryTest {
     @Test
     public void bundledInstallPopulatesTheMainPools() {
         MusicLibrary lib = MusicLibrary.scan(
-                new File("src/resources/music"),
+                new File("src/main/resources/music"),
                 new File("src/main/resources/assets/aether/sounds/music"));
         if (lib.isEmpty()) return; // music is optional; never fail a headless CI without it
         assertTrue("combat pool", lib.count(MusicDirector.CONTEXT_COMBAT) > 0);

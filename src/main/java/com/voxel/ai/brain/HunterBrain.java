@@ -3,6 +3,7 @@ package com.voxel.ai.brain;
 import com.voxel.ai.MobBrain;
 import com.voxel.ai.PathFinder;
 import com.voxel.ai.Senses;
+import com.voxel.ai.SpatialMind;
 import com.voxel.ai.Stimulus;
 import com.voxel.ai.StimulusBus;
 import com.voxel.entity.EnemyEntity;
@@ -106,6 +107,9 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
     private final List<Vector3i> path = new ArrayList<Vector3i>();
     private int pathIndex;
 
+    /** Positions of packmates within separation range, refreshed by perceive(). */
+    private final List<Vector3f> packmates = new ArrayList<Vector3f>();
+
     // Melee attack state (mirrors the legacy FSM's telegraphed strike, so a
     // brain-driven hunter still lands hits through overridable performAttack).
     private float attackCooldown;
@@ -161,11 +165,15 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
         float bestDist = Float.MAX_VALUE;
         hasCongaLeader = false;
         float leaderDist = Float.MAX_VALUE;
+        packmates.clear();
         for (int i = 0; i < senses.visibleEntities.size(); i++) {
             Senses.Visible v = senses.visibleEntities.get(i);
             if (v.entity instanceof EnemyEntity) {
                 // Nearest packmate: the one a herd follower trails after.
                 float d = (float) Math.sqrt(v.distanceSquared);
+                if (d <= 3f) {
+                    packmates.add(new Vector3f(v.entity.getPosition()));
+                }
                 if (d < leaderDist && d <= 10f) {
                     leaderDist = d;
                     congaLeader.set(v.entity.getPosition());
@@ -370,8 +378,30 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
         // Slow to a walk right before melee range so the wind-up telegraph
         // connects instead of overshooting a sprinting target.
         float speed = dist < 4f ? ATTACK_WALK_SPEED : CHASE_SPEED;
-        stepWithPaths(target, speed, dt);
+        stepWithPaths(closeQuartersAim(target, dist), speed, dt);
+        // The joke is the decision, not the feet: when A* finds no route at
+        // all, angle around the obstacle on this hunter's own side instead of
+        // grinding into the wall.
+        if (path.isEmpty() && dist > ATTACK_RANGE && owner.world != null) {
+            Vector3i flank = SpatialMind.flankCell(owner.world::getVoxel,
+                    owner.getPosition(), target, SpatialMind.sideFor(owner.id), 4);
+            if (flank != null) {
+                stepWithPaths(new Vector3f(flank.x + 0.5f, flank.y, flank.z + 0.5f),
+                        speed, dt);
+            }
+        }
         tryMeleeAttack(dt);
+    }
+
+    /**
+     * Prey direction with a small crowd-separation nudge at close range, so a
+     * pack surrounds the target instead of standing inside one another.
+     */
+    private Vector3f closeQuartersAim(Vector3f target, float dist) {
+        if (dist > 6f || packmates.isEmpty()) return target;
+        Vector3f nudge = SpatialMind.separation(owner.getPosition(), packmates, 1.6f);
+        if (nudge.lengthSquared() < 1e-4f) return target;
+        return new Vector3f(target).add(nudge.x * 1.2f, 0f, nudge.z * 1.2f);
     }
 
     /**
@@ -437,6 +467,18 @@ public final class HunterBrain implements MobBrain, StimulusBus.Listener {
     }
 
     private void retreat(float dt) {
+        // Spatially sound retreat: open ground away from the threat, not a
+        // blind straight line into a wall or off a cliff.
+        if (owner.world != null) {
+            Vector3i escape = SpatialMind.escapeTarget(owner.world::getVoxel,
+                    owner.getPosition(), currentTarget(), 7);
+            if (escape != null) {
+                owner.aiMoveToward(
+                        new Vector3f(escape.x + 0.5f, escape.y, escape.z + 0.5f),
+                        dt, RETREAT_SPEED);
+                return;
+            }
+        }
         Vector3f away = new Vector3f(owner.getPosition()).sub(currentTarget());
         away.y = 0f;
         if (away.lengthSquared() < 1e-4f) {

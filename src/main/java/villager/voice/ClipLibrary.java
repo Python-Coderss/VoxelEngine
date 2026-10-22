@@ -29,7 +29,13 @@ public final class ClipLibrary implements AutoCloseable {
     private static final String[] ADDON_ZIP_CANDIDATES = {
             "Villager News 1.0 Add-On (addon).zip",
             "Villager News 1.0 Add-On.zip",
+            "villager-news-addon-port-1.3.6.jar",
+            "villager-news-addon-port-2.0.0.jar",
+            "dev/villager-news-addon-port-1.3.6.jar",
+            "dev/villager-news-addon-port-2.0.0.jar",
     };
+    /** Extra jars/zips dropped in dev/ are picked up without a version bump. */
+    private static final String ADDON_SCAN_DIR = "dev";
     private static final String[] ADDON_DIR_CANDIDATES = {
             "dev/vn_addon/Villager News 1.0 Add-On RP",
             "Villager News 1.0 Add-On RP",
@@ -110,6 +116,22 @@ public final class ClipLibrary implements AutoCloseable {
                 if (source != null) return source;
             }
         }
+        // Version-proof fallback: any Villager News port jar/zip placed in dev/.
+        Path scanDir = Paths.get(ADDON_SCAN_DIR);
+        if (Files.isDirectory(scanDir)) {
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(scanDir)) {
+                for (Path path : stream) {
+                    String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+                    if (!name.startsWith("villager-news-addon-port")) continue;
+                    if (!name.endsWith(".jar") && !name.endsWith(".zip")) continue;
+                    if (!Files.isRegularFile(path)) continue;
+                    AddonSource source = ZipAddonSource.open(path);
+                    if (source != null) return source;
+                }
+            } catch (IOException ignored) {
+                // Keep looking in the remaining locations.
+            }
+        }
         String temp = System.getProperty("java.io.tmpdir");
         for (String candidate : ADDON_DIR_CANDIDATES) {
             Path dir = Paths.get(candidate);
@@ -181,7 +203,14 @@ public final class ClipLibrary implements AutoCloseable {
         }
     }
 
-    /** Addon zip: entries may live under any top-level pack folder. */
+    /**
+     * Addon zip/jar: entries may live under any top-level pack folder. The
+     * official addon keeps voice clips at {@code sounds/oreville/vn/*.ogg};
+     * the community port jar keeps the same recordings at
+     * {@code assets/villager-news-addon-port/sounds/voice/*.ogg}. Both layouts
+     * are indexed by clip basename, with a voice folder preferred when a name
+     * exists in several places (the port also ships short effect stubs).
+     */
     static final class ZipAddonSource implements AddonSource {
         private final ZipFile zip;
         private final Map<String, String> entriesByClip = new HashMap<>();
@@ -195,13 +224,25 @@ public final class ClipLibrary implements AutoCloseable {
             ZipAddonSource source = new ZipAddonSource(zip);
             java.util.Enumeration<? extends ZipEntry> entries = zip.entries();
             String marker = SOUND_DIR + "/";
+            Map<String, String> fallback = new HashMap<>();
             while (entries.hasMoreElements()) {
                 ZipEntry entry = entries.nextElement();
+                if (entry.isDirectory()) continue;
                 String name = entry.getName().replace('\\', '/');
-                int at = name.indexOf(marker);
-                if (at < 0 || !name.endsWith(".ogg")) continue;
-                String base = name.substring(at + marker.length(), name.length() - 4);
-                source.entriesByClip.put(base.toLowerCase(Locale.ROOT), name);
+                if (!name.endsWith(".ogg")) continue;
+                String base = name.substring(name.lastIndexOf('/') + 1, name.length() - 4)
+                        .toLowerCase(Locale.ROOT);
+                boolean voiceFolder = name.contains(marker)
+                        || name.contains("/sounds/voice/")
+                        || name.contains("/sounds/mob/villager/");
+                if (voiceFolder) {
+                    source.entriesByClip.put(base, name);
+                } else {
+                    fallback.putIfAbsent(base, name);
+                }
+            }
+            for (Map.Entry<String, String> entry : fallback.entrySet()) {
+                source.entriesByClip.putIfAbsent(entry.getKey(), entry.getValue());
             }
             if (source.entriesByClip.isEmpty()) {
                 source.close();

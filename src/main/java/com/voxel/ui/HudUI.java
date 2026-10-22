@@ -54,6 +54,9 @@ public class HudUI {
     public int loadingPopupTextureId = 0;
 
     public UILayer.UIElement crosshairElement;
+    /** Full-screen red damage flash. Added first to the static layer so the
+     *  hotbar, hearts and crosshair stay crisp on top of it. */
+    public UILayer.UIElement damageQuad;
 
     // Dedicated UI layers. The static layer holds rarely-changing chrome
     // (hotbar, hearts, inventory panels); the dynamic layer holds per-frame
@@ -61,6 +64,9 @@ public class HudUI {
     // billboards) and is added LAST so it renders on top of everything.
     public UILayer staticLayer;
     public UILayer dynamicLayer;
+    /** Title/options/load chrome. Drawn between the HUD and the virtual cursor,
+     *  and the HUD layers are hidden while a menu is open (vanilla behaviour). */
+    public UILayer menuLayer;
 
     // ── Cinematic overlays (movie mode) ──
     public UILayer.UIElement cineBarTop, cineBarBottom;
@@ -74,6 +80,28 @@ public class HudUI {
     public UILayer.UIElement tradePanelBackdrop;
     public UILayer.UITextElement cineSkipHint;      // "ESC to skip" during scenes
     private double lowHealthPulseTime = 0;
+
+    // ── MCSM choices + quick-time events (overlay, never camera owners) ──
+    public UILayer.UIElement choiceBackdrop, choiceHover, choiceTimerBar;
+    public UILayer.UITextElement choiceText;
+    /** One card per option, laid out as MCSM's horizontal choice row. */
+    public final UILayer.UIElement[] choiceCards = new UILayer.UIElement[4];
+    public final UILayer.UITextElement[] choiceCardText = new UILayer.UITextElement[4];
+    /** Thin accent strip along the top of each card. */
+    public final UILayer.UIElement[] choiceCardAccent = new UILayer.UIElement[4];
+    public UILayer.UIElement qteBackdrop, qteBar;
+    public UILayer.UITextElement qteText, qteKeyText;
+    /** Option card rectangles for mouse hit-testing (index 0..3). */
+    private final float[] choiceRowY = new float[4];
+    private float choiceRowX, choiceRowW, choiceRowH;
+    private int choiceRowCount = 0;
+
+    // Enchanting table plate (modal, like the trade panel).
+    public UILayer.UIElement enchantBackdrop, enchantHover;
+    public UILayer.UITextElement enchantText;
+    private final float[] enchantRowY = new float[3];
+    private float enchantRowX, enchantRowW, enchantRowH;
+    private int enchantRowCount = 0;
     private static final int CAPTION_WRAP_CHARS = 52;
 
     // ── MCSM interaction billboards ("click here" markers) ──
@@ -93,8 +121,23 @@ public class HudUI {
     /** Grey outline width on both sides of every white line. */
     private static final float MARKER_OUTLINE = 1f;
     public final UILayer.UIElement[][] markerParts = new UILayer.UIElement[MAX_BILLBOARDS][MARKER_PART_COUNT];
+    /** Dark card behind the prompt text; keeps labels readable over any scene. */
+    public final UILayer.UIElement[] markerPlates = new UILayer.UIElement[MAX_BILLBOARDS];
+    /** Gold accent strip down the plate's left edge. */
+    public final UILayer.UIElement[] markerAccents = new UILayer.UIElement[MAX_BILLBOARDS];
     public final UILayer.UITextElement[] markerNameTexts = new UILayer.UITextElement[MAX_BILLBOARDS];
     public final UILayer.UITextElement[][] markerActionTexts = new UILayer.UITextElement[MAX_BILLBOARDS][MAX_MARKER_ACTIONS];
+    /**
+     * Reticle prompt: the verb a click at the centre would perform. Sits just
+     * under the reticle so the answer is where the player is already looking,
+     * instead of at the far end of a leader line.
+     */
+    public UILayer.UIElement pacPromptPlate;
+    public UILayer.UIElement pacPromptAccent;
+    public UILayer.UITextElement pacPromptText;
+    private static final float PAC_PROMPT_SCALE = 2.0f;
+    /** Opacity of prompts the cursor is not on, so one target owns the eye. */
+    private static final float MARKER_IDLE_ALPHA = 0.58f;
 
     public UILayer.UIElement hotbarActiveElement;
     public UILayer.UIElement inventoryPanelElement;
@@ -198,6 +241,34 @@ public class HudUI {
     public UILayer.UITextElement menuSubtitle;
     public UILayer.UITextElement menuHint;
 
+    // ── Minecraft-style title screen chrome ──
+    /** Tiled dirt backdrop used by every menu screen except the title. */
+    public UILayer.UIElement menuDirtBackground;
+    /** Story Mode wordmark art shown on the title screen (null texture falls back to text). */
+    public UILayer.UIElement menuLogo;
+    /** "SEASON THREE" line under the wordmark. */
+    public UILayer.UITextElement menuSeasonText;
+    /** "VOXEL ENGINE" wordmark (drawn like the MC logo). */
+    public UILayer.UITextElement menuTitleText;
+    /** Pulsing yellow splash line beside the wordmark. */
+    public UILayer.UITextElement menuSplashText;
+    /** Heading on world-creation / load / options screens. */
+    public UILayer.UITextElement menuScreenTitle;
+    public UILayer.UITextElement menuEditionText;
+    public UILayer.UITextElement menuCopyrightText;
+
+    private static final String[] MENU_SPLASHES = {
+        "Also try Minecraft!",
+        "100% procedural!",
+        "Now with dirt!",
+        "Made of blocks!",
+        "Point & click!",
+        "Villagers speak!",
+        "Powered by raytracing!",
+        "Blocks all the way down!"
+    };
+    private int menuSplashIndex = -1;
+
     // ── In-game pause menu ──
     public UILayer.UIElement pauseDimmer;
     public UILayer.UIElement pausePanel;
@@ -223,6 +294,9 @@ public class HudUI {
     public Vector4f uvHeartBase  = new Vector4f(62, 1, 9, 9);
 
     public double lastTitleUpdate = 0.0;
+
+    /** MCSM combat overlay: lock-on reticle, charge/combo meters, damage numbers. */
+    public CombatHud combatHud;
 
     private final GameContext ctx;
     private final Main main;
@@ -252,13 +326,25 @@ public class HudUI {
 
     public void setup(int width, int height) {
         uiManager = new UIManager(width, height);
+        // Menu chrome samples widgets.png / options_background.png / the MC
+        // title assets. The boot screen normally loads them first; calling the
+        // idempotent loader here keeps a direct HUD setup self-contained.
+        MCGui.loadAll();
         // Two dedicated layers: static chrome (hotbar/hearts/inventory) and
         // dynamic per-frame elements (cursor, cinematic overlays, billboards).
         // dynamicLayer is added LAST so it renders on top of everything.
         staticLayer = new UILayer();
         dynamicLayer = new UILayer();
+        menuLayer = new UILayer();
 
-        // --- Static layer: inventory panel + hotbar/hearts/crafting chrome ---
+        // --- Static layer: damage flash underneath, then inventory + hotbar chrome ---
+        damageQuad = new UILayer.UIElement(
+            new Vector2f(0, 0), new Vector2f(width, height),
+            new Vector4f(0.62f, 0.02f, 0.02f, 0f)
+        );
+        damageQuad.visible = false;
+        staticLayer.addElement(damageQuad);
+
         inventoryPanelElement = new UILayer.UIElement(
             new Vector2f(Main.HOTBAR_X - 8, Main.HOTBAR_Y - 12),
             new Vector2f(Main.INVENTORY_PANEL_WIDTH, Main.INVENTORY_PANEL_HEIGHT),
@@ -308,6 +394,96 @@ public class HudUI {
         cineSkipHint.visible = false;
         dynamicLayer.addElement(cineSkipHint);
 
+        // Decision plate: prompt + numbered options, with a draining timer bar
+        // and a hover highlight for mouse picks.
+        choiceBackdrop = new UILayer.UIElement(
+            new Vector2f(0, 0), new Vector2f(1, 1), UiPalette.panelDeep(0.86f));
+        MCGui.mcsmPanel(choiceBackdrop);
+        choiceBackdrop.visible = false;
+        dynamicLayer.addElement(choiceBackdrop);
+        choiceHover = new UILayer.UIElement(
+            new Vector2f(0, 0), new Vector2f(1, 1), UiPalette.amber(0.22f));
+        choiceHover.visible = false;
+        dynamicLayer.addElement(choiceHover);
+        choiceTimerBar = new UILayer.UIElement(
+            new Vector2f(0, 0), new Vector2f(1, 3), UiPalette.amber(1f));
+        choiceTimerBar.visible = false;
+        dynamicLayer.addElement(choiceTimerBar);
+        choiceText = new UILayer.UITextElement(
+            new Vector2f(0, 0), "", 1.55f,
+            UiPalette.cream(1f), fontTextureId);
+        choiceText.visible = false;
+        choiceText.outlined = true;
+        choiceText.outlineColor = new Vector4f(0, 0, 0, 1);
+        choiceText.charLineLimit = 58;
+        dynamicLayer.addElement(choiceText);
+
+        // MCSM's four-choice row: one card per option, a thin gold accent on
+        // top and the countdown line running beneath the row.
+        for (int i = 0; i < choiceCards.length; i++) {
+            choiceCards[i] = new UILayer.UIElement(
+                new Vector2f(0, 0), new Vector2f(1, 1),
+                UiPalette.panel(0.94f));
+            MCGui.mcsmPanel(choiceCards[i]);
+            choiceCards[i].visible = false;
+            dynamicLayer.addElement(choiceCards[i]);
+
+            choiceCardAccent[i] = new UILayer.UIElement(
+                new Vector2f(0, 0), new Vector2f(1, 2),
+                UiPalette.amber(0.95f));
+            choiceCardAccent[i].visible = false;
+            dynamicLayer.addElement(choiceCardAccent[i]);
+
+            choiceCardText[i] = new UILayer.UITextElement(
+                new Vector2f(0, 0), "", 1.22f,
+                UiPalette.cream(1f), fontTextureId);
+            choiceCardText[i].visible = false;
+            choiceCardText[i].outlined = true;
+            choiceCardText[i].outlineColor = new Vector4f(0, 0, 0, 1);
+            dynamicLayer.addElement(choiceCardText[i]);
+        }
+
+        // Quick-time prompt: a single big call-out and the key it wants.
+        qteBackdrop = new UILayer.UIElement(
+            new Vector2f(0, 0), new Vector2f(1, 1), new Vector4f(0.05f, 0.02f, 0.02f, 0.55f));
+        qteBackdrop.visible = false;
+        dynamicLayer.addElement(qteBackdrop);
+        qteText = new UILayer.UITextElement(
+            new Vector2f(0, 0), "", 2.4f,
+            new Vector4f(1f, 0.92f, 0.82f, 1f), fontTextureId);
+        qteText.visible = false;
+        qteText.outlined = true;
+        qteText.outlineColor = new Vector4f(0, 0, 0, 1);
+        dynamicLayer.addElement(qteText);
+        qteKeyText = new UILayer.UITextElement(
+            new Vector2f(0, 0), "", 2.0f,
+            new Vector4f(1f, 0.82f, 0.28f, 1f), fontTextureId);
+        qteKeyText.visible = false;
+        qteKeyText.outlined = true;
+        qteKeyText.outlineColor = new Vector4f(0, 0, 0, 1);
+        dynamicLayer.addElement(qteKeyText);
+        qteBar = new UILayer.UIElement(
+            new Vector2f(0, 0), new Vector2f(1, 4), new Vector4f(0.98f, 0.3f, 0.2f, 1f));
+        qteBar.visible = false;
+        dynamicLayer.addElement(qteBar);
+
+        // Enchanting table: same plate language as the decision panel.
+        enchantBackdrop = new UILayer.UIElement(
+            new Vector2f(0, 0), new Vector2f(1, 1), new Vector4f(0.07f, 0.04f, 0.10f, 0.92f));
+        enchantBackdrop.visible = false;
+        dynamicLayer.addElement(enchantBackdrop);
+        enchantHover = new UILayer.UIElement(
+            new Vector2f(0, 0), new Vector2f(1, 1), new Vector4f(0.72f, 0.52f, 0.98f, 0.22f));
+        enchantHover.visible = false;
+        dynamicLayer.addElement(enchantHover);
+        enchantText = new UILayer.UITextElement(
+            new Vector2f(0, 0), "", 1.5f,
+            new Vector4f(0.96f, 0.92f, 1f, 1f), fontTextureId);
+        enchantText.visible = false;
+        enchantText.outlined = true;
+        enchantText.outlineColor = new Vector4f(0, 0, 0, 1);
+        dynamicLayer.addElement(enchantText);
+
         // Live speech captions: speaker name + revealed line, bottom center
         // (above the hotbar), outlined so they read over any terrain.
         speechCaptionSpeaker = new UILayer.UITextElement(
@@ -354,6 +530,17 @@ public class HudUI {
         // [8] black diagonal backing   [9] white diagonal
         // [10] black stem backing      [11] white stem
         for (int i = 0; i < MAX_BILLBOARDS; i++) {
+            markerPlates[i] = new UILayer.UIElement(
+                new Vector2f(-100, -100), new Vector2f(1, 1),
+                UiPalette.panel(0.86f));
+            MCGui.mcsmPanel(markerPlates[i]); // warm parchment prompt card
+            markerPlates[i].visible = false;
+            dynamicLayer.addElement(markerPlates[i]);
+            markerAccents[i] = new UILayer.UIElement(
+                new Vector2f(-100, -100), new Vector2f(3, 1),
+                UiPalette.amber(0.9f));
+            markerAccents[i].visible = false;
+            dynamicLayer.addElement(markerAccents[i]);
             for (int p = 0; p < MARKER_PART_COUNT; p++) {
                 UILayer.UIElement part = new UILayer.UIElement(
                     new Vector2f(-100, -100), new Vector2f(2, 2),
@@ -378,6 +565,29 @@ public class HudUI {
             }
         }
 
+        // Reticle action prompt: a compact pill under the crosshair naming the
+        // hovered target and the verb(s) a click fires. Added after the marker
+        // elements so it always draws on top of a prompt card.
+        pacPromptPlate = new UILayer.UIElement(
+            new Vector2f(-100, -100), new Vector2f(1, 1),
+            UiPalette.panel(0.92f));
+        MCGui.mcsmPanel(pacPromptPlate);
+        pacPromptPlate.visible = false;
+        dynamicLayer.addElement(pacPromptPlate);
+        pacPromptAccent = new UILayer.UIElement(
+            new Vector2f(-100, -100), new Vector2f(3, 1),
+            UiPalette.gold(1f));
+        pacPromptAccent.visible = false;
+        dynamicLayer.addElement(pacPromptAccent);
+        pacPromptText = new UILayer.UITextElement(
+            new Vector2f(-100, -100), "", PAC_PROMPT_SCALE,
+            UiPalette.cream(1f), fontTextureId);
+        pacPromptText.outlined = true;
+        pacPromptText.outlineColor.set(UiPalette.ink(1f));
+        pacPromptText.outlineWidth = 2f;
+        pacPromptText.visible = false;
+        dynamicLayer.addElement(pacPromptText);
+
         // Load shared UI assets, then build the static inventory chrome onto
         // the static layer.
         tryLoadUiTexture();
@@ -386,9 +596,23 @@ public class HudUI {
         tryLoadLoadingPopupTexture();
         buildInventoryUi(staticLayer);
 
-        // Order matters: static first, dynamic on top.
+        // Combat overlay is built after the font loads so its text elements get
+        // a real texture id, and it is added last so it draws above the HUD.
+        combatHud = new CombatHud(ctx, main, camera, fontTextureId);
+
+        // Order matters: static first, dynamic on top, combat overlay above all.
         uiLayers.add(staticLayer);
+        uiLayers.add(menuLayer);
         uiLayers.add(dynamicLayer);
+        uiLayers.add(combatHud.layer());
+        // The title screen owns the whole screen: no hotbar, hearts or status
+        // toasts until a world is actually loaded.
+        staticLayer.setVisible(ctx.menuScreen == GameContext.MenuScreen.IN_GAME);
+    }
+
+    /** Per-frame combat overlay pass, called from Main's render loop. */
+    public void updateCombatHud(double time) {
+        if (combatHud != null) combatHud.update(time);
     }
 
     public void tryLoadUiTexture() {
@@ -692,7 +916,8 @@ public class HudUI {
         layer.addElement(carriedItemElement);
 
         itemNameElement = new UILayer.UITextElement(
-            new Vector2f(Main.HOTBAR_X + 100, Main.HOTBAR_Y - 40),
+            // Above the top-left status rows (armour at y=40, hearts at y=70).
+            new Vector2f(Main.HOTBAR_X + 100, 6),
             "",
             2.5f,
             new Vector4f(1, 1, 1, 1),
@@ -817,10 +1042,11 @@ public class HudUI {
         chestPanelBg = new UILayer.UIElement(new Vector2f(chestX - 16, chestY - 52),
             new Vector2f(chestGridW + 32, chestGridH + 68),
             new Vector4f(0.10f, 0.07f, 0.045f, 0.94f));
+        MCGui.mcsmPanel(chestPanelBg);
         chestPanelBg.visible = false;
         layer.addElement(chestPanelBg);
         chestTitle = new UILayer.UITextElement(new Vector2f(chestX, chestY - 40),
-            "CHEST", 2.0f, new Vector4f(1.0f, 0.82f, 0.42f, 1.0f), fontTextureId);
+            "CHEST", 2.0f, UiPalette.gold(1f), fontTextureId);
         chestTitle.visible = false;
         layer.addElement(chestTitle);
 
@@ -873,8 +1099,9 @@ public class HudUI {
         tutorialPopupBg = new UILayer.UIElement(
             new Vector2f(main.width / 2f - 360, main.height / 2f - 70),
             new Vector2f(720, 110),
-            new Vector4f(0.05f, 0.06f, 0.10f, 0.72f)
+            UiPalette.panelDeep(0.72f)
         );
+        MCGui.mcsmPanel(tutorialPopupBg);
         tutorialPopupBg.visible = false;
         tutorialPopupBg.onClick = null;
         layer.addElement(tutorialPopupBg);
@@ -892,23 +1119,26 @@ public class HudUI {
         layer.addElement(tutorialSubtitleElement);
 
         // ── Guided objective tracker ──
+        // Kept off the top-left corner now that hearts/hunger live there: it
+        // starts to the right of the vertical hotbar, just below the status row.
         tutorialTrackerBg = new UILayer.UIElement(
-            new Vector2f(18, 18),
+            new Vector2f(110, 100),
             new Vector2f(470, 74),
-            new Vector4f(0.05f, 0.07f, 0.11f, 0.68f)
+            UiPalette.panelDeep(0.68f)
         );
+        MCGui.mcsmPanel(tutorialTrackerBg);
         tutorialTrackerBg.visible = false;
         tutorialTrackerBg.onClick = null;
         layer.addElement(tutorialTrackerBg);
 
         tutorialTrackerTitle = new UILayer.UITextElement(
-            new Vector2f(30, 28), "", 1.7f, new Vector4f(1f, 0.86f, 0.34f, 1f), fontTextureId);
+            new Vector2f(122, 110), "", 1.7f, new Vector4f(1f, 0.86f, 0.34f, 1f), fontTextureId);
         tutorialTrackerTitle.charLineLimit = 48;
         tutorialTrackerTitle.visible = false;
         layer.addElement(tutorialTrackerTitle);
 
         tutorialTrackerHint = new UILayer.UITextElement(
-            new Vector2f(30, 54), "", 1.15f, new Vector4f(0.82f, 0.9f, 1f, 1f), fontTextureId);
+            new Vector2f(122, 136), "", 1.15f, UiPalette.muted(1f), fontTextureId);
         tutorialTrackerHint.charLineLimit = 66;
         tutorialTrackerHint.visible = false;
         layer.addElement(tutorialTrackerHint);
@@ -932,17 +1162,18 @@ public class HudUI {
         creativePanelBg = new UILayer.UIElement(
             new Vector2f(cX - 14, cY - 44),
             new Vector2f(cGridW + 28, cGridH + 92),
-            new Vector4f(0.08f, 0.10f, 0.14f, 0.92f)
+            UiPalette.panelDeep(0.92f)
         );
+        MCGui.mcsmPanel(creativePanelBg);
         creativePanelBg.visible = false;
         layer.addElement(creativePanelBg);
         creativeSearchText = new UILayer.UITextElement(
-            new Vector2f(cX, cY - 32), "SEARCH: ", 1.6f, new Vector4f(0.9f, 0.95f, 1f, 1f), fontTextureId);
+            new Vector2f(cX, cY - 32), "SEARCH: ", 1.6f, UiPalette.cream(1f), fontTextureId);
         creativeSearchText.visible = false;
         creativeSearchText.charLineLimit = 30;
         layer.addElement(creativeSearchText);
         creativeCountText = new UILayer.UITextElement(
-            new Vector2f(cX + cGridW - 140, cY - 32), "", 1.3f, new Vector4f(0.7f, 0.8f, 0.9f, 1f), fontTextureId);
+            new Vector2f(cX + cGridW - 140, cY - 32), "", 1.3f, UiPalette.muted(1f), fontTextureId);
         creativeCountText.visible = false;
         creativeCountText.charLineLimit = 20;
         layer.addElement(creativeCountText);
@@ -969,7 +1200,7 @@ public class HudUI {
             float sy = cY + row * (cSlotH + cGap);
             UILayer.UIElement bg = new UILayer.UIElement(
                 new Vector2f(sx, sy), new Vector2f(cSlotW, cSlotH),
-                new Vector4f(0.16f, 0.19f, 0.24f, 0.95f));
+                UiPalette.panelLift(0.95f));
             bg.visible = false;
             layer.addElement(bg);
             creativeSlotBackgrounds[i] = bg;
@@ -990,8 +1221,9 @@ public class HudUI {
         mapPanelBg = new UILayer.UIElement(
             new Vector2f(main.width - 230, 12),
             new Vector2f(218, 208),
-            new Vector4f(0.06f, 0.08f, 0.12f, 0.88f)
+            UiPalette.panelDeep(0.88f)
         );
+        MCGui.mcsmPanel(mapPanelBg);
         mapPanelBg.visible = false;
         layer.addElement(mapPanelBg);
 
@@ -1059,7 +1291,7 @@ public class HudUI {
         mapCenterBtn = new UILayer.UIElement(
             new Vector2f(main.width - 220, 176),
             new Vector2f(134, 36),
-            new Vector4f(0.25f, 0.45f, 0.75f, 0.95f)
+            UiPalette.amber(0.95f)
         );
         mapCenterBtn.visible = false;
         mapCenterBtn.onClick = () -> {
@@ -1168,7 +1400,23 @@ public class HudUI {
         }
         menuBackground.onClick = () -> { };
         menuBackground.visible = false;
-        layer.addElement(menuBackground);
+        menuLayer.addElement(menuBackground);
+
+        // Vanilla dirt backdrop for every menu screen after the title. Kept
+        // above menuBackground so the options/world screens get the tiled
+        // 16x16 dirt wall instead of the panorama.
+        menuDirtBackground = new UILayer.UIElement(
+            new Vector2f(0, 0),
+            new Vector2f(main.width, main.height),
+            new Vector4f(0.42f, 0.42f, 0.42f, 1f)
+        );
+        // Menus stay live: the 3D panorama keeps rendering behind the rows, so
+        // the non-title screens get their legibility from a scrim rather than a
+        // prebuilt backdrop image.
+        MCGui.panel(menuDirtBackground);
+        menuDirtBackground.onClick = () -> { };
+        menuDirtBackground.visible = false;
+        menuLayer.addElement(menuDirtBackground);
 
         // ── Top-right loading popup ──
         // A compact toast panel shown while spawn chunks generate (world boot /
@@ -1184,7 +1432,8 @@ public class HudUI {
             loadingPopupBackground.textureId = loadingPopupTextureId;
         } else {
             // Flat fallback panel so the popup still reads over any world.
-            loadingPopupBackground.color.set(0.10f, 0.12f, 0.16f, 0.92f);
+            loadingPopupBackground.color.set(UiPalette.panelDeep(0.92f));
+            MCGui.mcsmPanel(loadingPopupBackground);
         }
         loadingPopupBackground.visible = false;
         layer.addElement(loadingPopupBackground);
@@ -1196,19 +1445,20 @@ public class HudUI {
         menuTextPanel = new UILayer.UIElement(
             new Vector2f(main.width / 2f - 350, main.height / 2f - 220),
             new Vector2f(700, 500),
-            new Vector4f(0.05f, 0.06f, 0.09f, 0.55f)
+            UiPalette.panelDeep(0.55f)
         );
+        MCGui.mcsmPanel(menuTextPanel);
         menuTextPanel.visible = false;
         // Pure backdrop: never intercept clicks (the menu is keyboard-driven and
         // the full-screen menuBackground already blocks stray in-game clicks).
         menuTextPanel.onClick = null;
-        layer.addElement(menuTextPanel);
+        menuLayer.addElement(menuTextPanel);
 
         spawnLoadingTitle = new UILayer.UITextElement(
             new Vector2f(main.width / 2f - 175, main.height / 2f - 70),
             "WORLD INITIALIZING",
             3.0f,
-            new Vector4f(0.06f, 0.22f, 0.32f, 1.0f),
+            UiPalette.srgb(0.42f, 0.28f, 0.12f, 1.0f),
             fontTextureId
         );
         spawnLoadingTitle.visible = false;
@@ -1219,7 +1469,7 @@ public class HudUI {
             new Vector2f(main.width / 2f - 12, main.height / 2f - 10),
             "|",
             3.0f,
-            new Vector4f(0.06f, 0.48f, 0.48f, 1.0f),
+            UiPalette.srgb(0.62f, 0.42f, 0.10f, 1.0f),
             fontTextureId
         );
         spawnLoadingSpinner.visible = false;
@@ -1229,7 +1479,7 @@ public class HudUI {
             new Vector2f(main.width / 2f - 230, main.height / 2f + 55),
             "Generating spawn chunks...",
             1.8f,
-            new Vector4f(0.10f, 0.28f, 0.34f, 1.0f),
+            UiPalette.srgb(0.34f, 0.24f, 0.12f, 1.0f),
             fontTextureId
         );
         spawnLoadingStatus.visible = false;
@@ -1245,44 +1495,97 @@ public class HudUI {
             UILayer.UIElement bg = new UILayer.UIElement(
                 new Vector2f(menuX, menuY + i * 48f),
                 new Vector2f(500, 40),
-                new Vector4f(0.08f, 0.12f, 0.18f, 0.92f));
+                UiPalette.panel(0.92f));
             bg.visible = false;
             bg.onClick = () -> main.requestMenuSelection(row);
             menuButtonBackgrounds[i] = bg;
-            layer.addElement(bg);
+            menuLayer.addElement(bg);
 
             UILayer.UITextElement label = new UILayer.UITextElement(
                 new Vector2f(menuX + 20, menuY + i * 48f + 8),
-                "", 1.55f, new Vector4f(0.92f, 0.95f, 1.0f, 1.0f), fontTextureId);
+                "", 1.55f, UiPalette.cream(1f), fontTextureId);
             label.visible = false;
             label.charLineLimit = 54;
             menuButtonLabels[i] = label;
-            layer.addElement(label);
+            menuLayer.addElement(label);
         }
         menuSubtitle = new UILayer.UITextElement(
             new Vector2f(main.width / 2f - 250f, main.height / 2f - 104f),
-            "", 1.35f, new Vector4f(0.72f, 0.80f, 0.90f, 1.0f), fontTextureId);
+            "", 1.35f, UiPalette.muted(1f), fontTextureId);
         menuSubtitle.visible = false;
         menuSubtitle.charLineLimit = 62;
-        layer.addElement(menuSubtitle);
+        menuLayer.addElement(menuSubtitle);
         menuHint = new UILayer.UITextElement(
             new Vector2f(main.width / 2f - 250f, main.height - 48f),
-            "", 1.2f, new Vector4f(0.78f, 0.84f, 0.92f, 0.95f), fontTextureId);
+            "", 1.2f, UiPalette.muted(0.95f), fontTextureId);
         menuHint.visible = false;
         menuHint.charLineLimit = 80;
-        layer.addElement(menuHint);
+        menuHint.shadow = true;
+        menuLayer.addElement(menuHint);
 
-        // Pause menu sits above the world and below its button labels.
+        // ── Title-screen chrome (Story Mode layout) ──
+        // The shipped Story Mode wordmark, a season line beneath it, a pulsing
+        // yellow splash to its right and the version/copyright lines below.
+        menuLogo = new UILayer.UIElement(new Vector2f(0, 0), new Vector2f(1, 1),
+                new Vector4f(1f, 1f, 1f, 1f));
+        MCGui.sprite(menuLogo, MCGui.MCSM_TITLE, MCGui.MCSM_TITLE_RECT);
+        menuLogo.visible = false;
+        menuLayer.addElement(menuLogo);
+        menuSeasonText = new UILayer.UITextElement(
+            new Vector2f(0, 0), "SEASON THREE", 2.4f, UiPalette.gold(1f), fontTextureId);
+        menuSeasonText.shadow = true;
+        menuSeasonText.visible = false;
+        menuLayer.addElement(menuSeasonText);
+
+        menuTitleText = new UILayer.UITextElement(
+            new Vector2f(0, 0), "VOXEL ENGINE", 6.2f,
+            new Vector4f(1f, 1f, 1f, 1f), fontTextureId);
+        menuTitleText.shadow = true;
+        // Only used when the shipped wordmark is missing.
+        menuTitleText.visible = false;
+        menuLayer.addElement(menuTitleText);
+
+        menuSplashText = new UILayer.UITextElement(
+            new Vector2f(0, 0), "", 1.9f,
+            new Vector4f(1f, 1f, 0.32f, 1f), fontTextureId);
+        menuSplashText.shadow = true;
+        menuSplashText.visible = false;
+        menuLayer.addElement(menuSplashText);
+
+        menuScreenTitle = new UILayer.UITextElement(
+            new Vector2f(0, 0), "", 2.8f,
+            new Vector4f(1f, 1f, 1f, 1f), fontTextureId);
+        menuScreenTitle.shadow = true;
+        menuScreenTitle.visible = false;
+        menuLayer.addElement(menuScreenTitle);
+
+        menuEditionText = new UILayer.UITextElement(
+            new Vector2f(12f, 0), "Voxel Engine 1.0", 1.35f,
+            new Vector4f(0.92f, 0.92f, 0.92f, 0.85f), fontTextureId);
+        menuEditionText.shadow = true;
+        menuEditionText.visible = false;
+        menuLayer.addElement(menuEditionText);
+
+        menuCopyrightText = new UILayer.UITextElement(
+            new Vector2f(0, 0), "Not affiliated with Mojang AB", 1.35f,
+            new Vector4f(0.92f, 0.92f, 0.92f, 0.85f), fontTextureId);
+        menuCopyrightText.shadow = true;
+        menuCopyrightText.visible = false;
+        menuLayer.addElement(menuCopyrightText);
+
+        // Pause menu sits above the live world and below its button labels:
+        // the dimmer is the only backdrop, so the world keeps moving behind it.
         pauseDimmer = new UILayer.UIElement(
             new Vector2f(0, 0), new Vector2f(main.width, main.height),
-            new Vector4f(0.015f, 0.025f, 0.05f, 0.58f));
+            UiPalette.ink(0.42f));
         pauseDimmer.visible = false;
         pauseDimmer.onClick = null;
         layer.addElement(pauseDimmer);
         pausePanel = new UILayer.UIElement(
             new Vector2f(main.width / 2f - 250f, main.height / 2f - 160f),
             new Vector2f(500, 330),
-            new Vector4f(0.045f, 0.065f, 0.11f, 0.96f));
+            UiPalette.panelDeep(0.96f));
+        MCGui.mcsmPanel(pausePanel);
         pausePanel.visible = false;
         layer.addElement(pausePanel);
         pauseTitle = new UILayer.UITextElement(
@@ -1295,14 +1598,14 @@ public class HudUI {
             float y = main.height / 2f - 60f + i * 54f;
             UILayer.UIElement bg = new UILayer.UIElement(
                 new Vector2f(main.width / 2f - 210f, y), new Vector2f(420, 44),
-                new Vector4f(0.10f, 0.15f, 0.23f, 0.96f));
+                UiPalette.panel(0.96f));
             bg.visible = false;
             bg.onClick = () -> main.requestPauseSelection(row);
             pauseButtonBackgrounds[i] = bg;
             layer.addElement(bg);
             UILayer.UITextElement label = new UILayer.UITextElement(
                 new Vector2f(main.width / 2f - 190f, y + 9), "", 1.55f,
-                new Vector4f(0.92f, 0.95f, 1.0f, 1), fontTextureId);
+                UiPalette.cream(1f), fontTextureId);
             label.visible = false;
             pauseButtonLabels[i] = label;
             layer.addElement(label);
@@ -1310,7 +1613,7 @@ public class HudUI {
         pauseHint = new UILayer.UITextElement(
             new Vector2f(main.width / 2f - 210f, main.height / 2f + 126f),
             "ESC resume   ENTER select", 1.15f,
-            new Vector4f(0.70f, 0.78f, 0.88f, 1), fontTextureId);
+            UiPalette.muted(1f), fontTextureId);
         pauseHint.visible = false;
         layer.addElement(pauseHint);
     }
@@ -1422,7 +1725,7 @@ public class HudUI {
         if (stack != null) {
             ItemDefinition def = itemDefinitions.getDefinition(stack.itemId);
             if (def != null) {
-                itemNameElement.text = def.displayName;
+                itemNameElement.text = stackLabel(stack, def);
                 itemNameElement.visible = true;
                 itemNameElement.color.w = 1.0f;
                 itemNameDisplayUntil = glfwGetTime() + 3.0;
@@ -1675,7 +1978,7 @@ public class HudUI {
 
                 if (main.inventoryOpen && chestSlotBackgrounds[i].isPointInside(main.lastMouseX, main.lastMouseY)) {
                     if (def != null) {
-                        itemNameElement.text = def.displayName;
+                        itemNameElement.text = stackLabel(stack, def);
                         itemNameElement.visible = true;
                         itemNameElement.color.w = 1.0f;
                         itemNameDisplayUntil = time + 0.1;
@@ -2068,7 +2371,9 @@ public class HudUI {
             if (!food.visible) continue;
             food.textureId = uiTextureId;
             food.color.set(1, 1, 1, 1);
-            food.pos.set(Main.HOTBAR_X + 10 * 30 + 10 + i * 30, main.height - 40);
+            // Top-left HUD: hunger sits on the same row as the hearts, to their
+            // right, exactly where the icons were built.
+            food.pos.set(Main.HOTBAR_X + 10 * 30 + 10 + i * 30, Main.HOTBAR_Y - 30);
             Vector4f uv = foodValue >= 2.0f ? UIConstants.HUNGER_FULL
                     : (foodValue >= 1.0f ? UIConstants.HUNGER_HALF : UIConstants.HUNGER_EMPTY);
             float fw = uiTextureSize.x;
@@ -2099,7 +2404,7 @@ public class HudUI {
             // Heart base/container behind each heart (always visible, 27x27)
             UILayer.UIElement heartBase = heartBases[i];
             heartBase.visible = !main.commandMode;
-            heartBase.pos.set(Main.HOTBAR_X + i * 30 - 3, main.height - 40 - 3);
+            heartBase.pos.set(Main.HOTBAR_X + i * 30 - 3, Main.HOTBAR_Y - 30 - 3);
             heartBase.uvOffset.set((uvHeartBase.x + 0.5f) / texW, (uvHeartBase.y + 0.5f) / texH);
             heartBase.uvScale.set((uvHeartBase.z - 1.0f) / texW, (uvHeartBase.w - 1.0f) / texH);
 
@@ -2111,7 +2416,7 @@ public class HudUI {
                 heart.visible = false;
             } else {
                 heart.visible = !main.commandMode;
-                heart.pos.set(Main.HOTBAR_X + i * 30, main.height - 40);
+                heart.pos.set(Main.HOTBAR_X + i * 30, Main.HOTBAR_Y - 30);
 
                 Vector4f uv = (heartValue >= 2.0f) ? uvHeartFull : uvHeartHalf;
                 // Inset UV by half a pixel to prevent texture atlas bleeding
@@ -2176,10 +2481,11 @@ public class HudUI {
             switch (ctx.menuScreen) {
                 case MAIN:
                     labels = new String[] { "NEW WORLD", "SHOWCASE WORLD", "TUTORIAL WORLD",
-                        "POINT & CLICK DEMO", "LOAD SAVE", "OPTIONS", "", "" };
-                    count = 6;
-                    menuSubtitle.text = "A small voxel world with big ideas";
-                    menuHint.text = "ARROWS / WHEEL select   ENTER / CLICK confirm   ESC back";
+                        "POINT & CLICK DEMO", "LIGHTING DEMO", "LOAD SAVE", "OPTIONS",
+                        "QUIT GAME" };
+                    count = 8;
+                    menuSubtitle.text = "";
+                    menuHint.text = "";
                     break;
                 case NEW_WORLD_NAME:
                     labels = new String[] { "CONTINUE", "BACK", "", "", "", "", "", "" };
@@ -2229,12 +2535,28 @@ public class HudUI {
             }
         }
 
+        // ── Minecraft-style layout ──
+        // 400x40 buttons on a 2x GUI scale, centred; the title screen stacks
+        // them under the wordmark, the other screens centre them and put a
+        // heading above. Spacing matches vanilla's 20px button + 4px gap.
+        boolean titleScreen = ctx.menuScreen == GameContext.MenuScreen.MAIN;
+        boolean menuShown = inMenu && !paused;
+        float buttonW = 400f, buttonH = 40f, buttonGap = 8f;
+        float buttonX = main.width / 2f - buttonW / 2f;
+        float stackH = count * buttonH + Math.max(0, count - 1) * buttonGap;
+        float startY = titleScreen
+                ? main.height * 0.36f
+                : Math.max(96f, (main.height - stackH) / 2f + 22f);
+
         for (int i = 0; i < MENU_BUTTON_COUNT; i++) {
-            boolean visible = inMenu && !paused && i < count && labels[i] != null && !labels[i].isEmpty();
+            boolean visible = menuShown && i < count && labels[i] != null && !labels[i].isEmpty();
             menuButtonBackgrounds[i].visible = visible;
             menuButtonLabels[i].visible = visible;
             if (!visible) continue;
-            boolean hover = menuButtonBackgrounds[i].isPointInside(ctx.lastMouseX, ctx.lastMouseY);
+            UILayer.UIElement bg = menuButtonBackgrounds[i];
+            bg.pos.set(buttonX, startY + i * (buttonH + buttonGap));
+            bg.size.set(buttonW, buttonH);
+            boolean hover = bg.isPointInside(ctx.lastMouseX, ctx.lastMouseY);
             boolean selected = i == ctx.menuSelection;
             // Mouse-driven selection: hovering a row moves the selection so the
             // keyboard highlight and ENTER always agree with what the mouse is
@@ -2262,20 +2584,139 @@ public class HudUI {
             } else if (ctx.menuScreen == GameContext.MenuScreen.NEW_WORLD_MODE && i < 2) {
                 selected = (i == 1) == (ctx.gameMode == GameContext.GameMode.CREATIVE);
             }
-            menuButtonBackgrounds[i].color.set(
-                hover || selected ? 0.18f : 0.08f,
-                hover || selected ? 0.38f : 0.12f,
-                hover || selected ? 0.42f : 0.18f,
-                hover ? 0.98f : 0.92f);
-            menuButtonLabels[i].text = labels[i];
-            float scale = menuButtonLabels[i].scale;
-            float textWidth = labels[i].length() * 8f * scale;
-            menuButtonLabels[i].pos.set(menuButtonBackgrounds[i].pos.x
-                    + Math.max(18f, (menuButtonBackgrounds[i].size.x - textWidth) * 0.5f),
-                    menuButtonBackgrounds[i].pos.y + 8f);
+            // Vanilla widget sprite: grey plate, light hover plate. White
+            // vertex colour keeps the artwork un-tinted. Without the atlas,
+            // fall back to the flat plates this menu used before.
+            if (MCGui.MCSM_UI != 0) {
+                // Story Mode row plates straight from the shipped spritesheet:
+                // the indigo plate in its pale-yellow frame for the focused row,
+                // the navy plate for the rest (see tools/cut_mcsm_ui.py). White
+                // vertex colour keeps the art's own palette — tinting these is
+                // what turned the menu brown.
+                MCGui.apply(bg, MCGui.MCSM_UI,
+                        (hover || selected) ? MCGui.MCSM_ROW_HOT : MCGui.MCSM_ROW);
+                bg.color.set(1f, 1f, 1f, (hover || selected) ? 1f : 0.94f);
+            } else if (MCGui.WIDGETS != 0) {
+                MCGui.button(bg, hover || selected);
+                bg.color.set(1f, 1f, 1f, 1f);
+            } else {
+                bg.color.set(hover || selected
+                        ? UiPalette.panelLift(0.96f) : UiPalette.panel(0.96f));
+            }
+
+            UILayer.UITextElement label = menuButtonLabels[i];
+            String text = labels[i];
+            // 23 glyphs at scale 2 is 368px, inside the 400px plate.
+            if (text.length() > 23) text = text.substring(0, 20) + "...";
+            label.text = text;
+            label.scale = 2.0f;
+            label.shadow = true;
+            label.color.set(1f, 1f, 1f, 1f);
+            label.charLineLimit = 0;
+            float textWidth = text.length() * 8f * label.scale;
+            label.pos.set(bg.pos.x + Math.max(8f, (buttonW - textWidth) * 0.5f),
+                    bg.pos.y + (buttonH - 8f * label.scale) * 0.5f);
         }
-        menuSubtitle.visible = inMenu && !paused;
-        menuHint.visible = inMenu && !paused;
+
+        // ── Title-screen wordmark, season line and splash ──
+        // The shipped Story Mode art is the wordmark; the old text logo only
+        // fills in when the texture is missing from a trimmed resource pack.
+        boolean logoAvailable = MCGui.MCSM_TITLE != 0 && menuLogo != null;
+        menuLogo.visible = menuShown && titleScreen && logoAvailable;
+        menuTitleText.visible = menuShown && titleScreen && !logoAvailable;
+        menuSeasonText.visible = menuShown && titleScreen;
+        menuSplashText.visible = menuShown && titleScreen;
+        float titleWidth = 0f;
+        float logoBottom = 34f + 8f * 6.2f;
+        if (menuLogo.visible) {
+            // Scale by width and keep the atlas sprite's aspect ratio.
+            float logoW = Math.min(main.width * 0.46f, 540f);
+            float logoH = logoW * (MCGui.MCSM_TITLE_RECT.h / (float) MCGui.MCSM_TITLE_RECT.w);
+            menuLogo.pos.set((main.width - logoW) / 2f, 22f);
+            menuLogo.size.set(logoW, logoH);
+            titleWidth = logoW;
+            logoBottom = 22f + logoH;
+        } else if (menuTitleText.visible) {
+            float titleScale = Math.min(6.2f, (main.width - 160f)
+                    / (menuTitleText.text.length() * 8f));
+            menuTitleText.scale = titleScale;
+            titleWidth = menuTitleText.text.length() * 8f * titleScale;
+            menuTitleText.pos.set((main.width - titleWidth) / 2f, 34f);
+            logoBottom = 34f + 8f * titleScale;
+        }
+        if (menuSeasonText.visible) {
+            menuSeasonText.scale = 2.4f;
+            float seasonW = menuSeasonText.text.length() * 8f * menuSeasonText.scale;
+            menuSeasonText.pos.set((main.width - seasonW) / 2f, logoBottom + 4f);
+        }
+        if (menuSplashText.visible) {
+            if (menuSplashIndex < 0) {
+                menuSplashIndex = (int) (Math.random() * MENU_SPLASHES.length)
+                        % MENU_SPLASHES.length;
+            }
+            menuSplashText.text = MENU_SPLASHES[menuSplashIndex];
+            float pulse = 1f + 0.06f * (float) Math.sin(time * 5.0);
+            menuSplashText.scale = 1.9f * pulse;
+            float splashW = menuSplashText.text.length() * 8f * menuSplashText.scale;
+            float splashX = Math.min(main.width - splashW - 12f,
+                    main.width / 2f + titleWidth * 0.32f);
+            // Below the season line: over the wordmark it collided with the
+            // art's own bottom strokes and read as part of the logo.
+            float splashY = logoBottom + 4f + 8f * menuSeasonText.scale + 10f;
+            menuSplashText.pos.set((main.width - splashW) / 2f, splashY);
+            float flicker = 0.78f + 0.22f * (float) Math.abs(Math.sin(time * 4.0));
+            menuSplashText.color.set(UiPalette.gold(flicker));
+        }
+
+        // ── Heading on the non-title screens ──
+        menuScreenTitle.visible = menuShown && !titleScreen;
+        if (menuScreenTitle.visible) {
+            String heading;
+            switch (ctx.menuScreen) {
+                case NEW_WORLD_NAME:
+                case NEW_WORLD_SEED:
+                case NEW_WORLD_SIZE:
+                case NEW_WORLD_MODE: heading = "CREATE NEW WORLD"; break;
+                case LOAD_SAVE: heading = "LOAD WORLD"; break;
+                case OPTIONS: heading = "OPTIONS"; break;
+                default: heading = ""; break;
+            }
+            menuScreenTitle.text = heading;
+            float headingW = heading.length() * 8f * menuScreenTitle.scale;
+            menuScreenTitle.pos.set((main.width - headingW) / 2f, 58f);
+        }
+
+        // Subtitle carries the per-screen detail (world name, seed, mode...)
+        // and sits just above the button stack. The title screen has none.
+        menuSubtitle.visible = menuShown && !titleScreen && menuSubtitle.text != null
+                && !menuSubtitle.text.isEmpty();
+        if (menuSubtitle.visible) {
+            menuSubtitle.scale = 1.75f;
+            menuSubtitle.color.set(UiPalette.cream(1f));
+            int widest = 0;
+            for (String line : menuSubtitle.text.split("\n")) {
+                widest = Math.max(widest, line.length());
+            }
+            menuSubtitle.pos.set((main.width - widest * 8f * menuSubtitle.scale) / 2f,
+                    startY - 46f);
+        }
+
+        // Bottom-corner render/version lines, exactly where MC puts them.
+        menuEditionText.visible = menuShown;
+        menuEditionText.pos.set(10f, main.height - 20f);
+        menuCopyrightText.visible = menuShown;
+        menuCopyrightText.pos.set(main.width - 10f
+                - menuCopyrightText.text.length() * 8f * menuCopyrightText.scale,
+                main.height - 20f);
+
+        // Key hints are only useful on the creation/load/options screens.
+        menuHint.visible = menuShown && !titleScreen;
+        if (menuHint.visible) {
+            menuHint.scale = 1.3f;
+            menuHint.color.set(UiPalette.muted(0.95f));
+            menuHint.pos.set((main.width - menuHint.text.length() * 8f * menuHint.scale) / 2f,
+                    main.height - 40f);
+        }
 
         pauseDimmer.visible = paused;
         pausePanel.visible = paused;
@@ -2291,10 +2732,16 @@ public class HudUI {
                 // Hovering a pause row moves the keyboard selection with it.
                 if (hover) ctx.pauseSelection = i;
                 boolean selected = i == ctx.pauseSelection;
-                pauseButtonBackgrounds[i].color.set(hover || selected ? 0.18f : 0.10f,
-                    hover || selected ? 0.38f : 0.15f,
-                    hover || selected ? 0.42f : 0.23f,
-                    hover ? 1.0f : 0.96f);
+                if (MCGui.MCSM_UI != 0) {
+                    MCGui.apply(pauseButtonBackgrounds[i], MCGui.MCSM_UI,
+                        (hover || selected) ? MCGui.MCSM_ROW_HOT : MCGui.MCSM_ROW);
+                    pauseButtonBackgrounds[i].color.set(1f, 1f, 1f,
+                        (hover || selected) ? 1.0f : 0.94f);
+                } else {
+                    pauseButtonBackgrounds[i].color.set(hover || selected
+                        ? UiPalette.panelLift(hover ? 1.0f : 0.96f)
+                        : UiPalette.panel(0.96f));
+                }
             }
         }
     }
@@ -2305,18 +2752,39 @@ public class HudUI {
         boolean loading = ctx.spawnLoading;
         boolean preWorld = ctx.initializing || inMenu;
         boolean menuActive = inMenu;
+        // Vanilla hides the in-game HUD on every menu screen; menuLayer owns
+        // the title/options chrome instead.
+        staticLayer.setVisible(!menuActive);
+        // Title screen: the panorama (live 3D panorama when the game has one,
+        // otherwise the shipped panorama_0.png). Every other menu screen uses
+        // vanilla's tiled dirt wall. Both are always visible so they consume
+        // clicks and hidden inventory controls can't be hit.
+        boolean titleScreen = ctx.menuScreen == GameContext.MenuScreen.MAIN;
         menuBackground.visible = menuActive;
-        if (main.panoramaActive) {
-            // The 3D panorama renders behind the menu: fade the 2D backdrop image
-            // out entirely, but keep the element visible (alpha 0) so it still
-            // consumes clicks and hidden inventory controls can't be hit.
+        menuDirtBackground.visible = menuActive && !titleScreen;
+        if (!titleScreen) {
+            // Dirt layer draws itself; the panorama quad underneath is irrelevant.
+            menuBackground.color.w = 0f;
+        } else if (main.panoramaActive) {
             menuBackground.color.w = 0f;
         } else {
-            menuBackground.color.w = 1f;
-            if (menuActive && menuBackground.textureId == 0) {
+            if (MCGui.PANORAMA != 0) {
+                // Cover-crop the square panorama face to the window instead of
+                // stretching it, exactly like the live panorama composition.
+                float cover = Math.min(1f, main.height / (float) main.width);
+                menuBackground.textureId = MCGui.PANORAMA;
+                menuBackground.textureType = 0;
+                menuBackground.tiled = false;
+                menuBackground.uvOffset.set(0f, (1f - cover) * 0.5f);
+                menuBackground.uvScale.set(1f, cover);
+            } else if (menuBackground.textureId == 0) {
                 menuBackground.textureId = ctx.uiTheme == GameContext.UiTheme.DARK
                     ? menuBackgroundDarkTextureId : menuBackgroundTextureId;
             }
+            menuBackground.color.set(1f, 1f, 1f, 1f);
+            // Cover the screen: panorama art is 16:9, so scale up to fill.
+            menuBackground.pos.set(0f, 0f);
+            menuBackground.size.set(main.width, main.height);
         }
         spawnLoadingBackground.visible = loading && preWorld && !menuActive;
         loadingPopupBackground.visible = loading && !preWorld && !menuActive;
@@ -2351,19 +2819,19 @@ public class HudUI {
         // Translucent text backdrop (menu only): dark pane in dark mode, pale
         // pane in light mode so the theme's text color stays readable over the
         // 3D panorama behind it.
-        menuTextPanel.visible = menuActive && !ctx.pauseMenuOpen;
+        menuTextPanel.visible = false; // replaced by the dirt / panorama chrome
         if (dark) {
-            menuTextPanel.color.set(0.05f, 0.06f, 0.09f, 0.55f);
+            menuTextPanel.color.set(UiPalette.panelDeep(0.55f));
         } else {
             menuTextPanel.color.set(1.0f, 1.0f, 1.0f, 0.40f);
         }
 
-        float titleR = dark ? 0.95f : 0.12f;
-        float titleG = dark ? 0.85f : 0.10f;
-        float titleB = dark ? 0.45f : 0.55f;
-        float bodyR = dark ? 0.85f : 0.10f;
-        float bodyG = dark ? 0.78f : 0.15f;
-        float bodyB = dark ? 0.55f : 0.35f;
+        float titleR = dark ? 0.95f : 0.36f;
+        float titleG = dark ? 0.85f : 0.24f;
+        float titleB = dark ? 0.45f : 0.09f;
+        float bodyR = dark ? 0.85f : 0.26f;
+        float bodyG = dark ? 0.78f : 0.18f;
+        float bodyB = dark ? 0.55f : 0.11f;
 
         // A small, deterministic pulse makes it clear that the game is working.
         int spinnerFrame = (int) Math.floor(time * 8.0) % 4;
@@ -2375,27 +2843,27 @@ public class HudUI {
             // Full-screen main menu centered on the panorama backdrop.
             spawnLoadingTitle.pos.set(main.width / 2f - 210f, main.height / 2f - 150f);
             spawnLoadingTitle.scale = 4.5f;
-            spawnLoadingTitle.color.set(titleR, titleG, titleB, 1.0f);
+            spawnLoadingTitle.color.set(UiPalette.srgb(titleR, titleG, titleB, 1.0f));
             spawnLoadingTitle.charLineLimit = 40;
             spawnLoadingSpinner.pos.set(main.width / 2f - 12, main.height / 2f - 10);
             spawnLoadingSpinner.scale = 3.0f;
             spawnLoadingSpinner.color.set(dark ? 0.95f : 0.2f, dark ? 0.65f : 0.4f, dark ? 0.20f : 0.6f, pulse);
             spawnLoadingStatus.pos.set(main.width / 2f - 300f, main.height / 2f - 90f);
             spawnLoadingStatus.scale = 2.0f;
-            spawnLoadingStatus.color.set(bodyR, bodyG, bodyB, 1.0f);
+            spawnLoadingStatus.color.set(UiPalette.srgb(bodyR, bodyG, bodyB, 1.0f));
             spawnLoadingStatus.charLineLimit = 46;
         } else if (preWorld) {
             // Centered layout on the full-screen loading artwork.
             spawnLoadingTitle.pos.set(main.width / 2f - 175f, main.height / 2f - 70);
             spawnLoadingTitle.scale = 3.0f;
-            spawnLoadingTitle.color.set(0.06f, 0.22f, 0.32f, 1.0f);
+            spawnLoadingTitle.color.set(UiPalette.srgb(0.42f, 0.28f, 0.12f, 1.0f));
             spawnLoadingTitle.charLineLimit = 40;
             spawnLoadingSpinner.pos.set(main.width / 2f - 12, main.height / 2f - 10);
             spawnLoadingSpinner.scale = 3.0f;
-            spawnLoadingSpinner.color.set(0.06f, 0.48f, 0.48f, pulse);
+            spawnLoadingSpinner.color.set(UiPalette.srgb(0.62f, 0.42f, 0.10f, pulse));
             spawnLoadingStatus.pos.set(main.width / 2f - 230, main.height / 2f + 55);
             spawnLoadingStatus.scale = 1.8f;
-            spawnLoadingStatus.color.set(0.10f, 0.28f, 0.34f, 1.0f);
+            spawnLoadingStatus.color.set(UiPalette.srgb(0.34f, 0.24f, 0.12f, 1.0f));
             spawnLoadingStatus.charLineLimit = 52;
         } else {
             // Top-right toast: panel at (width-268, 12) sized 256x64.
@@ -2404,14 +2872,14 @@ public class HudUI {
             loadingPopupBackground.pos.set(popupX, popupY);
             spawnLoadingTitle.pos.set(popupX + 42f, popupY + 12f);
             spawnLoadingTitle.scale = 1.3f;
-            spawnLoadingTitle.color.set(0.92f, 0.95f, 1.0f, 1.0f);
+            spawnLoadingTitle.color.set(UiPalette.cream(1.0f));
             spawnLoadingTitle.charLineLimit = 22;
             spawnLoadingSpinner.pos.set(popupX + 222f, popupY + 12f);
             spawnLoadingSpinner.scale = 1.4f;
             spawnLoadingSpinner.color.set(0.98f, 0.78f, 0.36f, pulse);
             spawnLoadingStatus.pos.set(popupX + 42f, popupY + 38f);
             spawnLoadingStatus.scale = 1.0f;
-            spawnLoadingStatus.color.set(0.72f, 0.78f, 0.88f, 1.0f);
+            spawnLoadingStatus.color.set(UiPalette.muted(1.0f));
             spawnLoadingStatus.charLineLimit = 26;
         }
     }
@@ -2512,6 +2980,300 @@ public class HudUI {
         }
     }
 
+    /** "Iron Pickaxe (Efficiency II)" — the name every item tooltip shows. */
+    private static String stackLabel(ItemStack stack, ItemDefinition def) {
+        String enchant = stack == null ? null : stack.enchantLabel();
+        return enchant == null ? def.displayName : def.displayName + " (" + enchant + ")";
+    }
+
+    /**
+     * Enchanting table plate: title, held item + XP level, then one row per
+     * offer. Rows are hit-testable so the mouse and the 1-3 keys agree.
+     */
+    public void updateEnchantPanel() {
+        if (enchantBackdrop == null) return;
+        boolean show = ctx.enchantingOpen
+                && ctx.menuScreen == GameContext.MenuScreen.IN_GAME && !ctx.pauseMenuOpen;
+        enchantBackdrop.visible = show;
+        enchantText.visible = show;
+        enchantRowCount = 0;
+        if (!show) {
+            enchantHover.visible = false;
+            return;
+        }
+
+        int count = ctx.enchantingOffers.size();
+        float scale = 1.55f;
+        float lineHeight = 8f * scale + 4f;
+        float width = Math.min(main.width - 40f, 620f);
+        float height = lineHeight * (count + 3) + 24f;
+        float x = (main.width - width) / 2f;
+        float y = Math.max(60f, main.height * 0.24f);
+
+        StringBuilder text = new StringBuilder("ENCHANTING TABLE");
+        text.append('\n').append("Holding: ").append(ctx.enchantingItemName)
+                .append("   Level ").append(ctx.player.getExperienceLevel());
+        for (int i = 0; i < count; i++) {
+            text.append('\n').append('[').append(i + 1).append("] ")
+                    .append(ctx.enchantingOffers.get(i).row());
+        }
+        text.append('\n').append("[1-").append(Math.max(1, count))
+                .append("] enchant   [ESC] close");
+
+        enchantText.text = text.toString();
+        enchantText.textureId = fontTextureId;
+        enchantText.scale = scale;
+        enchantText.color.set(0.96f, 0.92f, 1f, 1f);
+        enchantText.pos.set(x + 16f, y + 12f);
+
+        enchantBackdrop.pos.set(x, y);
+        enchantBackdrop.size.set(width, height);
+        enchantRowX = x + 14f;
+        enchantRowW = width - 28f;
+        enchantRowH = lineHeight;
+        for (int i = 0; i < count && i < enchantRowY.length; i++) {
+            enchantRowY[i] = y + 12f + lineHeight * (2 + i);
+            enchantRowCount++;
+        }
+
+        int hover = enchantRowAt(ctx.lastMouseX, ctx.lastMouseY);
+        enchantHover.visible = hover >= 0;
+        if (hover >= 0) {
+            enchantHover.pos.set(enchantRowX, enchantRowY[hover]);
+            enchantHover.size.set(enchantRowW, enchantRowH - 2f);
+            enchantHover.color.set(0.72f, 0.52f, 0.98f, 0.24f);
+        }
+    }
+
+    /** Offer row under a mouse position, or -1. */
+    public int enchantRowAt(float x, float y) {
+        for (int i = 0; i < enchantRowCount; i++) {
+            if (x >= enchantRowX && x <= enchantRowX + enchantRowW
+                    && y >= enchantRowY[i] - 2f && y <= enchantRowY[i] + enchantRowH - 2f) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * MCSM decision + QTE pass. Reads the cinematic director's volatile overlay
+     * state and lays out the plate, timer bars and hover highlight. Hit-testing
+     * rows here keeps mouse picking aligned with what is drawn.
+     */
+    public void updateChoiceOverlay() {
+        if (choiceBackdrop == null) return;
+        boolean inGame = ctx.menuScreen == GameContext.MenuScreen.IN_GAME && !ctx.pauseMenuOpen;
+        com.voxel.cinematic.CinematicChoice choice =
+                (inGame && ctx.cinematic != null) ? ctx.cinematic.getActiveChoice() : null;
+        boolean showChoice = choice != null;
+        choiceBackdrop.visible = showChoice;
+        choiceText.visible = showChoice;
+        choiceTimerBar.visible = showChoice;
+        choiceRowCount = 0;
+
+        float time = (float) glfwGetTime();
+        for (int i = 0; i < choiceCards.length; i++) {
+            boolean used = showChoice && i < choice.optionCount();
+            choiceCards[i].visible = used;
+            choiceCardAccent[i].visible = used;
+            choiceCardText[i].visible = used;
+        }
+        if (showChoice) {
+            int count = choice.optionCount();
+            float cardGap = 12f;
+            float available = Math.min(main.width - 56f, 1280f);
+            float cardW = Math.min(300f,
+                    (available - cardGap * Math.max(0, count - 1)) / Math.max(1, count));
+            float cardH = 56f;
+            float totalW = count * cardW + cardGap * Math.max(0, count - 1);
+            float rowX = (main.width - totalW) / 2f;
+            float rowY = Math.max(120f, main.height * 0.70f);
+
+            // Prompt: one wide dark banner above the cards, centred.
+            float promptScale = 1.45f;
+            float promptWidth = Math.min(main.width - 80f, 980f);
+            int promptLimit = Math.max(20, (int) (promptWidth / (8f * promptScale)));
+            int promptLines = countWrapped(choice.prompt(), promptLimit);
+            float promptHeight = 8f * promptScale * promptLines + 18f;
+            float promptY = rowY - promptHeight - 22f;
+            choiceBackdrop.visible = true;
+            choiceBackdrop.pos.set((main.width - promptWidth) / 2f, promptY);
+            choiceBackdrop.size.set(promptWidth, promptHeight);
+            choiceBackdrop.color.set(UiPalette.panelDeep(0.86f));
+
+            choiceText.visible = true;
+            choiceText.text = choice.prompt();
+            choiceText.textureId = fontTextureId;
+            choiceText.scale = promptScale;
+            choiceText.color.set(UiPalette.cream(1f));
+            choiceText.charLineLimit = promptLimit;
+            choiceText.pos.set((main.width - promptWidth) / 2f + 14f, promptY + 9f);
+
+            // Countdown: a thin MCSM line that drains under the prompt; it
+            // turns amber then red as the decision window closes.
+            float remaining = ctx.cinematic.getChoiceProgress();
+            choiceTimerBar.visible = true;
+            choiceTimerBar.pos.set(rowX, promptY + promptHeight + 8f);
+            choiceTimerBar.size.set(totalW * remaining, 4f);
+            if (remaining < 0.3f) {
+                choiceTimerBar.color.set(UiPalette.ember(0.95f));
+            } else if (remaining < 0.6f) {
+                choiceTimerBar.color.set(UiPalette.amber(0.95f));
+            } else {
+                choiceTimerBar.color.set(UiPalette.gold(0.95f));
+            }
+
+            int hover = choiceRowAt(ctx.lastMouseX, ctx.lastMouseY);
+            choiceRowCount = count;
+            for (int i = 0; i < count; i++) {
+                float cardX = rowX + i * (cardW + cardGap);
+                choiceCards[i].pos.set(cardX, rowY);
+                choiceCards[i].size.set(cardW, cardH);
+                boolean hot = i == hover;
+                float pulse = hot ? 0.55f + 0.35f * (float) Math.sin(time * 7f) : 0f;
+                choiceCards[i].color.set(UiPalette.blend(
+                        UiPalette.PANEL, UiPalette.PANEL_LIFT, pulse, 0.94f));
+
+                choiceCardAccent[i].pos.set(cardX, rowY);
+                choiceCardAccent[i].size.set(cardW, hot ? 3f : 2f);
+                choiceCardAccent[i].color.set(UiPalette.gold(hot ? 1f : 0.9f));
+
+                choiceRowX = cardX;
+                choiceRowW = cardW;
+                choiceRowH = cardH;
+                choiceRowY[i] = rowY;
+
+                // The digit is the keyboard shortcut; clicking the card works
+                // the same way and hovers the same highlight.
+                String label = (i + 1) + "  " + choice.optionAt(i).label;
+                float textScale = 1.22f;
+                int limit = Math.max(8, (int) ((cardW - 20f) / (8f * textScale)));
+                int lines = countWrapped(label, limit);
+                float textBlock = 8f * textScale * lines;
+                int longest = longestWrappedLine(label, limit);
+                float textWidth = Math.min(cardW - 20f, longest * 8f * textScale);
+                choiceCardText[i].text = label;
+                choiceCardText[i].textureId = fontTextureId;
+                choiceCardText[i].scale = textScale;
+                choiceCardText[i].charLineLimit = limit;
+                choiceCardText[i].color.set(UiPalette.cream(hot ? 1f : 0.94f));
+                choiceCardText[i].pos.set(
+                        cardX + Math.max(8f, (cardW - textWidth) / 2f),
+                        rowY + (cardH - textBlock) / 2f - 2f);
+
+            }
+            choiceHover.visible = false;
+        }
+        com.voxel.cinematic.QuickTimeEvent qte =
+                (inGame && ctx.cinematic != null) ? ctx.cinematic.getActiveQte() : null;
+        boolean showQte = qte != null;
+        qteBackdrop.visible = showQte;
+        qteText.visible = showQte;
+        qteKeyText.visible = showQte;
+        qteBar.visible = showQte;
+        if (showQte) {
+            float promptScale = 2.2f;
+            float promptWidth = Math.min(main.width - 60f, qte.prompt().length() * 8f * promptScale);
+            float px = (main.width - promptWidth) / 2f;
+            float py = main.height * 0.27f;
+            qteBackdrop.pos.set(px - 24f, py - 16f);
+            qteBackdrop.size.set(promptWidth + 48f, 110f);
+
+            qteText.text = qte.prompt();
+            qteText.textureId = fontTextureId;
+            qteText.scale = promptScale;
+            qteText.pos.set(px, py);
+            qteText.color.set(1f, 0.94f, 0.86f, 1f);
+
+            String key = qte.keyHint();
+            qteKeyText.text = "PRESS  " + key;
+            qteKeyText.scale = 2.0f;
+            qteKeyText.pos.set((main.width - qteKeyText.text.length() * 8f * 2f) / 2f,
+                    py + 8f * promptScale + 12f);
+            float pulse = 0.75f + 0.25f * (float) Math.abs(Math.sin(time * 9.0));
+            qteKeyText.color.set(1f, 0.82f, 0.28f, pulse);
+
+            float remaining = ctx.cinematic.getQteProgress();
+            qteBar.pos.set(px, py + 8f * promptScale + 40f);
+            qteBar.size.set(promptWidth * remaining, 4f);
+            qteBar.color.set(0.98f, 0.3f, 0.2f, 0.95f);
+        }
+    }
+
+    /** Option row under a mouse position, or -1. */
+    public int choiceRowAt(float x, float y) {
+        for (int i = 0; i < choiceRowCount; i++) {
+            UILayer.UIElement card = choiceCards[i];
+            if (card != null && card.visible && card.isPointInside(x, y)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** Length of the longest line a greedy wrap would produce. */
+    private static int longestWrappedLine(String value, int limit) {
+        if (value == null || value.isEmpty()) return 0;
+        String[] words = value.trim().split("\\s+");
+        int line = 0;
+        int longest = 0;
+        for (String word : words) {
+            int add = (line == 0 ? 0 : 1) + word.length();
+            if (limit > 0 && line + add > limit && line > 0) {
+                longest = Math.max(longest, line);
+                line = word.length();
+            } else {
+                line += add;
+            }
+        }
+        return Math.max(longest, line);
+    }
+
+    /** Greedy wrap line count, matching the text renderer's word wrap. */
+    private static int countWrapped(String value, int limit) {
+        if (value == null || value.isEmpty()) return 1;
+        int lines = 0;
+        for (String paragraph : value.split("\\n")) {
+            int line = 0;
+            for (String word : paragraph.split("\\s+")) {
+                if (word.isEmpty()) continue;
+                int add = line == 0 ? word.length() : word.length() + 1;
+                if (line > 0 && line + add > limit) {
+                    lines++;
+                    line = word.length();
+                } else {
+                    line += add;
+                }
+            }
+            lines++;
+        }
+        return Math.max(1, lines);
+    }
+
+    /**
+     * Damage feedback pass: a red full-screen flash that fades over ~0.35 s.
+     * Reads {@link GameContext#hurtFlash}, which the logic thread raises on any
+     * health loss, and owns its decay so the flash is frame-rate independent.
+     */
+    public void updateHurtOverlay(float dt) {
+        if (damageQuad == null) return;
+        float flash = ctx.hurtFlash;
+        if (flash > 0f) {
+            flash = Math.max(0f, flash - Math.max(0f, dt) * 2.8f);
+            ctx.hurtFlash = flash;
+        }
+        boolean visible = flash > 0.01f;
+        damageQuad.visible = visible;
+        if (visible) {
+            damageQuad.pos.set(0, 0);
+            damageQuad.size.set(main.width, main.height);
+            // Peak alpha stays low enough to read the scene (and the hearts)
+            // through the flash; the curve eases out so it never pops off.
+            damageQuad.color.set(0.62f, 0.02f, 0.02f, 0.38f * flash * flash);
+        }
+    }
+
     /**
      * Live speech captions pass: advances the word-reveal clock and centers
      * the caption block (speaker + line) at bottom center. Rendering only
@@ -2585,7 +3347,7 @@ public class HudUI {
         float y = main.height * 0.58f;
         tradePanelBackdrop.pos.set(x, y);
         tradePanelBackdrop.size.set(width, height);
-        tradePanelBackdrop.color.set(0.05f, 0.05f, 0.08f, 0.72f);
+        tradePanelBackdrop.color.set(UiPalette.panelDeep(0.72f));
         tradePanelBackdrop.visible = true;
         tradePanelText.pos.set(x + 12f, y + 10f);
         tradePanelText.visible = true;
@@ -2621,20 +3383,37 @@ public class HudUI {
         // This MUST live here rather than in updateInventoryUi(), whose early-
         // return dirty check would freeze the cursor in place whenever no
         // inventory state changed.
+        // Refresh the prompts first so the reticle can react to the same frame's
+        // hover state.
+        if (billboards != null) billboards.update(time);
+
         if (crosshairElement != null) {
             crosshairElement.visible = !main.inventoryOpen && !main.commandMode;
             if (crosshairElement.visible) {
-                // Fixed white 8x8 reticle at the screen centre: the point-and-
-                // click cursor is pinned there, so both modes share one look.
-                float sz = 8f;
+                // The point-and-click reticle is pinned to the screen centre
+                // (the click target), but widens and warms to amber when a
+                // usable block/entity or highlighted prompt is under it.
+                boolean hover = main.pacHoveringInteractable
+                        || (billboards != null && billboards.hasHighlightedMarker());
+                float sz = hover ? 12f : 8f;
                 crosshairElement.pos.set(main.width / 2f - sz / 2f, main.height / 2f - sz / 2f);
                 crosshairElement.size.set(sz, sz);
-                crosshairElement.color.set(1, 1, 1, 1);
+                if (hover) {
+                    crosshairElement.color.set(1f, 0.84f, 0.32f, 1f);
+                } else {
+                    crosshairElement.color.set(1f, 1f, 1f, 1f);
+                }
             }
         }
 
-        if (billboards == null) return;
-        billboards.update(time);
+        if (billboards == null) {
+            if (pacPromptText != null) {
+                pacPromptText.visible = false;
+                pacPromptPlate.visible = false;
+                pacPromptAccent.visible = false;
+            }
+            return;
+        }
         int count = billboards.getMarkerCount();
         for (int i = 0; i < MAX_BILLBOARDS; i++) {
             boolean on = i < count;
@@ -2642,15 +3421,30 @@ public class HudUI {
             UILayer.UITextElement nameEl = markerNameTexts[i];
             if (!on) {
                 nameEl.visible = false;
+                markerPlates[i].visible = false;
+                markerAccents[i].visible = false;
                 for (int j = 0; j < MAX_MARKER_ACTIONS; j++) markerActionTexts[i][j].visible = false;
                 continue;
             }
             float x = billboards.getMarkerX(i);
             float y = billboards.getMarkerY(i);
-            float a = billboards.getMarkerAlpha(i);
             boolean hot = billboards.isMarkerHighlighted(i);
+            // The hovered prompt is the click target: it stays full brightness
+            // and lists its verbs. Everything else recedes to a dim name tag so
+            // a room full of interactables still reads as one target, not six.
+            float a = billboards.getMarkerAlpha(i) * (hot ? 1f : MARKER_IDLE_ALPHA);
+            // Fully culled by the billboard raycast (behind a wall, off-screen
+            // or behind the camera): hide the card too, not just its lines.
+            if (a <= 0.01f) {
+                for (int p = 0; p < MARKER_PART_COUNT; p++) markerParts[i][p].visible = false;
+                nameEl.visible = false;
+                markerPlates[i].visible = false;
+                markerAccents[i].visible = false;
+                for (int j = 0; j < MAX_MARKER_ACTIONS; j++) markerActionTexts[i][j].visible = false;
+                continue;
+            }
             String name = billboards.getMarkerName(i);
-            int nAct = Math.min(billboards.getMarkerActionCount(i), MAX_MARKER_ACTIONS);
+            int nAct = hot ? Math.min(billboards.getMarkerActionCount(i), MAX_MARKER_ACTIONS) : 0;
 
             // --- Text metrics (needed before choosing line direction) ---
             float nameScale = hot ? 2.67f : 2.17f;
@@ -2660,19 +3454,25 @@ public class HudUI {
             float listH = nameLineH + nAct * actLineH;
 
             // --- Palette: white lines with a grey 1px outline on both sides ---
-            Vector4f white = new Vector4f(1f, 1f, 1f, a);
-            Vector4f grey = new Vector4f(0.55f, 0.55f, 0.55f, a);
+            Vector4f white = UiPalette.cream(a);
+            Vector4f grey = UiPalette.ink(a);
 
             // --- Geometry: hollow square -> 45° elbow -> vertical stem ---
-            float sq = hot ? 45f : 35f, half = sq / 2f;
+            float sq = hot ? 40f : 30f, half = sq / 2f;
             float t = 5f;                       // line thickness
             float o = MARKER_OUTLINE;           // grey outline width per side
-            float d = hot ? 130f : 100f;        // diagonal advance per axis
-            float stemLen = hot ? 210f : 170f;
+            float d = hot ? 90f : 70f;          // diagonal advance per axis
+            float stemLen = hot ? 150f : 120f;
 
-            // Flip the elbow downward when the text list would run off-screen.
-            boolean up = (y - half - d - stemLen - listH) > 8f;
+            // Point the leader into the half of the screen with more room, then
+            // shorten it until the card fits inside that half. The old rule
+            // flipped only when the whole fixed-length leader missed the top,
+            // which pinned the card to a screen edge (over the bottom HUD) with
+            // a 250px line that no longer read as belonging to its target.
+            boolean up = (y - half) >= (main.height - (y + half));
             int dir = up ? 1 : -1;
+            float room = (up ? (y - half) : (main.height - (y + half))) - listH - 12f;
+            if (d + stemLen > room) stemLen = Math.max(18f, room - d);
 
             // Hollow square centred on the anchor (white edges inside the
             // square bounds; black strips wrap 2px around the outside,
@@ -2730,18 +3530,21 @@ public class HudUI {
             }
 
             // --- Name + action list beside the end of the stem ---
-            float listX = elbowX + 20f;
-            float widest = (name == null ? 0 : name.length()) * 8f * nameScale;
+            // One action is the click itself; more than one gets key numbers,
+            // matching the point-and-click keys (1..n) in Main.
+            float widest = (name == null ? 0 : name.length() * 8f * nameScale);
             for (int j = 0; j < nAct; j++) {
-                String s = billboards.getMarkerAction(i, j);
+                String s = actionText(billboards.getMarkerAction(i, j), j, nAct);
                 widest = Math.max(widest, (s == null ? 0 : s.length()) * 8f * actScale);
             }
-            if (listX + widest > main.width - 40f) {
-                listX = elbowX - 20f - widest; // mirror to the left of the stem
+            float padded = widest + 20f;
+            float listX = elbowX + 20f;
+            if (listX + padded > main.width - 20f) {
+                listX = elbowX - 20f - padded; // mirror to the left of the stem
             }
 
             // Grey outline shared by all prompt text (alpha tracks the fill).
-            Vector4f textOutline = new Vector4f(0.35f, 0.35f, 0.35f, 1f);
+            Vector4f textOutline = UiPalette.ink(1f);
 
             nameEl.visible = true;
             // These elements are built before tryLoadFontTexture() runs, so
@@ -2754,8 +3557,33 @@ public class HudUI {
             nameEl.outlineColor.set(textOutline);
             nameEl.outlineWidth = 2f;
             // Stack: name first, then actions; block starts just past the stem.
-            float lineY = dir > 0 ? elbowY - stemLen - listH - 4f : elbowY + stemLen + 4f;
-            nameEl.pos.set(listX, lineY);
+            float blockTop = dir > 0 ? elbowY - stemLen - listH - 4f : elbowY + stemLen + 4f;
+            float pad = hot ? 10f : 8f;
+            float plateW = padded + pad * 2f;
+            float plateH = listH + pad * 2f;
+            float plateX = Math.max(6f, Math.min(main.width - plateW - 6f, listX - pad));
+            float plateY = Math.max(6f, Math.min(main.height - plateH - 6f, blockTop - pad));
+            float lineY = plateY + pad;
+            float textX = plateX + pad;
+
+            // The plate is the MCSM prompt card: readable over grass, lava and
+            // void alike, with the accent marking the prompt's leading edge.
+            UILayer.UIElement plate = markerPlates[i];
+            plate.visible = true;
+            plate.pos.set(plateX, plateY);
+            plate.size.set(plateW, plateH);
+            // Alpha tracks the marker's own fade (distance + idle dim) so a
+            // receding prompt does not leave a full-strength card behind.
+            if (hot) plate.color.set(UiPalette.panelLift(0.94f * a));
+            else plate.color.set(UiPalette.panel(0.86f * a));
+            UILayer.UIElement accent = markerAccents[i];
+            accent.visible = true;
+            accent.pos.set(plateX, plateY);
+            accent.size.set(hot ? 4f : 3f, plateH);
+            if (hot) accent.color.set(UiPalette.gold(a));
+            else accent.color.set(UiPalette.srgb(0.66f, 0.50f, 0.24f, 0.9f * a));
+
+            nameEl.pos.set(textX, lineY);
             lineY += nameLineH;
             for (int j = 0; j < MAX_MARKER_ACTIONS; j++) {
                 UILayer.UITextElement act = markerActionTexts[i][j];
@@ -2765,15 +3593,81 @@ public class HudUI {
                 act.outlined = true;
                 act.outlineColor.set(textOutline);
                 act.outlineWidth = 2f;
-                String s = billboards.getMarkerAction(i, j);
-                act.text = s == null ? "" : "- " + s;
+                act.text = actionText(billboards.getMarkerAction(i, j), j, nAct);
                 act.scale = actScale;
-                float acol = hot ? 1f : 0.7f;
-                act.color.set(acol, acol, acol, a);
-                act.pos.set(listX, lineY);
+                act.color.set(hot ? UiPalette.cream(a) : UiPalette.muted(a));
+                act.pos.set(textX, lineY);
                 lineY += actLineH;
             }
         }
+        // Finally the prompt that answers "what does clicking do?" for the
+        // target under the cursor.
+        updatePacPrompt();
+    }
+
+    /**
+     * Footprint of a prompt card in window pixels, for unattended capture
+     * checks: {x, y, w, h}. Returns null when the card is not drawn.
+     */
+    public float[] getMarkerPlateRect(int i, float[] out) {
+        if (i < 0 || i >= MAX_BILLBOARDS || !markerPlates[i].visible) return null;
+        out[0] = markerPlates[i].pos.x;
+        out[1] = markerPlates[i].pos.y;
+        out[2] = markerPlates[i].size.x;
+        out[3] = markerPlates[i].size.y;
+        return out;
+    }
+
+    /**
+     * The reticle action prompt: what a click at the centre would do. Shown
+     * only while a prompt is hovered, so walking around leaves the screen
+     * quiet; multi-action targets list their key hints here because that is
+     * where the player is already looking when they decide to click.
+     */
+    private void updatePacPrompt() {
+        if (pacPromptText == null) return;
+        int hovered = billboards == null ? -1 : billboards.getHighlightedMarker();
+        boolean show = hovered >= 0 && !main.inventoryOpen && !main.commandMode
+                && crosshairElement != null && crosshairElement.visible
+                && billboards.getMarkerAlpha(hovered) > 0.01f;
+        if (!show) {
+            pacPromptText.visible = false;
+            pacPromptPlate.visible = false;
+            pacPromptAccent.visible = false;
+            return;
+        }
+        int n = Math.min(billboards.getMarkerActionCount(hovered), MAX_MARKER_ACTIONS);
+        String[] verbs = new String[n];
+        for (int j = 0; j < n; j++) verbs[j] = billboards.getMarkerAction(hovered, j);
+        String text = com.voxel.game.InteractionBillboardSystem.promptLine(
+                billboards.getMarkerName(hovered), verbs);
+        float textW = text.length() * 8f * PAC_PROMPT_SCALE;
+        float padX = 12f, padY = 6f;
+        float plateW = textW + padX * 2f;
+        float plateH = 12f * PAC_PROMPT_SCALE + padY * 2f;
+        // Sit under the reticle, but never off the screen edge on a tiny window.
+        float plateX = Math.max(6f, Math.min(main.width - plateW - 6f, main.width / 2f - plateW / 2f));
+        float plateY = main.height / 2f + 34f; // clear of the anchor square
+        pacPromptPlate.visible = true;
+        pacPromptPlate.pos.set(plateX, plateY);
+        pacPromptPlate.size.set(plateW, plateH);
+        pacPromptPlate.color.set(UiPalette.panel(0.92f));
+        pacPromptAccent.visible = true;
+        pacPromptAccent.pos.set(plateX, plateY);
+        pacPromptAccent.size.set(3f, plateH);
+        pacPromptAccent.color.set(UiPalette.gold(1f));
+        pacPromptText.visible = true;
+        pacPromptText.textureId = fontTextureId;
+        pacPromptText.text = text;
+        pacPromptText.pos.set(plateX + padX, plateY + padY);
+        pacPromptText.color.set(UiPalette.cream(1f));
+    }
+
+    /** Prompt action line: "CLICK  Talk" or "[1] Talk" when there is a choice. */
+    private static String actionText(String action, int index, int count) {
+        String verb = action == null ? "" : action;
+        if (count > 1) return "[" + (index + 1) + "]  " + verb;
+        return "CLICK  " + verb;
     }
 
     public void updateWindowTitle() {

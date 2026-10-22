@@ -15,6 +15,53 @@
             <phase>none</phase>
           </execution>
           <execution>
+            <id>copy-classpath-assets-for-tests</id>
+            <phase>process-test-resources</phase>
+            <goals>
+              <goal>copy-resources</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+              <resources>
+                <resource>
+                  <directory>src/main/resources</directory>
+                  <includes>
+                    <include>dialogue.json</include>
+                    <include>create_content.json</include>
+                  </includes>
+                </resource>
+                <resource>
+                  <directory>src/main/resources/ai</directory>
+                  <targetPath>ai</targetPath>
+                  <includes>
+                    <include>**/*.json</include>
+                  </includes>
+                </resource>
+                <resource>
+                  <directory>src/main/resources/voice</directory>
+                  <targetPath>voice</targetPath>
+                  <includes>
+                    <include>**/*</include>
+                  </includes>
+                </resource>
+                <resource>
+                  <directory>src/main/resources/ui</directory>
+                  <targetPath>ui</targetPath>
+                  <includes>
+                    <include>**/*</include>
+                  </includes>
+                </resource>
+                <resource>
+                  <directory>src/main/resources/shaders</directory>
+                  <targetPath>shaders</targetPath>
+                  <includes>
+                    <include>**/*</include>
+                  </includes>
+                </resource>
+              </resources>
+            </configuration>
+          </execution>
+          <execution>
             <id>copy-assets-for-jar</id>
             <phase>prepare-package</phase>
             <goals>
@@ -37,7 +84,6 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <version>3.11.0</version>
         <configuration>
-          <release>8</release>
           <source>1.8</source>
           <target>1.8</target>
           <useIncrementalCompilation>true</useIncrementalCompilation>
@@ -102,6 +148,8 @@
                     <exclude>META-INF/*.SF</exclude>
                     <exclude>META-INF/*.DSA</exclude>
                     <exclude>META-INF/*.RSA</exclude>
+                    <exclude>**/*.pdb</exclude>
+                    <exclude>**/*.dSYM/**</exclude>
                   </excludes>
                 </filter>
               </filters>
@@ -137,9 +185,9 @@
     </dependencies>
   </dependencyManagement>
   <properties>
-    <maven.compiler.target>1.8</maven.compiler.target>
+    <lwjgl.version>3.3.3</lwjgl.version>
     <maven.compiler.source>1.8</maven.compiler.source>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <lwjgl.version>3.3.3</lwjgl.version>
+    <maven.compiler.target>1.8</maven.compiler.target>
   </properties>
 </project>

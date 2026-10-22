@@ -155,7 +155,7 @@ public final class TutorialWorldExporter {
     private static void writeLevelDat(File outDir) throws Exception {
         JSONObject root = new JSONObject();
         root.put("saveName", "tutorial");
-        root.put("seed", 1234567L);
+        root.put("seed", com.voxel.world.PackPng.SEED);
         root.put("worldSize", "MEDIUM");
         root.put("gameMode", "SURVIVAL");
         root.put("worldTime", 720.0);

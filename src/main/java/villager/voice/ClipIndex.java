@@ -201,11 +201,47 @@ public final class ClipIndex {
      * village does not loop one recording.
      */
     public Clip bestMatch(String text, Random rng, List<String> avoidIds) {
+        WordScores scores = scoreWords(text, avoidIds);
+        if (scores.best != null) return scores.best;
+
+        // A fresh vocalization beats looping the same recording again; only
+        // replay the avoided clip when nothing else exists at all.
+        Set<String> avoid = avoidIds == null ? Collections.<String>emptySet()
+                : new HashSet<>(avoidIds);
+        List<Clip> pool = new ArrayList<>();
+        for (Clip clip : vocal) {
+            if (!avoid.contains(clip.id)) pool.add(clip);
+        }
+        if (!pool.isEmpty()) {
+            return pool.get(rng == null ? 0 : Math.floorMod(rng.nextInt(), pool.size()));
+        }
+        if (scores.bestAvoided != null) return scores.bestAvoided;
+        pool.addAll(vocal);
+        if (pool.isEmpty()) pool.addAll(spoken);
+        if (pool.isEmpty()) return null;
+        return pool.get(rng == null ? 0 : Math.floorMod(rng.nextInt(), pool.size()));
+    }
+
+    /**
+     * The best clip that actually shares words with {@code text} (exact
+     * transcript first), or null when no recording is on topic. Unlike
+     * {@link #bestMatch} this never falls back to an unrelated
+     * vocalization: a null return means the line wants dynamic neural speech
+     * instead of a random recording.
+     */
+    public Clip bestWordMatch(String text, Random rng, List<String> avoidIds) {
+        WordScores scores = scoreWords(text, avoidIds);
+        return scores.best != null ? scores.best : scores.bestAvoided;
+    }
+
+    /** Score every spoken clip by shared words, honoring the avoid list. */
+    private WordScores scoreWords(String text, List<String> avoidIds) {
         Set<String> avoid = avoidIds == null ? Collections.<String>emptySet()
                 : new HashSet<>(avoidIds);
         Clip exact = exact(text);
-        if (exact != null && !avoid.contains(exact.id)) return exact;
-
+        if (exact != null && !avoid.contains(exact.id)) {
+            return new WordScores(exact, null);
+        }
         String[] query = tokens(text);
         Clip best = null;
         double bestScore = Double.NEGATIVE_INFINITY;
@@ -225,26 +261,22 @@ public final class ClipIndex {
                 best = clip;
             }
         }
-        if (best != null) return best;
+        return new WordScores(best, bestAvoided);
+    }
 
-        // A fresh vocalization beats looping the same recording again; only
-        // replay the avoided clip when nothing else exists at all.
-        List<Clip> pool = new ArrayList<>();
-        for (Clip clip : vocal) {
-            if (!avoid.contains(clip.id)) pool.add(clip);
+    /** Best non-avoided and best avoided word matches (either may be null). */
+    private static final class WordScores {
+        final Clip best;
+        final Clip bestAvoided;
+
+        WordScores(Clip best, Clip bestAvoided) {
+            this.best = best;
+            this.bestAvoided = bestAvoided;
         }
-        if (!pool.isEmpty()) {
-            return pool.get(rng == null ? 0 : Math.floorMod(rng.nextInt(), pool.size()));
-        }
-        if (bestAvoided != null) return bestAvoided;
-        pool.addAll(vocal);
-        if (pool.isEmpty()) pool.addAll(spoken);
-        if (pool.isEmpty()) return null;
-        return pool.get(rng == null ? 0 : Math.floorMod(rng.nextInt(), pool.size()));
     }
 
     /** Words of a line, lowercased and stripped of punctuation. */
-    static String[] tokens(String text) {
+    public static String[] tokens(String text) {
         String normalized = normalize(text);
         return normalized.isEmpty() ? new String[0] : normalized.split(" ");
     }

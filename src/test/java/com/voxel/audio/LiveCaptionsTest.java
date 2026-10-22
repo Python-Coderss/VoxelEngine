@@ -79,6 +79,46 @@ public class LiveCaptionsTest {
     }
 
     @Test
+    public void audioCaptionsWaitForPlaybackToStart() {
+        LiveCaptions.showForAudio("Farmer", "Hello there friend", 2f);
+        // Request time is not speech time: the clip may still be decoding.
+        LiveCaptions.tick(1.2f);
+        assertEquals("a caption must not run ahead of its audio", "",
+                LiveCaptions.current().revealedText);
+
+        LiveCaptions.beginAudio(2f, new float[]{0f, 0.5f, 1.1f});
+        LiveCaptions.tick(0.1f);
+        assertEquals("Hello", LiveCaptions.current().revealedText);
+        LiveCaptions.tick(0.5f);
+        assertEquals("Hello there", LiveCaptions.current().revealedText);
+        LiveCaptions.tick(0.6f);
+        assertEquals("Hello there friend", LiveCaptions.current().revealedText);
+    }
+
+    @Test
+    public void measuredWordTimesFollowThePauses() {
+        LiveCaptions.showForAudio("Farmer", "we built this wall", 3f);
+        // First two words in the first burst, the rest after the pause.
+        LiveCaptions.beginAudio(3f, new float[]{0.40f, 0.72f, 1.52f, 1.86f});
+        LiveCaptions.tick(0.45f);
+        assertEquals("we", LiveCaptions.current().revealedText);
+        LiveCaptions.tick(0.55f);
+        assertEquals("the pause holds the rest back", "we built",
+                LiveCaptions.current().revealedText);
+        LiveCaptions.tick(0.9f);
+        assertEquals("we built this wall", LiveCaptions.current().revealedText);
+    }
+
+    @Test
+    public void aCaptionWithNoAudioStillReveals() {
+        LiveCaptions.showForAudio("Farmer", "No device on this machine", 1f);
+        LiveCaptions.tick(3f);
+        assertNotNull("the watchdog must not leave the caption stuck",
+                LiveCaptions.current());
+        assertTrue(LiveCaptions.current().revealedText.length() > 0);
+    }
+
+    @Test
     public void clearDropsEverything() {
         LiveCaptions.show("Farmer", "First line", 2f);
         LiveCaptions.show("Nitwit", "Second line", 2f);

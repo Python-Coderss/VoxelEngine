@@ -30,6 +30,9 @@ public class MapGenFortress {
     private static final int DOOR_UPPER_X = DecorBlocks.DARK_OAK_DOOR_UPPER_EW;
     /** Block id of the mob spawner block. Main registers this as id 258. */
     private static final int SPAWNER = 258;
+    private static final int IRON_BARS = 471;
+    private static final int SOUL_SAND = 22;
+    private static final int CHEST = 118;
 
     /** Returns true if this chunk is part of a fortress grid cell. */
     public static boolean isFortressChunk(int cx, int cz) {
@@ -120,6 +123,40 @@ public class MapGenFortress {
         for (int dx = 0; dx <= 1; dx++)
             for (int dz = 0; dz <= 1; dz++)
                 set(world, slot, lax + dx, baseLy + 1, laz + dz, LAVA);
+        // Iron grate over the basin, so it reads as a vent rather than a hole.
+        for (int dx = 0; dx <= 1; dx++)
+            for (int dz = 0; dz <= 1; dz++)
+                set(world, slot, lax + dx, baseLy + 2, laz + dz, IRON_BARS);
+
+        // Furnishing: a chest on a brick plinth, soul-sand corner, wall
+        // sconces, slab benches and a brazier at the opposite corner.
+        set(world, slot, x1 - 1, baseLy + 1, z1 - 1, BRICK);
+        set(world, slot, x1 - 1, baseLy + 2, z1 - 1, CHEST);
+        set(world, slot, x0 + 1, baseLy + 1, z1 - 1, SOUL_SAND);
+        set(world, slot, x0 + 2, baseLy + 1, z1 - 1, SOUL_SAND);
+        set(world, slot, x1 - 1, baseLy + 1, z0 + 1, SOUL_SAND);
+        for (int lz = z0 + 3; lz <= z1 - 3; lz += 3) {
+            set(world, slot, x1, baseLy + 2, lz, GLOWSTONE);
+            set(world, slot, x0, baseLy + 2, lz, GLOWSTONE);
+        }
+        for (int lx = x0 + 3; lx <= x1 - 3; lx += 3) {
+            set(world, slot, lx, baseLy + 1, z1 - 3, SLAB);
+        }
+        set(world, slot, x0 + 1, baseLy + 1, z0 + 1, BRICK);
+        set(world, slot, x0 + 1, baseLy + 2, z0 + 1, GLOWSTONE);
+        set(world, slot, x1 - 2, baseLy + 1, z0 + 1, SLAB);
+        // Second brazier on the north-east corner.
+        set(world, slot, x1 - 2, baseLy + 1, z0 + 1, BRICK);
+        set(world, slot, x1 - 2, baseLy + 2, z0 + 1, GLOWSTONE);
+        // Crenellated slab trim along the parapet.
+        for (int lx = x0; lx <= x1; lx += 2) {
+            set(world, slot, lx, wallTop + 1, z0, SLAB);
+            set(world, slot, lx, wallTop + 1, z1, SLAB);
+        }
+        for (int lz = z0; lz <= z1; lz += 2) {
+            set(world, slot, x0, wallTop + 1, lz, SLAB);
+            set(world, slot, x1, wallTop + 1, lz, SLAB);
+        }
 
         // Two-wide double doors. The north wall runs along X so it takes the
         // *_ew panels; the west wall runs along Z and takes the plain panels.
@@ -163,6 +200,7 @@ public class MapGenFortress {
                     set(world, slot, 6, ly, i, BRICK);
                     set(world, slot, 10, ly, i, BRICK);
                 }
+                decorateCorridorCell(world, slot, rand, baseLy, i, true);
             } else {
                 set(world, slot, i, baseLy, 7, SLAB);
                 set(world, slot, i, baseLy, 8, SLAB);
@@ -174,6 +212,7 @@ public class MapGenFortress {
                     set(world, slot, i, ly, 6, BRICK);
                     set(world, slot, i, ly, 10, BRICK);
                 }
+                decorateCorridorCell(world, slot, rand, baseLy, i, false);
             }
         }
         // Occasional cross-brace with an arch gap.
@@ -194,6 +233,39 @@ public class MapGenFortress {
                 set(world, slot, at, baseLy + 1, 9, BRICK);
                 set(world, slot, at, baseLy + 2, 9, BRICK);
             }
+        }
+    }
+
+    /**
+     * Cross-beams, wall sconces and the odd supply niche down a corridor. The
+     * beam ends sit on brick risers, so nothing floats above the wall line.
+     */
+    private void decorateCorridorCell(World world, int slot, Random rand, int baseLy,
+                                      int i, boolean northSouth) {
+        if (i % 4 == 0) {
+            if (northSouth) {
+                set(world, slot, 6, baseLy + 3, i, BRICK);
+                set(world, slot, 10, baseLy + 3, i, BRICK);
+                set(world, slot, 7, baseLy + 3, i, SLAB);
+                set(world, slot, 8, baseLy + 3, i, GLOWSTONE);
+                set(world, slot, 9, baseLy + 3, i, SLAB);
+            } else {
+                set(world, slot, i, baseLy + 3, 6, BRICK);
+                set(world, slot, i, baseLy + 3, 10, BRICK);
+                set(world, slot, i, baseLy + 3, 7, SLAB);
+                set(world, slot, i, baseLy + 3, 8, GLOWSTONE);
+                set(world, slot, i, baseLy + 3, 9, SLAB);
+            }
+        }
+        if (i % 6 == 3) {
+            boolean east = rand.nextBoolean();
+            if (northSouth) set(world, slot, east ? 6 : 10, baseLy + 2, i, GLOWSTONE);
+            else set(world, slot, i, baseLy + 2, east ? 6 : 10, GLOWSTONE);
+        }
+        if (i % 7 == 2) {
+            boolean east = rand.nextBoolean();
+            if (northSouth) set(world, slot, east ? 6 : 10, baseLy + 1, i, CHEST);
+            else set(world, slot, i, baseLy + 1, east ? 6 : 10, CHEST);
         }
     }
 

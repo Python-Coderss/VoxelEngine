@@ -72,6 +72,10 @@ public class ItemDefinitions {
         public String itemId;
         public int count;
         public int durability = 0; // For parachutes and other durable items
+        /** Enchantment id (see {@link Enchantments}) or null when plain. */
+        public String enchantment = null;
+        /** Enchantment level (1..3); 0 when the stack is not enchanted. */
+        public int enchantLevel = 0;
 
         public ItemStack(String itemId, int count) {
             this.itemId = itemId;
@@ -81,7 +85,14 @@ public class ItemDefinitions {
         public ItemStack copy() {
             ItemStack copy = new ItemStack(itemId, count);
             copy.durability = this.durability;
+            copy.enchantment = this.enchantment;
+            copy.enchantLevel = this.enchantLevel;
             return copy;
+        }
+
+        /** "Sharpness II" / null when the stack is plain. */
+        public String enchantLabel() {
+            return Enchantments.label(enchantment, enchantLevel);
         }
     }
 

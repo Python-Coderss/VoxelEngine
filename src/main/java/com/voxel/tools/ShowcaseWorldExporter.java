@@ -46,7 +46,7 @@ public final class ShowcaseWorldExporter {
     public static void writeLevelDat(File saveDir) throws Exception {
         JSONObject root = new JSONObject();
         root.put("saveName", SAVE_NAME);
-        root.put("seed", 0L);
+        root.put("seed", com.voxel.world.PackPng.SEED);
         root.put("worldSize", "MEDIUM");
         root.put("gameMode", GameContext.GameMode.CREATIVE.name());
         root.put("worldTime", 1000.0);

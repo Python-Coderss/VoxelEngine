@@ -39,6 +39,11 @@ public class MapGenMineshaft {
     private static final int IRON_ORE = 81;
     private static final int GOLD_ORE = 82;
     private static final int DIAMOND_ORE = 83;
+    private static final int GRAVEL = 54;
+    private static final int OAK_SLAB = 206;
+    private static final int GLOWSTONE = 17;
+    private static final int MINECART = 393;
+    private static final int ANVIL = 456;
 
     private static final int[] ORES = {COAL_ORE, IRON_ORE, GOLD_ORE, DIAMOND_ORE};
 
@@ -126,8 +131,37 @@ public class MapGenMineshaft {
                 world.setVoxel(x + 1, startY + height, z, OAK_LOG);
                 world.setVoxel(x, startY + height, z, OAK_LOG);
                 world.setVoxel(x - 1, startY + height, z, OAK_LOG);
+                // Cobble footings under the posts.
+                world.setVoxel(x + 1, startY - 1, z, COBBLESTONE);
+                world.setVoxel(x - 1, startY - 1, z, COBBLESTONE);
                 // Torch on the post, alternating sides for even light.
                 world.setVoxel(x + ((step / 4) % 2 == 0 ? 1 : -1), startY + 2, z, TORCH);
+            }
+
+            // Timbered roof: slabs across the tunnel on alternate steps.
+            if (step % 2 == 0) {
+                for (int o = -1; o <= 1; o++) {
+                    if (dx != 0) world.setVoxel(x, startY + height, z + o, OAK_SLAB);
+                    else world.setVoxel(x + o, startY + height, z, OAK_SLAB);
+                }
+            }
+
+            // Supply niche every so often: a lit alcove cut into one wall.
+            if (step % 9 == 4) {
+                int side = rand.nextBoolean() ? 2 : -2;
+                int ax = dx == 0 ? x + side : x;
+                int az = dx == 0 ? z : z + side;
+                world.setVoxel(ax, startY, az, CHEST);
+                world.setVoxel(ax, startY + 1, az, AIR);
+                world.setVoxel(ax, startY + 2, az, GLOWSTONE);
+            }
+
+            // A spare cart parked on the line, and loose gravel at the edges.
+            if (step % 13 == 7) world.setVoxel(x, startY, z, MINECART);
+            if (rand.nextInt(9) == 0) {
+                int side = rand.nextBoolean() ? 2 : -2;
+                if (dx == 0) world.setVoxel(x + side, startY - 1, z, GRAVEL);
+                else world.setVoxel(x, startY - 1, z + side, GRAVEL);
             }
 
             // Ore vein in the tunnel wall, occasionally.
@@ -169,5 +203,20 @@ public class MapGenMineshaft {
         // Treasure: a chest in one corner, and a spawner at the heart.
         world.setVoxel(x + halfW - 1, y, z + halfD - 1, CHEST);
         world.setVoxel(x, y, z, SPAWNER);
+
+        // Work table, anvil, crates and ore samples in the walls.
+        world.setVoxel(x + 1, y, z - 1, PLANKS);
+        world.setVoxel(x + 1, y + 1, z - 1, ANVIL);
+        world.setVoxel(x - 1, y, z + 1, ANVIL);
+        world.setVoxel(x - halfW + 1, y, z - halfD + 1, PLANKS);
+        world.setVoxel(x - halfW + 1, y + 1, z - halfD + 1, OAK_SLAB);
+        world.setVoxel(x + halfW - 1, y, z - halfD + 1, PLANKS);
+        world.setVoxel(x + halfW - 1, y + 1, z - halfD + 1, GLOWSTONE);
+        world.setVoxel(x + halfW + 1, y + 2, z, COAL_ORE);
+        world.setVoxel(x - halfW - 1, y + 2, z, IRON_ORE);
+        world.setVoxel(x, y + 2, z + halfD + 1, GOLD_ORE);
+        world.setVoxel(x, y + 1, z - halfD - 1, DIAMOND_ORE);
+        world.setVoxel(x - halfW + 1, y + roomHeight - 1, z + halfD - 1, GLOWSTONE);
+        world.setVoxel(x + halfW - 1, y + roomHeight - 1, z + halfD - 1, GLOWSTONE);
     }
 }

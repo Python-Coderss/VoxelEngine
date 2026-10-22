@@ -57,8 +57,12 @@ public class GameContext {
     public WorldBorderManager borderManager = new WorldBorderManager(WorldSize.MEDIUM.intBits());
 
     // --- Seed ---
-    /** World generation seed. 0 = default (classic layout). */
-    public long worldSeed = 0L;
+    /**
+     * World generation seed. New worlds default to the cracked pack.png seed
+     * (see {@link com.voxel.world.PackPng}); 0 still means the classic layout
+     * for dimension-specific generators that treat it specially.
+     */
+    public long worldSeed = com.voxel.world.PackPng.SEED;
 
     // --- Save ---
     /** Name of the current save slot (folder under saves/). */
@@ -87,10 +91,12 @@ public class GameContext {
     public volatile boolean pointClickWorld = false;
     /** True when the creative Showcase World was chosen from the menu. */
     public volatile boolean showcaseWorld = false;
-    /** Last seed parsed from the menu (0 = random). */
-    public volatile long menuSeed = 0L;
+    /** True when the Lighting Demo (dark hall + light hall) was chosen. */
+    public volatile boolean lightingDemoWorld = false;
+    /** Last seed parsed from the menu (defaults to the pack.png seed). */
+    public volatile long menuSeed = com.voxel.world.PackPng.SEED;
     /** True when the menu was told to use a random seed. */
-    public volatile boolean randomSeed = true;
+    public volatile boolean randomSeed = false;
     /** Pending player state for save-load (applied after spawn resolution). */
     public volatile boolean loadPending = false;
     public volatile double loadX, loadY, loadZ;
@@ -175,6 +181,19 @@ public class GameContext {
     public boolean combatMode = false;
     public boolean inventoryOpen = false;
 
+    // --- Story mode (MCSM-style decisions) ---
+    /** Persistent flags + choice recap; saved in level.dat. */
+    public final StoryState story = new StoryState();
+    /** Accessibility: a missed quick-time event still succeeds (story mode). */
+    public volatile boolean qteAssist = false;
+
+    // --- Enchanting table (modal UI) ---
+    public volatile boolean enchantingOpen = false;
+    public int enchantingTableX, enchantingTableY, enchantingTableZ;
+    public volatile java.util.List<EnchantingTable.Offer> enchantingOffers =
+            java.util.Collections.emptyList();
+    public volatile String enchantingItemName = "";
+
     // --- Camera ---
     public float yaw = -90, pitch = 0;
     /** tan(fov/2) of the active camera lens — published by Main each frame so
@@ -190,6 +209,9 @@ public class GameContext {
     public float lastMouseX = 640, lastMouseY = 360;
     public boolean firstMouse = true;
     public float cameraShake = 0.0f;
+    /** Red full-screen damage flash, 0..1. Written on the logic thread when the
+     *  player loses health; decayed and drawn by the HUD each frame. */
+    public volatile float hurtFlash = 0.0f;
     public double lastAttackTime = 0;
     public double lastRollTime = 0;
 
@@ -307,8 +329,10 @@ public class GameContext {
     public float iFrameTimer = 0.0f;
     public int rollDirectionX = 0; // -1, 0, or 1
     public int rollDirectionZ = 0;
-    // Damage numbers list (world position, damage, lifetime)
-    public final java.util.List<DamageNumber> damageNumbers = new java.util.ArrayList<>();
+    // Damage numbers list (world position, damage, lifetime). Copy-on-write so
+    // the render thread can read it while the logic thread adds/expires entries.
+    public final java.util.List<DamageNumber> damageNumbers =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
 
     // --- World Save ---
     public WorldSaveManager worldSaveManager;
@@ -642,11 +666,12 @@ public class GameContext {
         player.resetVelocity();
         player.setDimension(target);
         beginSpawnResolution(spawnX, spawnZ);
-        // Cinematic: one-time first-Nether reveal when entering the Nether.
-        // The scene is queued onto the logic thread's cinematic tick, which
-        // reads player position after the teleport has landed.
-        if (cinematic != null && target == DimensionType.NETHER) {
-            cinematic.playFirstNether();
+        // Cinematic: every realm speaks on entry. The first visit gets a
+        // narrated establishing scene, later visits a one-line overlay; the
+        // scene is queued onto the logic thread's cinematic tick, which reads
+        // the player position after the teleport has landed.
+        if (cinematic != null && previous != target) {
+            cinematic.playDimensionArrival(target);
         }
         // Keep /spawn and death aligned with the safe location resolved for the
         // dimension the player just entered.
@@ -911,12 +936,24 @@ public class GameContext {
         public float damage;
         public float lifetime = 1.5f;
         public float maxLifetime = 1.5f;
+        /** Crits draw larger and linger a beat longer. */
+        public final boolean critical;
 
         public DamageNumber(float worldX, float worldY, float worldZ, float damage) {
+            this(worldX, worldY, worldZ, damage, false);
+        }
+
+        public DamageNumber(float worldX, float worldY, float worldZ, float damage,
+                            boolean critical) {
             this.worldX = worldX;
             this.worldY = worldY;
             this.worldZ = worldZ;
             this.damage = damage;
+            this.critical = critical;
+            if (critical) {
+                this.lifetime = 1.9f;
+                this.maxLifetime = 1.9f;
+            }
         }
 
         public void update(float dt) {

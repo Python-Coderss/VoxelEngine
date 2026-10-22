@@ -51,6 +51,24 @@ public class PointClickWorldGeneratorTest {
     }
 
     @Test
+    public void fountainWatchtowerAndRuinsExist() {
+        int g = PointClickWorldAuthor.G;
+        // Plaza fountain: a lit basin with a stone-brick rim, north of spawn.
+        assertEquals("fountain floor lamp", 17, gen.getBlockType(0, g, -8, g));
+        assertEquals("fountain water", 15, gen.getBlockType(0, g + 1, -8, g));
+        assertEquals("fountain rim", 131, gen.getBlockType(-3, g, -8, g));
+        // North-east watchtower: cobble shell, ladder shaft and beacon cap.
+        assertEquals("watchtower wall", 71, gen.getBlockType(27, g + 1, -28, g));
+        assertEquals("watchtower beacon", 457, gen.getBlockType(30, g + 9, -30, g));
+        // South-east ruins garden: the standing arch and its lit keystone.
+        assertEquals("ruins arch", 131, gen.getBlockType(27, g + 5, 25, g));
+        assertEquals("ruins keystone lamp", 17, gen.getBlockType(30, g + 7, 25, g));
+        // Connecting spurs from the plaza avenues reach both districts.
+        assertEquals("watchtower spur", 131, gen.getBlockType(12, g, -20, g));
+        assertEquals("ruins spur", 131, gen.getBlockType(12, g, 20, g));
+    }
+
+    @Test
     public void expandedPlazaStationsExist() {
         int g = PointClickWorldAuthor.G;
         // Villager TV beside the chest.

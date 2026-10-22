@@ -214,7 +214,7 @@ public class Main {
      * walls near-black and lets the lantern pools, coloured lights and the sun
      * shaft through the skylight carry the frame.
      */
-    private static final float PANORAMA_INTERIOR_EXPOSURE = 0.36f;
+    private static final float PANORAMA_INTERIOR_EXPOSURE = 0.46f;
     /** 6-neighbour offsets used by the panorama light bake. */
     private static final int[] PANO_NX = {1, -1, 0, 0, 0, 0};
     private static final int[] PANO_NY = {0, 0, 1, -1, 0, 0};
@@ -292,6 +292,8 @@ public class Main {
     public BlockDataManager blockDataManager;
     public BlockRegistry blockRegistry;
     public ShaderBlockRegistry shaderBlockRegistry;
+    /** Mods discovered from {@code mods/*.jar} (null until setupResources). */
+    public com.voxel.modloader.ModLoader.Discovery modDiscovery;
     public com.voxel.utils.BiomeManager biomeManager;
     public Player player;
     public com.voxel.entity.PlayerEntity playerEntity;
@@ -315,6 +317,8 @@ public class Main {
 
     public com.voxel.camera.CameraController cameraController;
     public com.voxel.ui.HudUI hud;
+    /** Instant MC-styled title frame shown before heavy initialization. */
+    private com.voxel.ui.BootScreen bootScreen;
     public com.voxel.game.WorldMapRenderer mapRenderer;
 
     public int width = 1280, height = 720;
@@ -505,6 +509,7 @@ public class Main {
         final java.util.function.Consumer<String> bootMark = stage ->
             System.out.println("[BOOT] " + stage + " " + ((System.nanoTime() - initStartNanos) / 1_000_000L) + " ms");
         if (!glfwInit()) throw new IllegalStateException("Unable to initialize GLFW");
+        bootMark.accept("glfw ready");
 
         glfwDefaultWindowHints();
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
@@ -515,6 +520,7 @@ public class Main {
 
         window = glfwCreateWindow(width, height, "Voxel Engine", NULL, NULL);
         if (window == NULL) throw new RuntimeException("Failed to create window");
+        bootMark.accept("window created");
 
         glfwSetKeyCallback(window, this::handleKeyInput);
         glfwSetCharCallback(window, this::handleCharInput);
@@ -528,50 +534,52 @@ public class Main {
         // appears on the desktop while a panorama frame is measured.
         if (!panoramaProbe) glfwShowWindow(window);
         GL.createCapabilities();
+        bootMark.accept("GL context ready");
 
-        // Build only the tiny fullscreen path needed for an immediate loading frame.
-        // This runs before OpenAL, compute-shader setup, and asset registration, so
-        // the first swap shows loading artwork instead of a native black window.
-        quadProgram = ShaderUtil.createProgram(
-            ShaderUtil.compileShader("src/main/resources/shaders/quad.vert", GL_VERTEX_SHADER),
-            ShaderUtil.compileShader("src/main/resources/shaders/quad.frag", GL_FRAGMENT_SHADER)
-        );
+        // Build only the tiny fullscreen path needed for an immediate title
+        // frame. This runs before OpenAL, compute-shader setup and asset
+        // registration, so the first swap shows the title screen instead of a
+        // native black window. Cached program binaries make a warm boot skip
+        // the GLSL compile entirely.
+        quadProgram = ShaderUtil.createGraphicsProgramCached(
+            "quad", "src/main/resources/shaders/quad.vert", "src/main/resources/shaders/quad.frag");
+        bootMark.accept("quad shader ready");
         locQuadPass = glGetUniformLocation(quadProgram, "inputTexture");
         locQuadFlipY = glGetUniformLocation(quadProgram, "u_FlipY");
         locQuadUITex = glGetUniformLocation(quadProgram, "uiTexture");
         locQuadCompositeUI = glGetUniformLocation(quadProgram, "u_CompositeUI");
         setupQuad();
-        int earlyLoadingTexture = 0;
-        File earlyLoadingFile = new File("src/main/resources/ui/loading.png");
-        if (earlyLoadingFile.exists()) {
-            try {
-                earlyLoadingTexture = UIManager.loadTexture(earlyLoadingFile.getPath());
-            } catch (RuntimeException e) {
-                System.err.println("Note: early loading texture unavailable; using fallback color");
-            }
-        }
-        presentEarlyLoadingFrame(earlyLoadingTexture);
-        bootMark.accept("first loading frame presented");
+        bootMark.accept("quad ready");
+        // Title screen first: the MC GUI kit + vanilla font + one UI shader are
+        // all this needs, so the window is never a black rectangle while the
+        // raytracer and the content registry load.
+        bootScreen = new com.voxel.ui.BootScreen(width, height);
+        bootScreen.setProgress("Preparing the world...", 0.02f);
+        bootMark.accept("boot screen built");
+        presentBootFrame();
+        bootMark.accept("title screen presented");
         bootMark.accept("GL capabilities ready");
 
         // Initialize OpenAL on the render thread. Voice clip playback is queued
         // asynchronously and never runs inside the game loop.
         villagerAudioManager = new com.voxel.audio.VillagerAudioManager();
         villagerAudioManager.initialize();
+        // Warm the dynamic villager voice on its worker now (the model load
+        // used to be paid by the first unmatched villager line).
+        villagerAudioManager.prepareDynamicVoice();
         // Background music shares the OpenAL context and plays the mono MP3
         // playlist from src/main/resources/music (see tools/convert_music.sh).
         musicPlayer = new com.voxel.audio.MusicPlayer();
         musicPlayer.initialize();
         // Every bundled music family feeds one classified library: the MCSM
-        // soundtrack albums (src/resources/music), the Aether soundtrack, and
-        // any minecraft/ or fanmade/ folders added under the music root.
+        // soundtrack albums (src/main/resources/music), the Aether soundtrack,
+        // and any minecraft/ or fanmade/ folders added under the music root.
         java.util.List<java.io.File> musicRoots = new java.util.ArrayList<>();
         String musicOverride = System.getProperty("voxel.music.root");
         if (musicOverride != null && !musicOverride.isEmpty()) {
             musicRoots.add(new java.io.File(musicOverride));
         }
         musicRoots.add(new java.io.File("src/main/resources/music"));
-        musicRoots.add(new java.io.File("src/resources/music"));
         musicRoots.add(new java.io.File("src/main/resources/assets/aether/sounds/music"));
         // Scan the catalogue on a background thread. The soundtrack is several
         // hundred tracks / a few hundred MB, and the walk (length() + canonical
@@ -586,18 +594,21 @@ public class Main {
         // mode), which would discard the catalogue the moment the scan landed.
         // An empty scan simply means no music plays, which is the correct
         // behaviour for a machine with no soundtrack files.
-        presentEarlyLoadingFrame(earlyLoadingTexture);
+        bootScreen.setProgress("Waking the audio engine...", 0.10f);
+        presentBootFrame();
         bootMark.accept("OpenAL ready");
 
-        computeProgram = ShaderUtil.createProgram(
-            ShaderUtil.compileShader("src/main/resources/shaders/raytracer.comp", GL_COMPUTE_SHADER)
-        );
+        bootScreen.setProgress("Compiling the raytracer...", 0.16f);
+        presentBootFrame();
+        computeProgram = ShaderUtil.createComputeProgramCached(
+            "raytracer", "src/main/resources/shaders/raytracer.comp");
         // quad.frag uses inputTexture; keep this cached so both the normal and
         // early loading passes explicitly bind the texture they draw.
         locQuadPass = glGetUniformLocation(quadProgram, "inputTexture"); // Cache to avoid per-frame lookup
         cacheUniformLocations();
         // Atmosphere uniforms handled by AtmosphereRenderer (no per-frame glGetUniformLocation)
-        presentEarlyLoadingFrame(earlyLoadingTexture);
+        bootScreen.setProgress("Raytracer ready. Loading textures...", 0.34f);
+        presentBootFrame();
         bootMark.accept("shaders ready");
 
 
@@ -643,7 +654,8 @@ public class Main {
         // Generate procedural textures BEFORE loading so they're available in the texture array
         generateCapeTexture();
         setupResources();
-        presentEarlyLoadingFrame(earlyLoadingTexture);
+        bootScreen.setProgress("Registering blocks and items...", 0.62f);
+        presentBootFrame();
         bootMark.accept("resources ready");
 
         // Create shared game context (world/chunkManager/dimensionManager filled below after init)
@@ -685,6 +697,9 @@ public class Main {
         // Create extracted subsystems
         itemDefinitions = new ItemDefinitions();
         itemDefinitions.setup(blockDataManager, textureManager);
+        // Mod items (and mod block items) are registered after the built-in
+        // table so an item id can never shadow a vanilla one.
+        com.voxel.modloader.ModLoader.flushItems(itemDefinitions);
         com.voxel.utils.CreateContentLoader.registerItems(itemDefinitions, textureManager);
         com.voxel.utils.MinecraftContentLoader.registerMissingItems(
                 itemDefinitions, blockDataManager, textureManager,
@@ -739,6 +754,8 @@ public class Main {
         System.out.println("[MC content] Crafting registry ready with " + vanillaRecipeCount + " imported recipes");
         ctx.craftingManager = craftingManager;
 
+        bootScreen.setProgress("Building the interface...", 0.82f);
+        presentBootFrame();
         hud = new com.voxel.ui.HudUI(ctx, this, cameraController, playerInventory, textureManager, itemDefinitions, biomeManager);
         setupUi();
         // World map renderer (top-down view, M to toggle)
@@ -765,7 +782,11 @@ public class Main {
         // before save/log setup and before the logic thread starts allocating the
         // world pools. This is the first frame users need to see.
         presentInitialLoadingFrame();
-        if (earlyLoadingTexture != 0) glDeleteTextures(earlyLoadingTexture);
+        if (bootScreen != null) {
+            // The real HUD has its own UI manager from here on; the instant
+            // boot canvas is no longer needed.
+            bootScreen = null;
+        }
         bootMark.accept("UI loading frame presented");
         bootMark.accept("UI ready");
 
@@ -799,6 +820,28 @@ public class Main {
         updateCursorMode();
         setStatus("Mode: survival. Press E for inventory, / for commands. R to respawn.");
         bootMark.accept("init complete");
+    }
+
+    /**
+     * Presents the instant MC title frame through the fullscreen quad. The boot
+     * canvas is opaque, so no blending or world SSBOs are required.
+     */
+    private void presentBootFrame() {
+        if (bootScreen == null) return;
+        bootScreen.render();
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, width, height);
+        glClearColor(0.03f, 0.04f, 0.07f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(quadProgram);
+        glBindTextureUnit(0, bootScreen.getTexture());
+        if (locQuadPass >= 0) glUniform1i(locQuadPass, 0);
+        if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 0);
+        if (locQuadCompositeUI >= 0) glUniform1i(locQuadCompositeUI, 0);
+        glBindVertexArray(quadVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glfwSwapBuffers(window);
+        glfwPollEvents();
     }
 
     /** Draw the loading artwork directly, before the HUD and world exist. */
@@ -2427,6 +2470,31 @@ public class Main {
         }
     };
 
+    /**
+     * Look at whatever the crosshair is on: print its lore and let Jesse
+     * think out loud. Every block has an entry ({@code ExamineSystem}), so
+     * the world is inspectable without hand-listing thousands of ids.
+     */
+    private void examineLookTarget() {
+        if (ctx == null || blockInteraction == null || ctx.world == null) return;
+        int[] hit = blockInteraction.raycastBlock(6.0f);
+        if (hit == null) {
+            setStatus("Nothing to look at");
+            return;
+        }
+        String name = null;
+        int id = ctx.world.getVoxel(hit[0], hit[1], hit[2]);
+        if (blockDataManager != null) {
+            com.voxel.utils.BlockDataManager.BlockData data =
+                    blockDataManager.blockRegistry.get(id);
+            if (data != null) name = data.name;
+        }
+        com.voxel.game.ExamineSystem.Lore lore = com.voxel.game.ExamineSystem.describe(name);
+        setStatus(lore.title + " \u2014 " + lore.body);
+        // The authored monologue is what Jesse says and what the caption shows.
+        com.voxel.ai.speech.CharacterVoice.speakMonologue(lore.monologue);
+    }
+
     /** Spawns the White Pumpkin boss at the pumpkin hideout (story beat). */
     private void spawnWhitePumpkinBoss() {
         float x = com.voxel.world.McsmStructures.PUMPKIN_HIDEOUT[0];
@@ -2475,6 +2543,7 @@ public class Main {
         dimensionManager.setTutorialWorld(ctx.tutorialWorld);
         dimensionManager.setPointClickWorld(ctx.pointClickWorld);
         dimensionManager.setShowcaseWorld(ctx.showcaseWorld);
+        dimensionManager.setLightingDemoWorld(ctx.lightingDemoWorld);
         dimensionManager.createDimension(initialDimension, initialRenderDistance);
         // createDimension populates the dimension map but leaves the active
         // dimension pointer alone; make sure it targets the selected dimension
@@ -2585,11 +2654,23 @@ public class Main {
             player.resetVelocity();
             ctx.beginSpawnResolution((int) Math.floor(ctx.loadX), (int) Math.floor(ctx.loadZ));
         } else {
-            ctx.beginSpawnResolution(0, 0);
+            // A new world is the pack.png world: stand at the screenshot column
+            // (x=49, z=0) so the first view looks toward the iconic hill.
+            player.setPosition(com.voxel.world.PackPng.SPAWN_X + 0.5,
+                    player.getPosition().y, com.voxel.world.PackPng.SPAWN_Z + 0.5);
+            player.resetVelocity();
+            // Face the iconic hill (x=116, z=-31) for the opening shot.
+            yaw = com.voxel.world.PackPng.SPAWN_YAW;
+            ctx.playerYaw = yaw;
+            ctx.beginSpawnResolution(com.voxel.world.PackPng.SPAWN_X,
+                    com.voxel.world.PackPng.SPAWN_Z);
         }
         chunkManager.updateFixedPosition(player.getFixedX(), player.getFixedY(), player.getFixedZ(), yaw);
 
         ctx.initializing = false;
+        // Mods get a stable world to read/edit once the deferred init is done.
+        com.voxel.modloader.EventBus.fireWorldLoad(new com.voxel.api.events.WorldLoadEvent(
+                ctx, ctx.saveName == null ? "world" : ctx.saveName, !ctx.loadPending));
     }
 
     /**
@@ -2988,8 +3069,9 @@ public class Main {
 
         switch (screen) {
             case MAIN: {
-                // Title screen: world creation, showcase, tutorial, saves, options.
-                int optionCount = 6;
+                // Title screen: world creation, showcase, tutorial, demos, saves,
+                // options, quit.
+                int optionCount = 8;
                 if (menuKeyPressed(GLFW_KEY_UP)) {
                     ctx.menuSelection--;
                     if (ctx.menuSelection < 0) ctx.menuSelection = optionCount - 1;
@@ -3004,6 +3086,7 @@ public class Main {
                             ctx.pointClickWorld = false;
                             ctx.tutorialWorld = false;
                             ctx.showcaseWorld = false;
+                            ctx.lightingDemoWorld = false;
                             ctx.menuScreen = GameContext.MenuScreen.NEW_WORLD_NAME;
                             ctx.menuTextActive = true;
                             ctx.menuTextInput.setLength(0);
@@ -3012,6 +3095,7 @@ public class Main {
                         case 1: // Showcase World — creative hub for every feature/dimension
                             ctx.tutorialWorld = false;
                             ctx.pointClickWorld = false;
+                            ctx.lightingDemoWorld = false;
                             ctx.showcaseWorld = true;
                             ctx.saveName = "showcase";
                             copyShowcaseTemplate();
@@ -3028,6 +3112,7 @@ public class Main {
                             ctx.tutorialWorld = true;
                             ctx.pointClickWorld = false;
                             ctx.showcaseWorld = false;
+                            ctx.lightingDemoWorld = false;
                             ctx.saveName = "tutorial";
                             // The handcrafted world ships in git-tracked resources
                             // (not the git-ignored saves/ dir). Copy it into the
@@ -3041,6 +3126,7 @@ public class Main {
                             ctx.tutorialWorld = false;
                             ctx.pointClickWorld = true;
                             ctx.showcaseWorld = false;
+                            ctx.lightingDemoWorld = false;
                             ctx.saveName = "pointclick";
                             copyPointClickTemplate();
                             loadSaveIntoContext("pointclick");
@@ -3049,14 +3135,30 @@ public class Main {
                             updateCursorMode();
                             setStatus("Point & Click Demo loaded.");
                             break;
-                        case 4: // Load Save
+                        case 4: // Lighting Demo (dark hall + light hall, side by side)
+                            ctx.tutorialWorld = false;
+                            ctx.pointClickWorld = false;
+                            ctx.showcaseWorld = false;
+                            ctx.lightingDemoWorld = true;
+                            ctx.saveName = "lighting";
+                            copyLightingDemoTemplate();
+                            loadSaveIntoContext("lighting");
+                            ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
+                            ctx.cursorRayOverride = null;
+                            updateCursorMode();
+                            setStatus("Lighting Demo loaded — light hall west, dark hall east.");
+                            break;
+                        case 5: // Load Save
                             ctx.saveList = com.voxel.world.WorldSaveManager.listSaves();
                             ctx.saveListSelection = 0;
                             ctx.menuScreen = GameContext.MenuScreen.LOAD_SAVE;
                             break;
-                        case 5: // Options
+                        case 6: // Options
                             ctx.menuScreen = GameContext.MenuScreen.OPTIONS;
                             ctx.menuSelection = 0;
+                            break;
+                        case 7: // Quit Game — the normal shutdown path saves world state.
+                            glfwSetWindowShouldClose(window, true);
                             break;
                     }
                 }
@@ -3082,8 +3184,10 @@ public class Main {
                 if (menuKeyPressed(GLFW_KEY_ENTER) || confirmRequested) {
                     String seedText = ctx.menuTextInput.toString().trim();
                     if (seedText.isEmpty()) {
-                        ctx.randomSeed = true;
-                        ctx.menuSeed = java.util.concurrent.ThreadLocalRandom.current().nextLong();
+                        // The default world is the cracked pack.png seed; type a
+                        // number or text to override it.
+                        ctx.randomSeed = false;
+                        ctx.menuSeed = com.voxel.world.PackPng.SEED;
                     } else {
                         ctx.randomSeed = false;
                         try {
@@ -3126,7 +3230,8 @@ public class Main {
                 if (menuKeyPressed(GLFW_KEY_ENTER) || confirmRequested) {
                     // Commit the new world: create save manager + seed, then let
                     // initializeWorldPhase() run on the next tick.
-                    ctx.worldSeed = ctx.randomSeed ? ctx.menuSeed : ctx.menuSeed;
+                    ctx.worldSeed = ctx.menuSeed == 0L
+                            ? com.voxel.world.PackPng.SEED : ctx.menuSeed;
                     ctx.worldSaveManager = com.voxel.world.WorldSaveManager.forSave(ctx.saveName);
                     ctx.loadPending = false;
                     ctx.worldSizeConfirmed = true;
@@ -3184,6 +3289,7 @@ public class Main {
                     // here; tutorialWorld is restored from level.dat by the loader.
                     ctx.showcaseWorld = false;
                     ctx.pointClickWorld = false;
+                    ctx.lightingDemoWorld = false;
                     loadSaveIntoContext(name);
                 }
                 if (menuKeyPressed(GLFW_KEY_ESCAPE)) {
@@ -3278,6 +3384,25 @@ public class Main {
         }
     }
 
+    /**
+     * Creates the Lighting Demo save.
+     *
+     * <p>Like the Showcase World the geometry is regenerated at runtime by
+     * {@link com.voxel.world.LightingDemoWorldGenerator}, so only level.dat is
+     * written: it records the creative mode, the corridor spawn and a kit of
+     * light sources for extending the demo in place.</p>
+     */
+    private void copyLightingDemoTemplate() {
+        java.io.File dst = new java.io.File(com.voxel.world.WorldSaveManager.SAVES_DIR,
+                com.voxel.tools.LightingDemoWorldExporter.SAVE_NAME);
+        com.voxel.world.WorldSaveManager.deleteSave(com.voxel.tools.LightingDemoWorldExporter.SAVE_NAME);
+        try {
+            com.voxel.tools.LightingDemoWorldExporter.exportTo(dst);
+        } catch (Exception e) {
+            System.err.println("Failed to write Lighting Demo level.dat: " + e);
+        }
+    }
+
     private static void copyDir(java.io.File src, java.io.File dst) {
         if (src.isDirectory()) {
             dst.mkdirs();
@@ -3347,7 +3472,7 @@ public class Main {
         if (screen == GameContext.MenuScreen.MAIN) {
             sb.append("VOXEL ENGINE\n\n");
             String[] options = { "New World", "Showcase World", "Tutorial World",
-                "Point & Click Demo", "Load Save", "Theme: " +
+                "Point & Click Demo", "Lighting Demo", "Load Save", "Theme: " +
                 (ctx.uiTheme == GameContext.UiTheme.DARK ? "Dark" : "Light") };
             for (int i = 0; i < options.length; i++) {
                 sb.append(ctx.menuSelection == i ? "> " : "  ").append(options[i]).append("\n");
@@ -3441,11 +3566,19 @@ public class Main {
             // after boot — byte-identical to a human pressing DOWN+ENTER on the
             // main menu (reuses copyTutorialTemplate + loadSaveIntoContext).
             // Inert unless the env var is set; remove once perf tuning concludes.
+            String autoWorld = System.getenv("VOXEL_AUTO_WORLD");
+            if (autoWorld != null && !autoWorldEntered && glfwGetTime() > 3.0) {
+                autoWorldEntered = true;
+                autoEnterWorld(autoWorld.trim().toLowerCase(java.util.Locale.ROOT));
+                return;
+            }
             if (System.getenv("VOXEL_AUTO_TUTORIAL") != null
                     && !perfProbeAutoEntered && glfwGetTime() > 3.0) {
                 perfProbeAutoEntered = true;
                 ctx.tutorialWorld = true;
                 ctx.pointClickWorld = false;
+                ctx.showcaseWorld = false;
+                ctx.lightingDemoWorld = false;
                 ctx.saveName = "tutorial";
                 copyTutorialTemplate();
                 loadSaveIntoContext("tutorial");
@@ -3593,6 +3726,13 @@ public class Main {
                 }
             }
 
+            // Unattended camera placement for render checks: VOXEL_PROBE_POS
+            // and VOXEL_PROBE_LOOK (yaw,pitch degrees) pin the camera once the
+            // world has settled, so a capture can be taken from an exact spot
+            // (e.g. outside a wall) instead of wherever the player spawned.
+            // Inert unless those variables are set.
+            applyProbePose();
+
             // Point & Click demo world: spawn the plaza villager once the
             // world is ready (the demo world has no zones, so this is the
             // analog of the tutorial world's zone-mob spawning).
@@ -3668,6 +3808,13 @@ public class Main {
             updateMinecarts(dt);
 
             player.update(dt, world, blockDataManager);
+            // Landing kick: a hop is a whisper, a long drop thumps. The impulse
+            // is consumed here so a single landing can only fire once.
+            float landingImpact = player.consumeLandingImpact();
+            if (landingImpact > 0.25f) {
+                cameraController.getFeel().addTrauma(
+                        Math.min(0.8f, 0.12f + landingImpact * 0.22f));
+            }
             // Hard world border clamp (keeps player within Far Lands boundary)
             ctx.borderManager.clamp(player);
 
@@ -4163,6 +4310,10 @@ public class Main {
 
         worldTime += dt;
         ctx.worldTime = worldTime;
+        if (com.voxel.modloader.EventBus.hasTickListeners()) {
+            com.voxel.modloader.EventBus.fireTick(new com.voxel.api.events.TickEvent(
+                    ctx, dt, worldTime));
+        }
 
         // The Sift's tide only advances inside the Sift (§Sift). The sifting
         // block and the HUD both read its strength/phase.
@@ -4183,20 +4334,27 @@ public class Main {
 
         if (ctx.cinematic != null) ctx.cinematic.tick(dt);
         com.voxel.game.VillagerReactions.tick(dt);
-        if (player != null && ctx.villagerAudioManager != null) {
+        if (player != null) {
             float hp = player.getHealth();
             if (hp < lastPlayerHealth - 0.01f) {
-                org.joml.Vector3f pp = player.getPosition();
-                if (hp <= 0f) {
-                    com.voxel.game.VillagerReactions.fire(ctx,
-                            com.voxel.game.VillagerReactions.Trigger.DEATH_WITNESSED,
-                            pp.x, pp.y, pp.z);
-                } else {
-                    com.voxel.game.VillagerReactions.fire(ctx,
-                            hp <= 6.0f
-                                ? com.voxel.game.VillagerReactions.Trigger.PLAYER_LOW_HEALTH
-                                : com.voxel.game.VillagerReactions.Trigger.PLAYER_DAMAGED,
-                            pp.x, pp.y, pp.z);
+                float lost = lastPlayerHealth - hp;
+                // Every damage source (mob, fall, fire) flashes the screen and
+                // jolts the camera, whether or not the voice system is active.
+                ctx.hurtFlash = Math.min(1f, ctx.hurtFlash + 0.55f + lost * 0.04f);
+                cameraController.getFeel().addTrauma(Math.min(0.7f, 0.3f + lost * 0.05f));
+                if (ctx.villagerAudioManager != null) {
+                    org.joml.Vector3f pp = player.getPosition();
+                    if (hp <= 0f) {
+                        com.voxel.game.VillagerReactions.fire(ctx,
+                                com.voxel.game.VillagerReactions.Trigger.DEATH_WITNESSED,
+                                pp.x, pp.y, pp.z);
+                    } else {
+                        com.voxel.game.VillagerReactions.fire(ctx,
+                                hp <= 6.0f
+                                    ? com.voxel.game.VillagerReactions.Trigger.PLAYER_LOW_HEALTH
+                                    : com.voxel.game.VillagerReactions.Trigger.PLAYER_DAMAGED,
+                                pp.x, pp.y, pp.z);
+                    }
                 }
             }
             lastPlayerHealth = hp;
@@ -4205,8 +4363,17 @@ public class Main {
         blockInteraction.updateMining(dt);
         blockInteraction.updatePlacementPreview();
 
-        if (cameraShake > 0) cameraShake -= dt * 5.0f;
-        if (ctx.cameraShake > 0) ctx.cameraShake -= dt * 5.0f;
+        // Screen-shake impulses are handed to the camera's trauma model, which
+        // decays and shapes them on the render thread (impulse² falloff instead
+        // of a linear fade). Setting cameraShake stays the public API.
+        if (cameraShake > 0f) {
+            cameraController.getFeel().addTrauma(Math.min(1.0f, cameraShake));
+            cameraShake = 0f;
+        }
+        if (ctx.cameraShake > 0f) {
+            cameraController.getFeel().addTrauma(Math.min(1.0f, ctx.cameraShake));
+            ctx.cameraShake = 0f;
+        }
         
         // Combat timers
         if (ctx.comboTimer > 0) {
@@ -4578,6 +4745,41 @@ public class Main {
     }
 
     public void handleInput(float dt) {
+        // MCSM decisions and quick-time events own their keys before movement,
+        // the map or any other UI reads them. Choices are 1-4 (MCSM's option
+        // row); a SPACE QTE also accepts the jump key, which is what players
+        // are already pressing when an action beat starts.
+        if (ctx.cinematic != null) {
+            if (ctx.cinematic.hasActiveChoice()) {
+                for (int i = 0; i < com.voxel.cinematic.CinematicChoice.MAX_OPTIONS; i++) {
+                    if (keyJustPressed(GLFW_KEY_1 + i)) {
+                        ctx.cinematic.requestChoice(i);
+                        return; // the digit must not also change the hotbar
+                    }
+                }
+            }
+            if (ctx.cinematic.hasActiveQte()
+                    && ctx.cinematic.getActiveQte().input()
+                        == com.voxel.cinematic.QuickTimeEvent.Input.SPACE
+                    && keyJustPressed(GLFW_KEY_SPACE)) {
+                ctx.cinematic.requestQte(true);
+                return; // the press belongs to the prompt, not to a jump
+            }
+        }
+        // The enchanting table is modal while open: 1-3 buys an offer, ESC
+        // closes, and movement is suspended until then.
+        if (ctx.enchantingOpen) {
+            for (int i = 0; i < 3; i++) {
+                if (keyJustPressed(GLFW_KEY_1 + i)) {
+                    com.voxel.game.EnchantingTable.apply(ctx, i);
+                }
+            }
+            if (keyJustPressed(GLFW_KEY_ESCAPE)) {
+                com.voxel.game.EnchantingTable.close(ctx);
+            }
+            return;
+        }
+
         // ── Map controls: WASD/arrows pan, scroll zoom, right-drag pan ──
         if (ctx.mapOpen) {
             // Keyboard pan: WASD or arrow keys (dt-scaled for consistent speed).
@@ -4799,6 +5001,17 @@ public class Main {
     public void performCombatAttack(float damage) {
         Vector3f pPos = player.getPosition();
         Vector3f pDir = getLookDirection();
+        // Vanilla critical: swing while falling, not while rising or grounded.
+        boolean critical = com.voxel.combat.CriticalHit.isCritical(
+                player.isOnGround(), player.getVelocityD().y);
+        // Sharpness scales the swing before the crit multiplier, like vanilla.
+        com.voxel.game.ItemDefinitions.ItemStack held = playerInventory == null
+                ? null : playerInventory.getSelected();
+        float enchantBonus = held == null ? 0f
+                : com.voxel.game.Enchantments.attackBonus(
+                        held.enchantment, held.enchantLevel);
+        float swingDamage = com.voxel.combat.CriticalHit.damage(
+                damage + enchantBonus, critical);
 
         for (int i = 0; i < entityManager.getEntityCount(); i++) {
             com.voxel.entity.Entity e = entityManager.getEntity(i);
@@ -4818,14 +5031,15 @@ public class Main {
                     toEnemy.normalize();
                     float dot = toEnemy.dot(pDir);
                     if (dot > minDot) {
-                        Vector3f knockback = new Vector3f(toEnemy).mul(0.8f + damage * 0.05f);
-                        enemy.takeDamage(damage, knockback);
-                        cameraShake = 0.8f + damage * 0.08f;
-                        // Spawn damage number at enemy position
-                        ctx.damageNumbers.add(new GameContext.DamageNumber(
-                            enemy.getPosX(), enemy.getPosY() + 2.0f, enemy.getPosZ(),
-                            damage
-                        ));
+                    Vector3f knockback = new Vector3f(toEnemy).mul(0.8f + swingDamage * 0.05f);
+                    enemy.takeDamage(swingDamage, knockback);
+                    // A crit reads heavier: a harder kick and a brighter number.
+                    cameraShake = (critical ? 1.15f : 0.8f) + swingDamage * 0.08f;
+                    // Spawn damage number at enemy position
+                    ctx.damageNumbers.add(new GameContext.DamageNumber(
+                        enemy.getPosX(), enemy.getPosY() + 2.0f, enemy.getPosZ(),
+                        swingDamage, critical
+                    ));
                         // Enemy telegraph: flash on hit
                         enemy.hitFlashTime = 0.3f;
                         
@@ -4833,7 +5047,9 @@ public class Main {
                         // Combo hit text
                         String[] comboText = {"Hit!", "Double!", "TRIPLE!"};
                         int comboIdx = Math.max(0, Math.min(ctx.comboCount, 2));
-                        ctx.setStatus(comboText[comboIdx] + " (" + String.format("%.0f", damage) + " dmg)");
+                        ctx.setStatus((critical ? "CRITICAL! " : "")
+                            + comboText[comboIdx] + " ("
+                            + String.format("%.0f", swingDamage) + " dmg)");
                     }
                 }
             }
@@ -4860,6 +5076,23 @@ public class Main {
                 frames = 0;
                 fpsTime = 0;
                 if (perfQueries != null) perfLogAndReset();
+            }
+
+            // ── Camera feel ──────────────────────────────────────────────────
+            // Sampled on the render thread from the logic thread's latest state:
+            // trauma decays here, bob and the speed FOV ease toward their targets.
+            if (cameraController != null && player != null) {
+                org.joml.Vector3f pvel = player.getVelocity();
+                float horizSpeed = (float) Math.sqrt(pvel.x * pvel.x + pvel.z * pvel.z);
+                com.voxel.camera.CameraFeel feel = cameraController.getFeel();
+                boolean detachedFeel = ctx.craftingCutsceneActive || ctx.craftingTableOpen
+                        || ctx.furnaceCutsceneActive || ctx.mapOpen
+                        || (ctx.cinematic != null && ctx.cinematic.cameraActive());
+                feel.setLocomotion(horizSpeed, player.isOnGround(), player.isSprinting());
+                feel.setBobEnabled(cameraMode == CameraMode.FIRST_PERSON && !detachedFeel && !player.isDead());
+                feel.setFovEnabled(!detachedFeel);
+                feel.update(dt);
+                cameraController.setGameplayFovOffset(feel.getFovOffsetDegrees());
             }
 
             if (player.isDead()) {
@@ -4944,6 +5177,10 @@ public class Main {
             hud.updateSpeechCaptions(glfwGetTime());
             hud.updateTradePanel();
             if (ctx != null) hud.updateBillboards(glfwGetTime());
+            hud.updateCombatHud(glfwGetTime());
+            hud.updateChoiceOverlay();
+            hud.updateEnchantPanel();
+            hud.updateHurtOverlay(dt);
 
             hud.uiManager.begin();
             for (UILayer layer : hud.uiLayers) layer.render(hud.uiManager);
@@ -5031,8 +5268,13 @@ public class Main {
             // actually points where the scene intends instead of following the
             // (frozen) mouse yaw.
             boolean cinematicCam = ctx.cinematic != null && ctx.cinematic.cameraActive();
-            double ry = Math.toRadians(cinematicCam ? ctx.yaw : yaw);
-            double rp = Math.toRadians(cinematicCam ? ctx.pitch : pitch);
+            // Shake rotates the RENDER basis only: gameplay yaw/pitch (and every
+            // mouse-unprojection path) stay steady, so a hit never spoils aim.
+            com.voxel.camera.CameraFeel feel = cameraController.getFeel();
+            float shakeYaw = cinematicCam ? 0f : feel.getShakeYawDegrees();
+            float shakePitch = cinematicCam ? 0f : feel.getShakePitchDegrees();
+            double ry = Math.toRadians((cinematicCam ? ctx.yaw : yaw) + shakeYaw);
+            double rp = Math.toRadians((cinematicCam ? ctx.pitch : pitch) + shakePitch);
             float fx = (float) (Math.cos(ry) * Math.cos(rp)), fy = (float) Math.sin(rp), fz = (float) (Math.sin(ry) * Math.cos(rp));
             float rx = -fz, rz = fx;
             float rl = (float) Math.sqrt(rx * rx + rz * rz);
@@ -5042,7 +5284,7 @@ public class Main {
             // bakes tan(fov/2) into the basis vectors, so pre-scale right/up
             // here (the picking paths use CameraController.getTanHalfFov() and
             // therefore always agree with what is rendered).
-            float camRoll = cinematicCam ? ctx.cinematic.getRoll() : 0.0f;
+            float camRoll = cinematicCam ? ctx.cinematic.getRoll() : feel.getShakeRollDegrees();
             if (camRoll != 0.0f) {
                 // Dutch angle: rotate right/up around the forward axis.
                 double ra = Math.toRadians(camRoll);
@@ -5071,10 +5313,16 @@ public class Main {
                 || (ctx.cinematic != null && ctx.cinematic.cameraActive());
             if (cameraMode == CameraMode.FIRST_PERSON && !detachedCamera) {
                 // Interpolate in pure fixed-point (no float→long precision loss)
-                long px = FixedPoint.lerp(player.getFixedPrevX(), player.getFixedX(), playerPartialTicks);
+                // Head bob rides the camera right vector; shake adds a tiny
+                // smooth positional wobble on top of the eye height.
+                float bobLat = feel.getBobX();
+                long px = FixedPoint.lerp(player.getFixedPrevX(), player.getFixedX(), playerPartialTicks)
+                    + FixedPoint.fromFloat(feel.getShakeOffsetX() + bobLat * rx);
                 long py = FixedPoint.lerp(player.getFixedPrevY(), player.getFixedY(), playerPartialTicks)
-                    + FixedPoint.fromFloat(CameraController.PLAYER_EYE_HEIGHT);
-                long pz = FixedPoint.lerp(player.getFixedPrevZ(), player.getFixedZ(), playerPartialTicks);
+                    + FixedPoint.fromFloat(CameraController.PLAYER_EYE_HEIGHT
+                        + feel.getBobY() + feel.getShakeOffsetY());
+                long pz = FixedPoint.lerp(player.getFixedPrevZ(), player.getFixedZ(), playerPartialTicks)
+                    + FixedPoint.fromFloat(feel.getShakeOffsetZ() + bobLat * rz);
                 cbx = FixedPoint.camBlock(px) - wox;
                 cby = FixedPoint.camBlock(py) - woy;
                 cbz = FixedPoint.camBlock(pz) - woz;
@@ -5086,9 +5334,10 @@ public class Main {
                 // (delta is small, within float precision), then apply to player's
                 // fixed-point position to get exact camera position at any world coord.
                 Vector3f playerPosF = player.getInterpolatedPosition(playerPartialTicks);
-                float camDeltaX = cameraPos.x - playerPosF.x;
-                float camDeltaY = cameraPos.y - playerPosF.y;
-                float camDeltaZ = cameraPos.z - playerPosF.z;
+                // Third-person/detached cameras get the shake but never the bob.
+                float camDeltaX = cameraPos.x - playerPosF.x + feel.getShakeOffsetX();
+                float camDeltaY = cameraPos.y - playerPosF.y + feel.getShakeOffsetY();
+                float camDeltaZ = cameraPos.z - playerPosF.z + feel.getShakeOffsetZ();
                 long pxTP = FixedPoint.lerp(player.getFixedPrevX(), player.getFixedX(), playerPartialTicks);
                 long pyTP = FixedPoint.lerp(player.getFixedPrevY(), player.getFixedY(), playerPartialTicks);
                 long pzTP = FixedPoint.lerp(player.getFixedPrevZ(), player.getFixedZ(), playerPartialTicks);
@@ -5101,11 +5350,6 @@ public class Main {
                 cfx = FixedPoint.camFrac(camX_fp);
                 cfy = FixedPoint.camFrac(camY_fp);
                 cfz = FixedPoint.camFrac(camZ_fp);
-            }
-            if (cameraShake > 0.01f) {
-                cfx += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
-                cfy += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
-                cfz += (float)(Math.random() - 0.5) * cameraShake * 0.1f;
             }
             // Underwater flag: when the camera eye is clipped inside a water block,
             // the shader switches to the underwater pass (fog, tint, caustics, no
@@ -5210,6 +5454,9 @@ public class Main {
 
 
             uploadCraftingItems();
+            if (debugSurfMode != 0) {
+                glProgramUniform1i(computeProgram, locCraftingItemCount, debugSurfMode);
+            }
 
             // ── 16 baked light pools (8 sun-trajectory + 8 moon-trajectory, ~20Hz) ──
             // No surface sun shadows: the main pass samples the ACTIVE sun/moon pools
@@ -5302,11 +5549,6 @@ public class Main {
 
             updateVariableExposure();
 
-            if (ctx.screenshotRequested) {
-                takeScreenshot();
-                ctx.screenshotRequested = false;
-            }
-
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glViewport(0, 0, width, height);
             glClear(GL_COLOR_BUFFER_BIT);
@@ -5327,6 +5569,10 @@ public class Main {
             glBindVertexArray(quadVAO);
             glDrawArrays(GL_TRIANGLES, 0, 6);
             perfEnd(2);
+            if (ctx.screenshotRequested) {
+                takeScreenshot();
+                ctx.screenshotRequested = false;
+            }
             perfSlot = (perfSlot + 1) % PERF_RING;
             } else {
                 // Loading-screen-only frame: the UI texture already holds the
@@ -5346,8 +5592,13 @@ public class Main {
                 if (locQuadFlipY >= 0) glUniform1i(locQuadFlipY, 0);
                 glBindVertexArray(quadVAO);
                 glDrawArrays(GL_TRIANGLES, 0, 6);
+                if (ctx.screenshotRequested) {
+                    takeScreenshot();
+                    ctx.screenshotRequested = false;
+                }
             }
 
+            maybeRunUiProbe();
             glfwSwapBuffers(window);
             glfwPollEvents();
             if (musicPlayer != null) {
@@ -5458,6 +5709,10 @@ public class Main {
         // keys are polled by the logic thread, but block gameplay hotkeys here.
         if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME) return;
         if (action == GLFW_PRESS && key == GLFW_KEY_ESCAPE) {
+            if (ctx.enchantingOpen) {
+                com.voxel.game.EnchantingTable.close(ctx);
+                return;
+            }
             if (ctx.pauseMenuOpen) {
                 ctx.pauseMenuOpen = false;
                 updateCursorMode();
@@ -5616,6 +5871,11 @@ public class Main {
 
             if (key == GLFW_KEY_C) {
                 spawnCreeperAtLook();
+                return;
+            }
+
+            if (key == GLFW_KEY_H) {
+                examineLookTarget();
                 return;
             }
 
@@ -5945,6 +6205,32 @@ public class Main {
             return;
         }
 
+        // Story overlays consume clicks before the world raycast: a decision row
+        // or a CLICK quick-time event must not also swing at a block.
+        if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT
+                && ctx.cinematic != null) {
+            if (ctx.cinematic.hasActiveChoice()) {
+                int row = hud.choiceRowAt(hudMouseX(), hudMouseY());
+                if (row >= 0) ctx.cinematic.requestChoice(row);
+                return;
+            }
+            if (ctx.cinematic.hasActiveQte()
+                    && ctx.cinematic.getActiveQte().input()
+                        == com.voxel.cinematic.QuickTimeEvent.Input.CLICK) {
+                ctx.cinematic.requestQte(true);
+                return;
+            }
+        }
+
+        // Modal enchanting plate: rows are clickable, everything else is swallowed.
+        if (ctx.enchantingOpen) {
+            if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT) {
+                int row = hud.enchantRowAt(hudMouseX(), hudMouseY());
+                if (row >= 0) com.voxel.game.EnchantingTable.apply(ctx, row);
+            }
+            return;
+        }
+
         // Map drag pan: LEFT or RIGHT mouse both pan (like Google Maps).
         // left press first tries the map overlay buttons (zoom/reset/center);
         // if none is hit, the press starts a drag. Everything is consumed so
@@ -6043,9 +6329,18 @@ public class Main {
         if (button == GLFW_MOUSE_BUTTON_LEFT && hud.billboards != null
                 && hud.billboards.hasHighlightedMarker()
                 && performBillboardAction(hud.billboards.getHighlightedMarker())) {
-            // Consume the click so the logic thread doesn't also mine/attack.
-            leftMousePressedThisFrame = false;
-            ctx.leftMousePressedThisFrame = false;
+            consumeClick();
+            return;
+        }
+
+        // Point-and-click: with no prompt highlighted, a plain left click still
+        // USES whatever interactive block or friendly entity sits under the
+        // reticle (chest, furnace, lever, villager, ...) instead of starting to
+        // mine. Holding the button mines non-interactive blocks as usual.
+        // Combat mode keeps left click for charged attacks.
+        if (button == GLFW_MOUSE_BUTTON_LEFT && pointAndClickMode && !combatMode
+                && blockInteraction.attemptClickInteract()) {
+            consumeClick();
             return;
         }
 
@@ -6068,6 +6363,18 @@ public class Main {
                 }
             }
         }
+    }
+
+    /**
+     * Consumes the current left click so the logic thread neither mines nor
+     * swings on the same press that a point-and-click interaction handled.
+     */
+    private void consumeClick() {
+        leftMousePressedThisFrame = false;
+        ctx.leftMousePressedThisFrame = false;
+        leftMouseHeld = false;
+        ctx.leftMouseHeld = false;
+        blockInteraction.resetMining();
     }
 
     /**
@@ -6141,6 +6448,7 @@ public class Main {
 
     public void toggleInventory() {
         hud.inventoryUiDirty = true;
+        if (ctx.enchantingOpen) com.voxel.game.EnchantingTable.close(ctx);
         setInventoryOpen(!inventoryOpen);
     }
 
@@ -6252,12 +6560,23 @@ public class Main {
         pacHoveringInteractable = false;
         if (blockInteraction != null && ctx.player != null && !ctx.player.isDead()
                 && !ctx.initializing && ctx.world != null && ctx.entityManager != null) {
+            // Only a *usable* block counts: the reticle must not widen over
+            // ordinary terrain, or the hover affordance means nothing.
             int[] blockHit = blockInteraction.raycastBlock(6.0f);
             if (blockHit != null) {
-                pacHoveringInteractable = true;
-            } else {
+                int blockId = ctx.world.getVoxel(blockHit[0], blockHit[1], blockHit[2]);
+                pacHoveringInteractable =
+                        com.voxel.game.InteractionBillboardSystem.isInteractableBlock(blockId);
+            }
+            if (!pacHoveringInteractable) {
+                // Friendly entities are the point-and-click talk targets.
                 int[] entityHit = blockInteraction.raycastEntity(6.0f);
-                if (entityHit != null) pacHoveringInteractable = true;
+                if (entityHit != null) {
+                    com.voxel.entity.Entity e = ctx.entityManager.getEntity(entityHit[0]);
+                    pacHoveringInteractable = e instanceof com.voxel.entity.VillagerEntity
+                            || e instanceof com.voxel.entity.MinecartEntity
+                            || e instanceof com.voxel.entity.AncientBuilderEntity;
+                }
             }
         }
     }
@@ -6611,6 +6930,30 @@ public class Main {
         glProgramUniform1i(computeProgram, locCraftingItemCount, totalCount);
     }
 
+    /**
+     * Surface-light debug view, enabled with {@code VOXEL_DEBUG_SURF=1}: the
+     * frame paints (sky light, block light, dynamic point light) into the red,
+     * green and blue channels instead of the lit scene. Same sentinel the
+     * headless panorama probe uses, so the two can be compared directly; it
+     * makes "is this room sky-lit or lamp-lit?" a pixel read rather than a guess.
+     */
+    private final int debugSurfMode = debugSurfModeFromEnv();
+
+    /**
+     * {@code VOXEL_DEBUG_SURF=surf} splits sky/block/point light, {@code =terms}
+     * splits point/god-ray/final, and {@code VOXEL_NO_SHAFTS=1} disables the
+     * shaft march — the A/B used to keep the volumetric pass inside the frame
+     * budget at 720p (it measures within noise of a no-shaft frame now that the
+     * march is distance-adaptive, so it is a regression guard rather than a
+     * crutch).
+     */
+    private static int debugSurfModeFromEnv() {
+        String v = System.getenv("VOXEL_DEBUG_SURF");
+        if (System.getenv("VOXEL_NO_SHAFTS") != null) return -9915;
+        if (v == null) return 0;
+        return "terms".equals(v) ? -9912 : -9913;
+    }
+
     public void bindTextures() {
         glActiveTexture(GL_TEXTURE6);
         glBindTexture(GL_TEXTURE_2D_ARRAY, textureManager.getTextureArrayId());
@@ -6726,7 +7069,13 @@ public class Main {
     public void setupResources() {
         textureManager = new TextureManager();
         com.voxel.entity.Entity.setSharedTextureManager(textureManager);
-        textureManager.loadTextures(
+        // Mods are extracted before the single texture-array upload so their
+        // block textures share the same atlas (loadTextures computes layer
+        // offsets for the whole set at once). Their plugins load later, once
+        // the built-in block table exists.
+        modDiscovery = com.voxel.modloader.ModLoader.discover(
+                com.voxel.modloader.ModLoader.MODS_DIR);
+        java.util.List<String> textureDirs = new java.util.ArrayList<>(java.util.Arrays.asList(
             "src/main/resources/assets/minecraft/textures/blocks",
             "src/main/resources/assets/minecraft/textures/items",
             "src/main/resources/assets/aether/textures/block/natural",
@@ -6734,7 +7083,9 @@ public class Main {
             "src/main/resources/assets/aether/textures/block/dungeon",
             "src/main/resources/assets/aether/textures/block/utility",
             "src/main/resources/assets/aether/textures/block/miscellaneous"
-        );
+        ));
+        textureDirs.addAll(java.util.Arrays.asList(modDiscovery.textureDirs()));
+        textureManager.loadTextures(textureDirs.toArray(new String[0]));
         textureManager.loadEntityTextures("src/main/resources/assets/minecraft/textures/entity");
         textureManager.loadEntityTextures("src/main/resources/assets/aether/textures/entity/mobs");
         // Snow Golem pumpkin layer uses the existing block textures on the entity array.
@@ -8138,6 +8489,12 @@ public class Main {
         com.voxel.world.BeaconLogic.VALID_PYRAMID_BLOCKS.add(blockDataManager.findBlockId("diamond_block"));
         com.voxel.world.BeaconLogic.VALID_PYRAMID_BLOCKS.add(blockDataManager.findBlockId("emerald_block"));
 
+        // ── Mods ──
+        // Every built-in id is taken; mods register into the reserved range
+        // (3000+) and queue their items for the post-ItemDefinitions pass.
+        com.voxel.modloader.ModLoader.load(modDiscovery, blockRegistry, shaderBlockRegistry,
+                blockDataManager, textureManager);
+
         blockDataManager.uploadToGPU();
     }
 
@@ -8371,6 +8728,132 @@ public class Main {
     private final int panoramaProbeFramesTarget =
             Integer.getInteger("voxel.panorama.frames", 45);
     private int panoramaProbeFrames = 0;
+
+    // ── Unattended UI capture (VOXEL_UI_PROBE) ─────────────────────────────
+    /** One-shot latch for VOXEL_AUTO_WORLD (unattended screenshots). */
+    private volatile boolean autoWorldEntered = false;
+    private int uiProbeFrames = 0;
+    private boolean uiProbeShot = false;
+    private final int uiProbeFramesTarget =
+            Integer.getInteger("voxel.ui.probe.frames", 150);
+
+    /** After the HUD has settled, request one full-window screenshot. */
+    private void maybeRunUiProbe() {
+        if (ctx == null || uiProbeShot || System.getenv("VOXEL_UI_PROBE") == null) return;
+        // Title-screen capture: VOXEL_PROBE_MENU shoots the main menu instead of
+        // a world, so the menu art and its UVs can be checked unattended.
+        if (System.getenv("VOXEL_PROBE_MENU") != null) {
+            // The title screen is allowed to be in its "initializing" state —
+            // that flag covers the menu panorama build too — so only the screen
+            // identity and the settle-frame count gate the capture.
+            if (ctx.menuScreen != GameContext.MenuScreen.MAIN) return;
+            if (++uiProbeFrames < uiProbeFramesTarget) return;
+            uiProbeShot = true;
+            // The menu draws inside renderMenuPanorama and never reaches the
+            // world branch's screenshot check, so capture right here while the
+            // panorama frame and the UI canvas are both current.
+            takeScreenshot();
+            return;
+        }
+        if (ctx.menuScreen != GameContext.MenuScreen.IN_GAME || ctx.initializing) return;
+        // Wait out the opening scene: the HUD is verified in play, not behind a
+        // letterbox and a choice card. Frames only count once control is back.
+        if (ctx.cinematic != null && ctx.cinematic.active) {
+            uiProbeFrames = 0;
+            return;
+        }
+        if (++uiProbeFrames < uiProbeFramesTarget) return;
+        uiProbeShot = true;
+        ctx.screenshotRequested = true;
+    }
+
+    /** Enter a bundled world without menu input (unattended UI verification). */
+    private void autoEnterWorld(String world) {
+        if (ctx == null) return;
+        if ("lighting".equals(world) || "lightingdemo".equals(world)) {
+            ctx.tutorialWorld = false;
+            ctx.pointClickWorld = false;
+            ctx.showcaseWorld = false;
+            ctx.lightingDemoWorld = true;
+            ctx.saveName = "lighting";
+            copyLightingDemoTemplate();
+            loadSaveIntoContext("lighting");
+            ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
+            ctx.cursorRayOverride = null;
+            updateCursorMode();
+            System.out.println("[UI PROBE] auto-entered Lighting Demo world");
+            return;
+        }
+        if ("pointclick".equals(world) || "point_click".equals(world)) {
+            ctx.tutorialWorld = false;
+            ctx.pointClickWorld = true;
+            ctx.showcaseWorld = false;
+            ctx.lightingDemoWorld = false;
+            ctx.saveName = "pointclick";
+            copyPointClickTemplate();
+            loadSaveIntoContext("pointclick");
+            ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
+            ctx.cursorRayOverride = null;
+            updateCursorMode();
+            System.out.println("[UI PROBE] auto-entered Point & Click world");
+            return;
+        }
+        if ("showcase".equals(world) || "tutorial".equals(world)) {
+            boolean tutorial = "tutorial".equals(world);
+            ctx.lightingDemoWorld = false;
+            ctx.tutorialWorld = tutorial;
+            ctx.pointClickWorld = false;
+            ctx.showcaseWorld = !tutorial;
+            ctx.saveName = world;
+            if (tutorial) copyTutorialTemplate(); else copyShowcaseTemplate();
+            loadSaveIntoContext(world);
+            if (!tutorial) ctx.gameMode = GameContext.GameMode.CREATIVE;
+            ctx.borderManager.setBorderFromBits(ctx.worldSize.intBits());
+            ctx.cursorRayOverride = null;
+            updateCursorMode();
+            System.out.println("[UI PROBE] auto-entered " + world + " world");
+        }
+    }
+
+    /** One-shot latch for VOXEL_PROBE_POS / VOXEL_PROBE_LOOK. */
+    private boolean probePoseApplied = false;
+
+    /**
+     * Place the camera for an unattended capture. {@code VOXEL_PROBE_POS=x,y,z}
+     * sets the player's feet, {@code VOXEL_PROBE_LOOK=yaw,pitch} the view
+     * direction (degrees, same convention as the look vector). Applied once,
+     * after spawn resolution, so the spawn re-snap does not undo it.
+     */
+    private void applyProbePose() {
+        if (probePoseApplied) return;
+        String pos = System.getenv("VOXEL_PROBE_POS");
+        if (pos == null || ctx == null || ctx.player == null || ctx.world == null
+                || ctx.initializing || ctx.spawnLoading || ctx.teleportLoading) return;
+        String[] xyz = pos.split(",");
+        if (xyz.length != 3) return;
+        try {
+            double px = Double.parseDouble(xyz[0].trim());
+            double py = Double.parseDouble(xyz[1].trim());
+            double pz = Double.parseDouble(xyz[2].trim());
+            probePoseApplied = true;
+            ctx.player.setPosition(px, py, pz);
+            ctx.player.resetVelocity();
+            String look = System.getenv("VOXEL_PROBE_LOOK");
+            if (look != null) {
+                String[] yp = look.split(",");
+                if (yp.length == 2) {
+                    yaw = Float.parseFloat(yp[0].trim());
+                    pitch = Float.parseFloat(yp[1].trim());
+                    ctx.yaw = yaw;
+                    ctx.pitch = pitch;
+                }
+            }
+            System.out.println("[PROBE] pose set to " + px + "," + py + "," + pz
+                    + (look == null ? "" : " looking " + look));
+        } catch (NumberFormatException ignored) {
+            // Malformed probe values: leave the spawn alone.
+        }
+    }
 
     private void maybeRunPanoramaProbe() {
         if (!panoramaProbe) return;
@@ -8622,36 +9105,115 @@ public class Main {
     }
 
     public void takeScreenshot() {
-        // Captured at the internal render resolution (renderTexture's size).
-        int numPixels = renderW * renderH;
-        java.nio.ByteBuffer pixels = MemoryUtil.memAlloc(numPixels * 4);
+        // Capture the WINDOW, after the UI composite, so the HUD, prompts and
+        // captions are in the image. Reading renderTexture here (the old path)
+        // only ever captured the raytraced scene.
+        int w = Math.max(1, width);
+        int h = Math.max(1, height);
+        java.nio.ByteBuffer pixels = MemoryUtil.memAlloc(w * h * 4);
         try {
-            glGetTextureImage(renderTexture, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+            glReadBuffer(GL_BACK);
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 
-            BufferedImage image = new BufferedImage(renderW, renderH, BufferedImage.TYPE_INT_ARGB);
-            for (int y = 0; y < renderH; y++) {
-                for (int x = 0; x < renderW; x++) {
-                    int idx = (y * renderW + x) * 4;
+            BufferedImage image = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    int idx = ((h - 1 - y) * w + x) * 4;
                     int r = pixels.get(idx) & 0xFF;
                     int g = pixels.get(idx + 1) & 0xFF;
                     int b = pixels.get(idx + 2) & 0xFF;
                     int a = pixels.get(idx + 3) & 0xFF;
-                    // OpenGL origin is bottom-left; flip to top-left for image
-                    image.setRGB(x, renderH - 1 - y, (a << 24) | (r << 16) | (g << 8) | b);
+                    image.setRGB(x, y, (a << 24) | (r << 16) | (g << 8) | b);
                 }
             }
 
             File dir = new File("screenshots");
             if (!dir.exists()) dir.mkdirs();
-
             File out = new File(dir, "screenshot_" + System.currentTimeMillis() + ".png");
             ImageIO.write(image, "PNG", out);
-            System.out.println("Screenshot saved: " + out.getPath());
+            System.out.println("Screenshot saved: " + out.getPath() + " (scene + HUD)");
+
+            if (System.getenv("VOXEL_UI_PROBE") != null) {
+                System.out.println("[UI PROBE] frame " + w + "x" + h
+                        + " world=" + (ctx == null || ctx.activeDimension == null
+                        ? "?" : ctx.activeDimension.name)
+                        + " menu=" + (ctx == null ? "?" : ctx.menuScreen)
+                        // Prompt culling diagnostics: how many point-and-click
+                        // markers survived the wall/off-screen raycast.
+                        + (hud == null || hud.billboards == null ? ""
+                        : " markers=" + hud.billboards.getMarkerCount()
+                        + " occluded=" + hud.billboards.getCulledOccludedCount()
+                        + " offscreen=" + hud.billboards.getCulledOffscreenCount()));
+                // Per-prompt geometry, so a captured frame can be cropped exactly
+                // where each card was drawn instead of hunting for it by eye.
+                if (hud != null && hud.billboards != null) {
+                    for (int i = 0; i < hud.billboards.getMarkerCount(); i++) {
+                        System.out.println("[UI PROBE] prompt " + i + " \""
+                                + hud.billboards.getMarkerName(i) + "\" at "
+                                + Math.round(hud.billboards.getMarkerX(i)) + ","
+                                + Math.round(hud.billboards.getMarkerY(i))
+                                + " alpha=" + String.format(java.util.Locale.US, "%.2f",
+                                hud.billboards.getMarkerAlpha(i))
+                                + (hud.billboards.isMarkerHighlighted(i) ? " HOVER" : ""));
+                        float[] rect = hud.getMarkerPlateRect(i, new float[4]);
+                        if (rect != null) {
+                            System.out.println("[UI PROBE]   card "
+                                    + Math.round(rect[0]) + "," + Math.round(rect[1])
+                                    + " " + Math.round(rect[2]) + "x" + Math.round(rect[3])
+                                    + (rect[0] < 0f || rect[1] < 0f
+                                    || rect[0] + rect[2] > w || rect[1] + rect[3] > h
+                                    ? " OFFSCREEN" : ""));
+                        }
+                    }
+                }
+                printUiAscii(pixels, w, h, 100, 40);
+                if (System.getenv("VOXEL_UI_PROBE_CLOSE") != null) {
+                    glfwSetWindowShouldClose(window, true);
+                }
+            }
         } catch (IOException e) {
             System.err.println("Failed to save screenshot: " + e.getMessage());
         } finally {
             MemoryUtil.memFree(pixels);
         }
+    }
+
+    /** Downsampled luminance + hue view of a captured window (text inspection). */
+    private void printUiAscii(java.nio.ByteBuffer pixels, int w, int h, int cols, int rows) {
+        final String ramp = " .:-=+*#%@";
+        StringBuilder lum = new StringBuilder();
+        StringBuilder hue = new StringBuilder();
+        for (int ry = 0; ry < rows; ry++) {
+            for (int cx = 0; cx < cols; cx++) {
+                int x0 = (int) ((long) cx * w / cols);
+                int x1 = Math.max(x0 + 1, (int) ((long) (cx + 1) * w / cols));
+                int y0 = (int) ((long) ry * h / rows);
+                int y1 = Math.max(y0 + 1, (int) ((long) (ry + 1) * h / rows));
+                double r = 0, g = 0, b = 0;
+                long n = 0;
+                for (int y = y0; y < y1; y += 2) {
+                    for (int x = x0; x < x1; x += 2) {
+                        int i = ((h - 1 - y) * w + x) * 4;
+                        r += pixels.get(i) & 0xFF;
+                        g += pixels.get(i + 1) & 0xFF;
+                        b += pixels.get(i + 2) & 0xFF;
+                        n++;
+                    }
+                }
+                r /= n; g /= n; b /= n;
+                double lv = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                int idx = (int) Math.round(lv / 255.0 * (ramp.length() - 1));
+                lum.append(ramp.charAt(Math.max(0, Math.min(ramp.length() - 1, idx))));
+                hue.append(hueLetter(r, g, b));
+            }
+            lum.append('\n');
+            hue.append('\n');
+        }
+        System.out.println("[UI PROBE ASCII] luminance \"" + ramp + "\" (top row first):");
+        System.out.print(lum);
+        System.out.println("[UI PROBE ASCII] hue ('.' = grey; R/Y/G/C/B/M):");
+        System.out.print(hue);
     }
 
     public void uploadWorldToGpu() {

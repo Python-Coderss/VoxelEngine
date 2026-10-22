@@ -51,6 +51,9 @@ public class UILayer {
         public int layer = 0;
         public Vector2f uvOffset = new Vector2f(0, 0);
         public Vector2f uvScale = new Vector2f(1, 1);
+        /** When true the texture repeats across the quad (MC dirt panels). */
+        public boolean tiled = false;
+        public float tileW = 16f, tileH = 16f;
         public boolean visible = true;
         public Runnable onClick;
         
@@ -62,6 +65,10 @@ public class UILayer {
         
         public void render(UIManager manager) {
             if (!visible) return;
+            if (tiled && textureId != 0 && textureType == 0) {
+                manager.drawQuadTiled(pos, size, color, textureId, tileW, tileH);
+                return;
+            }
             manager.drawQuad(pos, size, rotation, color, textureId, uvOffset, uvScale, textureType, layer);
         }
         
@@ -78,6 +85,8 @@ public class UILayer {
         public int lineOffset = 0;       // lines to skip from top (for scrolling)
         /** When true, text renders with a flat outline (see outlineColor). */
         public boolean outlined = false;
+        /** Minecraft-style single drop shadow (used by menus and title cards). */
+        public boolean shadow = false;
         public Vector4f outlineColor = new Vector4f(0f, 0f, 0f, 1f);
         public float outlineWidth = 1f;
         
@@ -94,6 +103,9 @@ public class UILayer {
             if (outlined) {
                 manager.drawStringOutlined(text, pos.x, pos.y, scale, color, textureId,
                     charLineLimit, lineOffset, outlineColor, outlineWidth);
+            } else if (shadow) {
+                manager.drawStringShadow(text, pos.x, pos.y, scale, color, textureId,
+                    charLineLimit, lineOffset);
             } else {
                 manager.drawString(text, pos.x, pos.y, scale, color, textureId, charLineLimit, lineOffset);
             }

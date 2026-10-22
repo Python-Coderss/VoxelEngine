@@ -57,8 +57,28 @@ public class CommandProcessor {
             case "worldsize": handleWorldSize(parts); break;
             case "save": handleSave(); break;
             case "seed": handleSeed(parts); break;
+            case "story": handleStory(); break;
+            case "qte": handleQte(parts); break;
             default: ctx.setStatus("Unknown command: /" + command + ". Type /help for commands."); break;
         }
+    }
+
+    /** Print the decisions the player has made (MCSM recap). */
+    private void handleStory() {
+        java.util.List<String> choices = ctx.story.choices();
+        if (choices.isEmpty()) {
+            ctx.setStatus("No decisions yet. Choices are remembered in this world.");
+            return;
+        }
+        ctx.setStatus("Your story: " + String.join("  |  ", choices));
+    }
+
+    /** /qte assist|off — no-fail accessibility for quick-time events. */
+    private void handleQte(String[] parts) {
+        boolean on = parts.length < 2 || !"off".equalsIgnoreCase(parts[1]);
+        ctx.qteAssist = on;
+        ctx.setStatus("QTE assist " + (on ? "ON — a missed prompt still succeeds"
+                : "OFF — prompts must be hit"));
     }
 
     private void handleSpawn(String[] parts) {

@@ -45,6 +45,24 @@ public final class CinematicScript {
         return this;
     }
 
+    /**
+     * The player thinking to themselves during a cutscene. Monologue is spoken
+     * in Jesse's own voice (Male Jesse unless the player picked the other
+     * Jesse) and is never rate-limited, because an inner thought belongs to
+     * the beat that triggered it.
+     */
+    public CinematicScript monologue(float seconds, String text) {
+        return at(seconds, MONOLOGUE_SPEAKER, text);
+    }
+
+    /** Speaker label that marks a line as player monologue. */
+    public static final String MONOLOGUE_SPEAKER = "Jesse";
+
+    /** True when a line is the player's inner voice. */
+    public static boolean isMonologue(Line line) {
+        return line != null && MONOLOGUE_SPEAKER.equalsIgnoreCase(line.speaker);
+    }
+
     public boolean isEmpty() {
         return lines.isEmpty();
     }

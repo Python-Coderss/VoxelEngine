@@ -224,6 +224,9 @@ public final class TutorialWorldAuthor {
         for (int i = 0; i < ZONES.length; i++) a.buildZone(i);
         a.buildProgressPath();
         a.buildFill();
+        // Runs last: the arrival avenue owns the strip from the spawn courtyard
+        // to the south gate, so it wins over any fill-pass decoration there.
+        a.buildApproach();
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -1270,6 +1273,75 @@ public final class TutorialWorldAuthor {
                             new int[]{8, 8, 8, 8, 4, 4});
                     break;
                 }
+            }
+        }
+
+        // ── Arrival approach ─────────────────────────────────────────
+
+        /**
+         * The processional approach from the spawn courtyard through the south
+         * gate: a five-wide stone-brick avenue, a nine-by-seven forecourt with
+         * notice boards and benches, alternating lantern posts and twin rows of
+         * oaks. Everything stays at or below G+5 and leaves the spawn column
+         * (0, 6), the drawbridge planks and the beacon pyramid untouched.
+         */
+        private void buildApproach() {
+            // Sweep fill-pass foliage off the road lane. Only loose decoration
+            // is cleared; bridge planks and the pyramid's metal blocks survive.
+            for (int z = 8; z <= 38; z++) {
+                for (int x = -2; x <= 2; x++) {
+                    for (int y = G + 1; y <= G + 2; y++) {
+                        int here = sink.get(x, y, z);
+                        if (here == OAK_LEAF || here == OAK_LOG || here == TALLGRASS
+                                || here == POPPY || here == DANDELION || here == REEDS) {
+                            set(x, y, z, 0);
+                        }
+                    }
+                }
+            }
+
+            // Avenue: five wide, from the courtyard edge out to the map road.
+            floor(-2, 8, 2, 38, G, STONE_BRICK);
+            // A plank centre line marks the stretch beyond the moat.
+            for (int z = 18; z <= 38; z++) set(0, G, z, PLANKS);
+            // Forecourt apron outside the gate: 9x7 centred on (0, 14).
+            floor(-4, 11, 4, 17, G, STONE_BRICK);
+
+            // Twin rows of oaks flank the avenue outside the castle moat.
+            for (int z = 18; z <= 34; z += 8) {
+                tree(-5, z, OAK_LOG, OAK_LEAF);
+                tree(5, z, OAK_LOG, OAK_LEAF);
+            }
+
+            // Lantern posts every six blocks: stone-brick and glowstone bodies
+            // alternate, each capped with a glowstone lamp.
+            int index = 0;
+            for (int z = 8; z <= 38; z += 6, index++) {
+                for (int x = -4; x <= 4; x += 8) {
+                    place(x, G + 1, z, (index & 1) == 0 ? STONE_BRICK : GLOWSTONE);
+                    place(x, G + 2, z, GLOWSTONE);
+                }
+            }
+
+            // Four oak-log corner posts on the forecourt, topped with lamps.
+            for (int x = -4; x <= 4; x += 8) {
+                for (int z = 11; z <= 17; z += 6) {
+                    place(x, G + 1, z, OAK_LOG);
+                    place(x, G + 2, z, OAK_LOG);
+                    place(x, G + 3, z, GLOWSTONE);
+                }
+            }
+
+            // Notice boards: two bookshelf columns either side of the lane.
+            for (int x = -3; x <= 3; x += 6) {
+                place(x, G + 1, 12, BOOKSHELF);
+                place(x, G + 2, 12, BOOKSHELF);
+            }
+
+            // Benches along the outer edge of the forecourt.
+            for (int x = 3; x <= 4; x++) {
+                place(x, G + 1, 15, PLANKS);
+                place(-x, G + 1, 15, PLANKS);
             }
         }
 

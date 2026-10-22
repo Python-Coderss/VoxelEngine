@@ -17,7 +17,7 @@ import java.util.Set;
  * A discovered, classified music library.
  *
  * <p>The project ships far more music than the old single-folder player could
- * use: eight MCSM soundtrack albums under {@code src/resources/music}, the
+ * use: eight MCSM soundtrack albums under {@code src/main/resources/music}, the
  * Aether soundtrack under {@code assets/aether/sounds/music}, and any
  * {@code minecraft/} or {@code fanmade/} tracks a user drops in. This class
  * walks those roots once at boot, filters out placeholders, unused takes,

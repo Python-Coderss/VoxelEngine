@@ -38,9 +38,26 @@ public class MapGenVillage {
     private static final int GLOWSTONE = 17;
     private static final int WATER = 15;
     private static final int FENCE = 73; // oak fence
-    private static final int WOOL_WHITE = 80;
+    private static final int WOOL_WHITE = 91; // white wool block
     private static final int VILLAGER_TV = 274;
     private static final int CHEST = 118;
+    private static final int BOOKSHELF = 136;
+    private static final int FURNACE = 116;
+    private static final int CRAFT_TABLE = 115;
+    private static final int OAK_SLAB = 206;
+    private static final int OAK_STAIRS = 200;
+    private static final int BRICK = 130;
+    private static final int FLOWER_POT = DecorBlocks.FLOWER_POT;
+    private static final int BED_FOOT = DecorBlocks.BED_FOOT_NORTH;
+    private static final int BED_HEAD = DecorBlocks.BED_HEAD_NORTH;
+    private static final int BANNER = DecorBlocks.BANNER_LOWER_NS;
+    private static final int BANNER_TOP = DecorBlocks.BANNER_UPPER_NS;
+    private static final int IRON_BARS = 471;
+    private static final int PUMPKIN = 42;
+    private static final int MELON = 43;
+    private static final int POPPY = 34;
+    private static final int DANDELION = 121;
+    private static final int TALLGRASS = 35;
 
     /** Last generated village center (for /locate command). */
     private static int lastVillageX = 0, lastVillageY = 0, lastVillageZ = 0;
@@ -105,6 +122,9 @@ public class MapGenVillage {
 
         // Light posts around the village
         generateLightPosts(world, centerX, surfaceY, centerZ, rand);
+
+        // Plaza furniture, market stalls and door-side dressing.
+        generateVillageDetail(world, centerX, surfaceY, centerZ, rand);
 
         // Simple wall around village perimeter (partial)
         if (rand.nextBoolean()) {
@@ -241,8 +261,25 @@ public class MapGenVillage {
             world.setVoxel(x + width - 3, y + 3, z + depth - 1, GLASS);
         }
 
-        // Shop stock: a chest in the corner is the shopkeeper's job site.
+        // Lamp over the front door.
+        world.setVoxel(doorX, y + 4, z, GLOWSTONE);
+
+        // Interior: shop chest, bed, workbench, furnace, a shelf and a plant.
         world.setVoxel(x + 1, y + 2, z + 1, CHEST);
+        int bedX = Math.min(x + 2, x + width - 2);
+        world.setVoxel(bedX, y + 2, z + 1, BED_FOOT);
+        world.setVoxel(bedX, y + 2, z + 2, BED_HEAD);
+        world.setVoxel(x + width - 2, y + 2, z + 1, CRAFT_TABLE);
+        world.setVoxel(x + width - 2, y + 2, z + depth - 2, FURNACE);
+        if (width >= 6) world.setVoxel(x + 1, y + 2, z + depth - 2, BOOKSHELF);
+        world.setVoxel(x + 1, y + 2, z + 2, FLOWER_POT);
+        world.setVoxel(x + 1, y + 3, z + 2, POPPY);
+
+        // Brick-capped chimney on the east gable.
+        for (int h = 1; h <= 4; h++) {
+            world.setVoxel(x + width, y + h, z + depth / 2, COBBLESTONE);
+        }
+        world.setVoxel(x + width, y + 5, z + depth / 2, BRICK);
 
         // Roof
         int roofY = y + height + 2;
@@ -308,8 +345,30 @@ public class MapGenVillage {
             world.setVoxel(x, y + 3, z + 3, GLASS);
         }
 
-        // Shop stock: a chest in the corner is the shopkeeper's job site.
+        // Lamp over the double door and a lit ceiling under the ridge.
+        world.setVoxel(doorX, y + 4, z, GLOWSTONE);
+        world.setVoxel(x + width / 2, y + height + 2, z + depth / 2, GLOWSTONE);
+
+        // Interior: two beds, workbench, furnace, shelves, chairs and a rug.
         world.setVoxel(x + 1, y + 2, z + 1, CHEST);
+        world.setVoxel(x + 2, y + 2, z + 1, BED_FOOT);
+        world.setVoxel(x + 2, y + 2, z + 2, BED_HEAD);
+        world.setVoxel(x + width - 2, y + 2, z + 1, BED_FOOT);
+        world.setVoxel(x + width - 2, y + 2, z + 2, BED_HEAD);
+        world.setVoxel(x + 1, y + 2, z + depth - 2, CRAFT_TABLE);
+        world.setVoxel(x + 3, y + 2, z + depth - 2, FURNACE);
+        if (width >= 8) {
+            world.setVoxel(x + 5, y + 2, z + depth - 2, BOOKSHELF);
+            world.setVoxel(x + 6, y + 2, z + depth - 2, BOOKSHELF);
+        }
+        world.setVoxel(x + width / 2 - 1, y + 2, z + depth / 2, OAK_STAIRS);
+        world.setVoxel(x + width / 2 + 1, y + 2, z + depth / 2, OAK_STAIRS);
+        world.setVoxel(x + width / 2, y + 2, z + depth / 2, OAK_SLAB);
+        world.setVoxel(x + 1, y + 2, z + 3, FLOWER_POT);
+        world.setVoxel(x + 1, y + 3, z + 3, DANDELION);
+        for (int dz = 2; dz <= depth - 3; dz++) {
+            world.setVoxel(x + width / 2, y + 1, z + dz, WOOL_WHITE);
+        }
 
         // A-frame roof
         int roofBase = y + height + 2;
@@ -347,6 +406,20 @@ public class MapGenVillage {
         // Water source in the centre of the plot (tile the irrigation from).
         int cx = x + size / 2, cz = z + size / 2;
         world.setVoxel(cx, y, cz, WATER);
+
+        // Gate gap in the north fence so the farmer can actually walk in.
+        world.setVoxel(x + size / 2, y + 1, z, 0);
+        // Scarecrow: post, crossbar, pumpkin head and a wool shirt.
+        int sx = x - 1, sz = z + 2;
+        for (int h = 1; h <= 2; h++) world.setVoxel(sx, y + h, sz, OAK_LOG);
+        world.setVoxel(sx - 1, y + 2, sz, OAK_LOG);
+        world.setVoxel(sx + 1, y + 2, sz, OAK_LOG);
+        world.setVoxel(sx, y + 3, sz, PUMPKIN);
+        world.setVoxel(sx, y + 1, sz + 1, WOOL_WHITE);
+        // A bench and two planters at the field edge.
+        bench(world, x + size, y, z + 1, 3, false);
+        world.setVoxel(x + size, y + 1, z + size - 1, BRICK);
+        world.setVoxel(x + size, y + 2, z + size - 1, DANDELION);
     }
 
     private void generateWorkshop(World world, int x, int y, int z, Random rand) {
@@ -387,8 +460,14 @@ public class MapGenVillage {
             for (int dz = -1; dz < depth + 1; dz++)
                 world.setVoxel(x + dx, roofY, z + dz, PLANKS);
 
-        // Place a crafting table inside
-        world.setVoxel(x + 2, y + 2, z + 2, 115);
+        // Workshop stations: bench, furnace, anvil, shelves and a stocked chest.
+        world.setVoxel(x + 2, y + 2, z + 2, CRAFT_TABLE);
+        world.setVoxel(x + 1, y + 2, z + 1, FURNACE);
+        world.setVoxel(x + 3, y + 2, z + 1, 456); // anvil
+        world.setVoxel(x + 1, y + 2, z + 3, BOOKSHELF);
+        world.setVoxel(x + 3, y + 2, z + 3, CHEST);
+        world.setVoxel(x + 2, y + 2, z + 4, OAK_STAIRS);
+        world.setVoxel(x + 2, y + 4, z + 2, GLOWSTONE);
     }
 
     /**
@@ -461,6 +540,17 @@ public class MapGenVillage {
             world.setVoxel(x0 + 6, by + 2, z0 + dz, PLANKS);
         }
         world.setVoxel(x0 + 6, by + 3, z0 + 3, VILLAGER_TV);
+        // Guest chairs, a potted plant and the studio camera on a tripod.
+        world.setVoxel(x0 + 5, by + 2, z0 + 2, OAK_STAIRS);
+        world.setVoxel(x0 + 5, by + 2, z0 + 4, OAK_STAIRS);
+        world.setVoxel(x0 + 1, by + 2, z0 + 1, FLOWER_POT);
+        world.setVoxel(x0 + 1, by + 3, z0 + 1, DANDELION);
+        for (int h = 1; h <= 2; h++) world.setVoxel(x0 + 2, by + h, z0 + 3, OAK_LOG);
+        world.setVoxel(x0 + 2, by + 3, z0 + 3, VILLAGER_TV);
+        world.setVoxel(x0 + 2, by + 2, z0 + 2, IRON_BARS);
+        // Studio banners outside the glass front.
+        bannerPost(world, x0 - 1, by, z0 + 1);
+        bannerPost(world, x0 - 1, by, z0 + 5);
 
         return new Vector3i[]{
                 new Vector3i(x0 + 7, by + 2, z0 + 3),
@@ -495,6 +585,84 @@ public class MapGenVillage {
         }
     }
 
+    /**
+     * Plaza furniture, a pair of market stalls and flower tufts. Everything is
+     * placed on the flattened village shelf, so nothing floats on a slope.
+     */
+    private void generateVillageDetail(World world, int cx, int y, int cz, Random rand) {
+        // Benches facing the well on all four sides.
+        bench(world, cx - 5, y, cz - 1, 3, true);
+        bench(world, cx + 3, y, cz - 1, 3, true);
+        bench(world, cx - 1, y, cz - 5, 3, false);
+        bench(world, cx - 1, y, cz + 3, 3, false);
+        // Brick planters at the plaza corners.
+        int[][] corners = {{-5, -5}, {5, -5}, {-5, 5}, {5, 5}};
+        for (int[] c : corners) {
+            world.setVoxel(cx + c[0], y + 1, cz + c[1], BRICK);
+            world.setVoxel(cx + c[0], y + 2, cz + c[1],
+                    ((c[0] + c[1]) & 1) == 0 ? POPPY : DANDELION);
+        }
+        // Notice board and banner standards either side of the well.
+        world.setVoxel(cx - 1, y + 1, cz - 6, OAK_LOG);
+        world.setVoxel(cx + 1, y + 1, cz - 6, OAK_LOG);
+        for (int dx = -1; dx <= 1; dx++) world.setVoxel(cx + dx, y + 2, cz - 6, PLANKS);
+        bannerPost(world, cx - 7, y, cz + 1);
+        bannerPost(world, cx + 6, y, cz + 1);
+        // Two market stalls on the plaza diagonals.
+        stall(world, cx + 7, y, cz + 7);
+        stall(world, cx - 10, y, cz - 8);
+        // Wildflower tufts soften the path mouths.
+        for (int i = 0; i < 12; i++) {
+            int a = rand.nextInt(360);
+            int d = 5 + rand.nextInt(4);
+            int px = cx + (int) (Math.cos(Math.toRadians(a)) * d);
+            int pz = cz + (int) (Math.sin(Math.toRadians(a)) * d);
+            if (world.getVoxel(px, y + 1, pz) == 0) {
+                world.setVoxel(px, y + 1, pz, i % 3 == 0 ? TALLGRASS : POPPY);
+            }
+        }
+    }
+
+    /** Log-legged plank bench; {@code alongX} lays the seat east-west. */
+    private void bench(World world, int x, int y, int z, int length, boolean alongX) {
+        for (int i = 0; i < length; i++) {
+            int bx = alongX ? x + i : x;
+            int bz = alongX ? z : z + i;
+            world.setVoxel(bx, y + 2, bz, PLANKS);
+            if (i % 2 == 0) world.setVoxel(bx, y + 1, bz, OAK_LOG);
+        }
+    }
+
+    private void bannerPost(World world, int x, int y, int z) {
+        world.setVoxel(x, y + 1, z, OAK_LOG);
+        world.setVoxel(x, y + 2, z, BANNER);
+        world.setVoxel(x, y + 3, z, BANNER_TOP);
+    }
+
+    /** 5x3 market stall: cobble plinth, plank counter, wool roof, produce chest. */
+    private void stall(World world, int x, int y, int z) {
+        for (int dx = 0; dx < 5; dx++) {
+            for (int dz = 0; dz < 3; dz++) {
+                world.setVoxel(x + dx, y, z + dz, COBBLESTONE);
+                if (dz == 1) world.setVoxel(x + dx, y + 1, z + dz, PLANKS);
+            }
+        }
+        for (int dx : new int[]{0, 4}) {
+            for (int dz : new int[]{0, 2}) {
+                for (int h = 1; h <= 2; h++) world.setVoxel(x + dx, y + h, z + dz, OAK_LOG);
+            }
+        }
+        for (int dx = 0; dx < 5; dx++) {
+            for (int dz = 0; dz < 3; dz++) {
+                world.setVoxel(x + dx, y + 3, z + dz, WOOL_WHITE);
+            }
+        }
+        world.setVoxel(x + 1, y + 2, z + 1, PUMPKIN);
+        world.setVoxel(x + 3, y + 2, z + 1, MELON);
+        world.setVoxel(x + 2, y, z + 2, CHEST);
+        world.setVoxel(x + 2, y + 4, z + 1, GLOWSTONE);
+    }
+
     private void generateLightPosts(World world, int cx, int y, int cz, Random rand) {
         // Place light posts at 4-6 locations around the village
         int postCount = 4 + rand.nextInt(3);
@@ -510,8 +678,9 @@ public class MapGenVillage {
                 world.setVoxel(px, py + 1, pz, OAK_LOG);
                 world.setVoxel(px, py + 2, pz, OAK_LOG);
                 world.setVoxel(px, py + 3, pz, OAK_LOG);
-                // Light source on top
+                // Light source on top, capped with a slab.
                 world.setVoxel(px, py + 4, pz, GLOWSTONE);
+                world.setVoxel(px, py + 5, pz, OAK_SLAB);
             }
         }
     }
@@ -531,6 +700,8 @@ public class MapGenVillage {
                 for (int h = 1; h <= wallHeight; h++) {
                     world.setVoxel(px, py + h, pz, OAK_LOG);
                 }
+                // Lantern on each compass pillar.
+                if (angle % 90 == 0) world.setVoxel(px, py + 4, pz, GLOWSTONE);
                 // Horizontal connection (every other pillar)
                 if (angle % 30 == 0) {
                     int nextAngle = (angle + 15) % 360;

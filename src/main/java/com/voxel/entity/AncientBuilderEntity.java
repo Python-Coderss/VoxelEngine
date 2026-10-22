@@ -163,13 +163,13 @@ public class AncientBuilderEntity extends Entity {
      */
     public String aiSpeakLine(String line) {
         return com.voxel.ai.speech.CharacterVoice.speak(id, getDisplayName(), line,
-                villager.voice.VoiceProfile.ANCIENT_BUILDER);
+                villager.voice.VoiceProfile.forBuilder(id));
     }
 
     /** Speak a line with an explicit caption reveal time. */
     public String aiSpeakLine(String line, float durationSeconds) {
         return com.voxel.ai.speech.CharacterVoice.speak(id, getDisplayName(), line,
-                villager.voice.VoiceProfile.ANCIENT_BUILDER, durationSeconds);
+                villager.voice.VoiceProfile.forBuilder(id), durationSeconds);
     }
 
     public boolean aiSpeak(String line) {

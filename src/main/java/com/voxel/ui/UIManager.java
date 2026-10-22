@@ -33,10 +33,9 @@ public class UIManager {
         this.height = height;
         this.projection = new Matrix4f().ortho(0, width, height, 0, -1, 1);
         
-        program = ShaderUtil.createProgram(
-            ShaderUtil.compileShader("src/main/resources/shaders/ui.vert", GL_VERTEX_SHADER),
-            ShaderUtil.compileShader("src/main/resources/shaders/ui.frag", GL_FRAGMENT_SHADER)
-        );
+        program = ShaderUtil.createGraphicsProgramCached("ui",
+            "src/main/resources/shaders/ui.vert",
+            "src/main/resources/shaders/ui.frag");
         
         uUVOffsetLoc = glGetUniformLocation(program, "uUVOffset");
         uUVScaleLoc = glGetUniformLocation(program, "uUVScale");
@@ -136,6 +135,43 @@ public class UIManager {
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 
+    /**
+     * Draws a quad whose texture tiles across it instead of stretching once.
+     * The texture must have been loaded with {@link #loadTexture(String, boolean)}
+     * and {@code repeat=true} so GL_REPEAT is set; one draw call covers the whole
+     * surface, which keeps MC's 16x16 dirt panels at native pixel density.
+     */
+    public void drawQuadTiled(Vector2f pos, Vector2f size, Vector4f color, int textureId,
+                              float tileW, float tileH) {
+        if (textureId == 0 || tileW <= 0f || tileH <= 0f) return;
+        glUniform2f(1, pos.x, pos.y);
+        glUniform2f(2, size.x, size.y);
+        glUniform1f(3, 0.0f);
+        glUniform1f(4, 0.0f);
+        glUniform4f(10, color.x, color.y, color.z, color.w);
+        glUniform2f(uUVOffsetLoc, 0f, 0f);
+        glUniform2f(uUVScaleLoc, size.x / tileW, size.y / tileH);
+        glUniform1i(uTextureTypeLoc, 0);
+        glUniform1i(uLayerLoc, 0);
+        glUniform1f(11, 1.0f);
+        glBindTextureUnit(0, textureId);
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+
+    /**
+     * Minecraft-style drop shadow: one hard-edged stamp one pixel down-right,
+     * then the fill pass. Used by menu buttons, title cards and captions.
+     */
+    public void drawStringShadow(String text, float x, float y, float scale, Vector4f color,
+                                 int fontTextureId, int charLineLimit, int lineOffset) {
+        if (fontTextureId == 0 || text == null || text.isEmpty()) return;
+        float off = Math.max(1f, scale);
+        Vector4f shadow = UiPalette.ink(color.w * 0.85f);
+        drawString(text, x + off, y + off, scale, shadow, fontTextureId, charLineLimit, lineOffset);
+        drawString(text, x, y, scale, color, fontTextureId, charLineLimit, lineOffset);
+    }
+
     public void drawString(String text, float x, float y, float scale, Vector4f color, int fontTextureId, int charLineLimit, int lineOffset) {
         if (fontTextureId == 0 || text == null || text.isEmpty()) return;
         
@@ -221,6 +257,30 @@ public class UIManager {
     }
 
     public static int loadTexture(String path) {
+        return loadTexture(path, false);
+    }
+
+    /**
+     * Loads a PNG as a 2D texture. {@code repeat} selects GL_REPEAT wrapping so
+     * the caller can tile it with {@link #drawQuadTiled}. Nearest filtering is
+     * deliberate: MC GUI art is pixel art and must stay crisp.
+     */
+    public static int loadTexture(String path, boolean repeat) {
+        return loadTexture(path, repeat, null);
+    }
+
+    /**
+     * Loads a PNG and reports the bounds of its opaque content into
+     * {@code boundsOut} as {x, y, w, h} in texture pixels (or {0,0,w,h} when
+     * the image is fully opaque). Callers use it to derive exact sprite UVs
+     * from the image itself instead of hand-maintained rectangles — padding or
+     * an off-by-a-few-pixels crop then cannot shift the art.
+     */
+    public static int loadTextureWithBounds(String path, boolean repeat, int[] boundsOut) {
+        return loadTexture(path, repeat, boundsOut);
+    }
+
+    private static int loadTexture(String path, boolean repeat, int[] boundsOut) {
         int textureId = glCreateTextures(GL_TEXTURE_2D);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer w = stack.mallocInt(1);
@@ -228,17 +288,43 @@ public class UIManager {
             IntBuffer comp = stack.mallocInt(1);
             ByteBuffer data = STBImage.stbi_load(path, w, h, comp, 4);
             if (data == null) throw new RuntimeException("Failed to load UI texture: " + path);
-            
-            glTextureStorage2D(textureId, 1, GL_RGBA8, w.get(0), h.get(0));
-            glTextureSubImage2D(textureId, 0, 0, 0, w.get(0), h.get(0), GL_RGBA, GL_UNSIGNED_BYTE, data);
-            
-            textureSizes.put(textureId, new Vector2i(w.get(0), h.get(0)));
+            int tw = w.get(0), th = h.get(0);
+
+            glTextureStorage2D(textureId, 1, GL_RGBA8, tw, th);
+            glTextureSubImage2D(textureId, 0, 0, 0, tw, th, GL_RGBA, GL_UNSIGNED_BYTE, data);
+
+            if (boundsOut != null) opaqueBounds(data, tw, th, boundsOut);
+            textureSizes.put(textureId, new Vector2i(tw, th));
             STBImage.stbi_image_free(data);
         }
         glTextureParameteri(textureId, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTextureParameteri(textureId, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTextureParameteri(textureId, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTextureParameteri(textureId, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(textureId, GL_TEXTURE_WRAP_S, repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
+        glTextureParameteri(textureId, GL_TEXTURE_WRAP_T, repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
         return textureId;
+    }
+
+    /** Alpha-aware content box of a straight RGBA buffer, written as {x,y,w,h}. */
+    private static void opaqueBounds(ByteBuffer rgba, int w, int h, int[] out) {
+        int minX = w, minY = h, maxX = -1, maxY = -1;
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int a = rgba.get((y * w + x) * 4 + 3) & 0xFF;
+                if (a > 8) {
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+            }
+        }
+        if (maxX < minX || maxY < minY) {
+            out[0] = 0; out[1] = 0; out[2] = w; out[3] = h;
+            return;
+        }
+        out[0] = minX;
+        out[1] = minY;
+        out[2] = maxX - minX + 1;
+        out[3] = maxY - minY + 1;
     }
 }

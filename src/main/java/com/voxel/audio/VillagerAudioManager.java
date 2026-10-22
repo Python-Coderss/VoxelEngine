@@ -10,7 +10,10 @@ import villager.voice.ClipIndex;
 import villager.voice.ClipLibrary;
 import villager.voice.ClipScript;
 import villager.voice.ClipVoice;
+import villager.voice.CoquiVitsTts;
 import villager.voice.SpeechOptions;
+import villager.voice.TextToSpeech;
+import villager.voice.VoiceProfile;
 import villager.voice.VillagerNewsIntro;
 import villager.voice.VillagerVoiceRenderer;
 import villager.voice.VoiceMode;
@@ -31,10 +34,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Bridges the recorded villager voice to the engine's OpenAL context.
  *
- * Plays recorded villager clips (Villager News addon + TEAVSRP corpus). Clip
- * decoding and playback shaping run on one worker thread; selection and the
- * live caption publish synchronously so the caption always matches the clip.
- * Nothing is ever synthesized. OpenAL calls stay on the render thread: call
+ * Plays recorded villager clips (Villager News addon + TEAVSRP corpus), and
+ * speaks lines no clip can cover with the dynamic fixed-voice neural TTS
+ * (Coqui VITS, one closed-inventory voice per villager). Clip decoding and
+ * playback shaping run on one worker thread; selection and the live caption
+ * publish synchronously so the caption always matches the audio. OpenAL
+ * calls stay on the render thread: call
  * {@link #update()} once per frame after the OpenAL context has been
  * initialized.
  */
@@ -51,6 +56,15 @@ public final class VillagerAudioManager implements AutoCloseable {
     private ClipVoice clipVoice;
     private final ClipLibrary injectedClips;
     private boolean clipsUnavailable;
+    /**
+     * Set {@code -Dvoxel.voice.villager.dynamic=false} to keep the legacy
+     * clips-only villager voice (unmatched lines fall back to a random
+     * vocalization, as before).
+     */
+    public static final String DYNAMIC_PROPERTY = "voxel.voice.villager.dynamic";
+    private volatile CoquiVitsTts dynamicNeural;
+    private volatile TextToSpeech dynamicOverride;
+    private volatile boolean dynamicProbeStarted;
     private final DialogueCatalog dialogueCatalog;
     private final ExecutorService clipExecutor;
     private final ConcurrentLinkedQueue<PendingClip> pendingClips = new ConcurrentLinkedQueue<PendingClip>();
@@ -137,15 +151,34 @@ public final class VillagerAudioManager implements AutoCloseable {
     }
 
     /**
-     * Play one line for a named speaker. The request is resolved to a real
-     * recorded clip first; the live caption shows that clip's exact transcript
-     * (revealed on the recording's own subtitle-cue timing) and the audio is
-     * that same clip — text and sound can never drift apart. Nothing is ever
-     * synthesized or invented: no clip, no line.
+     * Play one line for a named speaker. A line a real recording can speak
+     * plays that clip — the live caption shows the clip's exact transcript
+     * and the audio is that same clip, so text and sound can never drift
+     * apart. A line no clip shares words with is spoken by the dynamic
+     * fixed-voice neural TTS and captioned with the authored text, instead
+     * of the old unrelated random vocalization with no caption.
      *
-     * @return the captioned transcript, or null when the catalog has nothing
+     * @return the captioned text, or null when nothing could be spoken
      */
     public String requestSpeech(String text, SpeechOptions options, String speaker) {
+        return requestSpeech(text, options, speaker,
+                speaker == null ? 0 : speaker.hashCode());
+    }
+
+    /**
+     * Play one line, identifying the villager by {@code voiceSeed} (normally
+     * the entity id) so dynamic lines always use that villager's own fixed
+     * neural voice.
+     */
+    public String requestSpeech(String text, SpeechOptions options,
+                                String speaker, int voiceSeed) {
+        ClipIndex.Clip related = resolveRelatedClip(text);
+        if (related != null) {
+            return speak(related, options, speaker);
+        }
+        if (speakDynamic(text, options, speaker, voiceSeed)) {
+            return text == null ? null : text.trim();
+        }
         return speak(resolveClip(text), options, speaker);
     }
 
@@ -155,6 +188,119 @@ public final class VillagerAudioManager implements AutoCloseable {
         return speak(resolveTopic(topic), options, speaker);
     }
 
+    /** Inject a deterministic voice for tests (bypasses the model probe). */
+    public void setDynamicVoiceForTest(TextToSpeech voice) {
+        dynamicOverride = voice;
+    }
+
+    /**
+     * Start loading the dynamic villager voice now instead of on the first
+     * unmatched line. The game calls this at boot so the first villager who
+     * says something new already has the model warm; tests never do.
+     */
+    public void prepareDynamicVoice() {
+        startDynamicProbe();
+    }
+
+    /**
+     * Speak a line no clip shares words with through the dynamic fixed-voice
+     * neural TTS: caption the authored text now, render on the clip worker,
+     * play through the normal queue. Returns false when the neural voice is
+     * disabled or unavailable, so the caller falls back to the legacy
+     * vocalization instead of captioning words it cannot speak.
+     */
+    private boolean speakDynamic(String text, SpeechOptions options,
+                                 String speaker, int voiceSeed) {
+        if (closed || text == null || text.trim().isEmpty() || options == null) {
+            return false;
+        }
+        TextToSpeech voice = dynamicVoiceOrNull();
+        if (voice == null || !voice.isAvailable()) {
+            startDynamicProbe();
+            return false;
+        }
+        final String line = text.trim();
+        final String name = speaker == null || speaker.trim().isEmpty()
+                ? DEFAULT_SPEAKER : speaker.trim();
+        final SpeechOptions delivery = options;
+        final TextToSpeech engine = voice;
+        final String voiceTag = engine instanceof CoquiVitsTts
+                ? ((CoquiVitsTts) engine).speakerForSeed(voiceSeed) : "injected";
+        final int seed = voiceSeed;
+        float reveal = Math.max(0.6f, (float) LiveCaptions.estimateDuration(
+                line, options.getEffectiveSpeed()));
+        announceLine(line, name, reveal);
+        clipExecutor.execute(() -> {
+            try {
+                String key = "[DYNAMIC:" + voiceTag + "]" + line;
+                AudioData cached = cache.load(key, delivery);
+                PendingClip pending;
+                int words = wordCount(line);
+                if (cached != null) {
+                    pending = PendingClip.fromSamples(cached.samples, cached.sampleRate, words);
+                } else {
+                    WavAudio rendered = engine instanceof CoquiVitsTts
+                            ? ((CoquiVitsTts) engine).renderLine(line, delivery, seed)
+                            : engine.render(line, VoiceProfile.VILLAGER);
+                    cache.save(key, delivery, new AudioData(
+                            rendered.samples.clone(), 1, rendered.sampleRate));
+                    pending = PendingClip.fromSamples(rendered.samples, rendered.sampleRate, words);
+                }
+                while (pendingClips.poll() != null) {
+                    // Keep only the newest pending line.
+                }
+                pendingClips.offer(pending);
+            } catch (Throwable error) {
+                System.err.println("VillagerAudioManager: dynamic speech failed: " + error);
+            }
+        });
+        return true;
+    }
+
+    /** The ready dynamic voice, or null when disabled, missing, or probing. */
+    private TextToSpeech dynamicVoiceOrNull() {
+        if (!isDynamicEnabled() || closed) return null;
+        TextToSpeech override = dynamicOverride;
+        if (override != null) return override;
+        CoquiVitsTts neural = dynamicNeural;
+        return neural != null && neural.isAvailable() ? neural : null;
+    }
+
+    private static boolean isDynamicEnabled() {
+        String value = System.getProperty(DYNAMIC_PROPERTY, "true");
+        return value == null || !"false".equalsIgnoreCase(value.trim());
+    }
+
+    /** Load the neural model once, on the clip worker — never on a game thread. */
+    private void startDynamicProbe() {
+        if (dynamicProbeStarted || dynamicOverride != null
+                || !isDynamicEnabled() || closed) {
+            return;
+        }
+        synchronized (clipLock) {
+            if (dynamicProbeStarted || dynamicOverride != null) return;
+            dynamicProbeStarted = true;
+        }
+        // A dedicated thread: the model is ~137 MB and its load must not sit
+        // ahead of a villager clip on the shared clip worker.
+        Thread loader = new Thread(() -> {
+            try {
+                CoquiVitsTts neural = new CoquiVitsTts(CoquiVitsTts.defaultDirectory());
+                if (neural.isAvailable()) {
+                    dynamicNeural = neural;
+                    System.out.println(
+                            "VillagerAudioManager: dynamic villager voice ready ("
+                                    + neural.speakerForSeed(0) + " is the first voice)");
+                }
+            } catch (Throwable error) {
+                System.err.println(
+                        "VillagerAudioManager: dynamic voice unavailable (" + error + ")");
+            }
+        }, "VillagerVoiceModel");
+        loader.setDaemon(true);
+        loader.start();
+    }
+
     /**
      * Publish a line that a local synthetic voice is about to speak. The
      * caption carries the exact authored text, so the subtitle and the audio
@@ -162,7 +308,11 @@ public final class VillagerAudioManager implements AutoCloseable {
      */
     public void announceLine(String text, String speaker, float revealSeconds) {
         if (closed || text == null || text.trim().isEmpty()) return;
-        LiveCaptions.show(speaker, text.trim(), revealSeconds);
+        if (openALReady) {
+            LiveCaptions.showForAudio(speaker, text.trim(), revealSeconds);
+        } else {
+            LiveCaptions.show(speaker, text.trim(), revealSeconds);
+        }
     }
 
     /**
@@ -185,7 +335,8 @@ public final class VillagerAudioManager implements AutoCloseable {
         while (pendingClips.poll() != null) {
             // Keep only the newest requested line.
         }
-        pendingClips.offer(PendingClip.fromSamples(samples, rendered.sampleRate));
+        pendingClips.offer(PendingClip.fromSamples(samples, rendered.sampleRate,
+                LiveCaptions.pendingWordCount()));
     }
 
     /** Lazily discover the clip catalog; null when no clips exist on disk. */
@@ -199,6 +350,22 @@ public final class VillagerAudioManager implements AutoCloseable {
             }
         }
         return clipVoice;
+    }
+
+    /**
+     * Resolve free text to a clip that actually shares its words (exact
+     * transcript or word overlap). Null means no recording is on topic and
+     * the line wants dynamic neural speech instead of a random take.
+     */
+    private ClipIndex.Clip resolveRelatedClip(String text) {
+        if (closed || text == null || text.trim().isEmpty()) return null;
+        if (ClipIndex.tokens(text).length == 0) return null;
+        synchronized (clipLock) {
+            ClipVoice voice = clipVoiceOrNull();
+            return voice == null ? null
+                    : voice.library().index().bestWordMatch(
+                            text.trim(), clipRng, recentClips);
+        }
     }
 
     /** Resolve a free-text hint to the best matching recorded clip. */
@@ -224,25 +391,43 @@ public final class VillagerAudioManager implements AutoCloseable {
         if (closed || chosen == null || options == null || chosen.text.isEmpty()) {
             return null;
         }
-        float speed = (float) options.getEffectiveSpeed();
-        float reveal = Math.max(0.6f, chosen.duration / speed);
+        // The renderer resamples by speed * emotion pitch, so both the reveal
+        // window and the add-on cue times must use that real factor; dividing
+        // by speed alone made pitched lines run ahead of their voice.
+        float factor = (float) ClipVoice.playbackFactor(options);
+        float reveal = Math.max(0.6f, (float) (chosen.duration / factor));
         float[] cueTimes = null;
         if (chosen.cueTimes.length > 0) {
             cueTimes = new float[chosen.cueTimes.length];
             for (int i = 0; i < cueTimes.length; i++) {
-                cueTimes[i] = chosen.cueTimes[i] / speed;
+                cueTimes[i] = (float) (chosen.cueTimes[i] / factor);
             }
         }
+        // Word-level timings measured offline (local ASR) beat both the
+        // phrase cues and any runtime estimate; the PCM pause reader is the
+        // fallback when this clip has no measured timings.
+        int words = wordCount(chosen.text);
+        float[] measured = measuredTimings(chosen.id, words, factor);
         // Captions publish even when no audio device exists or the clip
         // cannot be loaded, so the line is always readable on screen.
-        LiveCaptions.show(speaker, chosen.text, reveal, cueTimes, chosen.cueTexts);
+        boolean audible = openALReady;
+        if (audible) {
+            if (measured != null) {
+                LiveCaptions.showForAudio(speaker, chosen.text, reveal, measured);
+            } else {
+                LiveCaptions.showForAudio(speaker, chosen.text, reveal,
+                        cueTimes, chosen.cueTexts);
+            }
+        } else {
+            LiveCaptions.show(speaker, chosen.text, reveal, cueTimes, chosen.cueTexts);
+        }
         synchronized (clipLock) {
             recentClips.add(chosen.id);
             while (recentClips.size() > RECENT_CLIPS) {
                 recentClips.remove(0);
             }
         }
-        if (!openALReady || !clipPending.compareAndSet(false, true)) {
+        if (!audible || !clipPending.compareAndSet(false, true)) {
             return chosen.text;
         }
         final ClipIndex.Clip clip = chosen;
@@ -250,13 +435,17 @@ public final class VillagerAudioManager implements AutoCloseable {
             try {
                 AudioData cached = cache.load(clip.id, options);
                 PendingClip pending;
+                // Measured timings already sit on the caption; do not let the
+                // PCM reader overwrite them with its coarser estimate.
+                final float[] measuredTimings = measured;
+                int pcmWords = measuredTimings != null ? 0 : words;
                 if (cached != null) {
-                    pending = PendingClip.fromSamples(cached.samples, cached.sampleRate);
+                    pending = PendingClip.fromSamples(cached.samples, cached.sampleRate, pcmWords);
                 } else {
                     WavAudio rendered = clipVoice.render(clip, options);
                     cache.save(clip.id, options, new AudioData(
                             rendered.samples.clone(), 1, rendered.sampleRate));
-                    pending = PendingClip.fromSamples(rendered.samples, rendered.sampleRate);
+                    pending = PendingClip.fromSamples(rendered.samples, rendered.sampleRate, pcmWords);
                 }
                 // Keep only the newest pending line so an active player cannot
                 // accumulate a large queue during rapid interactions.
@@ -369,7 +558,7 @@ public final class VillagerAudioManager implements AutoCloseable {
                 AudioData cached = cache.load(cacheText, profile);
                 PendingClip clip;
                 if (cached != null) {
-                    clip = PendingClip.fromSamples(cached.samples, cached.sampleRate);
+                    clip = PendingClip.fromSamples(cached.samples, cached.sampleRate, 0);
                 } else {
                     WavAudio rendered = arrangement.render(renderer, profile);
                     float[] scaled = rendered.samples.clone();
@@ -381,7 +570,7 @@ public final class VillagerAudioManager implements AutoCloseable {
                     }
                     cache.save(cacheText, profile,
                             new AudioData(scaled.clone(), 1, rendered.sampleRate));
-                    clip = PendingClip.fromSamples(scaled, rendered.sampleRate);
+                    clip = PendingClip.fromSamples(scaled, rendered.sampleRate, 0);
                 }
                 while (pendingClips.poll() != null) {
                     // Keep only the newest requested clip.
@@ -394,6 +583,16 @@ public final class VillagerAudioManager implements AutoCloseable {
                 clipPending.set(false);
             }
         });
+    }
+
+    private static int wordCount(String text) {
+        return PendingClip.wordCountOf(text);
+    }
+
+    /** Offline-measured word starts for this clip, or null when unavailable. */
+    private static float[] measuredTimings(String clipId, int words, double factor) {
+        ClipWordTiming timingDoc = ClipWordTiming.get();
+        return timingDoc == null ? null : timingDoc.scaled(clipId, words, factor);
     }
 
     /** Convenience method for the default villager greeting. */
@@ -431,13 +630,13 @@ public final class VillagerAudioManager implements AutoCloseable {
                 AudioData cached = cache.load(cacheText, profile);
                 PendingClip clip;
                 if (cached != null) {
-                    clip = PendingClip.fromSamples(cached.samples, cached.sampleRate);
+                    clip = PendingClip.fromSamples(cached.samples, cached.sampleRate, 0);
                     System.out.println("VillagerAudioManager: Villager News intro cache hit");
                 } else {
                     villager.voice.WavAudio rendered = intro.render(renderer, profile);
                     cache.save(cacheText, profile,
                             new AudioData(rendered.samples.clone(), 1, rendered.sampleRate));
-                    clip = PendingClip.fromSamples(rendered.samples, rendered.sampleRate);
+                    clip = PendingClip.fromSamples(rendered.samples, rendered.sampleRate, 0);
                     System.out.println("VillagerAudioManager: rendered and cached Villager News intro"
                             + " (" + intro.getAttribution() + ")");
                 }
@@ -470,7 +669,7 @@ public final class VillagerAudioManager implements AutoCloseable {
         // The catalog line is only a hint: what plays and captions is the
         // chosen clip's exact transcript.
         String spoken = requestSpeech(selected.getText(), selected.getOptions(),
-                villager.aiDisplayName());
+                villager.aiDisplayName(), villager.id);
         String display = spoken != null ? spoken : selected.getText();
         // Expressive talk gesture + lip sync while the line plays
         villager.startTalking(Math.max(1.2f, display.length() * 0.052f + 0.4f));
@@ -499,9 +698,10 @@ public final class VillagerAudioManager implements AutoCloseable {
         if (clip == null) {
             return;
         }
-        // The clip is actually starting now: sync the live caption reveal to
-        // the recording's real length.
-        LiveCaptions.retimeCurrent(clip.durationSeconds());
+        // The clip is actually starting now: start the caption clock here, not
+        // when the line was requested, and reveal each word at its measured
+        // place in this recording.
+        LiveCaptions.beginAudio(clip.durationSeconds(), clip.wordTimes);
         ByteBuffer pcm = clip.pcm.order(ByteOrder.LITTLE_ENDIAN);
         currentBuffer = AL10.alGenBuffers();
         AL10.alBufferData(currentBuffer, AL10.AL_FORMAT_MONO16, pcm, clip.sampleRate);
@@ -553,10 +753,13 @@ public final class VillagerAudioManager implements AutoCloseable {
     private static final class PendingClip {
         private final ByteBuffer pcm;
         private final int sampleRate;
+        /** Per-word starts in seconds, from the audio itself; null when unknown. */
+        private final float[] wordTimes;
 
-        private PendingClip(ByteBuffer pcm, int sampleRate) {
+        private PendingClip(ByteBuffer pcm, int sampleRate, float[] wordTimes) {
             this.pcm = pcm;
             this.sampleRate = sampleRate;
+            this.wordTimes = wordTimes;
         }
 
         float durationSeconds() {
@@ -564,10 +767,11 @@ public final class VillagerAudioManager implements AutoCloseable {
         }
 
         private static PendingClip fromPcm(ByteBuffer pcm, int sampleRate) {
-            return new PendingClip(pcm, sampleRate);
+            return new PendingClip(pcm, sampleRate, null);
         }
 
-        private static PendingClip fromSamples(float[] samples, int sampleRate) {
+        private static PendingClip fromSamples(float[] samples, int sampleRate,
+                                               int wordCount) {
             ByteBuffer pcm = ByteBuffer.allocateDirect(samples.length * 2)
                     .order(ByteOrder.LITTLE_ENDIAN);
             for (float value : samples) {
@@ -575,7 +779,15 @@ public final class VillagerAudioManager implements AutoCloseable {
                 pcm.putShort((short) Math.round(clipped * 32767.0f));
             }
             pcm.flip();
-            return new PendingClip(pcm.asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN), sampleRate);
+            float[] wordTimes = wordCount > 0
+                    ? CaptionTiming.wordTimes(wordCount, samples, sampleRate) : null;
+            return new PendingClip(pcm.asReadOnlyBuffer().order(ByteOrder.LITTLE_ENDIAN),
+                    sampleRate, wordTimes);
+        }
+
+        private static int wordCountOf(String text) {
+            return text == null || text.trim().isEmpty()
+                    ? 0 : text.trim().split("\\s+").length;
         }
     }
 

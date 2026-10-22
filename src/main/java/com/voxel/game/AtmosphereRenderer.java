@@ -125,9 +125,17 @@ public class AtmosphereRenderer {
         out[10] = 0.25f * smoothstep(-0.1f, 0.1f, -h);
         out[11] = 0.4f * smoothstep(-0.1f, 0.1f, -h);
 
-        out[18] = mix(0.02f, skyZenR * 0.4f, smoothstep(-0.2f, 0.2f, h));
-        out[19] = mix(0.03f, skyZenG * 0.4f, smoothstep(-0.2f, 0.2f, h));
-        out[20] = mix(0.07f, skyZenB * 0.4f, smoothstep(-0.2f, 0.2f, h));
+        // Ambient is a hemisphere, not the zenith. Taking 0.4x the sky colour
+        // alone meant a sky-lit wall received light in the zenith's ratio —
+        // (0.04, 0.14, 0.30) at noon, i.e. 1 : 3.5 : 7.5 — so tan sandstone
+        // came out cyan and every indoor surface read cold. Mixing in the warm
+        // ground bounce (the sun colour, which has just been computed above)
+        // pulls the ratio back to about 0.7 : 0.8 : 1.0 while keeping the sky's
+        // gentle cool cast, which is what Story Mode's interiors look like.
+        float ambLift = smoothstep(-0.2f, 0.2f, h);
+        out[18] = mix(0.02f, 0.35f * (skyZenR * 0.35f + out[6] * 0.45f + 0.060f), ambLift);
+        out[19] = mix(0.03f, 0.35f * (skyZenG * 0.35f + out[7] * 0.45f + 0.055f), ambLift);
+        out[20] = mix(0.07f, 0.35f * (skyZenB * 0.35f + out[8] * 0.45f + 0.050f), ambLift);
     }
 
     /**

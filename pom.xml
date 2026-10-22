@@ -138,6 +138,11 @@
             <version>1.0.1</version>
         </dependency>
         <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>1.20.0</version>
+        </dependency>
+        <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
             <version>4.13.2</version>
@@ -200,6 +205,13 @@
                                     <includes>
                                         <include>dialogue.json</include>
                                         <include>create_content.json</include>
+                                    </includes>
+                                </resource>
+                                <resource>
+                                    <directory>src/main/resources/ai</directory>
+                                    <targetPath>ai</targetPath>
+                                    <includes>
+                                        <include>**/*.json</include>
                                     </includes>
                                 </resource>
                                 <resource>
@@ -351,6 +363,11 @@
                                         <exclude>META-INF/*.SF</exclude>
                                         <exclude>META-INF/*.DSA</exclude>
                                         <exclude>META-INF/*.RSA</exclude>
+                                        <!-- Native debug symbols (onnxruntime ships a
+                                             304 MB .pdb per platform) are not
+                                             loaded at runtime. -->
+                                        <exclude>**/*.pdb</exclude>
+                                        <exclude>**/*.dSYM/**</exclude>
                                     </excludes>
                                 </filter>
                             </filters>

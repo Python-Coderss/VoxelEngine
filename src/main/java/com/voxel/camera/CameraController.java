@@ -35,6 +35,10 @@ public class CameraController {
     public static final float DEFAULT_FOV_DEGREES = 90.0f;
 
     private volatile float fovDegrees = DEFAULT_FOV_DEGREES;
+    /** Speed-driven lens widening from {@link CameraFeel}; zero during cinematics. */
+    private volatile float gameplayFovOffset = 0f;
+    /** Screen shake, head bob and the sprint FOV kick for the gameplay camera. */
+    private final CameraFeel feel = new CameraFeel();
 
     // Crafting table grid layout (relative to texture cells)
     public static final float CT_MARGIN = 4.0f / 16.0f;     // 0.25
@@ -76,14 +80,30 @@ public class CameraController {
 
     // ── Lens (FOV) ────────────────────────────────────────────────────────────
 
-    /** Current vertical FOV in degrees (90 = gameplay default). */
-    public float getFovDegrees() { return fovDegrees; }
+    /** The gameplay lens including the speed FOV kick (90 = stationary default). */
+    public float getFovDegrees() {
+        return Math.max(8.0f, Math.min(120.0f, fovDegrees + gameplayFovOffset));
+    }
+
+    /** Base lens set by cutscenes, before the gameplay offset is added. */
+    public float getBaseFovDegrees() { return fovDegrees; }
 
     public void setFovDegrees(float degrees) {
         fovDegrees = Math.max(8.0f, Math.min(120.0f, degrees));
     }
 
-    public void resetFov() { fovDegrees = DEFAULT_FOV_DEGREES; }
+    /** Adds the sprint/walk FOV kick on top of the base lens (clamped to ±12°). */
+    public void setGameplayFovOffset(float degrees) {
+        gameplayFovOffset = Math.max(-12.0f, Math.min(12.0f, degrees));
+    }
+
+    public void resetFov() {
+        fovDegrees = DEFAULT_FOV_DEGREES;
+        gameplayFovOffset = 0f;
+    }
+
+    /** Shared feel state (shake / bob / FOV); driven by Main.loop each frame. */
+    public CameraFeel getFeel() { return feel; }
 
     /** tan(fov/2) — the exact scale the shader ray gen bakes into the basis. */
     public float getTanHalfFov() {

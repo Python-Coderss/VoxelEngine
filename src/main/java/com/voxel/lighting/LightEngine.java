@@ -528,6 +528,18 @@ public class LightEngine {
      * @param add true to add, false to subtract
      * @param dirtySlots Set of slot indices to process (also receives any new dirty slots from main pool changes)
      */
+    /**
+     * Screen blend of one light contribution onto an already-stored channel:
+     * {@code a + b - a*b/255}. Brightens monotonically, never exceeds 255, and
+     * — unlike a clamped sum — keeps the gradient alive once a room holds more
+     * light than a single carrier can express.
+     */
+    private static int screen(int base, int added) {
+        if (added <= 0) return base;
+        if (added >= 255) return 255;
+        return Math.min(255, base + added - Math.round(base * (added / 255.0f)));
+    }
+
     private void applyTintToMain(int blockId, boolean add, Set<Integer> dirtySlots) {
         int lightColor = blockDataManager.getLightColorFast(blockId);
         int tr = (lightColor >> 16) & 0xFF;
@@ -571,9 +583,17 @@ public class LightEngine {
 
                 int newR, newG, newB;
                 if (add) {
-                    newR = Math.min(255, curR + cr);
-                    newG = Math.min(255, curG + cg);
-                    newB = Math.min(255, curB + cb);
+                    // Screen blend instead of a clamped sum. A room's worth of
+                    // overlapping torches used to add up past 255 and clip, so
+                    // every cell in a lit hall stored the same maximum and the
+                    // shaded result was a flat wash with no falloff near the
+                    // walls. Screen blending still brightens with each extra
+                    // source but approaches 255 asymptotically, so the gradient
+                    // (and the light colour, which is a ratio of the channels)
+                    // survives once a room is brightly lit.
+                    newR = screen(curR, cr);
+                    newG = screen(curG, cg);
+                    newB = screen(curB, cb);
                 } else {
                     newR = Math.max(0, curR - cr);
                     newG = Math.max(0, curG - cg);

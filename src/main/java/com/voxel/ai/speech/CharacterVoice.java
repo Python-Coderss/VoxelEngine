@@ -3,6 +3,7 @@ package com.voxel.ai.speech;
 import com.voxel.audio.LiveCaptions;
 import com.voxel.audio.VillagerAudioManager;
 
+import villager.voice.KokoroTts;
 import villager.voice.TextToSpeech;
 import villager.voice.VoiceProfile;
 import villager.voice.WavAudio;
@@ -60,7 +61,7 @@ public final class CharacterVoice {
     private static volatile VillagerAudioManager audio;
     private static volatile TextToSpeech synthesizer;
     private static volatile boolean probeStarted;
-    private static volatile WindowsSapiTts localSynthesizer;
+    private static volatile TextToSpeech localSynthesizer;
 
     private CharacterVoice() {
     }
@@ -122,6 +123,23 @@ public final class CharacterVoice {
                                        VoiceProfile profile) {
         return say(speaker == null ? "narrator".hashCode() : speaker.hashCode(),
                 speaker, line, profile, 0f);
+    }
+
+    /**
+     * The player thinking out loud. Monologue is Male Jesse by default (set
+     * {@code -Dvoxel.voice.jesse=female} for the other Jesse) and is never
+     * rate-limited: an inner thought belongs to the beat that triggered it.
+     */
+    public static String speakMonologue(String line) {
+        VoiceProfile voice = VoiceProfile.forMonologue();
+        return say("jesse".hashCode(), "Jesse", line, voice, 0f);
+    }
+
+    /** A spoken aside from a named MCSM character (or the closest cast match). */
+    public static String speakCharacter(String character, String line) {
+        VoiceProfile voice = VoiceProfile.byCharacterName(character);
+        if (voice == null) voice = VoiceProfile.forSpeaker(character);
+        return speakScripted(character, line, voice);
     }
 
     private static String say(int speakerId, String speaker, String line,
@@ -200,9 +218,7 @@ public final class CharacterVoice {
     private static TextToSpeech synthesizer() {
         TextToSpeech injected = synthesizer;
         if (injected != null) return injected;
-        WindowsSapiTts local = localSynthesizer;
-        if (local == null) return null;
-        return local;
+        return localSynthesizer;
     }
 
     private static void startProbe() {
@@ -211,6 +227,26 @@ public final class CharacterVoice {
             if (probeStarted) return;
             probeStarted = true;
             WORKER.execute(() -> {
+                // The neural Kokoro model is the primary voice: it is local,
+                // model-based, and far less robotic than the OS voices. Only
+                // when its bundle/runtime is missing do we fall back to the
+                // installed Windows voices.
+                if (KokoroTts.isEnabled() && !osEngineForced()) {
+                    try {
+                        KokoroTts neural = new KokoroTts(KokoroTts.defaultDirectory());
+                        if (neural.isAvailable()) {
+                            localSynthesizer = neural;
+                            System.out.println("CharacterVoice: neural speech ready ("
+                                    + "Kokoro 82M, "
+                                    + neural.styleName(VoiceProfile.ANCIENT_BUILDER)
+                                    + " for builders)");
+                            return;
+                        }
+                    } catch (Throwable unavailable) {
+                        System.err.println("CharacterVoice: Kokoro unavailable ("
+                                + unavailable.getMessage() + ")");
+                    }
+                }
                 WindowsSapiTts candidate = new WindowsSapiTts(cacheDirectory());
                 if (candidate.isAvailable()) {
                     localSynthesizer = candidate;
@@ -247,7 +283,30 @@ public final class CharacterVoice {
     private static Path cacheFile(String text, VoiceProfile profile) throws IOException {
         Path directory = cacheDirectory().resolve("characters");
         Files.createDirectories(directory);
-        return directory.resolve(hash(profile.name() + "\u0000" + text) + ".wav");
+        // Include the resolved engine + voice so upgrading the local voice
+        // stack re-renders old lines instead of replaying an older, worse take.
+        return directory.resolve(hash(engineTag(profile) + "\u0000" + profile.name()
+                + "\u0000" + text) + ".wav");
+    }
+
+    /** Engine + voice identity; part of the WAV cache key. */
+    private static String engineTag(VoiceProfile profile) {
+        TextToSpeech local = localSynthesizer;
+        if (local instanceof KokoroTts) {
+            return ((KokoroTts) local).cacheTag(profile);
+        }
+        if (local instanceof WindowsSapiTts) {
+            return ((WindowsSapiTts) local).cacheTag(profile);
+        }
+        return local == null ? "tts" : local.getClass().getSimpleName();
+    }
+
+    /** {@code -Dvoxel.voice.engine=sapi|winrt} opts out of the neural model. */
+    private static boolean osEngineForced() {
+        String engine = System.getProperty(WindowsSapiTts.ENGINE_PROPERTY, "auto");
+        if (engine == null) return false;
+        String value = engine.trim().toLowerCase(java.util.Locale.ROOT);
+        return value.equals("sapi") || value.equals("winrt");
     }
 
     private static Path cacheDirectory() {

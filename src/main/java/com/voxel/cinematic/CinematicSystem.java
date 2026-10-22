@@ -75,7 +75,6 @@ public class CinematicSystem {
     private boolean introPlayed = false;
 
     // --- First-time event tracking (so reveals only play once) ---
-    private boolean netherRevealed = false;
     private boolean lowHealthWarned = false;
     private boolean levelUpSeen = false;
     /** Dusk scenes are a flourish, not a cutscene every night. */
@@ -91,6 +90,21 @@ public class CinematicSystem {
 
     // --- First-of-kind tracking (milestone beats) ---
     private final java.util.Set<String> firstsSeen = new java.util.HashSet<>();
+
+    // --- MCSM decisions and quick-time events ---------------------------------
+    // Both are overlay state: they never take the camera, they can play over a
+    // scene, and the render thread only reads volatile snapshots.
+    private volatile CinematicChoice choice;
+    private volatile float choiceRemaining;
+    /** -2 = nothing queued; otherwise the option index chosen by input. */
+    private volatile int pendingChoicePick = -2;
+    private java.util.function.Consumer<Integer> choiceCallback;
+
+    private volatile QuickTimeEvent qte;
+    private volatile float qteRemaining;
+    /** -1 = nothing queued; 1 success, 0 miss. */
+    private volatile int pendingQteResult = -1;
+    private java.util.function.Consumer<Boolean> qteCallback;
 
     /**
      * Returns true exactly once per key — "first diamond mined", "first cake
@@ -146,7 +160,7 @@ public class CinematicSystem {
 
         beginScene(seq, true);
         startFade(1.0f, 0.0f, 1.6f);
-        showTitle("A NEW WORLD", "Your story begins", 1.2f, 5.2f);
+        showTitle("THE PACK.PNG WORLD", "Seed 3257840388504953787 · you know this hill", 1.2f, 5.2f);
     }
 
     /**
@@ -174,6 +188,9 @@ public class CinematicSystem {
         letterbox = Math.max(letterbox, 0.8f);
         startFade(1.0f, 0.0f, 1.6f);
         showTitle("THE TUTORIAL", "Six steps from your first block to your first raid", 1.0f, 5.4f);
+        // The first decision lands as soon as the intro hands control back:
+        // playChoice queues behind the scene instead of stomping it.
+        playChoice(StoryBeats.tutorialFork(), null);
     }
 
     /** A short, confident establishing pass over the creative Showcase hub. */
@@ -213,6 +230,8 @@ public class CinematicSystem {
         letterbox = Math.max(letterbox, 0.7f);
         startFade(1.0f, 0.0f, 1.2f);
         showTitle("POINT & CLICK", "Click the world. It clicks back.", 0.6f, 3.6f);
+        // Ask where to go first; the pick is remembered as choice.pointclick_fork.
+        playChoice(StoryBeats.pointClickFork(), null);
     }
 
     /** Dusk moment: a low-angle glance up at the darkening sky as night falls. */
@@ -262,22 +281,61 @@ public class CinematicSystem {
         showTitle("THROUGH THE PORTAL", "", 0.3f, 1.4f);
     }
 
-    /**
-     * First Nether reveal: a one-time wide orbit across the burning realm, cut
-     * to a close-up of the player's reaction. Skipped on later Nether visits.
-     */
-    public void playFirstNether() {
-        if (netherRevealed) return;
-        if (active) { queueScene(this::playFirstNether); return; }
-        netherRevealed = true;
-        java.util.function.Supplier<Vector3f> hero = this::heroPoint;
+    /** Dimensions the player has already entered in this world. */
+    private final java.util.Set<com.voxel.world.DimensionType> dimensionsSeen =
+            new java.util.HashSet<com.voxel.world.DimensionType>();
+    /** Wall-clock time of the last ambient realm line (seconds). */
+    private float lastAmbientAt = -1f;
+    private final java.util.Random ambientRng = new java.util.Random(0x5EED5EEDL);
+    /** Seconds between ambient realm observations. */
+    public static final float AMBIENT_INTERVAL_SECONDS = 160f;
 
-        List<CameraShot> seq = new ArrayList<>();
-        seq.add(CameraShot.wide(hero.get(), -170, -60, 8.5f, 3.2f, 4.0f).tracking(hero));
-        seq.add(CameraShot.closeUp(hero.get(), -35, 2.4f, 1.0f, 2.2f).tracking(hero));
-        beginScene(seq, true);
-        startFade(0.6f, 0.0f, 1.4f);
-        showTitle("THE NETHER", "A world that burns forever", 1.2f, 4.4f);
+    /**
+     * Speak for the realm the player just entered. The first visit is a real
+     * scene (establishing wide, then a medium on the player) with that
+     * dimension's narration; later visits get a one-line overlay so portal
+     * hopping never becomes a slideshow.
+     */
+    public void playDimensionArrival(com.voxel.world.DimensionType dimension) {
+        if (dimension == null || ctx == null || ctx.player == null) return;
+        if (active) {
+            final com.voxel.world.DimensionType queued = dimension;
+            queueScene(() -> playDimensionArrival(queued));
+            return;
+        }
+        boolean firstVisit = dimensionsSeen.add(dimension);
+        if (firstVisit) {
+            java.util.function.Supplier<Vector3f> hero = this::heroPoint;
+            List<CameraShot> sequence = new ArrayList<CameraShot>();
+            sequence.add(CameraShot.wide(hero.get(), 200, 235, 22f, 8f, 3.0f)
+                    .tracking(hero));
+            sequence.add(CameraShot.medium(hero.get(), 300, 3.2f, 1.0f, 2.2f)
+                    .tracking(hero));
+            beginScene(sequence, true, 0f, DimensionDialogue.arrivalLines(dimension));
+            startFade(0.55f, 0f, 1.2f);
+            showTitle(DimensionDialogue.title(dimension),
+                    DimensionDialogue.subtitle(dimension), 0.8f, 4.2f);
+            return;
+        }
+        CinematicScript line = new CinematicScript()
+                .at(0.25f, "Narrator", DimensionDialogue.returnLine(dimension));
+        beginOverlayScene(4.0f, line);
+    }
+
+    /**
+     * One small observation about the current realm, rate-limited. Called from
+     * the logic tick; does nothing during menus, cutscenes or death.
+     */
+    public void playDimensionAmbient(com.voxel.world.DimensionType dimension) {
+        if (dimension == null || active || ctx == null || ctx.player == null) return;
+        if (ctx.inventoryOpen || ctx.commandMode || ctx.pauseMenuOpen
+                || ctx.player.isDead() || ctx.initializing) return;
+        float now = (float) org.lwjgl.glfw.GLFW.glfwGetTime();
+        if (lastAmbientAt >= 0f && now - lastAmbientAt < AMBIENT_INTERVAL_SECONDS) return;
+        String line = DimensionDialogue.ambientLine(dimension, ambientRng);
+        if (line == null) return;
+        lastAmbientAt = now;
+        beginOverlayScene(4.2f, new CinematicScript().at(0.2f, "Narrator", line));
     }
 
     /**
@@ -433,6 +491,11 @@ public class CinematicSystem {
             }
         }
         beginScene(seq, true, 0f);
+        // The first ore is a scripted scare: a beam gives way overhead and the
+        // player gets one timed press. A miss only changes the flavour line.
+        if (beat == Beat.ORE && firstTime("qte.ore")) {
+            playQte(StoryBeats.oreQte());
+        }
         // Beats never leave a black frame behind — only a whisper of bars.
         letterbox = Math.max(letterbox, 0.6f);
     }
@@ -468,11 +531,12 @@ public class CinematicSystem {
 
     /** Reset first-time tracking (used when a brand-new world is created). */
     public void resetFirstTimeFlags() {
-        netherRevealed = false;
         lowHealthWarned = false;
         levelUpSeen = false;
         introPlayed = false;
         nightfallSeen = 0;
+        dimensionsSeen.clear();
+        lastAmbientAt = -1f;
         pendingScenes.clear();
     }
 
@@ -485,6 +549,8 @@ public class CinematicSystem {
     // ── Per-tick update ───────────────────────────────────────────────────────
 
     public void tick(float dt) {
+        // Decisions and QTEs advance even while a scene owns the camera.
+        tickChoiceAndQte(dt);
         // Fade animation always advances
         if (fading) {
             fadeTimer += dt;
@@ -514,6 +580,9 @@ public class CinematicSystem {
         // Scene playback
         if (!active) {
             detectNightfall();
+            // Every realm gets a voice: a small observation now and then, never
+            // during menus, death or another scene.
+            playDimensionAmbient(ctx.activeDimension);
             drainQueuedScenes();
             return;
         }
@@ -657,12 +726,17 @@ public class CinematicSystem {
 
     /** Start an overlay-only scene (no camera control). */
     private void beginOverlayScene(float durationSec) {
+        beginOverlayScene(durationSec, null);
+    }
+
+    /** Overlay-only scene that still speaks a timed script. */
+    private void beginOverlayScene(float durationSec, CinematicScript lines) {
         active = true;
         controlsCamera = false;
         timer = 0f;
         duration = durationSec;
         shots.clear();
-        script = new CinematicScript();
+        script = lines == null ? new CinematicScript() : lines;
         skipHintVisible = true;
     }
 
@@ -675,7 +749,13 @@ public class CinematicSystem {
     private void publishScript(float from, float to) {
         if (script == null || script.isEmpty()) return;
         for (CinematicScript.Line line : script.due(from, to)) {
-            com.voxel.ai.speech.CharacterVoice.speakScripted(line.speaker, line.text);
+            if (CinematicScript.isMonologue(line)) {
+                // The player's inner voice is Jesse's own, spoken as monologue
+                // rather than as a third-person character beat.
+                com.voxel.ai.speech.CharacterVoice.speakMonologue(line.text);
+            } else {
+                com.voxel.ai.speech.CharacterVoice.speakScripted(line.speaker, line.text);
+            }
         }
     }
 
@@ -858,6 +938,167 @@ public class CinematicSystem {
         titleVisible = false;
         textAlpha = 0f;
         pendingScenes.clear();
+        choice = null;
+        choiceCallback = null;
+        choiceRemaining = 0f;
+        pendingChoicePick = -2;
+        qte = null;
+        qteCallback = null;
+        qteRemaining = 0f;
+        pendingQteResult = -1;
+    }
+
+    // ── MCSM decisions (timed choices) ───────────────────────────────────────
+
+    public boolean hasActiveChoice() { return choice != null; }
+
+    public CinematicChoice getActiveChoice() { return choice; }
+
+    public float getChoiceRemaining() { return choiceRemaining; }
+
+    /** Remaining fraction of the choice timer, 0..1. */
+    public float getChoiceProgress() {
+        CinematicChoice current = choice;
+        if (current == null || current.seconds() <= 0f) return 0f;
+        return Math.max(0f, Math.min(1f, choiceRemaining / current.seconds()));
+    }
+
+    /**
+     * Show a timed decision. While a camera scene is playing the choice is
+     * queued until the scene hands control back, so an intro and its question
+     * never overlap.
+     */
+    public void playChoice(CinematicChoice next, java.util.function.Consumer<Integer> onPick) {
+        if (next == null || next.optionCount() == 0) return;
+        if (choice != null) return; // one decision at a time
+        if (active) {
+            queueScene(() -> playChoice(next, onPick));
+            return;
+        }
+        if (ctx.player == null || ctx.player.isDead()) return;
+        choice = next;
+        choiceRemaining = next.seconds();
+        pendingChoicePick = -2;
+        choiceCallback = onPick;
+        letterbox = Math.max(letterbox, 0.45f);
+        barsMoment(next.seconds());
+        com.voxel.ai.speech.CharacterVoice.speakScripted(next.speaker(), next.prompt());
+    }
+
+    /** Input entry point (keyboard on the logic thread, mouse on the GL thread). */
+    public void requestChoice(int index) {
+        if (choice != null) pendingChoicePick = index;
+    }
+
+    private void tickChoiceAndQte(float dt) {
+        CinematicChoice current = choice;
+        if (current != null) {
+            int pick = pendingChoicePick;
+            pendingChoicePick = -2;
+            if (pick != -2) {
+                resolveChoice(pick);
+            } else {
+                choiceRemaining -= dt;
+                if (choiceRemaining <= 0f) resolveChoice(current.defaultIndex());
+            }
+        }
+
+        QuickTimeEvent event = qte;
+        if (event != null) {
+            int result = pendingQteResult;
+            pendingQteResult = -1;
+            if (result != -1) {
+                resolveQte(result == 1);
+            } else {
+                qteRemaining -= dt;
+                if (qteRemaining <= 0f) resolveQte(ctx.qteAssist);
+            }
+        }
+    }
+
+    private void resolveChoice(int index) {
+        CinematicChoice current = choice;
+        if (current == null) return;
+        int picked = Math.max(0, Math.min(current.optionCount() - 1, index));
+        CinematicChoice.Option option = current.optionAt(picked);
+        String flag = "choice." + current.id();
+        ctx.story.set(flag, option.label);
+        ctx.story.recordChoice(current.prompt(), option.label);
+        if (option.response != null && !option.response.isEmpty()) {
+            com.voxel.ai.speech.CharacterVoice.speakScripted(current.speaker(), option.response);
+        }
+        ctx.setStatus("You chose: " + option.label);
+        java.util.function.Consumer<Integer> callback = choiceCallback;
+        choice = null;
+        choiceCallback = null;
+        choiceRemaining = 0f;
+        pendingChoicePick = -2;
+        if (callback != null) {
+            try {
+                callback.accept(picked);
+            } catch (RuntimeException error) {
+                System.err.println("CinematicSystem: choice callback failed: " + error);
+            }
+        }
+    }
+
+    // ── MCSM quick-time events ───────────────────────────────────────────────
+
+    public boolean hasActiveQte() { return qte != null; }
+
+    public QuickTimeEvent getActiveQte() { return qte; }
+
+    public float getQteRemaining() { return qteRemaining; }
+
+    public float getQteProgress() {
+        QuickTimeEvent current = qte;
+        if (current == null || current.seconds() <= 0f) return 0f;
+        return Math.max(0f, Math.min(1f, qteRemaining / current.seconds()));
+    }
+
+    /** Start a timed prompt. Misses are handled by the callback, never by stalling. */
+    public void playQte(QuickTimeEvent event) {
+        playQte(event, null);
+    }
+
+    public void playQte(QuickTimeEvent event, java.util.function.Consumer<Boolean> onResult) {
+        if (event == null || qte != null) return;
+        if (ctx.player == null || ctx.player.isDead()) return;
+        qte = event;
+        qteRemaining = event.seconds();
+        pendingQteResult = -1;
+        qteCallback = onResult;
+        barsMoment(Math.min(2.0f, event.seconds()));
+        if (event.prompt() != null && !event.prompt().isEmpty()) {
+            com.voxel.ai.speech.CharacterVoice.speakScripted(event.speaker(), event.prompt());
+        }
+    }
+
+    /** Input entry point. */
+    public void requestQte(boolean success) {
+        if (qte != null) pendingQteResult = success ? 1 : 0;
+    }
+
+    private void resolveQte(boolean success) {
+        QuickTimeEvent current = qte;
+        if (current == null) return;
+        String line = success ? current.successLine() : current.failLine();
+        if (line != null && !line.isEmpty()) {
+            com.voxel.ai.speech.CharacterVoice.speakScripted(current.speaker(), line);
+        }
+        ctx.setStatus(success ? "Nice reactions!" : "You stumble — but keep going.");
+        java.util.function.Consumer<Boolean> callback = qteCallback;
+        qte = null;
+        qteCallback = null;
+        qteRemaining = 0f;
+        pendingQteResult = -1;
+        if (callback != null) {
+            try {
+                callback.accept(success);
+            } catch (RuntimeException error) {
+                System.err.println("CinematicSystem: QTE callback failed: " + error);
+            }
+        }
     }
 
     private void startFade(float from, float to, float dur) {

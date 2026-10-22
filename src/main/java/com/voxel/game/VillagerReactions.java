@@ -254,7 +254,7 @@ public final class VillagerReactions {
         // The handbook line is only a hint: what plays and captions is the
         // chosen clip's exact transcript.
         String spoken = ctx.villagerAudioManager.requestSpeech(
-                text, options, speaker.aiDisplayName());
+                text, options, speaker.aiDisplayName(), speaker.id);
         return spoken != null ? spoken : text;
     }
 
