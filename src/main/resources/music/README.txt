@@ -26,7 +26,7 @@ as placeholders: counted as "pending" at boot, never played, skipped without
 error. Replace them one by one with real downloads and relaunch.
 
 Converting a big uncompressed collection (WAV/FLAC/AIFF) in one batch:
-      tools/convert_music.sh <input-dir>
+      tools/convert_music.bat <input-dir>
 Then move the resulting mp3s into the pools above (requires ffmpeg).
 
 Sourcing note: only include audio you have the rights to bundle (your own

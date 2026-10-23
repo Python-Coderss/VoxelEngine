@@ -7,8 +7,8 @@ import com.voxel.api.VoxelMod;
 /**
  * Example mod: adds a warm glowing lantern block and an item for it.
  *
- * <p>Build it with {@code build.bat} (Windows) or {@code build.sh} and drop the
- * resulting jar into {@code mods/}. See {@code docs/MODDING.md}.</p>
+ * <p>Build it with {@code build.bat} and drop the resulting jar into
+ * {@code mods/}. See {@code docs/MODDING.md}.</p>
  */
 public final class LanternMod implements VoxelMod {
 

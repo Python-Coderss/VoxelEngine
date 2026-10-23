@@ -582,7 +582,7 @@ public class Main {
         // used to be paid by the first unmatched villager line).
         villagerAudioManager.prepareDynamicVoice();
         // Background music shares the OpenAL context and plays the mono MP3
-        // playlist from src/main/resources/music (see tools/convert_music.sh).
+        // playlist from src/main/resources/music (see tools/convert_music.bat).
         musicPlayer = new com.voxel.audio.MusicPlayer();
         musicPlayer.initialize();
         // Every bundled music family feeds one classified library: the MCSM

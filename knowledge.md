@@ -5,7 +5,8 @@ A Minecraft-style voxel engine built in Java with OpenGL 4.3+ compute shaders.
 ## Build & Run
 
 - **Build system:** Maven (`./mvnw compile`); `./mvnw -o test` is canonical and must stay green
-- **Fast loop:** `tools/devtest.sh <TestClass>` — incremental javac (only stale sources, tracked by per-source stamp files under `target/devloop/stamps`) + direct JUnit, ~2.2 s warm / ~2.5 s with an edit (measured on `Main.java`, the 9k-line worst case). `javac` runs with `-J-XX:TieredStopAtLevel=1 -J-Xshare:auto` because C2 warmup doubles the cost of a short-lived compile. `--full` drops all classes and stamps; `--all` runs every `*Test` (729 tests in ~50 s, versus several minutes through Maven). Maven's `useIncrementalCompilation` never takes effect in this tree, so `mvn test` recompiles everything on every invocation; keep using devtest for iteration and Maven for the final check. Never put an absolute `/c/...` path in a javac argfile and always use `;` as the Windows classpath separator — both fail silently (missing-symbol errors / classpath entry glued onto the last jar).
+- **Fast loop:** `tools\devtest.bat <TestClass>` — incremental javac (only stale sources, tracked by per-source stamp files under `target/devloop/stamps`) + direct JUnit, ~0.7 s build+start and ~1.4 s total warm, ~3.6 s after editing `Main.java` (the 9k-line worst case). `javac` runs with `-J-XX:TieredStopAtLevel=1 -J-Xshare:auto` because C2 warmup doubles the cost of a short-lived compile. `--full` drops all classes and stamps; `--all` runs every `*Test` (819 tests in ~70 s, versus several minutes through Maven). Maven's `useIncrementalCompilation` never takes effect in this tree, so `mvn test` recompiles everything on every invocation; keep using devtest for iteration and Maven for the final check.
+  Batch-script traps that each cost real debugging time: keep `;` as the classpath separator (a `:` silently glues the entry onto the last jar), read the classpath file with `for /f` and never `set /p` (it truncates the line at 1024 chars and drops the last jars), a bare `find` resolves to Git's GNU `find` and walks the whole drive (count in batch or use `findstr`), strip leading zeros from `%TIME%` before `set /a` (it reads `08` as octal), never put an absolute `/c/...` path in a javac argfile, and keep `.bat` files CRLF or `goto`/labels misbehave. `mvnw.cmd` is unusable on this machine (its wrapper dist folder has no `bin/`), so the script locates Maven under `%USERPROFILE%\.m2\wrapper\dists` like `build-fast.bat` does.
 - **GLFW window:** 1280×720, titled "Voxel Engine"
 - **Entry point:** `com.voxel.Main` — single-class orchestrator (god-object, ~2100 lines)
 - **Launch script for the ai terminal coding agent that was used to make most of this project:** `launch_freebuff.bat`
@@ -27,7 +28,7 @@ A Minecraft-style voxel engine built in Java with OpenGL 4.3+ compute shaders.
   `ctx.initializing`. Listener exceptions are logged per mod and skipped.
 - **Failure isolation:** a jar that fails discovery or `onLoad` is recorded on
   `ModLoader.LoadedMod.error`; the rest still load.
-- **Docs + example:** `docs/MODDING.md` and `mods/example-lantern/` (build.bat / build.sh).
+- **Docs + example:** `docs/MODDING.md` and `mods/example-lantern/` (`build.bat`).
 
 ## Authored Worlds
 

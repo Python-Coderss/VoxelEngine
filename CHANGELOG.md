@@ -1,5 +1,24 @@
 # CHANGELOG
 
+## The Build Loop Drops the Shell (Oct 22, 2026)
+
+`tools/devtest.bat` replaces `devtest.sh` with the same contract — incremental
+`javac` over stale sources, direct JUnit, `--full`, `--all`, simple or
+fully-qualified test names — and gets faster doing it: `xcopy /L /D` decides
+staleness by comparing a source against its stamp file, so no shell
+comparison is needed. Measured here: **660 ms** build+start and **1.4 s**
+total warm, **3.6 s** after editing `Main.java`, and **819 tests in ~70 s** for
+`--all`. `tools/convert_music.bat` ports the mono 96 kbps MP3 batch (recursing
+subfolders, skipping files already converted), and the example mod keeps only
+its `build.bat`. The four one-shot `tools/migrate*.sh` HudUI scripts were
+dropped rather than ported: they rewrite `Main.buildInventoryUi` /
+`updateInventoryUi`, which no longer exist there.
+
+The docs follow the tooling: `knowledge.md` now records the batch traps that
+bit during the port (`set /p` truncating a classpath line at 1024 chars, Git's
+GNU `find` shadowing the batch builtin, `%TIME%` read as octal, CRLF needed
+for `goto`/labels).
+
 ## Story Mode Indigo (Oct 21, 2026)
 
 The interface goes back to the colours the source art actually uses. The menu

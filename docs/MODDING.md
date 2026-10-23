@@ -20,20 +20,11 @@ mods/
          src\com\example\lantern\LanternMod.java
    ```
 
-   ```sh
-   javac -cp ../../target/classes -d build/classes \
-         src/com/example/lantern/LanternMod.java
-   ```
-
 3. Pack the classes, `META-INF/services` and `assets/` into a jar and drop it in
    `mods/`:
 
    ```bat
    build.bat
-   ```
-
-   ```sh
-   ./build.sh
    ```
 
 4. Launch the game. The log prints
