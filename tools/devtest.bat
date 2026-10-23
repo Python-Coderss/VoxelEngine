@@ -75,9 +75,10 @@ where java >nul 2>&1 || (echo [devtest] java is not on PATH; install JDK 8 or ad
 if not exist "%DEVDIR%\" mkdir "%DEVDIR%"
 
 REM --- dependency classpath (refreshed only when pom.xml changes) -----------
-REM xcopy /L /D prints pom.xml only when it is newer than the cached dump; the
-REM wrapper's own .cmd is unusable on this machine (its dist folder has no bin),
-REM so maven is located the same way build-fast.bat does.
+REM xcopy /L /D prints pom.xml only when it is newer than the cached dump.
+REM Maven is located by scanning the wrapper's dists cache (the same way
+REM build-fast.bat does) so this keeps working when mvnw.cmd's own unpack is
+REM broken; if the cache is empty, run mvnw.cmd -v once to populate it.
 set "NEEDCP="
 if not exist "%CPFILE%" set "NEEDCP=1"
 if not defined NEEDCP (
